@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Claude local settings
+**/.claude/settings.local.json
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+.env.*.local

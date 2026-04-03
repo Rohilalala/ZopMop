@@ -1,0 +1,35 @@
+# Environment files
+.env
+*.env
+!.env.example
+
+# Binaries
+househelp-api
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Vendor
+vendor/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Temp
+tmp/
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
