@@ -344,6 +344,17 @@ function EditProfileModal({
 // ── Quick Actions Grid ────────────────────────────────────────────────────────
 
 function QuickActionsGrid() {
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+
+  function handleQuickAction(id: string) {
+    switch (id) {
+      case 'bookings': navigation.navigate('Bookings'); break;
+      case 'wallet':   navigation.navigate('Wallet'); break;
+      case 'offers':   navigation.navigate('Offers'); break;
+      case 'support':  navigation.navigate('HelpSupport'); break;
+    }
+  }
+
   return (
     <View style={s.section}>
       <View style={s.quickGrid}>
@@ -352,6 +363,7 @@ function QuickActionsGrid() {
             key={item.id}
             style={[s.quickCard, { width: QUICK_CARD_WIDTH }]}
             activeOpacity={0.82}
+            onPress={() => handleQuickAction(item.id)}
           >
             <View style={s.quickIconBox}>
               <Ionicons name={item.icon as any} size={22} color={Colors.primary} />

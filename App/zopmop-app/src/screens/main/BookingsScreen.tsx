@@ -10,6 +10,8 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { getBookings, cancelBooking, type ApiBooking, type BookingStatus } from '../../api/bookings';
 import { useAuth } from '../../context/AuthContext';
@@ -17,6 +19,7 @@ import { useAuth } from '../../context/AuthContext';
 type Tab = 'upcoming' | 'past';
 
 export default function BookingsScreen() {
+  const navigation = useNavigation();
   const { token } = useAuth();
   const [tab, setTab] = useState<Tab>('upcoming');
   const [bookings, setBookings] = useState<ApiBooking[]>([]);
@@ -64,6 +67,9 @@ export default function BookingsScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
+        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Your Bookings</Text>
       </View>
 
@@ -218,7 +224,8 @@ function formatDate(iso: string): string {
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
 
-  header: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16, gap: 4 },
+  backBtn: { padding: 4, marginLeft: -4 },
   headerTitle: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: Colors.text, letterSpacing: -0.5 },
 
   tabBar: {

@@ -19,17 +19,17 @@ export type AuthStackParamList = {
   };
 };
 
-export type MainTabParamList = {
+export type MainStackParamList = {
   Home: undefined;
   Bookings: undefined;
-};
-
-export type MainStackParamList = {
-  Tabs: undefined;
   Profile: undefined;
   Addresses: undefined;
+  AllServices: undefined;
   ServiceAbout: { service: ApiService };
   Cart: undefined;
+  Wallet: undefined;
+  Offers: undefined;
+  HelpSupport: undefined;
 };
 
 export type RootStackParamList = {

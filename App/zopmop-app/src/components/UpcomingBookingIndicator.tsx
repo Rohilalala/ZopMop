@@ -6,13 +6,13 @@ import {
   Animated,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import type { MainTabParamList } from '../types/navigation';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { MainStackParamList } from '../types/navigation';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../theme';
 import { getBookings, type ApiBooking } from '../api/bookings';
 import { useAuth } from '../context/AuthContext';
 
-type Nav = BottomTabNavigationProp<MainTabParamList>;
+type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 export default function UpcomingBookingIndicator() {
   const navigation = useNavigation<Nav>();
@@ -88,7 +88,7 @@ function formatTime(iso: string): string {
 const s = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    bottom: 96,   // just above tab bar
+    bottom: 32,
     alignSelf: 'center',
     zIndex: 10,
   },

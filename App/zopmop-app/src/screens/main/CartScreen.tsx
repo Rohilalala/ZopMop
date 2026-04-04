@@ -78,7 +78,7 @@ export default function CartScreen() {
       });
       await refreshCart();
       Alert.alert('Booking Confirmed! 🎉', 'Your service has been scheduled.', [
-        { text: 'View Bookings', onPress: () => navigation.navigate('Tabs') },
+        { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
       ]);
     } catch (err: any) {
       Alert.alert('Booking Failed', err?.message ?? 'Something went wrong. Please try again.');

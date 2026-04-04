@@ -28,16 +28,15 @@ const SERVICE_CARD_WIDTH = (SCREEN_WIDTH - H_PAD * 2 - GRID_GAP * 2) / 3;
 
 // ── Static fallback (shown while API loads or when DB has no seed data) ───────
 
+// Only the top-6 most ordered services are shown on the home screen.
+// The full catalog is available on AllServicesScreen.
 const STATIC_SERVICES: ApiService[] = [
-  { id: 'a1000000-0000-0000-0000-000000000001', emoji: '🧹', name: 'Sweeping &\nMopping',  bg_color: '#EEF2FF', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 15300, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 1 },
-  { id: 'a1000000-0000-0000-0000-000000000002', emoji: '🚿', name: 'Bathroom\nCleaning',   bg_color: '#F0FDFA', base_price_cents: 2500,  mrp_cents: 15000, rating: 4.9, review_count: 17800, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 2 },
-  { id: 'a1000000-0000-0000-0000-000000000003', emoji: '🍽️', name: 'Utensils',            bg_color: '#FFF7ED', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 13500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 3 },
-  { id: 'a1000000-0000-0000-0000-000000000004', emoji: '🧽', name: 'Dusting &\nWiping',   bg_color: '#F0FDF4', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 6500,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 4 },
-  { id: 'a1000000-0000-0000-0000-000000000005', emoji: '🔪', name: 'Kitchen\nPrep',        bg_color: '#EFF6FF', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 3700,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 5 },
-  { id: 'a1000000-0000-0000-0000-000000000006', emoji: '👕', name: 'Laundry',              bg_color: '#FDF4FF', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 4500,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 6 },
-  { id: 'a1000000-0000-0000-0000-000000000007', emoji: '🪟', name: 'Window\nCleaning',    bg_color: '#F8FAFC', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.9, review_count: 4200,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 7 },
-  { id: 'a1000000-0000-0000-0000-000000000008', emoji: '❄️', name: 'Fridge\nCleaning',    bg_color: '#F0F9FF', base_price_cents: 14900, mrp_cents: 25000, rating: 4.9, review_count: 3300,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 8 },
-  { id: 'a1000000-0000-0000-0000-000000000009', emoji: '🧺', name: 'Ironing &\nFolding',  bg_color: '#FEF9C3', base_price_cents: 2500,  mrp_cents: 12500, rating: 4.8, review_count: 4300,  min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 9 },
+  { id: 'a1000000-0000-0000-0000-000000000001', emoji: '🧹', name: 'Sweeping &\nMopping', bg_color: '#EEF2FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 15300, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 1 },
+  { id: 'a1000000-0000-0000-0000-000000000002', emoji: '🚿', name: 'Bathroom\nCleaning',  bg_color: '#F0FDFA', base_price_cents: 2500, mrp_cents: 15000, rating: 4.9, review_count: 17800, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 2 },
+  { id: 'a1000000-0000-0000-0000-000000000003', emoji: '🍽️', name: 'Utensils',            bg_color: '#FFF7ED', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 13500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 3 },
+  { id: 'a1000000-0000-0000-0000-000000000004', emoji: '🧽', name: 'Dusting &\nWiping',  bg_color: '#F0FDF4', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  6500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 4 },
+  { id: 'a1000000-0000-0000-0000-000000000005', emoji: '🔪', name: 'Kitchen\nPrep',       bg_color: '#EFF6FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  3700, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 5 },
+  { id: 'a1000000-0000-0000-0000-000000000006', emoji: '👕', name: 'Laundry',             bg_color: '#FDF4FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  4500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 6 },
 ];
 
 // Default coords: Gurugram (matches service_zones seed — always serviceable on first launch)
@@ -52,7 +51,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     listServices()
-      .then(data => { if (data.length > 0) setServices(data); })
+      .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
       .catch(() => {});
     // Check default location on mount
     checkServiceability(DEFAULT_LAT, DEFAULT_LON)
@@ -202,11 +201,12 @@ function BookingCards() {
 // ── Services Grid ─────────────────────────────────────────────────────────────
 
 function ServicesGrid({ services }: { services: ApiService[] }) {
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   return (
     <View style={s.section}>
       <View style={s.sectionHeader}>
         <Text style={s.sectionTitle}>Popular Services</Text>
-        <TouchableOpacity activeOpacity={0.7}>
+        <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('AllServices')}>
           <Text style={s.seeAll}>See all</Text>
         </TouchableOpacity>
       </View>
