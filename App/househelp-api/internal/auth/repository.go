@@ -11,7 +11,6 @@ import (
 )
 
 // Repository handles all database operations for the auth module.
-// All queries are parameterized. Every query uses a 5s context timeout.
 type Repository struct {
 	db *pgxpool.Pool
 }
@@ -21,21 +20,27 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
+const userSelectFields = `id, phone, name, role, is_suspended, created_at, updated_at`
+
+func scanUser(row pgx.Row, user *User) error {
+	return row.Scan(
+		&user.ID, &user.Phone, &user.Name,
+		&user.Role, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
+	)
+}
+
 // CreateUser inserts a new user and returns the created user.
 func (r *Repository) CreateUser(ctx context.Context, phone, role string) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	user := &User{}
-	err := r.db.QueryRow(queryCtx,
+	err := scanUser(r.db.QueryRow(queryCtx,
 		`INSERT INTO users (phone, role)
 		 VALUES ($1, $2)
-		 RETURNING id, phone, name, role, is_suspended, created_at, updated_at`,
+		 RETURNING `+userSelectFields,
 		phone, role,
-	).Scan(
-		&user.ID, &user.Phone, &user.Name, &user.Role,
-		&user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
-	)
+	), user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
@@ -44,21 +49,16 @@ func (r *Repository) CreateUser(ctx context.Context, phone, role string) (*User,
 	return user, nil
 }
 
-// GetUserByPhone retrieves a user by phone number.
-// Returns nil, nil if not found.
+// GetUserByPhone retrieves a user by phone number. Returns nil, nil if not found.
 func (r *Repository) GetUserByPhone(ctx context.Context, phone string) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	user := &User{}
-	err := r.db.QueryRow(queryCtx,
-		`SELECT id, phone, name, role, is_suspended, created_at, updated_at
-		 FROM users WHERE phone = $1`,
+	err := scanUser(r.db.QueryRow(queryCtx,
+		`SELECT `+userSelectFields+` FROM users WHERE phone = $1`,
 		phone,
-	).Scan(
-		&user.ID, &user.Phone, &user.Name, &user.Role,
-		&user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
-	)
+	), user)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -69,21 +69,16 @@ func (r *Repository) GetUserByPhone(ctx context.Context, phone string) (*User, e
 	return user, nil
 }
 
-// GetUserByID retrieves a user by their ID.
-// Returns nil, nil if not found.
+// GetUserByID retrieves a user by their ID. Returns nil, nil if not found.
 func (r *Repository) GetUserByID(ctx context.Context, userID string) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	user := &User{}
-	err := r.db.QueryRow(queryCtx,
-		`SELECT id, phone, name, role, is_suspended, created_at, updated_at
-		 FROM users WHERE id = $1`,
+	err := scanUser(r.db.QueryRow(queryCtx,
+		`SELECT `+userSelectFields+` FROM users WHERE id = $1`,
 		userID,
-	).Scan(
-		&user.ID, &user.Phone, &user.Name, &user.Role,
-		&user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
-	)
+	), user)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -94,24 +89,28 @@ func (r *Repository) GetUserByID(ctx context.Context, userID string) (*User, err
 	return user, nil
 }
 
-// UpdateUser updates a user's name.
-func (r *Repository) UpdateUser(ctx context.Context, userID, name string) (*User, error) {
+// UpdateProfile updates a user's name.
+func (r *Repository) UpdateProfile(ctx context.Context, userID string, req UpdateProfileRequest) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	user := &User{}
-	err := r.db.QueryRow(queryCtx,
-		`UPDATE users SET name = $2, updated_at = now()
+	err := scanUser(r.db.QueryRow(queryCtx,
+		`UPDATE users
+		 SET name       = CASE WHEN $2 <> '' THEN $2 ELSE name END,
+		     updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, phone, name, role, is_suspended, created_at, updated_at`,
-		userID, name,
-	).Scan(
-		&user.ID, &user.Phone, &user.Name, &user.Role,
-		&user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
-	)
+		 RETURNING `+userSelectFields,
+		userID, req.Name,
+	), user)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update user: %w", err)
+		return nil, fmt.Errorf("failed to update profile: %w", err)
 	}
 
 	return user, nil
+}
+
+// UpdateUser updates a user's name (kept for backwards compatibility).
+func (r *Repository) UpdateUser(ctx context.Context, userID, name string) (*User, error) {
+	return r.UpdateProfile(ctx, userID, UpdateProfileRequest{Name: name})
 }

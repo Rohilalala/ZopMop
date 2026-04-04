@@ -1,6 +1,12 @@
 package auth
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrUserNotFound is returned when a user ID does not exist in the database.
+var ErrUserNotFound = errors.New("user not found")
 
 // User represents a registered user in the system.
 type User struct {
@@ -40,4 +46,9 @@ type JWTClaims struct {
 	UserID      string `json:"user_id"`
 	Role        string `json:"role"`
 	IsSuspended bool   `json:"is_suspended"`
+}
+
+// UpdateProfileRequest is the input for PUT /me — only name is collected.
+type UpdateProfileRequest struct {
+	Name string `json:"name" validate:"omitempty,max=100"`
 }

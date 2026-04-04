@@ -1,0 +1,4 @@
+-- 010_add_customer_fields.sql
+-- No schema changes needed: phone is captured on login (001_create_users.sql),
+-- receiver_name and receiver_phone are stored per-address (009_create_user_addresses.sql).
+-- This migration is intentionally empty.

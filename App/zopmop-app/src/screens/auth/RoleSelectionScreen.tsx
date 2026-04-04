@@ -20,7 +20,7 @@ type Props = {
 type Role = 'user' | 'professional';
 
 export default function RoleSelectionScreen({ route }: Props) {
-  const { phone } = route.params;
+  const { phone, backendToken, backendUser } = route.params;
   const { signIn } = useAuth();
   const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,8 +50,16 @@ export default function RoleSelectionScreen({ route }: Props) {
     setError('');
     setLoading(true);
     try {
-      // TODO: POST /select-role when backend is running
-      signIn(phone, selected);
+      // Always pass a user object with at minimum the phone so ProfileScreen
+      // can display it even when the backend was unavailable during OTP.
+      const userForAuth = backendUser ?? {
+        id: '',
+        phone,
+        role: 'user',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      signIn(backendToken ?? '__guest__', userForAuth);
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {

@@ -7,6 +7,7 @@ import type { MainStackParamList, MainTabParamList } from '../types/navigation';
 import HomeScreen from '../screens/main/HomeScreen';
 import BookingsScreen from '../screens/main/BookingsScreen';
 import ProfileScreen from '../screens/main/ProfileScreen';
+import AddressesScreen from '../screens/main/AddressesScreen';
 import { Colors, FontFamily, FontSize } from '../theme';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
@@ -76,6 +77,11 @@ export default function MainNavigator() {
       <Stack.Screen
         name="Profile"
         component={ProfileScreen}
+        options={{ animation: 'slide_from_right' }}
+      />
+      <Stack.Screen
+        name="Addresses"
+        component={AddressesScreen}
         options={{ animation: 'slide_from_right' }}
       />
     </Stack.Navigator>

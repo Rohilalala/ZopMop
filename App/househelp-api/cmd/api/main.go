@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/internal/addresses"
 	"github.com/adityarohilla/househelp-api/internal/admin"
 	"github.com/adityarohilla/househelp-api/internal/auth"
 	"github.com/adityarohilla/househelp-api/internal/booking"
@@ -122,6 +123,11 @@ func main() {
 	locationService := location.NewService(rdb)
 	locationHandler := location.NewHandler(locationService, cfg.JWTSecret)
 
+	// Addresses.
+	addressRepo := addresses.NewRepository(dbPool)
+	addressService := addresses.NewService(addressRepo)
+	addressHandler := addresses.NewHandler(addressService)
+
 	// --- Route groups ---
 	api := app.Group("/api/v1")
 
@@ -145,6 +151,14 @@ func main() {
 	// Location routes (requires JWT).
 	locationGroup := api.Group("/location", authMiddleware, authLimiter)
 	locationHandler.RegisterRoutes(locationGroup)
+
+	// Addresses routes (requires JWT).
+	addressGroup := api.Group("/addresses", authMiddleware, authLimiter)
+	addressHandler.RegisterRoutes(addressGroup)
+
+	// Profile routes (requires JWT).
+	meGroup := api.Group("/me", authMiddleware, authLimiter)
+	authHandler.RegisterMeRoutes(meGroup)
 
 	// Admin routes (requires JWT + admin role + specific permissions).
 	adminMiddleware := mw.AdminMiddleware(dbPool, rdb)

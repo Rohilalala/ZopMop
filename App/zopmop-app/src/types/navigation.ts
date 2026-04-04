@@ -5,8 +5,15 @@ export type AuthStackParamList = {
   OTPVerification: {
     phone: string;
   };
+  NameEntry: {
+    phone: string;
+    backendToken?: string;
+    backendUser?: any;
+  };
   RoleSelection: {
     phone: string;
+    backendToken?: string;
+    backendUser?: any;
   };
 };
 
@@ -18,6 +25,7 @@ export type MainTabParamList = {
 export type MainStackParamList = {
   Tabs: undefined;
   Profile: undefined;
+  Addresses: undefined;
 };
 
 export type RootStackParamList = {

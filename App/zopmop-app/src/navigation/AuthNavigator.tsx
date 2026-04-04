@@ -5,6 +5,7 @@ import LocationCheckScreen from '../screens/auth/LocationCheckScreen';
 import NotServiceableScreen from '../screens/auth/NotServiceableScreen';
 import PhoneEntryScreen from '../screens/auth/PhoneEntryScreen';
 import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
+import NameEntryScreen from '../screens/auth/NameEntryScreen';
 import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
@@ -18,6 +19,11 @@ export default function AuthNavigator() {
       <Stack.Screen
         name="OTPVerification"
         component={OTPVerificationScreen}
+        options={{ animation: 'slide_from_right' }}
+      />
+      <Stack.Screen
+        name="NameEntry"
+        component={NameEntryScreen}
         options={{ animation: 'slide_from_right' }}
       />
       <Stack.Screen

@@ -12,7 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import LocationSelectorModal from '../../components/LocationSelectorModal';
+import LocationSelectorModal, { type SavedAddress } from '../../components/LocationSelectorModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const H_PAD = 16;
@@ -38,10 +38,18 @@ const SERVICES = [
 export default function HomeScreen() {
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationName, setLocationName] = useState('Sector 51, Gurugram');
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
 
   function handleLocationSelect(name: string) {
     const shortName = name.split(',').slice(0, 2).join(',').trim();
     setLocationName(shortName);
+  }
+
+  function handleAddressSaved(addr: SavedAddress) {
+    setSavedAddresses(prev => {
+      const exists = prev.some(a => a.id === addr.id);
+      return exists ? prev : [addr, ...prev];
+    });
   }
 
   return (
@@ -64,6 +72,8 @@ export default function HomeScreen() {
         visible={locationModalVisible}
         onClose={() => setLocationModalVisible(false)}
         onLocationSelect={(name) => handleLocationSelect(name)}
+        savedAddresses={savedAddresses}
+        onAddressSaved={handleAddressSaved}
       />
     </SafeAreaView>
   );

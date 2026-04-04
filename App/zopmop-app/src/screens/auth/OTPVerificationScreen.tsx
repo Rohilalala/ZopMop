@@ -60,9 +60,33 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
 
     try {
       if (!confirmation) throw new Error('Session expired. Please go back and try again.');
-      await confirmation.confirm(fullCode);
-      // TODO: call /login endpoint to check is_new_user, then route accordingly
-      navigation.replace('RoleSelection', { phone });
+      const userCredential = await confirmation.confirm(fullCode);
+      // Exchange Firebase ID token for backend JWT (best-effort; falls back if backend unavailable).
+      let backendToken: string | undefined;
+      let backendUser: any | undefined;
+      try {
+        const idToken = await userCredential?.user.getIdToken();
+        const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+        const res = await fetch(`${BASE_URL}/auth/firebase`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ firebase_token: idToken }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          backendToken = data.token as string;
+          backendUser = data.user;
+        }
+      } catch {
+        // Backend unavailable — token will be undefined, address saving is deferred.
+      }
+      // Skip name screen for returning users who already have a name.
+      const hasName = backendUser?.name && backendUser.name.trim().length > 0;
+      if (hasName) {
+        navigation.replace('RoleSelection', { phone, backendToken, backendUser });
+      } else {
+        navigation.replace('NameEntry', { phone, backendToken, backendUser });
+      }
     } catch (err: any) {
       const msg =
         err?.code === 'auth/invalid-verification-code'
