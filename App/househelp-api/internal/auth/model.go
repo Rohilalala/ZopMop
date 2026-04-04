@@ -30,6 +30,11 @@ type LoginResponse struct {
 	User  User   `json:"user"`
 }
 
+// FirebaseAuthRequest is the input for Firebase token exchange.
+type FirebaseAuthRequest struct {
+	FirebaseToken string `json:"firebase_token"`
+}
+
 // JWTClaims represents the custom claims embedded in the JWT token.
 type JWTClaims struct {
 	UserID      string `json:"user_id"`

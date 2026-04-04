@@ -181,6 +181,37 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*LoginResp
 	}, nil
 }
 
+// VerifyFirebaseToken validates a Firebase ID token, upserts the user, and returns a JWT.
+func (s *Service) VerifyFirebaseToken(ctx context.Context, idToken string) (*LoginResponse, error) {
+	phone, err := VerifyFirebaseToken(ctx, idToken)
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := s.repo.GetUserByPhone(ctx, phone)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up user: %w", err)
+	}
+
+	if user == nil {
+		user, err = s.repo.CreateUser(ctx, phone, "customer")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create user: %w", err)
+		}
+	}
+
+	if user.IsSuspended {
+		return nil, &ErrAccountSuspended{}
+	}
+
+	token, err := s.generateJWT(user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	return &LoginResponse{Token: token, User: *user}, nil
+}
+
 // generateJWT creates a signed JWT token with userID, role, issuer, iat, exp claims.
 func (s *Service) generateJWT(user *User) (string, error) {
 	now := time.Now()

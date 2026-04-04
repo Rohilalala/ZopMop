@@ -72,7 +72,7 @@ export default function SplashScreen({ onReady }: Props) {
           ]}
         >
           <Image
-            source={require('../../../assets/Abstract house + sparkle icon.png')}
+            source={require('../../../assets/logo.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />

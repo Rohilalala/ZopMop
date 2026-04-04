@@ -30,7 +30,13 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# Firebase config (contain API keys — do not commit)
+google-services.json
+GoogleService-Info.plist
+
+# local env files — never commit secrets
+.env
+.env.local
 .env*.local
 
 # typescript

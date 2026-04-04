@@ -1,3 +1,7 @@
+# Secrets (service account keys, private certs)
+secrets/
+*.json.key
+
 # Environment files
 .env
 *.env

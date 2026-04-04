@@ -22,6 +22,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/send-otp", h.SendOTP)
 	router.Post("/verify-otp", h.VerifyOTP)
+	router.Post("/firebase", h.VerifyFirebase)
 }
 
 // SendOTP handles POST /auth/send-otp.
@@ -71,6 +72,37 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)
+}
+
+// VerifyFirebase handles POST /auth/firebase.
+// Accepts a Firebase ID token, verifies it, upserts the user, and returns a JWT.
+func (h *Handler) VerifyFirebase(c *fiber.Ctx) error {
+	var req FirebaseAuthRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	if req.FirebaseToken == "" {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error": "firebase_token is required",
+		})
+	}
+
+	loginResp, err := h.service.VerifyFirebaseToken(c.Context(), req.FirebaseToken)
+	if err != nil {
+		log.Error().Err(err).Msg("firebase auth failed")
+
+		var accountSuspended *ErrAccountSuspended
+		if errors.As(err, &accountSuspended) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(loginResp)
 }
 
 // VerifyOTP handles POST /auth/verify-otp.

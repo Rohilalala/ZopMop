@@ -13,9 +13,20 @@ import {
 import * as SplashScreenNative from 'expo-splash-screen';
 import SplashScreen from './src/screens/auth/SplashScreen';
 import AuthNavigator from './src/navigation/AuthNavigator';
+import MainNavigator from './src/navigation/MainNavigator';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { Colors } from './src/theme';
 
 SplashScreenNative.preventAutoHideAsync();
+
+function Navigation() {
+  const { isAuthenticated } = useAuth();
+  return (
+    <NavigationContainer>
+      {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
+    </NavigationContainer>
+  );
+}
 
 export default function App() {
   const [splashDone, setSplashDone] = useState(false);
@@ -38,15 +49,15 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <View style={styles.root} onLayout={onLayoutRootView}>
-        {!splashDone ? (
-          <SplashScreen onReady={() => setSplashDone(true)} />
-        ) : (
-          <NavigationContainer>
-            <AuthNavigator />
-          </NavigationContainer>
-        )}
-      </View>
+      <AuthProvider>
+        <View style={styles.root} onLayout={onLayoutRootView}>
+          {!splashDone ? (
+            <SplashScreen onReady={() => setSplashDone(true)} />
+          ) : (
+            <Navigation />
+          )}
+        </View>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

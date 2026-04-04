@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   FlatList,
   Platform,
   KeyboardAvoidingView,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
@@ -32,6 +33,27 @@ export default function LocationCheckScreen({ navigation }: Props) {
   const [mode, setMode] = useState<Mode>('choose');
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const rippleScale = useRef(new Animated.Value(1)).current;
+  const rippleOpacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(rippleScale, { toValue: 1.4, duration: 1600, useNativeDriver: true }),
+          Animated.timing(rippleOpacity, { toValue: 0, duration: 1600, useNativeDriver: true }),
+        ]),
+        Animated.delay(400),
+        Animated.parallel([
+          Animated.timing(rippleScale, { toValue: 1, duration: 0, useNativeDriver: true }),
+          Animated.timing(rippleOpacity, { toValue: 0.3, duration: 0, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
 
   // Filtered city list based on search input
   const filteredCities = useMemo(() => {
@@ -101,7 +123,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
                 <View style={styles.pinTail} />
               </View>
             </View>
-            <View style={[styles.ripple, styles.ripple1]} />
+            <Animated.View style={[styles.ripple, styles.ripple1, { transform: [{ scale: rippleScale }], opacity: rippleOpacity }]} />
             <View style={[styles.ripple, styles.ripple2]} />
           </View>
 
@@ -176,7 +198,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
                 <View style={styles.pinTail} />
               </View>
             </View>
-            <View style={[styles.ripple, styles.ripple1]} />
+            <Animated.View style={[styles.ripple, styles.ripple1, { transform: [{ scale: rippleScale }], opacity: rippleOpacity }]} />
             <View style={[styles.ripple, styles.ripple2]} />
           </View>
 
