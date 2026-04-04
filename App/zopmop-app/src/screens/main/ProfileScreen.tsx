@@ -92,20 +92,12 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'This action is permanent and cannot be undone. All your data will be deleted.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => {} },
-      ],
-    );
-  };
-
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
+        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+        </TouchableOpacity>
         <Text style={s.headerTitle}>Profile</Text>
       </View>
 
@@ -129,7 +121,7 @@ export default function ProfileScreen() {
           onItemPress={{ addresses: () => navigation.navigate('Addresses') }}
         />
         <ListSection title="Info & Legal" items={LEGAL_ITEMS} muted />
-        <AccountActions onLogout={handleLogout} onDelete={handleDeleteAccount} />
+        <AccountActions onLogout={handleLogout} />
         <View style={{ height: 32 }} />
       </ScrollView>
 
@@ -430,23 +422,15 @@ function ListSection({
 
 // ── Account Actions ───────────────────────────────────────────────────────────
 
-function AccountActions({ onLogout, onDelete }: { onLogout: () => void; onDelete: () => void }) {
+function AccountActions({ onLogout }: { onLogout: () => void }) {
   return (
     <View style={s.section}>
       <View style={s.listCard}>
         <TouchableOpacity style={s.listRow} onPress={onLogout} activeOpacity={0.7}>
-          <View style={[s.listIconBox, s.listIconBoxWarn]}>
-            <Ionicons name="log-out-outline" size={18} color={Colors.warning} />
-          </View>
-          <Text style={[s.listLabel, s.listLabelWarn]}>Log Out</Text>
-          <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-        </TouchableOpacity>
-        <View style={s.divider} />
-        <TouchableOpacity style={s.listRow} onPress={onDelete} activeOpacity={0.7}>
           <View style={[s.listIconBox, s.listIconBoxDanger]}>
-            <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+            <Ionicons name="log-out-outline" size={18} color={Colors.danger} />
           </View>
-          <Text style={[s.listLabel, s.listLabelDanger]}>Delete Account</Text>
+          <Text style={[s.listLabel, s.listLabelDanger]}>Log Out</Text>
           <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
         </TouchableOpacity>
       </View>
@@ -463,7 +447,8 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   content: { paddingBottom: Spacing.base },
 
-  header: { paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16, gap: 4 },
+  backBtn: { padding: 4, marginLeft: -4 },
   headerTitle: {
     fontFamily: FontFamily.bold,
     fontSize: FontSize['2xl'],

@@ -44,3 +44,35 @@ type CreateBookingRequest struct {
 type CancelBookingRequest struct {
 	Reason string `json:"reason,omitempty" validate:"max=500"`
 }
+
+// BookingServiceItem represents one service line within a scheduled booking.
+type BookingServiceItem struct {
+	ServiceID       string `json:"service_id"`
+	ServiceName     string `json:"service_name"`
+	DurationMinutes int    `json:"duration_minutes"`
+	PriceCents      int    `json:"price_cents"`
+}
+
+// ScheduledBooking is the response for the new scheduling flow, includes
+// the list of services and the resolved time slot.
+type ScheduledBooking struct {
+	ID                   string               `json:"id"`
+	CustomerID           string               `json:"customer_id"`
+	AddressID            *string              `json:"address_id,omitempty"`
+	TimeSlotID           *string              `json:"time_slot_id,omitempty"`
+	ScheduledTime        *string              `json:"scheduled_time,omitempty"` // RFC3339
+	TotalDurationMinutes int                  `json:"total_duration_minutes"`
+	Services             []BookingServiceItem `json:"services"`
+	Status               BookingStatus        `json:"status"`
+	PriceCents           int                  `json:"price_cents"`
+	DiscountCents        int                  `json:"discount_cents"`
+	PromoCode            *string              `json:"promo_code,omitempty"`
+	CreatedAt            time.Time            `json:"created_at"`
+}
+
+// CreateScheduledBookingRequest is the input for the new booking flow.
+type CreateScheduledBookingRequest struct {
+	AddressID  string `json:"address_id"  validate:"required,uuid_format"`
+	TimeSlotID string `json:"time_slot_id" validate:"required,uuid_format"`
+	PromoCode  string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
+}

@@ -13,11 +13,15 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/admin"
 	"github.com/adityarohilla/househelp-api/internal/auth"
 	"github.com/adityarohilla/househelp-api/internal/booking"
+	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/content"
 	"github.com/adityarohilla/househelp-api/internal/location"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
+	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
+	zonesmod "github.com/adityarohilla/househelp-api/internal/zones"
 	"github.com/adityarohilla/househelp-api/pkg/config"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -128,6 +132,26 @@ func main() {
 	addressService := addresses.NewService(addressRepo)
 	addressHandler := addresses.NewHandler(addressService)
 
+	// Services catalog.
+	servicesRepo := servicesmod.NewRepository(dbPool)
+	servicesCatalog := servicesmod.NewService(servicesRepo)
+	servicesHandler := servicesmod.NewHandler(servicesCatalog)
+
+	// Cart.
+	cartRepo := cartmod.NewRepository(dbPool)
+	cartService := cartmod.NewService(cartRepo)
+	cartHandler := cartmod.NewHandler(cartService)
+
+	// Time slots.
+	slotsRepo := slotsmod.NewRepository(dbPool)
+	slotsService := slotsmod.NewService(slotsRepo)
+	slotsHandler := slotsmod.NewHandler(slotsService)
+
+	// Service zones.
+	zonesRepo := zonesmod.NewRepository(dbPool)
+	zonesService := zonesmod.NewService(zonesRepo)
+	zonesHandler := zonesmod.NewHandler(zonesService)
+
 	// --- Route groups ---
 	api := app.Group("/api/v1")
 
@@ -156,6 +180,22 @@ func main() {
 	addressGroup := api.Group("/addresses", authMiddleware, authLimiter)
 	addressHandler.RegisterRoutes(addressGroup)
 
+	// Services catalog routes (public).
+	servicesGroup := api.Group("/services", publicLimiter)
+	servicesHandler.RegisterPublicRoutes(servicesGroup)
+
+	// Cart routes (requires JWT).
+	cartGroup := api.Group("/cart", authMiddleware, authLimiter)
+	cartHandler.RegisterRoutes(cartGroup)
+
+	// Time slots routes (requires JWT).
+	slotsGroup := api.Group("/slots", authMiddleware, authLimiter)
+	slotsHandler.RegisterRoutes(slotsGroup)
+
+	// Zones routes (public check).
+	zonesGroup := api.Group("/zones", publicLimiter)
+	zonesHandler.RegisterPublicRoutes(zonesGroup)
+
 	// Profile routes (requires JWT).
 	meGroup := api.Group("/me", authMiddleware, authLimiter)
 	authHandler.RegisterMeRoutes(meGroup)
@@ -167,6 +207,7 @@ func main() {
 	adminHandler.RegisterRoutes(adminGroup)
 	contentHandler.RegisterAdminContentRoutes(adminGroup)
 	configHandler.RegisterAdminRoutes(adminGroup)
+	zonesHandler.RegisterAdminRoutes(adminGroup.Group("/zones"))
 
 	// --- Start server with graceful shutdown ---
 	go func() {

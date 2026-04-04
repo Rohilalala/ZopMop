@@ -270,6 +270,160 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 	return bookings, nil
 }
 
+// CreateScheduledBooking creates a booking from cart items using the new scheduling flow.
+// It inserts the booking row, booking_services rows, and returns the full ScheduledBooking.
+// The caller must have already validated the cart, time slot, and address.
+func (r *Repository) CreateScheduledBooking(
+	ctx context.Context,
+	customerID, addressID, timeSlotID string,
+	scheduledTime string,
+	items []BookingServiceItem,
+	totalPriceCents, discountCents int,
+	promoCode *string,
+) (*ScheduledBooking, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := r.db.Begin(queryCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	// Calculate total duration.
+	totalDuration := 0
+	for _, item := range items {
+		totalDuration += item.DurationMinutes
+	}
+
+	// Use a placeholder service_category_id (first item) for the legacy column.
+	legacyServiceID := items[0].ServiceID
+
+	var b ScheduledBooking
+	err = tx.QueryRow(queryCtx,
+		`INSERT INTO bookings
+		   (customer_id, service_category_id, status, address, lat, lng,
+		    price_cents, discount_cents, promo_code,
+		    address_id, time_slot_id, scheduled_time, total_duration_minutes)
+		 VALUES ($1, $2, $3, '', 0, 0, $4, $5, $6, $7, $8, $9, $10)
+		 RETURNING id, customer_id, address_id, time_slot_id,
+		           to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		           total_duration_minutes, status, price_cents, discount_cents, promo_code, created_at`,
+		customerID, legacyServiceID, StatusPending,
+		totalPriceCents, discountCents, promoCode,
+		addressID, timeSlotID, scheduledTime, totalDuration,
+	).Scan(
+		&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
+		&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
+		&b.PromoCode, &b.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scheduled booking: %w", err)
+	}
+
+	// Insert booking_services rows.
+	for _, item := range items {
+		_, err := tx.Exec(queryCtx,
+			`INSERT INTO booking_services (booking_id, service_id, duration_minutes, price_cents)
+			 VALUES ($1, $2, $3, $4)`,
+			b.ID, item.ServiceID, item.DurationMinutes, item.PriceCents,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to insert booking service: %w", err)
+		}
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return nil, fmt.Errorf("failed to commit scheduled booking: %w", err)
+	}
+
+	b.Services = items
+	return &b, nil
+}
+
+// GetCustomerBookingsByStatus returns bookings for a customer filtered by status group.
+// status param: "upcoming" → pending/accepted/in_progress, "past" → completed/cancelled.
+func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID, status string, page, limit int) ([]ScheduledBooking, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	offset := (page - 1) * limit
+
+	var statusFilter string
+	switch status {
+	case "upcoming":
+		statusFilter = `status IN ('pending', 'accepted', 'in_progress')`
+	case "past":
+		statusFilter = `status IN ('completed', 'cancelled')`
+	default:
+		statusFilter = `true`
+	}
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT id, customer_id, address_id, time_slot_id,
+		        to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		        total_duration_minutes, status, price_cents, discount_cents, promo_code, created_at
+		 FROM bookings
+		 WHERE customer_id = $1 AND `+statusFilter+`
+		 ORDER BY COALESCE(scheduled_time, created_at) DESC LIMIT $2 OFFSET $3`,
+		customerID, limit, offset,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query bookings: %w", err)
+	}
+	defer rows.Close()
+
+	var bookings []ScheduledBooking
+	for rows.Next() {
+		var b ScheduledBooking
+		if err := rows.Scan(
+			&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
+			&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
+			&b.PromoCode, &b.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan booking: %w", err)
+		}
+		// Fetch services for this booking.
+		b.Services, err = r.getBookingServices(queryCtx, b.ID)
+		if err != nil {
+			return nil, err
+		}
+		bookings = append(bookings, b)
+	}
+	if bookings == nil {
+		bookings = []ScheduledBooking{}
+	}
+	return bookings, rows.Err()
+}
+
+// getBookingServices returns the services for a booking.
+func (r *Repository) getBookingServices(ctx context.Context, bookingID string) ([]BookingServiceItem, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT bs.service_id, sc.name, bs.duration_minutes, bs.price_cents
+		 FROM booking_services bs
+		 JOIN service_categories sc ON sc.id = bs.service_id
+		 WHERE bs.booking_id = $1`,
+		bookingID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query booking services: %w", err)
+	}
+	defer rows.Close()
+
+	var items []BookingServiceItem
+	for rows.Next() {
+		var item BookingServiceItem
+		if err := rows.Scan(&item.ServiceID, &item.ServiceName, &item.DurationMinutes, &item.PriceCents); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []BookingServiceItem{}
+	}
+	return items, rows.Err()
+}
+
 // IncrementPromoCodeUsage atomically increments the usage count of a promo code
 // and checks the limit wasn't exceeded. Uses FOR UPDATE lock to prevent race conditions.
 // Returns error if usage limit has been reached.

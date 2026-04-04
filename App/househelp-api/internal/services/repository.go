@@ -2,9 +2,9 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,47 +18,35 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-const serviceColumns = `
-	id, name, description, short_description, emoji, bg_color,
-	base_price_cents, mrp_cents, rating, review_count,
-	min_duration_minutes, max_duration_minutes, duration_step_minutes,
-	is_active, display_order, created_at`
-
-func scanService(row pgx.Row) (*Service, error) {
-	var s Service
-	err := row.Scan(
-		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
-		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
-		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
-		&s.IsActive, &s.DisplayOrder, &s.CreatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
 // List returns all active services ordered by display_order.
 func (r *Repository) List(ctx context.Context) ([]Service, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	rows, err := r.db.Query(ctx,
-		`SELECT `+serviceColumns+`
+		`SELECT id, name, description, short_description, emoji, bg_color,
+		        base_price_cents, mrp_cents, rating, review_count,
+		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
+		        is_active, display_order, created_at
 		 FROM service_categories WHERE is_active = true ORDER BY display_order ASC`,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query services: %w", err)
 	}
 	defer rows.Close()
 
 	var list []Service
 	for rows.Next() {
-		s, err := scanService(rows)
-		if err != nil {
-			return nil, err
+		var s Service
+		if err := rows.Scan(
+			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+			&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
+			&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
+			&s.IsActive, &s.DisplayOrder, &s.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan service: %w", err)
 		}
-		list = append(list, *s)
+		list = append(list, s)
 	}
 	if list == nil {
 		list = []Service{}
@@ -71,9 +59,23 @@ func (r *Repository) GetByID(ctx context.Context, serviceID string) (*Service, e
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return scanService(r.db.QueryRow(ctx,
-		`SELECT `+serviceColumns+` FROM service_categories WHERE id = $1`, serviceID,
-	))
+	var s Service
+	err := r.db.QueryRow(ctx,
+		`SELECT id, name, description, short_description, emoji, bg_color,
+		        base_price_cents, mrp_cents, rating, review_count,
+		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
+		        is_active, display_order, created_at
+		 FROM service_categories WHERE id = $1`, serviceID,
+	).Scan(
+		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
+		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
+		&s.IsActive, &s.DisplayOrder, &s.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // GetDetails returns the service plus its includes, excludes, and steps.
@@ -117,7 +119,7 @@ func (r *Repository) GetAddons(ctx context.Context, serviceID string) ([]Service
 		serviceID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query addons: %w", err)
 	}
 	defer rows.Close()
 
@@ -125,7 +127,7 @@ func (r *Repository) GetAddons(ctx context.Context, serviceID string) ([]Service
 	for rows.Next() {
 		var a ServiceAddon
 		if err := rows.Scan(&a.ID, &a.Name, &a.Emoji, &a.BgColor, &a.BasePriceCents, &a.DisplayOrder); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan addon: %w", err)
 		}
 		addons = append(addons, a)
 	}
@@ -144,7 +146,7 @@ func (r *Repository) listIncludes(ctx context.Context, serviceID string) ([]Serv
 		 WHERE service_id = $1 ORDER BY display_order ASC`, serviceID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query includes: %w", err)
 	}
 	defer rows.Close()
 
@@ -171,7 +173,7 @@ func (r *Repository) listExcludes(ctx context.Context, serviceID string) ([]Serv
 		 WHERE service_id = $1 ORDER BY display_order ASC`, serviceID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query excludes: %w", err)
 	}
 	defer rows.Close()
 
@@ -198,7 +200,7 @@ func (r *Repository) listSteps(ctx context.Context, serviceID string) ([]Service
 		 WHERE service_id = $1 ORDER BY step_number ASC`, serviceID,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query steps: %w", err)
 	}
 	defer rows.Close()
 

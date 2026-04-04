@@ -1,3 +1,5 @@
+import type { ApiService } from '../api/services';
+
 export type AuthStackParamList = {
   Location: undefined;
   NotServiceable: { cityName: string };
@@ -26,6 +28,8 @@ export type MainStackParamList = {
   Tabs: undefined;
   Profile: undefined;
   Addresses: undefined;
+  ServiceAbout: { service: ApiService };
+  Cart: undefined;
 };
 
 export type RootStackParamList = {

@@ -241,6 +241,136 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 	return nil
 }
 
+// GetCartItemsForUser fetches cart items for a user and converts them to BookingServiceItems.
+func (s *Service) GetCartItemsForUser(ctx context.Context, userID string) ([]BookingServiceItem, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := s.db.Query(queryCtx,
+		`SELECT ci.service_id, sc.name, ci.duration_minutes, ci.price_cents
+		 FROM cart_items ci
+		 JOIN cart c ON c.id = ci.cart_id
+		 JOIN service_categories sc ON sc.id = ci.service_id
+		 WHERE c.user_id = $1
+		 ORDER BY ci.created_at ASC`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch cart items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []BookingServiceItem
+	for rows.Next() {
+		var item BookingServiceItem
+		if err := rows.Scan(&item.ServiceID, &item.ServiceName, &item.DurationMinutes, &item.PriceCents); err != nil {
+			return nil, fmt.Errorf("failed to scan cart item: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// GetSlotScheduledTime returns the start timestamp for a time slot as RFC3339.
+func (s *Service) GetSlotScheduledTime(ctx context.Context, slotID string) (string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var scheduledTime string
+	err := s.db.QueryRow(queryCtx,
+		`SELECT to_char((slot_date + start_time) AT TIME ZONE 'Asia/Kolkata' AT TIME ZONE 'UTC',
+		               'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		 FROM time_slots WHERE id = $1 AND is_active = true`,
+		slotID,
+	).Scan(&scheduledTime)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", fmt.Errorf("time slot not found or unavailable")
+		}
+		return "", fmt.Errorf("failed to get slot time: %w", err)
+	}
+	return scheduledTime, nil
+}
+
+// ClearUserCart removes all items from the user's cart after a successful booking.
+func (s *Service) ClearUserCart(ctx context.Context, userID string) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if _, err := s.db.Exec(queryCtx,
+		`DELETE FROM cart_items WHERE cart_id = (SELECT id FROM cart WHERE user_id = $1)`,
+		userID,
+	); err != nil {
+		log.Warn().Err(err).Str("user_id", userID).Msg("failed to clear cart after booking")
+	}
+}
+
+// CreateScheduledBooking creates a booking using cart items + time slot.
+// The cart must be non-empty. Items are converted to BookingServiceItems and
+// the cart is cleared on success.
+func (s *Service) CreateScheduledBooking(
+	ctx context.Context,
+	customerID string,
+	req *CreateScheduledBookingRequest,
+	cartItems []BookingServiceItem,
+	scheduledTime string,
+) (*ScheduledBooking, error) {
+	if len(cartItems) == 0 {
+		return nil, fmt.Errorf("cart is empty")
+	}
+
+	// Calculate total price from items.
+	totalPriceCents := 0
+	for _, item := range cartItems {
+		totalPriceCents += item.PriceCents
+	}
+
+	discountCents := 0
+	var promoCode *string
+
+	if req.PromoCode != "" {
+		promo, promoErr := s.ValidatePromoCode(ctx, req.PromoCode, totalPriceCents)
+		if promoErr != nil {
+			return nil, fmt.Errorf("invalid promo code: %w", promoErr)
+		}
+		if promo != nil {
+			promoCode = &req.PromoCode
+			if promo.DiscountType == "percent" {
+				discountCents = totalPriceCents * promo.DiscountValue / 100
+			} else {
+				discountCents = promo.DiscountValue
+			}
+			if discountCents > totalPriceCents {
+				discountCents = totalPriceCents
+			}
+		}
+	}
+
+	booking, err := s.repo.CreateScheduledBooking(
+		ctx, customerID, req.AddressID, req.TimeSlotID,
+		scheduledTime, cartItems,
+		totalPriceCents, discountCents, promoCode,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if promoCode != nil {
+		if err := s.repo.IncrementPromoCodeUsage(ctx, *promoCode); err != nil {
+			log.Warn().Err(err).Str("promo_code", *promoCode).Msg("failed to increment promo code usage")
+		}
+	}
+
+	log.Info().
+		Str("booking_id", booking.ID).
+		Str("customer_id", customerID).
+		Int("services", len(cartItems)).
+		Int("price_cents", totalPriceCents).
+		Msg("scheduled booking created")
+
+	return booking, nil
+}
+
 // ValidatePromoCode validates a promo code and returns the discount.
 func (s *Service) ValidatePromoCode(ctx context.Context, code string, orderAmountCents int) (*admin.Promotion, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

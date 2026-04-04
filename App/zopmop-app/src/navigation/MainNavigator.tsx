@@ -8,7 +8,10 @@ import HomeScreen from '../screens/main/HomeScreen';
 import BookingsScreen from '../screens/main/BookingsScreen';
 import ProfileScreen from '../screens/main/ProfileScreen';
 import AddressesScreen from '../screens/main/AddressesScreen';
+import ServiceAboutScreen from '../screens/main/ServiceAboutScreen';
+import CartScreen from '../screens/main/CartScreen';
 import { Colors, FontFamily, FontSize } from '../theme';
+import { CartProvider } from '../context/CartContext';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -45,11 +48,7 @@ function TabNavigator() {
         component={HomeScreen}
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <Ionicons
-              name={focused ? 'home' : 'home-outline'}
-              size={22}
-              color={color}
-            />
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={22} color={color} />
           ),
         }}
       />
@@ -58,11 +57,7 @@ function TabNavigator() {
         component={BookingsScreen}
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <Ionicons
-              name={focused ? 'calendar' : 'calendar-outline'}
-              size={22}
-              color={color}
-            />
+            <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />
           ),
         }}
       />
@@ -72,18 +67,30 @@ function TabNavigator() {
 
 export default function MainNavigator() {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Tabs" component={TabNavigator} />
-      <Stack.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ animation: 'slide_from_right' }}
-      />
-      <Stack.Screen
-        name="Addresses"
-        component={AddressesScreen}
-        options={{ animation: 'slide_from_right' }}
-      />
-    </Stack.Navigator>
+    <CartProvider>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="Tabs" component={TabNavigator} />
+        <Stack.Screen
+          name="Profile"
+          component={ProfileScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="Addresses"
+          component={AddressesScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ServiceAbout"
+          component={ServiceAboutScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="Cart"
+          component={CartScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+      </Stack.Navigator>
+    </CartProvider>
   );
 }

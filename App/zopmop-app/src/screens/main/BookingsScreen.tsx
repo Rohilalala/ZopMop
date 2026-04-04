@@ -1,220 +1,270 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
+  ActivityIndicator,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { getBookings, cancelBooking, type ApiBooking, type BookingStatus } from '../../api/bookings';
+import { useAuth } from '../../context/AuthContext';
 
 type Tab = 'upcoming' | 'past';
-type Filter = 'one-time' | 'recurring';
 
 export default function BookingsScreen() {
+  const { token } = useAuth();
   const [tab, setTab] = useState<Tab>('upcoming');
-  const [filter, setFilter] = useState<Filter>('one-time');
+  const [bookings, setBookings] = useState<ApiBooking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchBookings = useCallback(async (isRefresh = false) => {
+    if (!token) return;
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const data = await getBookings(token, tab);
+      setBookings(data);
+    } catch {
+      setBookings([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token, tab]);
+
+  useEffect(() => {
+    setBookings([]);
+    fetchBookings();
+  }, [fetchBookings]);
+
+  const handleCancel = useCallback(async (bookingId: string) => {
+    if (!token) return;
+    Alert.alert('Cancel Booking', 'Are you sure you want to cancel this booking?', [
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Cancel Booking', style: 'destructive',
+        onPress: async () => {
+          try {
+            await cancelBooking(token, bookingId);
+            fetchBookings();
+          } catch (err: any) {
+            Alert.alert('Error', err?.message ?? 'Could not cancel booking.');
+          }
+        },
+      },
+    ]);
+  }, [token, fetchBookings]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
-      {/* Header */}
       <View style={s.header}>
         <Text style={s.headerTitle}>Your Bookings</Text>
       </View>
 
-      {/* Upcoming / Past tab bar */}
+      {/* Tab bar */}
       <View style={s.tabBar}>
-        <TouchableOpacity
-          style={[s.tab, tab === 'upcoming' && s.tabActive]}
-          onPress={() => setTab('upcoming')}
-          activeOpacity={0.7}
-        >
-          <Text style={[s.tabText, tab === 'upcoming' && s.tabTextActive]}>Upcoming</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[s.tab, tab === 'past' && s.tabActive]}
-          onPress={() => setTab('past')}
-          activeOpacity={0.7}
-        >
-          <Text style={[s.tabText, tab === 'past' && s.tabTextActive]}>Past</Text>
-        </TouchableOpacity>
+        {(['upcoming', 'past'] as Tab[]).map(t => (
+          <TouchableOpacity
+            key={t}
+            style={[s.tab, tab === t && s.tabActive]}
+            onPress={() => setTab(t)}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.tabText, tab === t && s.tabTextActive]}>
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* One-time / Recurring pill toggle */}
-        <View style={s.filterRow}>
-          <TouchableOpacity
-            style={[s.filterBtn, filter === 'one-time' && s.filterBtnActive]}
-            onPress={() => setFilter('one-time')}
-            activeOpacity={0.8}
-          >
-            <Text style={[s.filterText, filter === 'one-time' && s.filterTextActive]}>
-              One-time
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.filterBtn, filter === 'recurring' && s.filterBtnActive]}
-            onPress={() => setFilter('recurring')}
-            activeOpacity={0.8}
-          >
-            <Text style={[s.filterText, filter === 'recurring' && s.filterTextActive]}>
-              Recurring
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <EmptyState tab={tab} filter={filter} />
-      </ScrollView>
+      {loading ? (
+        <ActivityIndicator color={Colors.primary} style={{ marginTop: 48 }} />
+      ) : (
+        <ScrollView
+          style={s.scroll}
+          contentContainerStyle={[s.scrollContent, bookings.length === 0 && s.scrollEmpty]}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchBookings(true)}
+              tintColor={Colors.primary}
+            />
+          }
+        >
+          {bookings.length === 0 ? (
+            <EmptyState tab={tab} />
+          ) : (
+            bookings.map(booking => (
+              <BookingCard
+                key={booking.id}
+                booking={booking}
+                onCancel={tab === 'upcoming' ? handleCancel : undefined}
+              />
+            ))
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-function EmptyState({ tab, filter }: { tab: Tab; filter: Filter }) {
-  const isUpcoming = tab === 'upcoming';
-  const isOneTime = filter === 'one-time';
+// ── Booking Card ──────────────────────────────────────────────────────────────
+
+function BookingCard({
+  booking,
+  onCancel,
+}: {
+  booking: ApiBooking;
+  onCancel?: (id: string) => void;
+}) {
+  const statusMeta = STATUS_META[booking.status] ?? STATUS_META.pending;
+  const serviceNames = booking.services?.length
+    ? booking.services.map(s => s.service_name).join(', ')
+    : 'Service';
+  const totalDuration = booking.total_duration_minutes;
+  const totalPrice = (booking.price_cents / 100).toFixed(0);
 
   return (
-    <View style={s.empty}>
-      <View style={s.emptyIconWrap}>
-        <Text style={s.emptyEmoji}>{isUpcoming ? '📅' : '✅'}</Text>
+    <View style={s.card}>
+      {/* Status badge */}
+      <View style={s.cardHeader}>
+        <View style={[s.statusBadge, { backgroundColor: statusMeta.bg }]}>
+          <Text style={[s.statusText, { color: statusMeta.color }]}>
+            {statusMeta.icon} {statusMeta.label}
+          </Text>
+        </View>
+        <Text style={s.bookingDate}>{formatDate(booking.scheduled_time ?? booking.created_at)}</Text>
       </View>
-      <Text style={s.emptyTitle}>
-        {isUpcoming ? 'No upcoming bookings' : 'No past bookings'}
-      </Text>
-      <Text style={s.emptySub}>
-        {isUpcoming
-          ? `Your next ${isOneTime ? 'one-time' : 'recurring'} service will appear here`
-          : `Your completed ${isOneTime ? 'one-time' : 'recurring'} services will appear here`}
-      </Text>
-      {isUpcoming && (
-        <TouchableOpacity style={s.bookNowBtn} activeOpacity={0.85}>
-          <Text style={s.bookNowText}>Book a Service</Text>
+
+      {/* Services */}
+      <Text style={s.serviceNames} numberOfLines={2}>{serviceNames}</Text>
+      <Text style={s.serviceMeta}>{totalDuration} min total · ₹{totalPrice}</Text>
+
+      {/* Individual services */}
+      {booking.services?.length > 0 && (
+        <View style={s.serviceList}>
+          {booking.services.map((svc, i) => (
+            <View key={i} style={s.serviceItem}>
+              <Text style={s.serviceItemName}>{svc.service_name}</Text>
+              <Text style={s.serviceItemDetail}>{svc.duration_minutes} min · ₹{(svc.price_cents / 100).toFixed(0)}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Actions */}
+      {onCancel && (booking.status === 'pending' || booking.status === 'accepted') && (
+        <TouchableOpacity
+          style={s.cancelBtn}
+          activeOpacity={0.7}
+          onPress={() => onCancel(booking.id)}
+        >
+          <Text style={s.cancelBtnText}>Cancel Booking</Text>
         </TouchableOpacity>
       )}
     </View>
   );
 }
 
+// ── Empty State ───────────────────────────────────────────────────────────────
+
+function EmptyState({ tab }: { tab: Tab }) {
+  const isUpcoming = tab === 'upcoming';
+  return (
+    <View style={s.empty}>
+      <View style={s.emptyIconWrap}>
+        <Text style={s.emptyEmoji}>{isUpcoming ? '📅' : '✅'}</Text>
+      </View>
+      <Text style={s.emptyTitle}>{isUpcoming ? 'No upcoming bookings' : 'No past bookings'}</Text>
+      <Text style={s.emptySub}>
+        {isUpcoming
+          ? 'Your scheduled services will appear here'
+          : 'Your completed services will appear here'}
+      </Text>
+    </View>
+  );
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const STATUS_META: Record<BookingStatus, { label: string; icon: string; color: string; bg: string }> = {
+  pending:     { label: 'Pending',     icon: '🕐', color: Colors.warning,     bg: `${Colors.warning}18` },
+  accepted:    { label: 'Accepted',    icon: '✅', color: Colors.success,     bg: `${Colors.success}18` },
+  in_progress: { label: 'In Progress', icon: '⚡', color: Colors.info,        bg: `${Colors.info}18`    },
+  completed:   { label: 'Completed',   icon: '🎉', color: Colors.success,     bg: `${Colors.success}18` },
+  cancelled:   { label: 'Cancelled',   icon: '✕',  color: Colors.textMuted,   bg: Colors.surface        },
+};
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-IN', {
+      day: 'numeric', month: 'short',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
 
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
-  headerTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
+  header: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16 },
+  headerTitle: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: Colors.text, letterSpacing: -0.5 },
 
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
     paddingHorizontal: 16,
     backgroundColor: Colors.white,
   },
-  tab: {
-    paddingVertical: 12,
-    marginRight: 24,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    borderBottomColor: Colors.primary,
-  },
-  tabText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-  },
-  tabTextActive: {
-    color: Colors.primary,
-  },
+  tab: { paddingVertical: 12, marginRight: 24, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabActive: { borderBottomColor: Colors.primary },
+  tabText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.textSecondary },
+  tabTextActive: { color: Colors.primary },
 
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, flexGrow: 1 },
+  scrollContent: { padding: 16, gap: 12 },
+  scrollEmpty: { flexGrow: 1 },
 
-  filterRow: {
-    flexDirection: 'row',
-    backgroundColor: Colors.surface,
+  // Booking card
+  card: {
+    backgroundColor: Colors.white,
     borderRadius: Radius.xl,
-    padding: 4,
-    marginBottom: 28,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  filterBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: Radius.lg,
-    alignItems: 'center',
-  },
-  filterBtnActive: {
-    backgroundColor: Colors.primary,
+    padding: 16,
+    borderWidth: 1, borderColor: Colors.border,
     ...Shadow.sm,
+    gap: 8,
   },
-  filterText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  filterTextActive: {
-    color: Colors.white,
-  },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full },
+  statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs },
+  bookingDate: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
 
-  empty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 48,
-    paddingBottom: 32,
-    gap: 10,
-  },
-  emptyIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
+  serviceNames: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
+  serviceMeta: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
+
+  serviceList: { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: 10, gap: 6 },
+  serviceItem: { flexDirection: 'row', justifyContent: 'space-between' },
+  serviceItemName: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: Colors.text },
+  serviceItemDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
+
+  cancelBtn: { borderWidth: 1, borderColor: Colors.danger, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
+  cancelBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.danger },
+
+  // Empty
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 48, gap: 10 },
+  emptyIconWrap: { width: 80, height: 80, borderRadius: Radius.full, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 6, borderWidth: 1, borderColor: Colors.border },
   emptyEmoji: { fontSize: 36 },
-  emptyTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-  },
-  emptySub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    maxWidth: 220,
-    lineHeight: 20,
-  },
-  bookNowBtn: {
-    marginTop: 8,
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: Radius.xl,
-    ...Shadow.sm,
-  },
-  bookNowText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.white,
-  },
+  emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text },
+  emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center', maxWidth: 220, lineHeight: 20 },
 });

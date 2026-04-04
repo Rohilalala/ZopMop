@@ -435,13 +435,6 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                       {gpsState === 'denied' && <Text style={s.actionError}>Permission denied — tap to retry</Text>}
                     </View>
                   </TouchableOpacity>
-                  <View style={s.actionDivider} />
-                  <TouchableOpacity style={s.actionRow} activeOpacity={0.7} onPress={() => searchInputRef.current?.focus()}>
-                    <View style={[s.actionIconBox, { backgroundColor: Colors.successBg }]}>
-                      <Text style={s.addText}>+</Text>
-                    </View>
-                    <Text style={s.actionTitle}>Add address</Text>
-                  </TouchableOpacity>
                 </View>
               )}
 

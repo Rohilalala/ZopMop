@@ -1,0 +1,76 @@
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Animated } from 'react-native';
+import { getCart, addToCart, removeFromCart, type ApiCart, type ApiCartItem } from '../api/cart';
+import { useAuth } from './AuthContext';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface CartContextValue {
+  items: ApiCartItem[];
+  itemCount: number;
+  subtotalCents: number;
+  addItem: (serviceId: string, durationMinutes: number) => Promise<void>;
+  removeItem: (itemId: string) => Promise<void>;
+  refreshCart: () => Promise<void>;
+  cartBadgeAnim: Animated.Value;
+}
+
+// ── Context ───────────────────────────────────────────────────────────────────
+
+const CartContext = createContext<CartContextValue | null>(null);
+
+export function CartProvider({ children }: { children: React.ReactNode }) {
+  const { token } = useAuth();
+  const [cart, setCart] = useState<ApiCart | null>(null);
+  const cartBadgeAnim = useRef(new Animated.Value(1)).current;
+
+  const refreshCart = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await getCart(token);
+      setCart(data);
+    } catch {
+      // Silently fail — cart is a convenience feature
+    }
+  }, [token]);
+
+  useEffect(() => {
+    refreshCart();
+  }, [refreshCart]);
+
+  const pulseBadge = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(cartBadgeAnim, { toValue: 1.4, duration: 120, useNativeDriver: true }),
+      Animated.spring(cartBadgeAnim, { toValue: 1, useNativeDriver: true }),
+    ]).start();
+  }, [cartBadgeAnim]);
+
+  const addItem = useCallback(async (serviceId: string, durationMinutes: number) => {
+    if (!token) return;
+    const updated = await addToCart(token, serviceId, durationMinutes);
+    setCart(updated);
+    pulseBadge();
+  }, [token, pulseBadge]);
+
+  const removeItem = useCallback(async (itemId: string) => {
+    if (!token) return;
+    const updated = await removeFromCart(token, itemId);
+    setCart(updated);
+  }, [token]);
+
+  const items = cart?.items ?? [];
+  const itemCount = items.length;
+  const subtotalCents = items.reduce((sum, item) => sum + item.price_cents, 0);
+
+  return (
+    <CartContext.Provider value={{ items, itemCount, subtotalCents, addItem, removeItem, refreshCart, cartBadgeAnim }}>
+      {children}
+    </CartContext.Provider>
+  );
+}
+
+export function useCart(): CartContextValue {
+  const ctx = useContext(CartContext);
+  if (!ctx) throw new Error('useCart must be used within CartProvider');
+  return ctx;
+}
