@@ -11,8 +11,9 @@ import {
   StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useCart } from '../../context/CartContext';
@@ -53,6 +54,9 @@ function groupServices(services: ApiService[]): Group[] {
 
 export default function AllServicesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
+  const instant = route.params?.instant ?? false;
+  
   const [services, setServices] = useState<ApiService[]>([]);
   const [loading, setLoading] = useState(true);
   const { itemCount, subtotalCents } = useCart();
@@ -93,7 +97,7 @@ export default function AllServicesScreen() {
               <Text style={s.sectionTitle}>{group.title}</Text>
               <View style={s.grid}>
                 {group.services.map(svc => (
-                  <ServiceCard key={svc.id} service={svc} />
+                  <ServiceCard key={svc.id} service={svc} instant={instant} />
                 ))}
               </View>
             </View>
@@ -110,7 +114,7 @@ export default function AllServicesScreen() {
       )}
 
       {/* Cart bar */}
-      {itemCount > 0 && (
+      {!instant && itemCount > 0 && (
         <View style={s.cartBar}>
           <View style={s.cartBarLeft}>
             <Text style={s.cartBarEmoji}>🛒</Text>
@@ -134,13 +138,39 @@ export default function AllServicesScreen() {
 
 // ── Service Card ──────────────────────────────────────────────────────────────
 
-function ServiceCard({ service }: { service: ApiService }) {
+function ServiceCard({ service, instant }: { service: ApiService, instant: boolean }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
   const [busy, setBusy] = useState(false);
 
   const cartItem = items.find(i => i.service_id === service.id);
   const inCart = !!cartItem;
+
+  // Render for instant mode
+  if (instant) {
+    return (
+      <TouchableOpacity
+        style={[s.card, { width: CARD_WIDTH }]}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('InstantMatching', { serviceId: service.id, serviceName: service.name })}
+      >
+        <View style={[s.cardImgBox, { backgroundColor: service.bg_color || '#EEF2FF' }]}>
+          <View style={s.ratingBadge}>
+            <Text style={s.ratingText}>⭐ {service.rating}</Text>
+          </View>
+          <Text style={s.cardEmoji}>{service.emoji ?? '🧹'}</Text>
+        </View>
+
+        <Text style={s.cardName} numberOfLines={2}>{service.name.replace(/\n/g, ' ')}</Text>
+        <View style={s.priceRow}>
+          <Text style={s.cardPrice}>₹{(service.base_price_cents / 100).toFixed(0)}</Text>
+          {service.mrp_cents != null && (
+            <Text style={s.cardMrp}>₹{(service.mrp_cents / 100).toFixed(0)}</Text>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  }
 
   async function handleAdd() {
     if (busy) return;

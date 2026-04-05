@@ -16,7 +16,9 @@ import (
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/content"
+	helpermod "github.com/adityarohilla/househelp-api/internal/helper"
 	"github.com/adityarohilla/househelp-api/internal/location"
+	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
@@ -100,9 +102,12 @@ func main() {
 	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTExpiryHours)
 	authHandler := auth.NewHandler(authService)
 
+	// Notification.
+	notificationService := notification.NewService(context.Background())
+
 	// Admin.
 	adminRepo := admin.NewRepository(dbPool)
-	adminService := admin.NewService(adminRepo)
+	adminService := admin.NewService(adminRepo, notificationService)
 	adminHandler := admin.NewHandler(adminService)
 
 	// Content.
@@ -115,12 +120,15 @@ func main() {
 	configService := config_manager.NewService(configRepo, rdb)
 	configHandler := config_manager.NewHandler(configService)
 
-	// Notification.
-	notificationService := notification.NewService()
+	// Matching engine + batcher (instant bookings only).
+	matchEngine := matching.NewEngine(dbPool, rdb, configService)
+	matchBatcher := matching.NewBatcher(matchEngine, 5*time.Second)
+	matchBatcher.Start()
+	defer matchBatcher.Stop()
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
-	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService)
+	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
@@ -141,6 +149,11 @@ func main() {
 	cartRepo := cartmod.NewRepository(dbPool)
 	cartService := cartmod.NewService(cartRepo)
 	cartHandler := cartmod.NewHandler(cartService)
+
+	// Helper (pro-side profile, invites, location, status).
+	helperRepo := helpermod.NewRepository(dbPool)
+	helperService := helpermod.NewService(helperRepo, locationService, matchEngine, rdb)
+	helperHandler := helpermod.NewHandler(helperService)
 
 	// Time slots.
 	slotsRepo := slotsmod.NewRepository(dbPool)
@@ -199,6 +212,10 @@ func main() {
 	// Profile routes (requires JWT).
 	meGroup := api.Group("/me", authMiddleware, authLimiter)
 	authHandler.RegisterMeRoutes(meGroup)
+
+	// Helper routes (requires JWT + pro role).
+	helpersGroup := api.Group("/helpers", authMiddleware, authLimiter)
+	helperHandler.RegisterRoutes(helpersGroup)
 
 	// Admin routes (requires JWT + admin role + specific permissions).
 	adminMiddleware := mw.AdminMiddleware(dbPool, rdb)

@@ -184,7 +184,7 @@ function BookingCards() {
         <TouchableOpacity
           style={[s.bookingCard, s.bookingCardInstant]}
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('Cart')}
+          onPress={() => navigation.navigate('AllServices', { instant: true })}
         >
           <View style={s.timePill}><Text style={s.timePillText}>~30 min</Text></View>
           <View style={[s.bookingIconBox, { backgroundColor: '#F0FDFA' }]}>

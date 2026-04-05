@@ -17,6 +17,11 @@ export type AuthStackParamList = {
     backendToken?: string;
     backendUser?: any;
   };
+  ProOnboarding: {
+    phone: string;
+    backendToken?: string;
+    backendUser?: any;
+  };
 };
 
 export type MainStackParamList = {
@@ -24,12 +29,31 @@ export type MainStackParamList = {
   Bookings: undefined;
   Profile: undefined;
   Addresses: undefined;
-  AllServices: undefined;
+  AllServices: { instant?: boolean } | undefined;
   ServiceAbout: { service: ApiService };
   Cart: undefined;
   Wallet: undefined;
   Offers: undefined;
   HelpSupport: undefined;
+  InstantMatching: { serviceId: string; serviceName: string };
+  ActiveBooking: {
+    bookingId: string;
+    serviceName: string;
+    helperName: string;
+    helperRating: number;
+    helperLat?: number;
+    helperLng?: number;
+    etaMinutes: number;
+  };
+  ProDashboard: undefined;
+  ProMatched: {
+    bookingId: string;
+    serviceName?: string;
+    customerAddress: string;
+    customerLat: number;
+    customerLng: number;
+    distanceKm?: number;
+  };
 };
 
 export type RootStackParamList = {

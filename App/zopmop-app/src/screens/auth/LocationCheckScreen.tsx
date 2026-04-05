@@ -69,14 +69,17 @@ export default function LocationCheckScreen({ navigation }: Props) {
     setMode('gps');
     setGpsState('requesting');
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      setGpsState('denied');
-      return;
-    }
-
-    setGpsState('checking');
     try {
+      console.log('Requesting location permissions...');
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      console.log('Location status:', status);
+
+      if (status !== 'granted') {
+        setGpsState('denied');
+        return;
+      }
+
+      setGpsState('checking');
       const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
@@ -93,7 +96,12 @@ export default function LocationCheckScreen({ navigation }: Props) {
         } catch { /* use fallback */ }
         navigation.replace('NotServiceable', { cityName });
       }
-    } catch {
+    } catch (error: any) {
+      console.error('Location error:', error);
+      // Alert the exact error so the developer can see why it fails
+      import('react-native').then(({ Alert }) => {
+        Alert.alert('Location Request Failed', String(error?.message || error));
+      });
       setGpsState('denied');
     }
   }

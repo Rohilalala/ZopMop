@@ -8,6 +8,8 @@ import {
   Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
@@ -21,6 +23,7 @@ type Role = 'user' | 'professional';
 
 export default function RoleSelectionScreen({ route }: Props) {
   const { phone, backendToken, backendUser } = route.params;
+  const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signIn } = useAuth();
   const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
@@ -47,8 +50,21 @@ export default function RoleSelectionScreen({ route }: Props) {
 
   async function handleContinue() {
     if (!selected) return;
+
+    if (selected === 'professional') {
+      navigation.navigate('ProOnboarding', { phone, backendToken, backendUser });
+      return;
+    }
+
     setError('');
     setLoading(true);
+
+    if (!backendToken) {
+      setError('Cannot connect to backend server. Ensure EXPO_PUBLIC_API_URL uses your Mac IP in the .env file.');
+      setLoading(false);
+      return;
+    }
+
     try {
       // Always pass a user object with at minimum the phone so ProfileScreen
       // can display it even when the backend was unavailable during OTP.

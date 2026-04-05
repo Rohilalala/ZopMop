@@ -114,3 +114,63 @@ func (r *Repository) UpdateProfile(ctx context.Context, userID string, req Updat
 func (r *Repository) UpdateUser(ctx context.Context, userID, name string) (*User, error) {
 	return r.UpdateProfile(ctx, userID, UpdateProfileRequest{Name: name})
 }
+
+// OnboardPro updates a user's role to 'pro' and inserts them into the helpers table.
+func (r *Repository) OnboardPro(ctx context.Context, userID string, lat, lng float64) (*User, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update user role
+	user := &User{}
+	err = scanUser(tx.QueryRow(ctx,
+		`UPDATE users
+		 SET role = 'pro', updated_at = now()
+		 WHERE id = $1
+		 RETURNING `+userSelectFields,
+		userID,
+	), user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update user role: %w", err)
+	}
+
+	// Insert into helpers table ensuring idempotency
+	_, err = tx.Exec(ctx,
+		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available)
+		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false)
+		 ON CONFLICT (id) DO UPDATE SET
+		   current_lat = EXCLUDED.current_lat,
+		   current_lng = EXCLUDED.current_lng,
+		   location = EXCLUDED.location`,
+		userID, lat, lng, lng, lat,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert helper record: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit tx: %w", err)
+	}
+
+	return user, nil
+}
+
+// UpdateFCMToken updates the FCM token for a user.
+func (r *Repository) UpdateFCMToken(ctx context.Context, userID, token string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	res, err := r.db.Exec(queryCtx,
+		`UPDATE users SET fcm_token = $1, updated_at = now() WHERE id = $2`,
+		token, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update FCM token: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("user not found or token unchanged")
+	}
+	return nil
+}

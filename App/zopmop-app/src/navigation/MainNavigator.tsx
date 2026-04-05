@@ -11,14 +11,24 @@ import AllServicesScreen from '../screens/main/AllServicesScreen';
 import WalletScreen from '../screens/main/WalletScreen';
 import OffersScreen from '../screens/main/OffersScreen';
 import HelpSupportScreen from '../screens/main/HelpSupportScreen';
+import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
+import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
+import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
+import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
 import { CartProvider } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
 export default function MainNavigator() {
+  const { user } = useAuth();
+  
   return (
     <CartProvider>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator 
+        screenOptions={{ headerShown: false }}
+        initialRouteName={user?.role === 'pro' || user?.role === 'helper' ? 'ProDashboard' : 'Home'}
+      >
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen
           name="Bookings"
@@ -64,6 +74,26 @@ export default function MainNavigator() {
           name="HelpSupport"
           component={HelpSupportScreen}
           options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="InstantMatching"
+          component={InstantMatchingScreen}
+          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="ActiveBooking"
+          component={ActiveBookingScreen}
+          options={{ animation: 'fade', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="ProDashboard"
+          component={ProDashboardScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ProMatched"
+          component={ProMatchedScreen}
+          options={{ animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
     </CartProvider>

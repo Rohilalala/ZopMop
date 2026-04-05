@@ -103,3 +103,14 @@ type Promotion struct {
 	CreatedBy     string    `json:"created_by"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// UpdateUserStatusRequest is the payload for updating a customer's status.
+type UpdateUserStatusRequest struct {
+	IsSuspended bool `json:"is_suspended"`
+}
+
+// BroadcastNotificationRequest is the payload for manual push notification broadcast
+type BroadcastNotificationRequest struct {
+	Title string `json:"title" validate:"required,min=2"`
+	Body  string `json:"body" validate:"required,min=2"`
+}

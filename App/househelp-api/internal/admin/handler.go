@@ -43,6 +43,9 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/promotions", middleware.RequirePermission(PermManagePromotions), h.CreatePromotion)
 	router.Patch("/promotions/:id", middleware.RequirePermission(PermManagePromotions), h.UpdatePromotion)
 	router.Patch("/promotions/:id/disable", middleware.RequirePermission(PermManagePromotions), h.DisablePromotion)
+
+	// Broadcast Notification
+	router.Post("/notifications/broadcast", middleware.RequirePermission(PermManageUsers), h.BroadcastNotification)
 }
 
 // GetDashboard handles GET /admin/dashboard — stats overview.
@@ -241,4 +244,19 @@ func (h *Handler) DisablePromotion(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "promotion disabled"})
+}
+
+// BroadcastNotification handles POST /admin/notifications/broadcast.
+func (h *Handler) BroadcastNotification(c *fiber.Ctx) error {
+	var req BroadcastNotificationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	if err := h.service.BroadcastToCustomers(c.Context(), req.Title, req.Body); err != nil {
+		log.Error().Err(err).Msg("failed to broadcast notification")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to broadcast notification"})
+	}
+
+	return c.JSON(fiber.Map{"message": "broadcast initiated"})
 }

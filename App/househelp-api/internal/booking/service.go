@@ -8,6 +8,7 @@ import (
 
 	"github.com/adityarohilla/househelp-api/internal/admin"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
+	"github.com/adityarohilla/househelp-api/internal/matching"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,21 +18,29 @@ import (
 
 // Service handles booking business logic.
 type Service struct {
-	repo      *Repository
-	db        *pgxpool.Pool
-	rdb       *redis.Client
-	configSvc *config_manager.Service
-	notifSvc  *notification.Service
+	repo         *Repository
+	db           *pgxpool.Pool
+	rdb          *redis.Client
+	configSvc    *config_manager.Service
+	notifSvc     *notification.Service
+	matchBatcher *matching.Batcher  // nil-safe; only used for instant bookings
+	matchEngine  *matching.Engine   // nil-safe; used for status queries
 }
 
 // NewService creates a new booking service.
-func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service) *Service {
+func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service, batcher *matching.Batcher) *Service {
+	var engine *matching.Engine
+	if batcher != nil {
+		engine = matching.NewEngine(db, rdb, configSvc)
+	}
 	return &Service{
-		repo:      repo,
-		db:        db,
-		rdb:       rdb,
-		configSvc: configSvc,
-		notifSvc:  notifSvc,
+		repo:         repo,
+		db:           db,
+		rdb:          rdb,
+		configSvc:    configSvc,
+		notifSvc:     notifSvc,
+		matchBatcher: batcher,
+		matchEngine:  engine,
 	}
 }
 
@@ -140,6 +149,22 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		Int("price_cents", totalPriceCents).
 		Int("discount_cents", discountCents).
 		Msg("booking created")
+
+	// ── Matching (instant bookings only) ──────────────────────────────────────
+	// Track demand for the heatmap and enqueue into the batch matcher.
+	// Scheduled bookings are NOT enqueued here — they are matched closer to
+	// their scheduled_time by a separate pre-dispatch job.
+	matching.TrackDemand(ctx, s.rdb, req.Lat, req.Lng)
+	if s.matchBatcher != nil {
+		s.matchBatcher.Enqueue(matching.BatchEntry{
+			BookingID:  booking.ID,
+			CustomerID: customerID,
+			Lat:        req.Lat,
+			Lng:        req.Lng,
+			CellID:     matching.LatLngToCell(req.Lat, req.Lng),
+			EnqueuedAt: time.Now(),
+		})
+	}
 
 	return booking, nil
 }
@@ -411,4 +436,73 @@ func (s *Service) ValidatePromoCode(ctx context.Context, code string, orderAmoun
 	}
 
 	return &promo, nil
+}
+
+// GetMatchStatus returns the current matching state for a booking.
+// Called by the customer's mobile client to poll for an assigned helper.
+func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID string) (*MatchStatusResponse, error) {
+	// Fetch the booking — IDOR check ensures only the customer can query it.
+	booking, err := s.repo.GetBookingByID(ctx, bookingID, customerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// If a helper has already accepted, return matched + helper details.
+	if booking.HelperID != nil {
+		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		var helper MatchedHelper
+		err := s.db.QueryRow(queryCtx,
+			`SELECT u.id, COALESCE(u.name,''), COALESCE(u.phone,''),
+			        COALESCE(h.rating,5.0),
+			        COALESCE(h.current_lat, 0), COALESCE(h.current_lng, 0)
+			 FROM users u
+			 JOIN helpers h ON h.id = u.id
+			 WHERE u.id = $1`,
+			*booking.HelperID,
+		).Scan(&helper.ID, &helper.Name, &helper.Phone, &helper.Rating, &helper.Lat, &helper.Lng)
+		if err != nil {
+			log.Warn().Err(err).Str("helper_id", *booking.HelperID).Msg("could not fetch helper details")
+		}
+		helper.ETAMinutes = 30 // default ETA; production would compute from routing
+		return &MatchStatusResponse{Status: "matched", Helper: &helper}, nil
+	}
+
+	// Booking not yet accepted. Check if it's still in the match window via Redis.
+	if s.matchEngine != nil {
+		matches, _ := s.matchEngine.GetBookingMatches(ctx, bookingID)
+		if len(matches) > 0 {
+			// Helpers have been notified but none accepted yet.
+			return &MatchStatusResponse{Status: "searching"}, nil
+		}
+	}
+
+	// If the booking is cancelled, report failed.
+	if booking.Status == StatusCancelled {
+		return &MatchStatusResponse{Status: "failed"}, nil
+	}
+
+	// Still pending with no Redis data — matching window may have expired.
+	createdAt := booking.CreatedAt
+	if time.Since(createdAt) > 120*time.Second {
+		return &MatchStatusResponse{Status: "failed"}, nil
+	}
+
+	return &MatchStatusResponse{Status: "searching"}, nil
+}
+
+// GetHelperInvites returns the booking IDs this helper has been invited to accept.
+func (s *Service) GetHelperInvites(ctx context.Context, helperID string) ([]string, error) {
+	if s.matchEngine == nil {
+		return []string{}, nil
+	}
+	ids, err := s.matchEngine.GetHelperInvites(ctx, helperID)
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
 }

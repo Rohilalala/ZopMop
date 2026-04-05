@@ -196,6 +196,26 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, req UpdatePr
 	return s.repo.UpdateProfile(ctx, userID, req)
 }
 
+// OnboardPro updates user role to pro, inserts into helpers table, and issues a new JWT.
+func (s *Service) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*LoginResponse, error) {
+	user, err := s.repo.OnboardPro(ctx, userID, req.Lat, req.Lng)
+	if err != nil {
+		return nil, fmt.Errorf("failed to onboard pro in DB: %w", err)
+	}
+
+	token, err := s.generateJWT(user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate new token: %w", err)
+	}
+
+	return &LoginResponse{Token: token, User: *user}, nil
+}
+
+// UpdateFCMToken updates the user's FCM push token
+func (s *Service) UpdateFCMToken(ctx context.Context, userID, token string) error {
+	return s.repo.UpdateFCMToken(ctx, userID, token)
+}
+
 // generateJWT creates a signed JWT token with userID, role, issuer, iat, exp claims.
 func (s *Service) generateJWT(user *User) (string, error) {
 	now := time.Now()

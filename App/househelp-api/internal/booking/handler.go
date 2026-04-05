@@ -22,7 +22,9 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/", h.CreateBooking)
 	router.Post("/scheduled", h.CreateScheduledBooking)
+	router.Get("/helper/invites", h.GetHelperInvites)
 	router.Get("/", h.GetBookings)
+	router.Get("/:id/match-status", h.GetMatchStatus)
 	router.Get("/:id", h.GetBooking)
 	router.Post("/:id/cancel", h.CancelBooking)
 	router.Post("/:id/accept", h.AcceptBooking)
@@ -222,4 +224,38 @@ func (h *Handler) AcceptBooking(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "booking accepted"})
+}
+
+// GetMatchStatus handles GET /bookings/:id/match-status.
+// Customers poll this to find out if a helper has been matched to their booking.
+// Returns { status: "searching" | "matched" | "failed", helper? }
+func (h *Handler) GetMatchStatus(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	userID, _ := c.Locals("userID").(string)
+
+	resp, err := h.service.GetMatchStatus(c.Context(), bookingID, userID)
+	if err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get match status")
+		status := fiber.StatusInternalServerError
+		if err.Error() == "booking not found" {
+			status = fiber.StatusNotFound
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(resp)
+}
+
+// GetHelperInvites handles GET /bookings/helper/invites.
+// Pros poll this to see which pending booking IDs they have been invited to accept.
+func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
+	helperID, _ := c.Locals("userID").(string)
+
+	bookingIDs, err := h.service.GetHelperInvites(c.Context(), helperID)
+	if err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper invites")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get invites"})
+	}
+
+	return c.JSON(fiber.Map{"booking_ids": bookingIDs})
 }

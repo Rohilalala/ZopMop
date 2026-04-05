@@ -52,3 +52,14 @@ type JWTClaims struct {
 type UpdateProfileRequest struct {
 	Name string `json:"name" validate:"omitempty,max=100"`
 }
+
+// OnboardProRequest is the input for POST /me/onboard-pro.
+type OnboardProRequest struct {
+	Lat float64 `json:"lat" validate:"required,min=-90,max=90"`
+	Lng float64 `json:"lng" validate:"required,min=-180,max=180"`
+}
+
+// UpdateFCMTokenRequest is the input for PUT /me/fcm-token
+type UpdateFCMTokenRequest struct {
+	Token string `json:"fcm_token" validate:"required"`
+}

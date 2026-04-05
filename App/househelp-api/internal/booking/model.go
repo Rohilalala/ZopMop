@@ -76,3 +76,26 @@ type CreateScheduledBookingRequest struct {
 	TimeSlotID string `json:"time_slot_id" validate:"required,uuid_format"`
 	PromoCode  string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
 }
+
+// CreateInstantBookingRequest is the input for POST /bookings/instant.
+// Cart items are read server-side; only the delivery address is required.
+type CreateInstantBookingRequest struct {
+	AddressID string `json:"address_id" validate:"required,uuid_format"`
+}
+
+// MatchStatusResponse is returned by GET /bookings/:id/match-status.
+type MatchStatusResponse struct {
+	Status string         `json:"status"` // "searching" | "matched" | "failed"
+	Helper *MatchedHelper `json:"helper,omitempty"`
+}
+
+// MatchedHelper contains the assigned helper's details once a booking is accepted.
+type MatchedHelper struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Phone      string  `json:"phone"`
+	Rating     float64 `json:"rating"`
+	ETAMinutes int     `json:"eta_minutes"`
+	Lat        float64 `json:"lat,omitempty"`
+	Lng        float64 `json:"lng,omitempty"`
+}

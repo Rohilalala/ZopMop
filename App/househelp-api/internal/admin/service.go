@@ -5,17 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/rs/zerolog/log"
 )
 
 // Service handles admin business logic.
 type Service struct {
-	repo *Repository
+	repo    *Repository
+	notifSvc *notification.Service
 }
 
 // NewService creates a new admin service.
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, notifSvc *notification.Service) *Service {
+	return &Service{repo: repo, notifSvc: notifSvc}
 }
 
 // CheckPermission verifies if an admin has the required permission.
@@ -247,4 +249,21 @@ func (s *Service) DisablePromotion(ctx context.Context, promoID, adminID, ipAddr
 	}
 
 	return nil
+}
+
+// BroadcastToCustomers fetches all customer FCM tokens and sends a push notification.
+func (s *Service) BroadcastToCustomers(ctx context.Context, title, body string) error {
+	tokens, err := s.repo.GetCustomerFCMTokens(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch customer tokens: %w", err)
+	}
+
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	// We pass the raw tokens directly to a new Multicast logic in notification service
+	return s.notifSvc.SendToTokens(ctx, tokens, title, body, map[string]string{
+		"type": "broadcast",
+	})
 }

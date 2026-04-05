@@ -26,3 +26,12 @@ export async function updateMe(token: string, name: string): Promise<AuthUser> {
   if (!res.ok) throw new Error('Failed to update profile');
   return res.json() as Promise<AuthUser>;
 }
+
+export async function updateFCMToken(token: string, fcmToken: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/me/fcm-token`, {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify({ fcm_token: fcmToken }),
+  });
+  if (!res.ok) throw new Error('Failed to update FCM token');
+}

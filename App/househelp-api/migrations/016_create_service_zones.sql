@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS service_zones (
 
 CREATE INDEX IF NOT EXISTS idx_service_zones_active ON service_zones (is_active) WHERE is_active = true;
 
--- Seed: Gurugram covered by a single 15km zone (covers the whole city).
+-- Seed: Gurugram and Vellore covered by 15km zones.
 -- Add more fine-grained rows (2.5km each) as operations expand.
 INSERT INTO service_zones (name, city, lat, lon, radius_km) VALUES
-    ('Gurugram', 'Gurugram', 28.4595, 77.0266, 15.0)
-ON CONFLICT DO NOTHING;
+    ('Gurugram', 'Gurugram', 28.4595, 77.0266, 15.0),
+    ('Vellore', 'Vellore', 12.9692, 79.1559, 15.0);

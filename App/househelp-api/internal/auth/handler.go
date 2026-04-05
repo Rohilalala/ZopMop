@@ -29,6 +29,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 func (h *Handler) RegisterMeRoutes(router fiber.Router) {
 	router.Get("/", h.Me)
 	router.Put("/", h.UpdateMe)
+	router.Post("/onboard-pro", h.OnboardPro)
+	router.Put("/fcm-token", h.UpdateFCMToken)
 }
 
 // SendOTP handles POST /auth/send-otp.
@@ -167,4 +169,59 @@ func (h *Handler) UpdateMe(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(user)
+}
+
+// OnboardPro handles POST /me/onboard-pro — upgrades a user to 'pro' and creates a helper record.
+func (h *Handler) OnboardPro(c *fiber.Ctx) error {
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+
+	var req OnboardProRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	loginResp, err := h.service.OnboardPro(c.Context(), userID, req)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("failed to onboard pro")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to onboard pro"})
+	}
+
+	return c.JSON(loginResp)
+}
+
+// UpdateFCMToken handles PUT /me/fcm-token.
+func (h *Handler) UpdateFCMToken(c *fiber.Ctx) error {
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+
+	var req UpdateFCMTokenRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	if err := h.service.UpdateFCMToken(c.Context(), userID, req.Token); err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("failed to update FCM token")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update FCM token"})
+	}
+
+	return c.JSON(fiber.Map{"message": "token updated"})
 }

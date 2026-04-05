@@ -104,8 +104,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   }
 
   async function exchangeForBackendJWT(firebaseToken: string) {
-    // TODO: replace BASE_URL with your actual backend URL
-    const BASE_URL = 'http://localhost:3000/api/v1';
+    const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
     const res = await fetch(`${BASE_URL}/auth/firebase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

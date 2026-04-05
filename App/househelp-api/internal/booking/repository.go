@@ -206,7 +206,7 @@ func (r *Repository) GetActiveBookingsCount(ctx context.Context, customerID stri
 	var count int
 	err := r.db.QueryRow(queryCtx,
 		`SELECT COUNT(*) FROM bookings
-		 WHERE customer_id = $1 AND status IN ('pending', 'accepted', 'in_progress')`,
+		 WHERE customer_id = $1 AND status IN ('accepted', 'in_progress')`,
 		customerID,
 	).Scan(&count)
 	if err != nil {
@@ -224,7 +224,7 @@ func (r *Repository) GetActiveBookingsCountForHelper(ctx context.Context, helper
 	var count int
 	err := r.db.QueryRow(queryCtx,
 		`SELECT COUNT(*) FROM bookings
-		 WHERE helper_id = $1 AND status IN ('pending', 'accepted', 'in_progress')`,
+		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')`,
 		helperID,
 	).Scan(&count)
 	if err != nil {

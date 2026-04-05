@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { registerSignOutCallback } from '../api/client';
+import { updateFCMToken } from '../api/users';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
@@ -33,6 +35,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const { expoPushToken } = usePushNotifications();
 
   // Register the global signOut callback so apiFetch can sign out on 401.
   useEffect(() => {
@@ -105,6 +109,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     return () => sub.remove();
   }, []);
+
+  // Sync FCM token to backend when logged in and token is available
+  useEffect(() => {
+    if (token && token !== '__guest__' && expoPushToken) {
+      updateFCMToken(token, expoPushToken).catch((err) => {
+        console.log('Failed to sync FCM token:', err);
+      });
+    }
+  }, [token, expoPushToken]);
 
   function signIn(jwt: string, authUser?: AuthUser) {
     setToken(jwt);

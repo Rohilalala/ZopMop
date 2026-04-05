@@ -2,7 +2,10 @@ package matching
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,14 +13,36 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Engine handles the matching logic to find nearest available helpers.
+// Redis key templates for match results.
+//
+//	match:b:<bookingID>         → JSON array of HelperMatch; TTL = timeout_seconds
+//	match:h:<helperID>          → SET of bookingIDs the helper is invited to accept
+//	supply:cell:<cellID>        → float count of active helpers in this cell (used by demand ratio)
+const (
+	matchBookingKeyFmt = "match:b:%s"
+	matchHelperKeyFmt  = "match:h:%s"
+	supplyCellKeyFmt   = "supply:cell:%s"
+)
+
+// Engine handles the full matching pipeline:
+//  1. Hex-cell pre-filter  — narrows the search area via Redis GEOSEARCH
+//  2. Postgres enrich      — fetches availability, rating, active booking count
+//  3. Staleness check      — drops helpers whose location TTL marker has expired
+//  4. Score & rank         — multi-factor composite score via score.go
+//  5. Store results        — writes matches to Redis for helpers to poll
+//
+// Only instant bookings flow through the Engine (via Batcher).
+// Scheduled bookings are matched separately, closer to their scheduled_time.
 type Engine struct {
 	db        *pgxpool.Pool
 	rdb       *redis.Client
 	configSvc *config_manager.Service
+
+	// cfg is refreshed at the start of every batch window.
+	cfg *config_manager.MatchingConfig
 }
 
-// NewEngine creates a new matching engine.
+// NewEngine creates a ready-to-use matching engine.
 func NewEngine(db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service) *Engine {
 	return &Engine{
 		db:        db,
@@ -26,76 +51,341 @@ func NewEngine(db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Se
 	}
 }
 
-// FindNearestHelpers finds available helpers within the given radius.
+// ── Public API ────────────────────────────────────────────────────────────────
+
+// FindBestHelpers is the synchronous entry-point used by the booking service
+// when it needs an immediate result (e.g. admin dashboard, fallback path).
+// For the normal flow, bookings go through the Batcher instead.
 //
-// Implementation approach:
-// 1. Use Redis GEOSEARCH to find helpers with live locations within radius.
-//    - Helpers continuously update their position via the location WebSocket.
-//    - Redis stores positions using GEOADD with key "helpers:locations".
-//    - GEOSEARCH BYLONLAT <lng> <lat> BYRADIUS <radius> km ASC returns sorted results.
-//
-// 2. Cross-reference with PostgreSQL to filter:
-//    - Only helpers where is_available = true
-//    - Only helpers with rating >= min_rating (from config_manager)
-//    - Only helpers not currently in an active booking
-//
-// 3. Return up to max_helpers_notified (from config_manager) helpers sorted by distance.
-//
-// 4. If no helpers found within initial radius, the booking service waits
-//    matching.timeout_seconds and then retries with matching.max_radius_km.
-//
-// The config_manager dynamically provides radius, timeout, and max_helpers values
-// so admins can tune matching behavior without code deploys.
-func (e *Engine) FindNearestHelpers(ctx context.Context, lat, lng, radiusKm float64) ([]HelperMatch, error) {
-	// Get config values dynamically.
-	matchingConfig, err := e.configSvc.GetMatchingConfig(ctx)
+// The function implements the two-phase search described in the stub:
+//  1. Search within radius_km.
+//  2. If no qualified helpers found, wait and retry with max_radius_km.
+func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]HelperMatch, error) {
+	cfg, err := e.configSvc.GetMatchingConfig(ctx)
+	if err != nil || cfg == nil {
+		cfg = defaultCfg()
+	}
+	e.cfg = cfg
+
+	candidates, err := e.fetchAndScoreCandidates(ctx, lat, lng)
 	if err != nil {
-		log.Warn().Err(err).Msg("failed to get matching config, using provided radius")
+		return nil, err
 	}
 
-	// Defensive check: ensure matchingConfig is not nil before accessing fields.
-	if matchingConfig == nil {
-		log.Warn().Msg("matching config is nil, using hardcoded defaults")
-		matchingConfig = &config_manager.MatchingConfig{
-			RadiusKm:           15.0,
-			MaxRadiusKm:        30.0,
-			TimeoutSeconds:     30,
-			MaxHelpersNotified: 3,
+	// Phase 2: expand radius if nothing found in the initial search.
+	if len(candidates) == 0 && cfg.MaxRadiusKm > cfg.RadiusKm {
+		log.Info().
+			Float64("lat", lat).Float64("lng", lng).
+			Float64("initial_radius_km", cfg.RadiusKm).
+			Float64("expanded_radius_km", cfg.MaxRadiusKm).
+			Msg("[engine] no helpers in initial radius — expanding")
+
+		candidates, err = e.geoSearchCandidates(ctx, lat, lng, cfg.MaxRadiusKm, cfg)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	if radiusKm <= 0 {
-		radiusKm = matchingConfig.RadiusKm
+	RankCandidates(candidates)
+	return ToHelperMatches(candidates, cfg.MaxHelpersNotified), nil
+}
+
+// GetHelperInvites returns the booking IDs a helper has been matched to.
+// Helpers call this to discover which pending bookings they can accept.
+func (e *Engine) GetHelperInvites(ctx context.Context, helperID string) ([]string, error) {
+	key := fmt.Sprintf(matchHelperKeyFmt, helperID)
+	members, err := e.rdb.SMembers(ctx, key).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read helper invites: %w", err)
+	}
+	return members, nil
+}
+
+// GetBookingMatches returns the helpers matched to a specific booking.
+// Used by admin and for debugging.
+func (e *Engine) GetBookingMatches(ctx context.Context, bookingID string) ([]HelperMatch, error) {
+	key := fmt.Sprintf(matchBookingKeyFmt, bookingID)
+	data, err := e.rdb.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, fmt.Errorf("no match data for booking %s: %w", bookingID, err)
+	}
+	var matches []HelperMatch
+	if err := json.Unmarshal(data, &matches); err != nil {
+		return nil, fmt.Errorf("corrupt match data for booking %s: %w", bookingID, err)
+	}
+	return matches, nil
+}
+
+// ClearMatchOnAccept removes match entries once a helper accepts, so other
+// helpers stop seeing the booking as available.  Called by the booking service.
+func (e *Engine) ClearMatchOnAccept(ctx context.Context, bookingID string, acceptedHelperID string) {
+	bookingKey := fmt.Sprintf(matchBookingKeyFmt, bookingID)
+
+	// Retrieve helper IDs that were matched to this booking.
+	data, err := e.rdb.Get(ctx, bookingKey).Bytes()
+	if err == nil {
+		var matches []HelperMatch
+		if json.Unmarshal(data, &matches) == nil {
+			pipe := e.rdb.Pipeline()
+			for _, m := range matches {
+				helperKey := fmt.Sprintf(matchHelperKeyFmt, m.HelperID)
+				pipe.SRem(ctx, helperKey, bookingID)
+			}
+			pipe.Del(ctx, bookingKey)
+			if _, err := pipe.Exec(ctx); err != nil {
+				log.Warn().Err(err).Str("booking_id", bookingID).
+					Msg("[engine] failed to clear match keys on accept")
+			}
+		}
 	}
 
-	maxHelpers := matchingConfig.MaxHelpersNotified
+	log.Info().
+		Str("booking_id", bookingID).
+		Str("helper_id", acceptedHelperID).
+		Msg("[engine] match cleared — booking accepted")
+}
 
-	// TODO: Implement Redis GEOSEARCH + PostgreSQL filter pipeline.
-	//
-	// Step 1: Redis GEOSEARCH
-	// results, err := e.rdb.GeoSearchLocation(ctx, "helpers:locations", &redis.GeoSearchLocationQuery{
-	//     GeoSearchQuery: redis.GeoSearchQuery{
-	//         Longitude:  lng,
-	//         Latitude:   lat,
-	//         Radius:     radiusKm,
-	//         RadiusUnit: "km",
-	//         Sort:       "ASC",
-	//         Count:      maxHelpers * 3, // Fetch more to allow filtering.
-	//     },
-	//     WithCoord: true,
-	//     WithDist:  true,
-	// }).Result()
-	//
-	// Step 2: Fetch helper IDs from results
-	// Step 3: Filter by availability, rating, and active booking status in PostgreSQL
-	// Step 4: Sort by distance, return top maxHelpers
+// ── Internal pipeline ─────────────────────────────────────────────────────────
+
+// fetchAndScoreCandidates runs the full pipeline for a single lat/lng:
+// geo-search → postgres enrich → stale filter → score.
+func (e *Engine) fetchAndScoreCandidates(ctx context.Context, lat, lng float64) ([]HelperCandidate, error) {
+	cfg := e.cfg
+	if cfg == nil {
+		var err error
+		cfg, err = e.configSvc.GetMatchingConfig(ctx)
+		if err != nil || cfg == nil {
+			cfg = defaultCfg()
+		}
+		e.cfg = cfg
+	}
+	return e.geoSearchCandidates(ctx, lat, lng, cfg.RadiusKm, cfg)
+}
+
+// geoSearchCandidates performs the three-stage pipeline for a given radius.
+func (e *Engine) geoSearchCandidates(
+	ctx context.Context,
+	lat, lng, radiusKm float64,
+	cfg *config_manager.MatchingConfig,
+) ([]HelperCandidate, error) {
+	// ── Stage 1: Redis GEOSEARCH ──────────────────────────────────────────────
+	// Fetch up to 4× max helpers so Postgres filtering still leaves enough.
+	fetchCount := cfg.MaxHelpersNotified * 4
+	if fetchCount < 20 {
+		fetchCount = 20
+	}
+
+	geoResults, err := e.rdb.GeoSearchLocation(ctx, "helpers:locations",
+		&redis.GeoSearchLocationQuery{
+			GeoSearchQuery: redis.GeoSearchQuery{
+				Longitude:  lng,
+				Latitude:   lat,
+				Radius:     radiusKm,
+				RadiusUnit: "km",
+				Sort:       "ASC",
+				Count:      fetchCount,
+			},
+			WithCoord: true,
+			WithDist:  true,
+		},
+	).Result()
+	if err != nil {
+		return nil, fmt.Errorf("Redis GEOSEARCH failed: %w", err)
+	}
+	log.Debug().
+		Float64("lat", lat).Float64("lng", lng).
+		Float64("radius_km", radiusKm).
+		Int("geo_results", len(geoResults)).
+		Msg("[engine] GEOSEARCH result")
+	if len(geoResults) == 0 {
+		log.Warn().Float64("lat", lat).Float64("lng", lng).Float64("radius_km", radiusKm).
+			Msg("[engine] no helpers in Redis geo index")
+		return nil, nil
+	}
+
+	// Build helper ID list and distance map.
+	helperIDs := make([]string, len(geoResults))
+	distByID := make(map[string]float64, len(geoResults))
+	for i, r := range geoResults {
+		helperIDs[i] = r.Name
+		distByID[r.Name] = r.Dist // km, as returned by Redis
+	}
+
+	// ── Stage 2: Postgres enrich + filter ────────────────────────────────────
+	minRatingStr, _ := e.configSvc.GetConfig(ctx, config_manager.ConfigHelperMinRatingToAppear)
+	minRating, _ := strconv.ParseFloat(minRatingStr, 64)
+	if minRating <= 0 {
+		minRating = 3.0
+	}
+
+	rows, err := e.db.Query(ctx, `
+		SELECT
+			h.id,
+			COALESCE(h.rating, 5.0)    AS rating,
+			COALESCE(h.total_jobs, 0)  AS total_jobs,
+			COALESCE(active.cnt, 0)    AS active_bookings
+		FROM helpers h
+		LEFT JOIN (
+			SELECT helper_id, COUNT(*) AS cnt
+			FROM bookings
+			WHERE status IN ('accepted', 'in_progress')
+			GROUP BY helper_id
+		) active ON active.helper_id = h.id
+		WHERE h.id = ANY($1::uuid[])
+		  AND h.is_available = true
+		  AND COALESCE(h.rating, 5.0) >= $2
+	`, helperIDs, minRating)
+	if err != nil {
+		return nil, fmt.Errorf("Postgres enrichment failed: %w", err)
+	}
+	defer rows.Close()
+
+	// ── Stage 3: Stale location check + score ─────────────────────────────────
+	// A helper whose TTL marker has expired was last seen > 5 minutes ago.
+	// We drop them to avoid assigning a booking to someone who may have gone
+	// offline.
+	var candidates []HelperCandidate
+	for rows.Next() {
+		var c HelperCandidate
+		if err := rows.Scan(&c.HelperID, &c.Rating, &c.TotalJobs, &c.ActiveBookings); err != nil {
+			log.Warn().Err(err).Msg("[engine] failed to scan helper row")
+			continue
+		}
+
+		// Check TTL marker (set by location service on every GPS ping).
+		markerKey := fmt.Sprintf("helper:active:%s", c.HelperID)
+		if exists, _ := e.rdb.Exists(ctx, markerKey).Result(); exists == 0 {
+			log.Debug().Str("helper_id", c.HelperID).
+				Msg("[engine] dropping stale helper — location TTL expired")
+			continue
+		}
+
+		c.DistanceKm = distByID[c.HelperID]
+		ScoreCandidate(&c)
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating helper rows: %w", err)
+	}
+	log.Debug().Int("candidates_after_filter", len(candidates)).Msg("[engine] scored candidates")
+
+	// Update per-cell supply counter for demand-ratio calculations.
+	go e.updateSupplyCounter(context.Background(), lat, lng, len(candidates))
+
+	return candidates, nil
+}
+
+// storeMatchResults persists the match outcome to Redis so helpers can poll for
+// invites, and increments match_attempts in Postgres.
+func (e *Engine) storeMatchResults(ctx context.Context, bookingID string, matches []HelperMatch) error {
+	if len(matches) == 0 {
+		return nil
+	}
+
+	cfg := e.cfg
+	if cfg == nil {
+		cfg = defaultCfg()
+	}
+
+	data, err := json.Marshal(matches)
+	if err != nil {
+		return fmt.Errorf("failed to marshal match results: %w", err)
+	}
+
+	ttl := time.Duration(cfg.TimeoutSeconds) * time.Second
+	bookingKey := fmt.Sprintf(matchBookingKeyFmt, bookingID)
+
+	pipe := e.rdb.Pipeline()
+
+	// Store the ranked helper list for this booking.
+	pipe.Set(ctx, bookingKey, data, ttl)
+
+	// Add the booking ID to each helper's invite set.
+	for _, m := range matches {
+		helperKey := fmt.Sprintf(matchHelperKeyFmt, m.HelperID)
+		pipe.SAdd(ctx, helperKey, bookingID)
+		pipe.Expire(ctx, helperKey, ttl)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("failed to write match results to Redis: %w", err)
+	}
+
+	// Increment match_attempts in Postgres (best-effort, non-blocking).
+	go func() {
+		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, dbErr := e.db.Exec(uCtx,
+			`UPDATE bookings
+			    SET match_attempts = match_attempts + 1,
+			        matched_at     = NOW()
+			  WHERE id = $1`,
+			bookingID,
+		)
+		if dbErr != nil {
+			log.Warn().Err(dbErr).Str("booking_id", bookingID).
+				Msg("[engine] failed to update match_attempts")
+		}
+	}()
 
 	log.Info().
-		Float64("lat", lat).
-		Float64("lng", lng).
-		Float64("radius_km", radiusKm).
-		Int("max_helpers", maxHelpers).
-		Msg("FindNearestHelpers called (stub)")
+		Str("booking_id", bookingID).
+		Int("helpers_notified", len(matches)).
+		Float64("top_score", matches[0].Score).
+		Msg("[engine] match stored")
 
-	return nil, fmt.Errorf("matching engine not yet implemented")
+	return nil
+}
+
+// updateSupplyCounter writes the number of active helpers in a cell to Redis
+// so SupplyDemandRatio can compute surge-pricing signals cheaply.
+func (e *Engine) updateSupplyCounter(ctx context.Context, lat, lng float64, count int) {
+	cellID := LatLngToCell(lat, lng)
+	key := fmt.Sprintf(supplyCellKeyFmt, cellID)
+	if err := e.rdb.Set(ctx, key, float64(count), 10*time.Minute).Err(); err != nil {
+		log.Warn().Err(err).Str("cell_id", cellID).
+			Msg("[engine] failed to update supply counter")
+	}
+}
+
+// FetchPendingUnmatched returns pending bookings that still need matching.
+// Used by the Batcher to retry bookings that weren't matched in a prior window
+// (e.g. no helpers online yet) or that survived a server restart.
+func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error) {
+	rows, err := e.db.Query(ctx, `
+		SELECT id, customer_id, lat::float8, lng::float8, COALESCE(hex_cell_id, '')
+		FROM bookings
+		WHERE status = 'pending'
+		  AND (matched_at IS NULL OR matched_at < NOW() - INTERVAL '30 seconds')
+		  AND match_attempts < 5
+		  AND created_at > NOW() - INTERVAL '10 minutes'
+		ORDER BY created_at ASC
+		LIMIT 50
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("FetchPendingUnmatched query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BatchEntry
+	for rows.Next() {
+		var e BatchEntry
+		if err := rows.Scan(&e.BookingID, &e.CustomerID, &e.Lat, &e.Lng, &e.CellID); err != nil {
+			continue
+		}
+		e.EnqueuedAt = time.Now()
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// ── defaults ──────────────────────────────────────────────────────────────────
+
+func defaultCfg() *config_manager.MatchingConfig {
+	return &config_manager.MatchingConfig{
+		RadiusKm:           5.0,
+		MaxRadiusKm:        15.0,
+		TimeoutSeconds:     90,
+		MaxHelpersNotified: 3,
+	}
 }

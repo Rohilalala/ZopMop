@@ -25,6 +25,20 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 }
 
 // GetByDate handles GET /slots?date=YYYY-MM-DD.
+//
+// Response shape:
+//
+//	{
+//	  "date": "2026-04-06",
+//	  "periods": [
+//	    { "label": "Morning",   "slots": [ { ... }, ... ] },
+//	    { "label": "Afternoon", "slots": [ ... ] },
+//	    { "label": "Evening",   "slots": [ ... ] }
+//	  ]
+//	}
+//
+// Only future slots (start time > now + 30 min) are included.
+// Empty periods are omitted from the response.
 func (h *Handler) GetByDate(c *fiber.Ctx) error {
 	date := c.Query("date")
 	if date == "" || !dateRe.MatchString(date) {
@@ -33,10 +47,20 @@ func (h *Handler) GetByDate(c *fiber.Ctx) error {
 		})
 	}
 
-	slotList, err := h.service.GetByDate(c.Context(), date)
+	periods, err := h.service.GetByDate(c.Context(), date)
 	if err != nil {
 		log.Error().Err(err).Str("date", date).Msg("failed to get time slots")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch time slots"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to fetch time slots",
+		})
 	}
-	return c.JSON(fiber.Map{"slots": slotList, "date": date})
+
+	if periods == nil {
+		periods = []SlotPeriod{}
+	}
+
+	return c.JSON(fiber.Map{
+		"date":    date,
+		"periods": periods,
+	})
 }

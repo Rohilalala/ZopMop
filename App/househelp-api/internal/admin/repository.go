@@ -522,3 +522,33 @@ func (r *Repository) DisablePromotion(ctx context.Context, promoID string) error
 	}
 	return nil
 }
+
+// GetCustomerFCMTokens retrieves all FCM tokens for users with the 'customer' role.
+// This is used for broadcasting bulk marketing notifications.
+func (r *Repository) GetCustomerFCMTokens(ctx context.Context) ([]string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT fcm_token FROM users WHERE role = 'customer' AND fcm_token IS NOT NULL AND fcm_token != ''`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query customer FCM tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tokens: %w", err)
+	}
+
+	return tokens, nil
+}

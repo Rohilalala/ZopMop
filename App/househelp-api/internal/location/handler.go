@@ -133,7 +133,7 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 		}
 
 		// Update location in Redis (available for helpers and admins).
-		if role == "helper" || role == "admin" {
+		if role == "helper" || role == "pro" || role == "admin" {
 			// Use context with timeout for location update.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := h.service.UpdateHelperLocation(ctx, userID, update.Lat, update.Lng); err != nil {
