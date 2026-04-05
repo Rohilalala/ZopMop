@@ -198,7 +198,7 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, req UpdatePr
 
 // OnboardPro updates user role to pro, inserts into helpers table, and issues a new JWT.
 func (s *Service) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*LoginResponse, error) {
-	user, err := s.repo.OnboardPro(ctx, userID, req.Lat, req.Lng)
+	user, err := s.repo.OnboardPro(ctx, userID, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to onboard pro in DB: %w", err)
 	}

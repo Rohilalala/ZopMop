@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
+	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -37,6 +38,7 @@ type Engine struct {
 	db        *pgxpool.Pool
 	rdb       *redis.Client
 	configSvc *config_manager.Service
+	maps      *googlemaps.Client // optional; nil = skip walking-time filter
 
 	// cfg is refreshed at the start of every batch window.
 	cfg *config_manager.MatchingConfig
@@ -87,6 +89,7 @@ func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]Helpe
 	}
 
 	RankCandidates(candidates)
+	candidates = e.filterByWalkingTime(ctx, candidates, lat, lng)
 	return ToHelperMatches(candidates, cfg.MaxHelpersNotified), nil
 }
 
@@ -99,6 +102,24 @@ func (e *Engine) GetHelperInvites(ctx context.Context, helperID string) ([]strin
 		return nil, fmt.Errorf("failed to read helper invites: %w", err)
 	}
 	return members, nil
+}
+
+// RemoveHelperInvites removes specific booking IDs from a helper's Redis invite set.
+// Called by the booking service to prune stale invites when their underlying
+// booking is no longer pending (cancelled, accepted by someone else, etc.).
+func (e *Engine) RemoveHelperInvites(ctx context.Context, helperID string, bookingIDs []string) {
+	if len(bookingIDs) == 0 {
+		return
+	}
+	key := fmt.Sprintf(matchHelperKeyFmt, helperID)
+	members := make([]interface{}, len(bookingIDs))
+	for i, id := range bookingIDs {
+		members[i] = id
+	}
+	if err := e.rdb.SRem(ctx, key, members...).Err(); err != nil {
+		log.Warn().Err(err).Str("helper_id", helperID).
+			Msg("[engine] failed to remove stale helper invites from Redis")
+	}
 }
 
 // GetBookingMatches returns the helpers matched to a specific booking.
@@ -203,12 +224,14 @@ func (e *Engine) geoSearchCandidates(
 		return nil, nil
 	}
 
-	// Build helper ID list and distance map.
+	// Build helper ID list, distance map, and coordinate map.
 	helperIDs := make([]string, len(geoResults))
 	distByID := make(map[string]float64, len(geoResults))
+	coordByID := make(map[string][2]float64, len(geoResults)) // [lat, lng]
 	for i, r := range geoResults {
 		helperIDs[i] = r.Name
 		distByID[r.Name] = r.Dist // km, as returned by Redis
+		coordByID[r.Name] = [2]float64{r.Latitude, r.Longitude}
 	}
 
 	// ── Stage 2: Postgres enrich + filter ────────────────────────────────────
@@ -261,6 +284,9 @@ func (e *Engine) geoSearchCandidates(
 		}
 
 		c.DistanceKm = distByID[c.HelperID]
+		coord := coordByID[c.HelperID]
+		c.Lat = coord[0]
+		c.Lng = coord[1]
 		ScoreCandidate(&c)
 		candidates = append(candidates, c)
 	}
@@ -351,7 +377,24 @@ func (e *Engine) updateSupplyCounter(ctx context.Context, lat, lng float64, coun
 // FetchPendingUnmatched returns pending bookings that still need matching.
 // Used by the Batcher to retry bookings that weren't matched in a prior window
 // (e.g. no helpers online yet) or that survived a server restart.
+//
+// As a side effect, pending bookings that have been attempted at least once and
+// are older than 45 seconds are cancelled here.  This prevents stale bookings
+// from generating fresh Redis invites long after the customer's 30-second
+// search window has expired.
 func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error) {
+	// Auto-cancel pending bookings that have outlived the customer-facing timeout.
+	// Condition: tried at least once (invites were sent) AND older than 45s.
+	if _, expErr := e.db.Exec(ctx, `
+		UPDATE bookings
+		   SET status = 'cancelled', updated_at = NOW()
+		 WHERE status = 'pending'
+		   AND match_attempts > 0
+		   AND created_at < NOW() - INTERVAL '45 seconds'
+	`); expErr != nil {
+		log.Warn().Err(expErr).Msg("[engine] failed to auto-cancel expired pending bookings")
+	}
+
 	rows, err := e.db.Query(ctx, `
 		SELECT id, customer_id, lat::float8, lng::float8, COALESCE(hex_cell_id, '')
 		FROM bookings
@@ -377,6 +420,70 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
+}
+
+// SetMapsClient attaches a Google Maps client for walking-time validation.
+// Pass nil to disable the filter (default behaviour when no API key is set).
+func (e *Engine) SetMapsClient(c *googlemaps.Client) { e.maps = c }
+
+// filterByWalkingTime removes candidates whose walking travel time to the
+// booking location exceeds 30 minutes.  It only checks the top 3 candidates
+// (the rest are already unlikely to be assigned) and runs checks in parallel
+// with a 5-second timeout so it never blocks the matching pipeline.
+// Candidates with an unavailable result (API down, no key) are kept.
+func (e *Engine) filterByWalkingTime(
+	ctx context.Context,
+	candidates []HelperCandidate,
+	destLat, destLng float64,
+) []HelperCandidate {
+	if e.maps == nil || len(candidates) == 0 {
+		return candidates
+	}
+
+	checkCount := len(candidates)
+	if checkCount > 3 {
+		checkCount = 3
+	}
+	toCheck := candidates[:checkCount]
+	rest := candidates[checkCount:]
+
+	type res struct {
+		idx     int
+		minutes int
+	}
+	ch := make(chan res, checkCount)
+
+	tCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	for i, c := range toCheck {
+		go func(i int, c HelperCandidate) {
+			mins, _ := e.maps.GetTravelMinutes(tCtx, c.Lat, c.Lng, destLat, destLng)
+			ch <- res{i, mins}
+		}(i, c)
+	}
+
+	minutesByIdx := make(map[int]int, checkCount)
+	for range toCheck {
+		r := <-ch
+		minutesByIdx[r.idx] = r.minutes
+	}
+
+	filtered := make([]HelperCandidate, 0, len(candidates))
+	for i := range toCheck {
+		mins := minutesByIdx[i]
+		toCheck[i].WalkingMinutes = mins
+		if mins == 0 || mins <= 30 {
+			filtered = append(filtered, toCheck[i])
+		} else {
+			log.Debug().
+				Str("helper_id", toCheck[i].HelperID).
+				Int("walking_minutes", mins).
+				Msg("[engine] helper filtered — walking time > 30 min")
+		}
+	}
+	filtered = append(filtered, rest...)
+	return filtered
 }
 
 // ── defaults ──────────────────────────────────────────────────────────────────

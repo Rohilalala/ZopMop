@@ -99,3 +99,16 @@ type MatchedHelper struct {
 	Lat        float64 `json:"lat,omitempty"`
 	Lng        float64 `json:"lng,omitempty"`
 }
+
+// TrackingResponse is returned by GET /bookings/:id/tracking.
+// It contains the helper's live location, the customer's location, a walking
+// ETA and an encoded Google Maps polyline for the route.
+type TrackingResponse struct {
+	HelperLat       float64 `json:"helper_lat"`
+	HelperLng       float64 `json:"helper_lng"`
+	CustomerLat     float64 `json:"customer_lat"`
+	CustomerLng     float64 `json:"customer_lng"`
+	ETAMinutes      int     `json:"eta_minutes"`
+	EncodedPolyline string  `json:"polyline"`
+	LastUpdatedAt   string  `json:"last_updated_at"` // ISO8601
+}

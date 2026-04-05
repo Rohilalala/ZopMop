@@ -17,6 +17,7 @@ import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { getIdToken } from '@react-native-firebase/auth';
 import { otpStore } from '../../utils/otpStore';
+import { useAuth } from '../../context/AuthContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'OTPVerification'>;
@@ -29,6 +30,7 @@ const RESEND_SECONDS = 60;
 export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone } = route.params;
   const confirmation = otpStore.get();
+  const { signIn } = useAuth();
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [loading, setLoading] = useState(false);
@@ -80,6 +82,11 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         }
       } catch {
         // Backend unavailable — token will be undefined, address saving is deferred.
+      }
+      // Returning pro/helper — sign in directly, skip onboarding flow.
+      if (backendToken && (backendUser?.role === 'helper' || backendUser?.role === 'pro')) {
+        signIn(backendToken, backendUser);
+        return;
       }
       // Skip name screen for returning users who already have a name.
       const hasName = backendUser?.name && backendUser.name.trim().length > 0;

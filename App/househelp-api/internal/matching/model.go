@@ -10,6 +10,7 @@ type HelperMatch struct {
 	TotalJobs      int     `json:"total_jobs"`
 	ActiveBookings int     `json:"active_bookings"`
 	Score          float64 `json:"score"`
+	WalkingMinutes int     `json:"walking_minutes,omitempty"` // from Google Maps; 0 if unavailable
 }
 
 // MatchRequest is used by callers (e.g. booking service) to request matching.
@@ -32,6 +33,7 @@ type HelperCandidate struct {
 	TotalJobs      int
 	ActiveBookings int
 	Score          float64 // filled by scorer
+	WalkingMinutes int     // filled by walking-time filter; 0 if not yet checked
 }
 
 // BatchEntry represents a pending booking request waiting in the batch queue.

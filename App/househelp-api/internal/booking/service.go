@@ -8,6 +8,7 @@ import (
 
 	"github.com/adityarohilla/househelp-api/internal/admin"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
+	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/jackc/pgx/v5"
@@ -25,7 +26,11 @@ type Service struct {
 	notifSvc     *notification.Service
 	matchBatcher *matching.Batcher  // nil-safe; only used for instant bookings
 	matchEngine  *matching.Engine   // nil-safe; used for status queries
+	maps         *googlemaps.Client // nil-safe; used for tracking ETA + polyline
 }
+
+// SetMapsClient attaches a Google Maps client for tracking and ETA.
+func (s *Service) SetMapsClient(c *googlemaps.Client) { s.maps = c }
 
 // NewService creates a new booking service.
 func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service, batcher *matching.Batcher) *Service {
@@ -210,6 +215,11 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 
 	if err := s.repo.UpdateBookingStatus(ctx, bookingID, StatusCancelled); err != nil {
 		return fmt.Errorf("failed to cancel booking: %w", err)
+	}
+
+	// Clear Redis match keys so helpers immediately stop seeing this invite.
+	if s.matchEngine != nil {
+		go s.matchEngine.ClearMatchOnAccept(context.Background(), bookingID, "")
 	}
 
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
@@ -455,16 +465,29 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 		var helper MatchedHelper
 		err := s.db.QueryRow(queryCtx,
 			`SELECT u.id, COALESCE(u.name,''), COALESCE(u.phone,''),
-			        COALESCE(h.rating,5.0),
-			        COALESCE(h.current_lat, 0), COALESCE(h.current_lng, 0)
+			        COALESCE(h.rating,5.0)
 			 FROM users u
 			 JOIN helpers h ON h.id = u.id
 			 WHERE u.id = $1`,
 			*booking.HelperID,
-		).Scan(&helper.ID, &helper.Name, &helper.Phone, &helper.Rating, &helper.Lat, &helper.Lng)
+		).Scan(&helper.ID, &helper.Name, &helper.Phone, &helper.Rating)
 		if err != nil {
 			log.Warn().Err(err).Str("helper_id", *booking.HelperID).Msg("could not fetch helper details")
 		}
+
+		// Prefer Redis GEO (updated every ~10s by WebSocket) over stale Postgres columns.
+		geoPos, geoErr := s.rdb.GeoPos(ctx, "helpers:locations", *booking.HelperID).Result()
+		if geoErr == nil && len(geoPos) > 0 && geoPos[0] != nil {
+			helper.Lat = geoPos[0].Latitude
+			helper.Lng = geoPos[0].Longitude
+		} else {
+			// Fallback to Postgres.
+			_ = s.db.QueryRow(queryCtx,
+				`SELECT COALESCE(current_lat, 0), COALESCE(current_lng, 0) FROM helpers WHERE id = $1`,
+				*booking.HelperID,
+			).Scan(&helper.Lat, &helper.Lng)
+		}
+
 		helper.ETAMinutes = 30 // default ETA; production would compute from routing
 		return &MatchStatusResponse{Status: "matched", Helper: &helper}, nil
 	}
@@ -493,6 +516,8 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 }
 
 // GetHelperInvites returns the booking IDs this helper has been invited to accept.
+// It validates each invite against Postgres and silently prunes any that are no
+// longer pending (cancelled, accepted by another helper, timed out, etc.).
 func (s *Service) GetHelperInvites(ctx context.Context, helperID string) ([]string, error) {
 	if s.matchEngine == nil {
 		return []string{}, nil
@@ -501,8 +526,131 @@ func (s *Service) GetHelperInvites(ctx context.Context, helperID string) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	if ids == nil {
-		ids = []string{}
+	if len(ids) == 0 {
+		return []string{}, nil
 	}
-	return ids, nil
+
+	validIDs := make([]string, 0, len(ids))
+	staleIDs := make([]string, 0)
+
+	for _, bookingID := range ids {
+		var status string
+		qErr := s.db.QueryRow(ctx,
+			`SELECT status FROM bookings WHERE id = $1`, bookingID,
+		).Scan(&status)
+		if qErr != nil || status != string(StatusPending) {
+			staleIDs = append(staleIDs, bookingID)
+		} else {
+			validIDs = append(validIDs, bookingID)
+		}
+	}
+
+	// Remove stale invites from Redis so they never show up again.
+	if len(staleIDs) > 0 {
+		go s.matchEngine.RemoveHelperInvites(context.Background(), helperID, staleIDs)
+	}
+
+	return validIDs, nil
+}
+
+// GetTracking returns the helper's live location, ETA and route polyline for an
+// active booking.  Both the customer and the assigned helper may call this.
+func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID string) (*TrackingResponse, error) {
+	booking, err := s.repo.GetBookingByID(ctx, bookingID, requestingUserID)
+	if err != nil {
+		return nil, err
+	}
+	if booking.Status != StatusAccepted && booking.Status != StatusInProgress {
+		return nil, fmt.Errorf("tracking not available for booking in status %s", booking.Status)
+	}
+	if booking.HelperID == nil {
+		return nil, fmt.Errorf("no helper assigned to this booking")
+	}
+
+	// Fetch helper's live location — prefer Redis GEO (updated by WebSocket every ~10s)
+	// over Postgres current_lat/lng which is only updated by REST PUT /helpers/me/location.
+	var helperLat, helperLng float64
+	geoPos, geoErr := s.rdb.GeoPos(ctx, "helpers:locations", *booking.HelperID).Result()
+	if geoErr == nil && len(geoPos) > 0 && geoPos[0] != nil {
+		helperLat = geoPos[0].Latitude
+		helperLng = geoPos[0].Longitude
+	} else {
+		// Fallback to Postgres (populated by REST PUT /helpers/me/location).
+		qCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_ = s.db.QueryRow(qCtx,
+			`SELECT COALESCE(current_lat,0), COALESCE(current_lng,0)
+			 FROM helpers WHERE id = $1`,
+			*booking.HelperID,
+		).Scan(&helperLat, &helperLng)
+	}
+
+	resp := &TrackingResponse{
+		HelperLat:     helperLat,
+		HelperLng:     helperLng,
+		CustomerLat:   booking.Lat,
+		CustomerLng:   booking.Lng,
+		LastUpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Enrich with Google Maps directions if available.
+	if s.maps != nil && helperLat != 0 && helperLng != 0 {
+		dir, dirErr := s.maps.GetDirections(ctx, helperLat, helperLng, booking.Lat, booking.Lng)
+		if dirErr == nil && dir != nil {
+			resp.ETAMinutes = dir.DurationMinutes
+			resp.EncodedPolyline = dir.EncodedPolyline
+		}
+	}
+
+	return resp, nil
+}
+
+// StartBooking transitions a booking from accepted → in_progress.
+// Only the assigned helper may call this (marks "I've arrived").
+func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
+	res, err := s.db.Exec(ctx,
+		`UPDATE bookings SET status = 'in_progress', updated_at = NOW()
+		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'`,
+		bookingID, helperID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to start booking: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("booking not found or cannot be started")
+	}
+	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
+	return nil
+}
+
+// CompleteBooking transitions a booking from in_progress → completed and
+// increments the helper's total_jobs counter.
+// Only the assigned helper may call this.
+func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
+	res, err := s.db.Exec(ctx,
+		`UPDATE bookings SET status = 'completed', updated_at = NOW()
+		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'`,
+		bookingID, helperID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to complete booking: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("booking not found or cannot be completed")
+	}
+
+	// Increment total_jobs (best-effort, non-blocking).
+	go func() {
+		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, dbErr := s.db.Exec(uCtx,
+			`UPDATE helpers SET total_jobs = total_jobs + 1 WHERE id = $1`,
+			helperID,
+		); dbErr != nil {
+			log.Warn().Err(dbErr).Str("helper_id", helperID).Msg("failed to increment total_jobs")
+		}
+	}()
+
+	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking completed")
+	return nil
 }

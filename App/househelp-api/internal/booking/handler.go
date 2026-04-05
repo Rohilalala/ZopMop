@@ -25,9 +25,12 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Get("/helper/invites", h.GetHelperInvites)
 	router.Get("/", h.GetBookings)
 	router.Get("/:id/match-status", h.GetMatchStatus)
+	router.Get("/:id/tracking", h.GetTracking)
 	router.Get("/:id", h.GetBooking)
 	router.Post("/:id/cancel", h.CancelBooking)
 	router.Post("/:id/accept", h.AcceptBooking)
+	router.Post("/:id/start", h.StartBooking)
+	router.Post("/:id/complete", h.CompleteBooking)
 }
 
 // CreateBooking handles POST /bookings.
@@ -258,4 +261,63 @@ func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"booking_ids": bookingIDs})
+}
+
+// GetTracking handles GET /bookings/:id/tracking.
+// Returns the helper's live location, walking ETA and encoded route polyline.
+// Both the customer and the assigned helper may call this.
+func (h *Handler) GetTracking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	userID, _ := c.Locals("userID").(string)
+
+	resp, err := h.service.GetTracking(c.Context(), bookingID, userID)
+	if err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get tracking")
+		status := fiber.StatusInternalServerError
+		if err.Error() == "booking not found" {
+			status = fiber.StatusNotFound
+		} else if err.Error() == "no helper assigned to this booking" ||
+			err.Error()[:38] == "tracking not available for booking in " {
+			status = fiber.StatusBadRequest
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(resp)
+}
+
+// StartBooking handles POST /bookings/:id/start.
+// Called by the helper when they arrive — transitions accepted → in_progress.
+func (h *Handler) StartBooking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	helperID, _ := c.Locals("userID").(string)
+
+	if err := h.service.StartBooking(c.Context(), bookingID, helperID); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to start booking")
+		status := fiber.StatusInternalServerError
+		if err.Error() == "booking not found or cannot be started" {
+			status = fiber.StatusBadRequest
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "booking started"})
+}
+
+// CompleteBooking handles POST /bookings/:id/complete.
+// Called by the helper when the service is done — transitions in_progress → completed.
+func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	helperID, _ := c.Locals("userID").(string)
+
+	if err := h.service.CompleteBooking(c.Context(), bookingID, helperID); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to complete booking")
+		status := fiber.StatusInternalServerError
+		if err.Error() == "booking not found or cannot be completed" {
+			status = fiber.StatusBadRequest
+		}
+		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{"message": "booking completed"})
 }

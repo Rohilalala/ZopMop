@@ -55,8 +55,11 @@ type UpdateProfileRequest struct {
 
 // OnboardProRequest is the input for POST /me/onboard-pro.
 type OnboardProRequest struct {
-	Lat float64 `json:"lat" validate:"required,min=-90,max=90"`
-	Lng float64 `json:"lng" validate:"required,min=-180,max=180"`
+	Lat          float64  `json:"lat"          validate:"required,min=-90,max=90"`
+	Lng          float64  `json:"lng"          validate:"required,min=-180,max=180"`
+	Services     []string `json:"services"`
+	Availability []string `json:"availability"`
+	Address      string   `json:"address"      validate:"max=500"`
 }
 
 // UpdateFCMTokenRequest is the input for PUT /me/fcm-token

@@ -55,11 +55,11 @@ func (r *Repository) GetBookingInviteDetails(ctx context.Context, bookingIDs []s
 	rows, err := r.db.Query(ctx,
 		`SELECT
 		   b.id,
-		   COALESCE(u.name, 'Customer')     AS customer_name,
-		   COALESCE(a.full_address, '')     AS address,
-		   COALESCE(a.lat,  0.0)            AS lat,
-		   COALESCE(a.lon,  0.0)            AS lng,
-		   COALESCE(b.total_duration_minutes, 0) AS total_minutes,
+		   COALESCE(u.name, 'Customer')              AS customer_name,
+		   COALESCE(a.full_address, b.address, '')   AS address,
+		   COALESCE(a.lat,  b.lat,  0.0)             AS lat,
+		   COALESCE(a.lon,  b.lng,  0.0)             AS lng,
+		   COALESCE(b.total_duration_minutes, 0)     AS total_minutes,
 		   b.price_cents,
 		   b.created_at
 		 FROM bookings b

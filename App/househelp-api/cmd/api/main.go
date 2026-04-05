@@ -16,6 +16,7 @@ import (
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/content"
+	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	helpermod "github.com/adityarohilla/househelp-api/internal/helper"
 	"github.com/adityarohilla/househelp-api/internal/location"
 	"github.com/adityarohilla/househelp-api/internal/matching"
@@ -126,9 +127,20 @@ func main() {
 	matchBatcher.Start()
 	defer matchBatcher.Stop()
 
+	// Google Maps client (optional — gracefully skipped if key not set).
+	var mapsClient *googlemaps.Client
+	if mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY"); mapsAPIKey != "" {
+		mapsClient = googlemaps.NewClient(mapsAPIKey, rdb)
+		log.Info().Msg("Google Maps client initialised")
+	} else {
+		log.Warn().Msg("GOOGLE_MAPS_API_KEY not set — walking-time filter and live ETA disabled")
+	}
+	matchEngine.SetMapsClient(mapsClient)
+
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
+	bookingService.SetMapsClient(mapsClient)
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.

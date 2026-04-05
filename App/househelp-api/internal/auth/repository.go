@@ -116,7 +116,7 @@ func (r *Repository) UpdateUser(ctx context.Context, userID, name string) (*User
 }
 
 // OnboardPro updates a user's role to 'pro' and inserts them into the helpers table.
-func (r *Repository) OnboardPro(ctx context.Context, userID string, lat, lng float64) (*User, error) {
+func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*User, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin tx: %w", err)
@@ -138,13 +138,16 @@ func (r *Repository) OnboardPro(ctx context.Context, userID string, lat, lng flo
 
 	// Insert into helpers table ensuring idempotency
 	_, err = tx.Exec(ctx,
-		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available)
-		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false)
+		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available, services, availability, address)
+		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false, $6, $7, $8)
 		 ON CONFLICT (id) DO UPDATE SET
-		   current_lat = EXCLUDED.current_lat,
-		   current_lng = EXCLUDED.current_lng,
-		   location = EXCLUDED.location`,
-		userID, lat, lng, lng, lat,
+		   current_lat   = EXCLUDED.current_lat,
+		   current_lng   = EXCLUDED.current_lng,
+		   location      = EXCLUDED.location,
+		   services      = EXCLUDED.services,
+		   availability  = EXCLUDED.availability,
+		   address       = EXCLUDED.address`,
+		userID, req.Lat, req.Lng, req.Lng, req.Lat, req.Services, req.Availability, req.Address,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert helper record: %w", err)

@@ -149,6 +149,7 @@ func (b *Batcher) processBatch() {
 				Msg("[batcher] failed to fetch candidates")
 			continue
 		}
+		candidates = b.engine.filterByWalkingTime(ctx, candidates, entry.Lat, entry.Lng)
 		candidatesByBooking[entry.BookingID] = candidates
 	}
 

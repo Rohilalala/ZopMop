@@ -95,6 +95,7 @@ func ToHelperMatches(cs []HelperCandidate, limit int) []HelperMatch {
 			TotalJobs:      c.TotalJobs,
 			ActiveBookings: c.ActiveBookings,
 			Score:          c.Score,
+			WalkingMinutes: c.WalkingMinutes,
 		}
 	}
 	return out
