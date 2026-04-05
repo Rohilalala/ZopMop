@@ -39,6 +39,18 @@ export interface HelperInvite {
   booking_id: string;
 }
 
+export interface HelperInviteDetail {
+  booking_id: string;
+  customer_name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  services: string[];
+  total_minutes: number;
+  price_cents: number;
+  created_at: string;
+}
+
 // ── Instant Booking (Customer) ────────────────────────────────────────────────
 
 /**
@@ -103,6 +115,21 @@ export async function getHelperInvites(token: string): Promise<string[]> {
 }
 
 /**
+ * GET /helpers/me/invites — gets full invite details (address, lat, lng, services, etc.)
+ * for all pending bookings this helper has been matched to.
+ * Use this instead of getHelperInvites + getBookingDetails to avoid IDOR failures
+ * on pending bookings where helper_id is still NULL.
+ */
+export async function getHelperInvitesWithDetails(token: string): Promise<HelperInviteDetail[]> {
+  const res = await apiFetch(`${BASE_URL}/helpers/me/invites`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error('Failed to fetch invites');
+  const data = await res.json();
+  return (data.invites ?? []) as HelperInviteDetail[];
+}
+
+/**
  * GET /bookings/:id — gets a specific booking's full details (including customer address).
  */
 export async function getBookingDetails(token: string, bookingId: string) {
@@ -124,6 +151,64 @@ export async function acceptBooking(token: string, bookingId: string): Promise<v
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error ?? 'Failed to accept booking');
+  }
+}
+
+// ── Tracking (both sides) ─────────────────────────────────────────────────────
+
+export interface TrackingResponse {
+  helper_lat: number;
+  helper_lng: number;
+  customer_lat: number;
+  customer_lng: number;
+  eta_minutes: number;
+  polyline: string;
+  last_updated_at: string;
+}
+
+/**
+ * GET /bookings/:id/tracking — returns helper live location, ETA and route polyline.
+ * Both customer and helper can call this while status is accepted/in_progress.
+ */
+export async function getBookingTracking(
+  token: string,
+  bookingId: string,
+): Promise<TrackingResponse> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/tracking`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to get tracking');
+  }
+  return res.json() as Promise<TrackingResponse>;
+}
+
+/**
+ * POST /bookings/:id/start — helper marks arrival (accepted → in_progress).
+ */
+export async function startBooking(token: string, bookingId: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/start`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to start booking');
+  }
+}
+
+/**
+ * POST /bookings/:id/complete — helper marks service done (in_progress → completed).
+ */
+export async function completeBooking(token: string, bookingId: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/complete`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to complete booking');
   }
 }
 

@@ -9,18 +9,16 @@ import {
   Linking,
   Alert,
   ActivityIndicator,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { acceptBooking } from '../../api/matching';
 
-const { width: W } = Dimensions.get('window');
 
 type Props = {
   route: RouteProp<MainStackParamList, 'ProMatched'>;
@@ -57,14 +55,12 @@ export default function ProMatchedScreen({ route }: Props) {
     setAccepting(true);
     try {
       await acceptBooking(token, bookingId);
-      navigation.replace('ActiveBooking', {
+      navigation.replace('ProActive', {
         bookingId,
         serviceName: serviceName ?? 'Home Service',
-        helperName: customerAddress,
-        helperRating: 0,
-        helperLat: customerLat,
-        helperLng: customerLng,
-        etaMinutes: 30,
+        customerAddress,
+        customerLat,
+        customerLng,
       });
     } catch (err: any) {
       Alert.alert('Could not accept', err?.message ?? 'Please try again.');

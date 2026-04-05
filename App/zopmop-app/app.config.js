@@ -12,4 +12,14 @@ module.exports = ({ config }) => ({
       googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
     },
   },
+  android: {
+    ...config.android,
+    config: {
+      ...config.android?.config,
+      // Injects Google Maps API key into AndroidManifest (required by react-native-maps)
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
+      },
+    },
+  },
 });

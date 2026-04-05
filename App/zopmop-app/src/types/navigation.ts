@@ -54,6 +54,13 @@ export type MainStackParamList = {
     customerLng: number;
     distanceKm?: number;
   };
+  ProActive: {
+    bookingId: string;
+    serviceName?: string;
+    customerAddress: string;
+    customerLat: number;
+    customerLng: number;
+  };
 };
 
 export type RootStackParamList = {

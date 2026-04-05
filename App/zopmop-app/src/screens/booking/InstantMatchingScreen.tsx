@@ -55,6 +55,8 @@ export default function InstantMatchingScreen({ route }: Props) {
 
   const bookingIdRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const matchedRef = useRef(false);
 
   // -- Bounce dots animation
   useEffect(() => {
@@ -93,12 +95,25 @@ export default function InstantMatchingScreen({ route }: Props) {
         duration: MATCH_DURATION,
         easing: Easing.bezier(0.4, 0, 0.2, 1),
         useNativeDriver: false,
-      }).start(({ finished }) => {
-        // Bar completed — if still searching, show busy
-        if (finished && !cancelled && screenState === 'searching') {
-          setScreenState('busy');
+      }).start();
+
+      // Hard stop at exactly 30 s — kill polling, cancel the booking, show busy.
+      timeoutRef.current = setTimeout(() => {
+        if (cancelled || matchedRef.current) return;
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        progress.stopAnimation();
+        // Cancel the booking so the backend stops re-queueing it and
+        // helpers' invite sets are cleaned up immediately.
+        const bid = bookingIdRef.current;
+        if (bid && token && token !== '__guest__') {
+          const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+          fetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          }).catch(() => {/* best-effort — batcher will auto-expire it anyway */});
         }
-      });
+        setScreenState('busy');
+      }, MATCH_DURATION);
 
       // 2. Create the instant booking with a dummy address (we use user's stored location)
       if (!token || token === '__guest__') {
@@ -143,7 +158,9 @@ export default function InstantMatchingScreen({ route }: Props) {
         try {
           const status = await getMatchStatus(token, bookingId);
           if (status.status === 'matched' && status.helper) {
-            if (pollRef.current) clearInterval(pollRef.current);
+            matchedRef.current = true;
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
             progress.stopAnimation();
             // Flash the bar green
             Animated.sequence([
@@ -176,7 +193,8 @@ export default function InstantMatchingScreen({ route }: Props) {
     run();
     return () => {
       cancelled = true;
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
     };
   }, []);
 

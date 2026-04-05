@@ -15,6 +15,7 @@ import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
 import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
+import ProActiveScreen from '../screens/pro/ProActiveScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -94,6 +95,11 @@ export default function MainNavigator() {
           name="ProMatched"
           component={ProMatchedScreen}
           options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="ProActive"
+          component={ProActiveScreen}
+          options={{ animation: 'fade', gestureEnabled: false }}
         />
       </Stack.Navigator>
     </CartProvider>

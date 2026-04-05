@@ -1,67 +1,129 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
-  Animated,
-  Linking,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import type { Region } from 'react-native-maps';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
+import polyline from '@mapbox/polyline';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useAuth } from '../../context/AuthContext';
+import { getBookingTracking, type TrackingResponse } from '../../api/matching';
+import { apiFetch } from '../../api/client';
 
-const ARRIVAL_MINUTES = 30;
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+
+const MAP_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
+  { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#6b7280' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e5e7eb' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#eef2ff' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#818cf8' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#ccfbf1' }] },
+];
 
 type Props = {
   route: RouteProp<MainStackParamList, 'ActiveBooking'>;
 };
 
+type BookingStatus = 'accepted' | 'in_progress' | 'completed' | 'cancelled';
+
 export default function ActiveBookingScreen({ route }: Props) {
-  const { bookingId, serviceName, helperName, helperRating, helperLat, helperLng, etaMinutes } =
+  const { bookingId, serviceName, helperName, helperRating, helperLat: initialHelperLat, helperLng: initialHelperLng } =
     route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const { token } = useAuth();
 
-  const totalSeconds = (etaMinutes ?? ARRIVAL_MINUTES) * 60;
-  const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mapRef = useRef<MapView>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fittedRef = useRef(false);
 
-  // Countdown
-  useEffect(() => {
-    timerRef.current = setInterval(() => {
-      setSecondsLeft(s => {
-        if (s <= 1) { clearInterval(timerRef.current!); return 0; }
-        return s - 1;
-      });
-    }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+  const [tracking, setTracking] = useState<TrackingResponse | null>(null);
+  const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+  const [bookingStatus, setBookingStatus] = useState<BookingStatus>('accepted');
+  const [loading, setLoading] = useState(true);
 
-  // Pulse ring for the pro icon
-  const ring = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(ring, { toValue: 1.25, duration: 900, useNativeDriver: true }),
-        Animated.timing(ring, { toValue: 1, duration: 900, useNativeDriver: true }),
-      ]),
-    ).start();
-  }, []);
-
-  function openMaps() {
-    if (!helperLat || !helperLng) {
-      Alert.alert('No location', 'Pro location not yet available.');
-      return;
+  // Decode polyline string → coordinate array
+  function decodePolyline(encoded: string) {
+    if (!encoded) return [];
+    try {
+      return polyline.decode(encoded).map(([lat, lng]) => ({ latitude: lat, longitude: lng }));
+    } catch {
+      return [];
     }
-    Linking.openURL(`https://maps.google.com/?q=${helperLat},${helperLng}`).catch(() =>
-      Alert.alert('Could not open Maps'),
+  }
+
+  // Fit map to show both markers
+  function fitMap(helperLat: number, helperLng: number, custLat: number, custLng: number) {
+    if (!mapRef.current) return;
+    mapRef.current.fitToCoordinates(
+      [
+        { latitude: helperLat, longitude: helperLng },
+        { latitude: custLat, longitude: custLng },
+      ],
+      { edgePadding: { top: 80, right: 60, bottom: 320, left: 60 }, animated: true },
     );
   }
+
+  const fetchTracking = useCallback(async () => {
+    if (!token || token === '__guest__') return;
+    try {
+      const data = await getBookingTracking(token, bookingId);
+      setTracking(data);
+      const coords = decodePolyline(data.polyline);
+      setRouteCoords(coords);
+      setLoading(false);
+
+      if (!fittedRef.current && data.helper_lat && data.helper_lng) {
+        fittedRef.current = true;
+        fitMap(data.helper_lat, data.helper_lng, data.customer_lat, data.customer_lng);
+      }
+    } catch {
+      setLoading(false);
+      // Tracking may not yet be available (booking just accepted) — keep polling
+    }
+  }, [token, bookingId]);
+
+  // Poll booking status to detect in_progress / completed
+  const fetchStatus = useCallback(async () => {
+    if (!token || token === '__guest__') return;
+    try {
+      const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBookingStatus(data.status as BookingStatus);
+        if (data.status === 'completed' || data.status === 'cancelled') {
+          if (pollRef.current) clearInterval(pollRef.current);
+        }
+      }
+    } catch { /* silently keep polling */ }
+  }, [token, bookingId]);
+
+  useEffect(() => {
+    fetchTracking();
+    fetchStatus();
+    pollRef.current = setInterval(() => {
+      fetchTracking();
+      fetchStatus();
+    }, 10000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [fetchTracking, fetchStatus]);
 
   function handleCancel() {
     Alert.alert(
@@ -69,227 +131,261 @@ export default function ActiveBookingScreen({ route }: Props) {
       'Are you sure you want to cancel? Cancellation fees may apply.',
       [
         { text: 'Keep Booking', style: 'cancel' },
-        { text: 'Cancel Booking', style: 'destructive', onPress: () => navigation.goBack() },
+        {
+          text: 'Cancel Booking',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await apiFetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+              });
+            } catch { /* best effort */ }
+            navigation.goBack();
+          },
+        },
       ],
     );
   }
 
-  // Format mm:ss
-  const mins = Math.floor(secondsLeft / 60).toString().padStart(2, '0');
-  const secs = (secondsLeft % 60).toString().padStart(2, '0');
-  const arrived = secondsLeft === 0;
+  const helperLat = tracking?.helper_lat ?? initialHelperLat ?? 0;
+  const helperLng = tracking?.helper_lng ?? initialHelperLng ?? 0;
+  const custLat = tracking?.customer_lat ?? 0;
+  const custLng = tracking?.customer_lng ?? 0;
+  const eta = tracking?.eta_minutes ?? 0;
+  const arrived = bookingStatus === 'in_progress' || bookingStatus === 'completed';
 
-  // Progress of countdown (1 → 0 as timer runs)
-  const timerProgress = secondsLeft / totalSeconds;
-  const progressColor = timerProgress > 0.4 ? Colors.success : timerProgress > 0.15 ? Colors.warning : Colors.danger;
+  // Center the map: prefer midpoint between helper and customer, then either
+  // individually, then fall back to Gurugram HQ so the map is never blank.
+  const centerLat = helperLat && custLat ? (helperLat + custLat) / 2
+    : helperLat || custLat || 28.4357;
+  const centerLng = helperLng && custLng ? (helperLng + custLng) / 2
+    : helperLng || custLng || 77.0763;
+
+  const initialRegion: Region = {
+    latitude: centerLat,
+    longitude: centerLng,
+    latitudeDelta: 0.04,
+    longitudeDelta: 0.04,
+  };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={s.content} bounces={false}>
+    <View style={s.container}>
+      {/* Full-screen map */}
+      <MapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFillObject}
+        provider={PROVIDER_GOOGLE}
+        customMapStyle={MAP_STYLE}
+        initialRegion={initialRegion}
+        showsUserLocation={false}
+        showsMyLocationButton={false}
+      >
+        {/* Helper marker */}
+        {helperLat !== 0 && helperLng !== 0 && (
+          <Marker coordinate={{ latitude: helperLat, longitude: helperLng }} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={s.helperMarker}>
+              <Text style={s.markerEmoji}>🚶</Text>
+            </View>
+          </Marker>
+        )}
 
-        {/* Header */}
-        <View style={s.headerRow}>
-          <View style={[s.statusBadge, arrived ? s.statusBadgeArrived : s.statusBadgeActive]}>
-            <View style={[s.statusDot, { backgroundColor: arrived ? Colors.success : Colors.primary }]} />
-            <Text style={[s.statusText, { color: arrived ? Colors.success : Colors.primary }]}>
-              {arrived ? 'Pro has arrived!' : 'Booking Active'}
-            </Text>
-          </View>
-          <Text style={s.bookingId}>#{bookingId.slice(0, 8).toUpperCase()}</Text>
+        {/* Customer (destination) marker */}
+        {custLat !== 0 && custLng !== 0 && (
+          <Marker coordinate={{ latitude: custLat, longitude: custLng }} anchor={{ x: 0.5, y: 1.0 }}>
+            <View style={s.customerMarker}>
+              <Text style={s.markerEmoji}>🏠</Text>
+            </View>
+          </Marker>
+        )}
+
+        {/* Route polyline */}
+        {routeCoords.length > 1 && (
+          <Polyline
+            coordinates={routeCoords}
+            strokeColor={Colors.primary}
+            strokeWidth={4}
+            lineDashPattern={undefined}
+          />
+        )}
+      </MapView>
+
+      {/* Loading overlay */}
+      {loading && (
+        <View style={s.loadingOverlay}>
+          <ActivityIndicator size="large" color={Colors.primary} />
         </View>
+      )}
 
-        {/* Countdown */}
-        <View style={s.timerCard}>
-          <View style={[s.timerBg]}>
-            <View style={[s.timerBgCircle, s.timerBgC1]} />
-            <View style={[s.timerBgCircle, s.timerBgC2]} />
-          </View>
-
-          {arrived ? (
-            <Text style={s.arrivedEmoji}>🎉</Text>
-          ) : (
-            <Animated.View style={[s.proRing, { transform: [{ scale: ring }], borderColor: `${Colors.white}33` }]} />
-          )}
-
-          <Text style={s.timerLabel}>
-            {arrived ? 'Your pro is here!' : 'Pro arrives in'}
+      {/* Status badge top-left */}
+      <SafeAreaView style={s.topBadgeWrap} edges={['top']}>
+        <View style={[s.statusBadge, arrived ? s.badgeArrived : s.badgeActive]}>
+          <View style={[s.statusDot, { backgroundColor: arrived ? Colors.success : Colors.primary }]} />
+          <Text style={[s.statusText, { color: arrived ? Colors.success : Colors.primary }]}>
+            {bookingStatus === 'completed' ? 'Service Complete' : arrived ? 'Pro has arrived!' : 'Pro on the way'}
           </Text>
-          {!arrived && (
-            <Text style={s.timerValue}>{mins}:{secs}</Text>
-          )}
-
-          {/* Mini progress bar */}
-          {!arrived && (
-            <View style={s.timerBar}>
-              <View style={[s.timerBarFill, { width: `${timerProgress * 100}%`, backgroundColor: progressColor }]} />
-            </View>
-          )}
-
-          <Text style={s.timerSub}>
-            {arrived ? 'Open the door and say hi! ✌️' : 'Please be ready at your location'}
-          </Text>
         </View>
+      </SafeAreaView>
 
-        {/* Pro details card */}
-        <View style={s.proCard}>
-          <Text style={s.proCardHeading}>Your Pro</Text>
-          <View style={s.proRow}>
-            <View style={s.proAvatar}>
-              <Text style={s.proAvatarText}>
-                {helperName?.charAt(0).toUpperCase() ?? '?'}
-              </Text>
-            </View>
-            <View style={s.proInfo}>
-              <Text style={s.proName}>{helperName}</Text>
-              <View style={s.proRatingRow}>
-                <Text style={s.proRatingStar}>⭐</Text>
-                <Text style={s.proRatingValue}>{helperRating?.toFixed(1)}</Text>
-                <Text style={s.proRatingLabel}> rating</Text>
-              </View>
-            </View>
-            <View style={s.proRight}>
-              <Text style={s.proService}>{serviceName}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Maps & status */}
-        <TouchableOpacity style={s.mapsBtn} activeOpacity={0.85} onPress={openMaps}>
-          <Text style={s.mapsBtnIcon}>🗺️</Text>
+      {/* Bottom sheet */}
+      <View style={s.sheet}>
+        {/* ETA row */}
+        <View style={s.etaRow}>
           <View>
-            <Text style={s.mapsBtnTitle}>Track on Google Maps</Text>
-            <Text style={s.mapsBtnSub}>See your pro's live location</Text>
+            <Text style={s.etaLabel}>
+              {arrived ? 'Pro is at your location' : eta > 0 ? `🚶 ${eta} min away` : 'Locating your pro…'}
+            </Text>
+            <Text style={s.bookingRef}>Booking #{bookingId.slice(0, 8).toUpperCase()}</Text>
           </View>
-          <Text style={s.mapsBtnArrow}>→</Text>
-        </TouchableOpacity>
-
-        <View style={s.statusCard}>
-          <StatusStep done icon="✅" label="Booking confirmed" />
-          <StatusStep done={!arrived} active={!arrived} icon="🚗" label="Pro on the way" />
-          <StatusStep icon="🏠" label="Pro arrives" active={arrived} done={arrived} />
-          <StatusStep icon="✨" label="Service complete" />
+          <View style={s.etaBadge}>
+            <Text style={s.etaBadgeText}>{serviceName}</Text>
+          </View>
         </View>
 
-        {/* Cancel */}
-        {!arrived && (
+        {/* Pro card */}
+        <View style={s.proRow}>
+          <View style={s.proAvatar}>
+            <Text style={s.proAvatarText}>{helperName?.charAt(0).toUpperCase() ?? '?'}</Text>
+          </View>
+          <View style={s.proInfo}>
+            <Text style={s.proName}>{helperName}</Text>
+            <Text style={s.proRating}>⭐ {helperRating?.toFixed(1)}</Text>
+          </View>
+        </View>
+
+        {/* Status steps */}
+        <View style={s.stepsRow}>
+          <Step done label="Confirmed" />
+          <View style={[s.stepLine, (!arrived) && s.stepLineActive]} />
+          <Step done={arrived} active={!arrived} label="On the way" />
+          <View style={[s.stepLine, arrived && s.stepLineActive]} />
+          <Step done={bookingStatus === 'completed'} active={arrived && bookingStatus !== 'completed'} label="Arrived" />
+          <View style={s.stepLine} />
+          <Step done={bookingStatus === 'completed'} label="Done" />
+        </View>
+
+        {/* Cancel button — only while still accepted */}
+        {bookingStatus === 'accepted' && (
           <TouchableOpacity style={s.cancelBtn} activeOpacity={0.75} onPress={handleCancel}>
             <Text style={s.cancelBtnText}>Cancel Booking</Text>
           </TouchableOpacity>
         )}
-      </ScrollView>
-    </SafeAreaView>
+      </View>
+    </View>
   );
 }
 
-function StatusStep({ icon, label, done, active }: { icon: string; label: string; done?: boolean; active?: boolean }) {
+function Step({ label, done, active }: { label: string; done?: boolean; active?: boolean }) {
   return (
-    <View style={s.statusStep}>
-      <View style={[s.statusStepIcon, done && s.statusStepIconDone, active && !done && s.statusStepIconActive]}>
-        <Text style={{ fontSize: done ? 16 : 13, opacity: done || active ? 1 : 0.35 }}>{icon}</Text>
-      </View>
-      <Text style={[s.statusStepLabel, (done || active) && s.statusStepLabelActive]}>{label}</Text>
+    <View style={s.stepItem}>
+      <View style={[s.stepDot, done && s.stepDotDone, active && !done && s.stepDotActive]} />
+      <Text style={[s.stepLabel, (done || active) && s.stepLabelActive]}>{label}</Text>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  content: { padding: 20, paddingBottom: 40, gap: 16 },
+  container: { flex: 1, backgroundColor: Colors.background },
 
-  headerRow: {
-    flexDirection: 'row',
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.6)',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+  },
+
+  topBadgeWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    alignSelf: 'flex-start',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: Radius.full,
     borderWidth: 1,
-  },
-  statusBadgeActive: { borderColor: `${Colors.primary}44`, backgroundColor: Colors.primaryBg },
-  statusBadgeArrived: { borderColor: `${Colors.success}44`, backgroundColor: Colors.successBg },
-  statusDot: { width: 8, height: 8, borderRadius: Radius.full },
-  statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm },
-  bookingId: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
-
-  // Timer card
-  timerCard: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius['2xl'],
-    padding: 32,
-    alignItems: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-    gap: 8,
-  },
-  timerBg: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  timerBgCircle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: Colors.white },
-  timerBgC1: { width: 180, height: 180, opacity: 0.05, top: -70, right: -50 },
-  timerBgC2: { width: 100, height: 100, opacity: 0.04, bottom: -30, left: 40 },
-  proRing: {
-    position: 'absolute',
-    top: 24,
-    width: 60,
-    height: 60,
-    borderRadius: Radius.full,
-    borderWidth: 2,
-  },
-  arrivedEmoji: { fontSize: 52, marginBottom: 8 },
-  timerLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: 'rgba(255,255,255,0.75)',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: 4,
-  },
-  timerValue: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: 68,
-    color: Colors.white,
-    letterSpacing: -2,
-    lineHeight: 76,
-  },
-  timerBar: {
-    width: '85%',
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: Radius.full,
-    overflow: 'hidden',
-    marginTop: 4,
-  },
-  timerBarFill: { height: '100%', borderRadius: Radius.full },
-  timerSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: 'rgba(255,255,255,0.65)',
-    marginTop: 6,
-    textAlign: 'center',
-  },
-
-  // Pro card
-  proCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
     ...Shadow.sm,
   },
-  proCardHeading: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.textMuted,
-    marginBottom: 14,
+  badgeActive: { borderColor: `${Colors.primary}44`, backgroundColor: Colors.white },
+  badgeArrived: { borderColor: `${Colors.success}44`, backgroundColor: Colors.white },
+  statusDot: { width: 8, height: 8, borderRadius: Radius.full },
+  statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm },
+
+  // Markers
+  helperMarker: {
+    backgroundColor: Colors.white,
+    borderRadius: 20,
+    padding: 6,
+    borderWidth: 2,
+    borderColor: Colors.accent,
+    ...Shadow.sm,
   },
+  customerMarker: {
+    backgroundColor: Colors.white,
+    borderRadius: 20,
+    padding: 6,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    ...Shadow.sm,
+  },
+  markerEmoji: { fontSize: 22 },
+
+  // Bottom sheet
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.white,
+    borderTopLeftRadius: Radius['2xl'],
+    borderTopRightRadius: Radius['2xl'],
+    padding: 24,
+    paddingBottom: 36,
+    gap: 16,
+    ...Shadow.lg,
+  },
+
+  etaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  etaLabel: {
+    fontFamily: FontFamily.bold,
+    fontSize: FontSize.lg,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  bookingRef: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textMuted,
+  },
+  etaBadge: {
+    backgroundColor: Colors.primaryBg,
+    borderRadius: Radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: `${Colors.primary}33`,
+  },
+  etaBadgeText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+  },
+
   proRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   proAvatar: {
-    width: 56,
-    height: 56,
+    width: 48,
+    height: 48,
     borderRadius: Radius.full,
     backgroundColor: Colors.primaryBg,
     alignItems: 'center',
@@ -297,79 +393,47 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: `${Colors.primary}22`,
   },
-  proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: Colors.primary },
+  proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: Colors.primary },
   proInfo: { flex: 1 },
-  proName: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    marginBottom: 4,
-  },
-  proRatingRow: { flexDirection: 'row', alignItems: 'center' },
-  proRatingStar: { fontSize: FontSize.sm },
-  proRatingValue: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text, marginLeft: 2 },
-  proRatingLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
-  proRight: { alignItems: 'flex-end' },
-  proService: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: Colors.primary },
+  proName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text, marginBottom: 2 },
+  proRating: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
 
-  // Maps button
-  mapsBtn: {
+  stepsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.accent,
-    padding: 18,
-    gap: 14,
-    ...Shadow.sm,
+    justifyContent: 'space-between',
   },
-  mapsBtnIcon: { fontSize: 30 },
-  mapsBtnTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.accent, marginBottom: 2 },
-  mapsBtnSub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
-  mapsBtnArrow: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.accent, marginLeft: 'auto' },
-
-  // Status steps
-  statusCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 16,
-    ...Shadow.sm,
-  },
-  statusStep: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  statusStepIcon: {
-    width: 36,
-    height: 36,
+  stepItem: { alignItems: 'center', gap: 4, flex: 0 },
+  stepDot: {
+    width: 12,
+    height: 12,
     borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
+    backgroundColor: Colors.border,
+    borderWidth: 1.5,
     borderColor: Colors.border,
   },
-  statusStepIconDone: { backgroundColor: Colors.successBg, borderColor: `${Colors.success}44` },
-  statusStepIconActive: { backgroundColor: Colors.primaryBg, borderColor: `${Colors.primary}44` },
-  statusStepLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
+  stepDotDone: { backgroundColor: Colors.success, borderColor: Colors.success },
+  stepDotActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  stepLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: 10,
     color: Colors.textMuted,
   },
-  statusStepLabelActive: { color: Colors.text },
+  stepLabelActive: { color: Colors.text, fontFamily: FontFamily.semibold },
+  stepLine: { flex: 1, height: 2, backgroundColor: Colors.border, marginBottom: 14 },
+  stepLineActive: { backgroundColor: Colors.primary },
 
   cancelBtn: {
     alignSelf: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.danger,
   },
   cancelBtnText: {
     fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
+    fontSize: FontSize.sm,
     color: Colors.danger,
   },
 });

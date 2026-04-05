@@ -15,17 +15,42 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
-import { getHelperInvites, getBookingDetails } from '../../api/matching';
+import { getHelperInvitesWithDetails } from '../../api/matching';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
-
-type Props = {};
 
 export default function ProDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token, user, signOut } = useAuth();
+
+  // On mount: if there's an active booking already (e.g. app resumed), go straight to ProActive.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    (async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/bookings?status=upcoming`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const bookings: any[] = data.bookings ?? [];
+        const active = bookings.find(
+          b => b.status === 'accepted' || b.status === 'in_progress',
+        );
+        if (active) {
+          navigation.replace('ProActive', {
+            bookingId: active.id,
+            serviceName: undefined,
+            customerAddress: active.address ?? 'Customer Location',
+            customerLat: active.lat ?? 0,
+            customerLng: active.lng ?? 0,
+          });
+        }
+      } catch { /* silently ignore — not critical */ }
+    })();
+  }, [token]);
 
   const [isOnline, setIsOnline] = useState(false);
   const [checkingInvites, setCheckingInvites] = useState(false);
@@ -57,31 +82,22 @@ export default function ProDashboardScreen() {
     if (navigatingToBookingRef.current) return;
     setCheckingInvites(true);
     try {
-      const ids = await getHelperInvites(token);
+      const invites = await getHelperInvitesWithDetails(token);
       setLastChecked(new Date());
-      setInviteCount(ids.length);
-      if (ids.length > 0 && !navigatingToBookingRef.current) {
+      setInviteCount(invites.length);
+      if (invites.length > 0 && !navigatingToBookingRef.current) {
         navigatingToBookingRef.current = true;
         // Stop poll immediately so we don't navigate again on the next tick.
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-        const bookingId = ids[0];
-        try {
-          const booking = await getBookingDetails(token, bookingId);
-          navigation.navigate('ProMatched', {
-            bookingId,
-            serviceName: booking.service_category_id ? 'Home Service' : undefined,
-            customerAddress: booking.address ?? 'Customer Location',
-            customerLat: booking.lat ?? 0,
-            customerLng: booking.lng ?? 0,
-          });
-        } catch {
-          navigation.navigate('ProMatched', {
-            bookingId,
-            customerAddress: 'Customer Location',
-            customerLat: 0,
-            customerLng: 0,
-          });
-        }
+        const invite = invites[0];
+        const bookingId = invite.booking_id.trim();
+        navigation.navigate('ProMatched', {
+          bookingId,
+          serviceName: invite.services?.[0] ?? 'Home Service',
+          customerAddress: invite.address || 'Customer Location',
+          customerLat: invite.lat,
+          customerLng: invite.lng,
+        });
       }
     } catch {
       // silently fail — retry on next cycle

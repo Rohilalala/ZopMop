@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  TextInput,
   ActivityIndicator,
   Animated,
   Alert,
@@ -15,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
@@ -24,16 +23,19 @@ import { useAuth } from '../../context/AuthContext';
 
 const { width: W } = Dimensions.get('window');
 
-// All services a pro can offer
-const ALL_SERVICES = [
-  { id: 'sweep', emoji: '🧹', label: 'Sweeping & Mopping' },
-  { id: 'bathroom', emoji: '🚿', label: 'Bathroom Cleaning' },
-  { id: 'utensils', emoji: '🍽️', label: 'Utensils / Dishes' },
-  { id: 'dusting', emoji: '🧽', label: 'Dusting & Wiping' },
-  { id: 'kitchen', emoji: '🔪', label: 'Kitchen Prep' },
-  { id: 'laundry', emoji: '👕', label: 'Laundry & Folding' },
-  { id: 'ironing', emoji: '🏠', label: 'Ironing' },
+const SERVICES = [
+  { id: 'cleaning', emoji: '🏠', label: 'Home Cleaning' },
+  { id: 'kitchen', emoji: '🍳', label: 'Kitchen Work' },
+  { id: 'laundry', emoji: '👕', label: 'Laundry & Ironing' },
+  { id: 'petcare', emoji: '🐾', label: 'Pet Care' },
   { id: 'gardening', emoji: '🌿', label: 'Gardening' },
+  { id: 'carclean', emoji: '🚗', label: 'Car Cleaning' },
+];
+
+const AVAILABILITY_SLOTS = [
+  { id: 'morning', label: 'Morning', time: '6am – 12pm' },
+  { id: 'afternoon', label: 'Afternoon', time: '12pm – 5pm' },
+  { id: 'evening', label: 'Evening', time: '5pm – 10pm' },
 ];
 
 const TOTAL_STEPS = 4;
@@ -48,23 +50,29 @@ export default function ProOnboardingScreen({ route }: Props) {
   const { signIn } = useAuth();
 
   const [step, setStep] = useState(1);
-  const [bio, setBio] = useState('');
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [locationText, setLocationText] = useState('');
+  const [address, setAddress] = useState('');
   const [gpsLat, setGpsLat] = useState<number | null>(null);
   const [gpsLng, setGpsLng] = useState<number | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  // Progress bar animation
-  const progressAnim = useRef(new Animated.Value(1 / TOTAL_STEPS)).current;
+  // Step dot animation
+  const dotAnims = useRef(
+    Array.from({ length: TOTAL_STEPS }, (_, i) =>
+      new Animated.Value(i === 0 ? 1 : 0)
+    )
+  ).current;
 
   useEffect(() => {
-    Animated.timing(progressAnim, {
-      toValue: step / TOTAL_STEPS,
-      duration: 350,
-      useNativeDriver: false,
-    }).start();
+    dotAnims.forEach((anim, i) => {
+      Animated.timing(anim, {
+        toValue: i < step ? 1 : 0,
+        duration: 250,
+        useNativeDriver: false,
+      }).start();
+    });
   }, [step]);
 
   // ── GPS ────────────────────────────────────────────────────────────────────
@@ -73,40 +81,44 @@ export default function ProOnboardingScreen({ route }: Props) {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please allow location access to auto-fill your area.');
+        Alert.alert(
+          'Location needed',
+          'Please allow location access so we can match you with nearby customers.'
+        );
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
       setGpsLat(pos.coords.latitude);
       setGpsLng(pos.coords.longitude);
 
-      // Reverse geocode to get a readable address
       const [place] = await Location.reverseGeocodeAsync({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
       });
       if (place) {
         const parts = [place.name, place.district, place.city].filter(Boolean);
-        setLocationText(parts.join(', '));
+        setAddress(parts.join(', '));
       }
-    } catch (e) {
-      Alert.alert('Could not detect location', 'Enter your service area manually.');
+    } catch {
+      Alert.alert('Could not detect location', 'Please try again or contact support.');
     } finally {
       setGpsLoading(false);
     }
   }
 
-  // ── Go Live ────────────────────────────────────────────────────────────────
+  // ── Submit ─────────────────────────────────────────────────────────────────
   async function handleGoLive() {
     if (submitting) return;
     setSubmitting(true);
     try {
       if (!backendToken) {
-        Alert.alert('Connection Error', 'Cannot connect to backend server. Ensure EXPO_PUBLIC_API_URL uses your Mac IP, not localhost when on a real device.');
+        Alert.alert('Connection Error', 'Cannot reach the server. Check your network and try again.');
         return;
       }
       if (!gpsLat || !gpsLng) {
-        Alert.alert('Missing Location', 'Please capture your GPS location.');
+        Alert.alert('Location required', 'Please detect your location first.');
         return;
       }
       const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
@@ -114,54 +126,59 @@ export default function ProOnboardingScreen({ route }: Props) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${backendToken}`,
+          Authorization: `Bearer ${backendToken}`,
         },
         body: JSON.stringify({
           lat: gpsLat,
           lng: gpsLng,
-        })
+          services: selectedServices,
+          availability: selectedSlots,
+          address,
+        }),
       });
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`Failed to onboard (HTTP ${res.status}): ${text}`);
+        throw new Error(`Onboarding failed (HTTP ${res.status}): ${text}`);
       }
 
       const data = await res.json();
 
-      // Push location to Redis + set is_available=true so matching engine can find this pro.
+      // Push GPS to Redis so matching engine can find this pro immediately.
       await fetch(`${BASE_URL}/helpers/me/location`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${data.token}`,
+          Authorization: `Bearer ${data.token}`,
         },
         body: JSON.stringify({ lat: gpsLat, lng: gpsLng }),
       });
 
-      // data.token and data.user contain the upgraded profile
       signIn(data.token, data.user);
     } catch (err: any) {
-      Alert.alert('Error Details', err.message || 'Network fetch failed completely.');
+      Alert.alert('Something went wrong', err.message ?? 'Please try again.');
     } finally {
       setSubmitting(false);
     }
   }
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
+  // ── Step navigation ────────────────────────────────────────────────────────
   function nextStep() {
     if (step === 1) {
-      // No validation needed for bio
+      if (selectedServices.length === 0) {
+        Alert.alert('Pick a service', 'Select at least one service you can do.');
+        return;
+      }
       setStep(2);
     } else if (step === 2) {
-      if (selectedServices.length === 0) {
-        Alert.alert('Select services', 'Please pick at least one service you offer.');
+      if (!gpsLat || !gpsLng) {
+        Alert.alert('Location needed', 'Tap "Use my location" to capture your GPS.');
         return;
       }
       setStep(3);
     } else if (step === 3) {
-      if (!locationText.trim()) {
-        Alert.alert('Add your area', 'Please enter or detect your service area.');
+      if (selectedSlots.length === 0) {
+        Alert.alert('Pick availability', 'Select at least one time slot.');
         return;
       }
       setStep(4);
@@ -170,7 +187,13 @@ export default function ProOnboardingScreen({ route }: Props) {
 
   function toggleService(id: string) {
     setSelectedServices(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id],
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  }
+
+  function toggleSlot(id: string) {
+    setSelectedSlots(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
   }
 
@@ -180,166 +203,197 @@ export default function ProOnboardingScreen({ route }: Props) {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Header */}
+        {/* ── Header ── */}
         <View style={s.header}>
-          {step > 1 && (
-            <TouchableOpacity style={s.backBtn} onPress={() => setStep(s => s - 1)} activeOpacity={0.7}>
-              <Text style={s.backBtnText}>←</Text>
+          {step > 1 && step < 4 && (
+            <TouchableOpacity
+              style={s.backBtn}
+              onPress={() => setStep(step - 1)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={s.backArrow}>‹</Text>
             </TouchableOpacity>
           )}
-          <View style={{ flex: 1 }}>
-            <Text style={s.stepLabel}>Step {step} of {TOTAL_STEPS}</Text>
-            <Animated.View style={[s.progressTrack]}>
+          <View style={s.dotsRow}>
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
               <Animated.View
-                style={[s.progressFill, {
-                  width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-                }]}
+                key={i}
+                style={[
+                  s.dot,
+                  {
+                    backgroundColor: dotAnims[i].interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [Colors.border, Colors.primary],
+                    }),
+                    width: dotAnims[i].interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [8, 24],
+                    }),
+                  },
+                ]}
               />
-            </Animated.View>
+            ))}
           </View>
         </View>
 
-        <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={s.scroll}
+          contentContainerStyle={s.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
 
-          {/* ── Step 1: Bio ─────────────────────────────────────────────────── */}
+          {/* ── Step 1: Services ───────────────────────────────────────────── */}
           {step === 1 && (
             <View style={s.stepContainer}>
-              <Text style={s.stepEmoji}>👋</Text>
-              <Text style={s.stepTitle}>Hey, tell us about yourself</Text>
-              <Text style={s.stepSub}>
-                A short intro helps customers feel comfortable booking you.
-              </Text>
-              <View style={s.inputCard}>
-                <TextInput
-                  style={s.bioInput}
-                  placeholder="I'm an experienced cleaner with 3+ years…"
-                  placeholderTextColor={Colors.textMuted}
-                  value={bio}
-                  onChangeText={setBio}
-                  multiline
-                  numberOfLines={5}
-                  maxLength={250}
-                  textAlignVertical="top"
-                />
-                <Text style={s.charCount}>{bio.length}/250</Text>
-              </View>
-            </View>
-          )}
-
-          {/* ── Step 2: Services ────────────────────────────────────────────── */}
-          {step === 2 && (
-            <View style={s.stepContainer}>
-              <Text style={s.stepEmoji}>🛠️</Text>
               <Text style={s.stepTitle}>What can you do?</Text>
-              <Text style={s.stepSub}>Select all the services you are comfortable performing.</Text>
+              <Text style={s.stepSub}>Pick all services you are comfortable with.</Text>
+
               <View style={s.serviceGrid}>
-                {ALL_SERVICES.map(svc => {
+                {SERVICES.map(svc => {
                   const selected = selectedServices.includes(svc.id);
                   return (
                     <TouchableOpacity
                       key={svc.id}
-                      style={[s.serviceChip, selected && s.serviceChipSelected]}
-                      activeOpacity={0.8}
+                      style={[s.serviceCard, selected && s.serviceCardSelected]}
+                      activeOpacity={0.85}
                       onPress={() => toggleService(svc.id)}
                     >
-                      <Text style={s.serviceChipEmoji}>{svc.emoji}</Text>
-                      <Text style={[s.serviceChipLabel, selected && s.serviceChipLabelSelected]}>
+                      {selected && <View style={s.checkBadge}><Text style={s.checkMark}>✓</Text></View>}
+                      <Text style={s.serviceEmoji}>{svc.emoji}</Text>
+                      <Text style={[s.serviceLabel, selected && s.serviceLabelSelected]}>
                         {svc.label}
                       </Text>
-                      {selected && <Text style={s.serviceChipCheck}>✓</Text>}
                     </TouchableOpacity>
                   );
                 })}
               </View>
-              <Text style={s.selectedCount}>
-                {selectedServices.length} service{selectedServices.length !== 1 ? 's' : ''} selected
-              </Text>
+
+              {selectedServices.length > 0 && (
+                <Text style={s.selectionHint}>
+                  {selectedServices.length} service{selectedServices.length !== 1 ? 's' : ''} selected
+                </Text>
+              )}
             </View>
           )}
 
-          {/* ── Step 3: Location ────────────────────────────────────────────── */}
-          {step === 3 && (
+          {/* ── Step 2: Location ───────────────────────────────────────────── */}
+          {step === 2 && (
             <View style={s.stepContainer}>
-              <Text style={s.stepEmoji}>📍</Text>
               <Text style={s.stepTitle}>Where do you work?</Text>
               <Text style={s.stepSub}>
-                We match you with customers near your location. Your exact GPS is used for matching — only your area name is shown to customers.
+                We use your location to match you with nearby customers.
               </Text>
 
               <TouchableOpacity
-                style={[s.gpsButton, gpsLoading && s.gpsButtonLoading]}
+                style={[s.locationBtn, gpsLoading && s.locationBtnLoading, gpsLat != null && s.locationBtnDone]}
                 activeOpacity={0.85}
                 onPress={handleDetectLocation}
                 disabled={gpsLoading}
               >
-                {gpsLoading
-                  ? <ActivityIndicator size="small" color={Colors.white} />
-                  : <Text style={s.gpsButtonText}>📡  Detect My Location</Text>
-                }
+                {gpsLoading ? (
+                  <ActivityIndicator size="small" color={Colors.white} />
+                ) : gpsLat != null ? (
+                  <Text style={s.locationBtnText}>✓  Location captured</Text>
+                ) : (
+                  <Text style={s.locationBtnText}>📍  Use my location</Text>
+                )}
               </TouchableOpacity>
 
-              {gpsLat != null && (
-                <View style={s.gpsBadge}>
-                  <Text style={s.gpsBadgeText}>✅  GPS captured</Text>
+              {address ? (
+                <View style={s.addressBadge}>
+                  <Text style={s.addressBadgeText}>{address}</Text>
                 </View>
-              )}
+              ) : null}
 
-              <Text style={s.orText}>— or type your area —</Text>
-
-              <View style={s.inputCard}>
-                <TextInput
-                  style={s.locationInput}
-                  placeholder="e.g. Sector 51, Gurugram"
-                  placeholderTextColor={Colors.textMuted}
-                  value={locationText}
-                  onChangeText={setLocationText}
-                />
-              </View>
-            </View>
-          )}
-
-          {/* ── Step 4: Review & Go Live ─────────────────────────────────────── */}
-          {step === 4 && (
-            <View style={s.stepContainer}>
-              <Text style={s.stepEmoji}>🚀</Text>
-              <Text style={s.stepTitle}>You're all set!</Text>
-              <Text style={s.stepSub}>
-                Review your profile and hit Go Live to start receiving bookings.
+              <Text style={s.locationNote}>
+                Your exact location is only used for matching — customers only see your area name.
               </Text>
+            </View>
+          )}
 
-              <View style={s.reviewCard}>
-                <ReviewRow label="Services" value={selectedServices.length + ' selected'} />
-                <ReviewRow label="Area" value={locationText || '—'} />
-                <ReviewRow label="GPS" value={gpsLat != null ? `${gpsLat.toFixed(4)}, ${gpsLng?.toFixed(4)}` : 'Not captured'} />
-                {bio ? <ReviewRow label="Bio" value={bio} multiline /> : null}
-              </View>
+          {/* ── Step 3: Availability ───────────────────────────────────────── */}
+          {step === 3 && (
+            <View style={s.stepContainer}>
+              <Text style={s.stepTitle}>When can you work?</Text>
+              <Text style={s.stepSub}>Select all time slots that work for you.</Text>
 
-              <View style={s.infoBox}>
-                <Text style={s.infoText}>
-                  🔔  Once live, you'll receive notifications when a nearby customer needs your service. Accept to confirm.
-                </Text>
+              <View style={s.slotsRow}>
+                {AVAILABILITY_SLOTS.map(slot => {
+                  const active = selectedSlots.includes(slot.id);
+                  return (
+                    <TouchableOpacity
+                      key={slot.id}
+                      style={[s.slotPill, active && s.slotPillActive]}
+                      activeOpacity={0.85}
+                      onPress={() => toggleSlot(slot.id)}
+                    >
+                      <Text style={[s.slotLabel, active && s.slotLabelActive]}>{slot.label}</Text>
+                      <Text style={[s.slotTime, active && s.slotTimeActive]}>{slot.time}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
           )}
+
+          {/* ── Step 4: Completion ─────────────────────────────────────────── */}
+          {step === 4 && (
+            <View style={[s.stepContainer, s.completionContainer]}>
+              <View style={s.successIcon}>
+                <Text style={s.successEmoji}>🎉</Text>
+              </View>
+              <Text style={s.completionTitle}>You're all set!</Text>
+              <Text style={s.completionSub}>You are ready to start working</Text>
+
+              <View style={s.summaryCard}>
+                <SummaryRow
+                  label="Services"
+                  value={selectedServices
+                    .map(id => SERVICES.find(s => s.id === id)?.label ?? id)
+                    .join(', ')}
+                />
+                <SummaryRow
+                  label="Available"
+                  value={selectedSlots
+                    .map(id => AVAILABILITY_SLOTS.find(s => s.id === id)?.label ?? id)
+                    .join(', ')}
+                />
+                {address ? <SummaryRow label="Area" value={address} /> : null}
+              </View>
+            </View>
+          )}
+
         </ScrollView>
 
-        {/* CTA Button */}
+        {/* ── CTA ── */}
         <View style={s.ctaWrap}>
           {step < 4 ? (
-            <TouchableOpacity style={s.ctaBtn} activeOpacity={0.88} onPress={nextStep}>
-              <Text style={s.ctaBtnText}>Continue  →</Text>
+            <TouchableOpacity
+              style={[
+                s.ctaBtn,
+                step === 1 && selectedServices.length === 0 && s.ctaBtnDisabled,
+                step === 2 && !gpsLat && s.ctaBtnDisabled,
+                step === 3 && selectedSlots.length === 0 && s.ctaBtnDisabled,
+              ]}
+              activeOpacity={0.88}
+              onPress={nextStep}
+            >
+              <Text style={s.ctaBtnText}>Continue</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={[s.ctaBtn, s.ctaBtnGreen]}
+              style={[s.ctaBtn, s.ctaBtnGo, submitting && s.ctaBtnDisabled]}
               activeOpacity={0.88}
               onPress={handleGoLive}
               disabled={submitting}
             >
-              {submitting
-                ? <ActivityIndicator color={Colors.white} />
-                : <Text style={s.ctaBtnText}>⚡  Go Live</Text>
-              }
+              {submitting ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <Text style={s.ctaBtnText}>Start Working</Text>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -348,33 +402,35 @@ export default function ProOnboardingScreen({ route }: Props) {
   );
 }
 
-// ── Review Row ────────────────────────────────────────────────────────────────
-function ReviewRow({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <View style={s.reviewRow}>
-      <Text style={s.reviewLabel}>{label}</Text>
-      <Text style={[s.reviewValue, multiline && { flex: 1 }]} numberOfLines={multiline ? 3 : 1}>{value}</Text>
+    <View style={s.summaryRow}>
+      <Text style={s.summaryLabel}>{label}</Text>
+      <Text style={s.summaryValue}>{value}</Text>
     </View>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+const CARD_SIZE = (W - Spacing['2xl'] * 2 - Spacing.md) / 2;
+
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 24 },
+  scrollContent: { paddingBottom: Spacing.xl },
 
+  // ── Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
-    gap: 12,
+    paddingHorizontal: Spacing['2xl'],
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.base,
+    gap: Spacing.md,
+    minHeight: 56,
   },
   backBtn: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: Radius.full,
     backgroundColor: Colors.surface,
     alignItems: 'center',
@@ -382,190 +438,236 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  backBtnText: { fontSize: 20, color: Colors.text },
-  stepLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    marginBottom: 8,
+  backArrow: {
+    fontSize: 28,
+    color: Colors.text,
+    lineHeight: 32,
+    marginTop: -2,
   },
-  progressTrack: {
-    height: 6,
-    backgroundColor: Colors.border,
-    borderRadius: Radius.full,
-    overflow: 'hidden',
+  dotsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: Colors.primary,
+  dot: {
+    height: 8,
     borderRadius: Radius.full,
   },
 
-  stepContainer: { paddingHorizontal: 24, paddingTop: 20 },
-  stepEmoji: { fontSize: 52, marginBottom: 16 },
+  // ── Step content
+  stepContainer: {
+    paddingHorizontal: Spacing['2xl'],
+    paddingTop: Spacing.lg,
+  },
   stepTitle: {
     fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['2xl'],
+    fontSize: FontSize['3xl'],
     color: Colors.text,
     letterSpacing: -0.5,
-    marginBottom: 10,
+    marginBottom: Spacing.sm,
   },
   stepSub: {
     fontFamily: FontFamily.regular,
     fontSize: FontSize.base,
     color: Colors.textSecondary,
-    lineHeight: 24,
-    marginBottom: 28,
+    lineHeight: FontSize.base * 1.6,
+    marginBottom: Spacing['2xl'],
   },
 
-  inputCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    padding: 16,
-    ...Shadow.sm,
-  },
-  bioInput: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    minHeight: 110,
-  },
-  charCount: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-    textAlign: 'right',
-    marginTop: 8,
-  },
-  locationInput: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    height: 48,
-  },
-
+  // ── Service grid
   serviceGrid: {
-    gap: 10,
-  },
-  serviceChip: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.md,
+  },
+  serviceCard: {
+    width: CARD_SIZE,
+    aspectRatio: 1,
     backgroundColor: Colors.white,
     borderRadius: Radius.xl,
     borderWidth: 1.5,
     borderColor: Colors.border,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
     ...Shadow.sm,
   },
-  serviceChipSelected: {
+  serviceCardSelected: {
     borderColor: Colors.primary,
+    borderWidth: 2,
     backgroundColor: Colors.primaryBg,
+    ...Shadow.md,
   },
-  serviceChipEmoji: { fontSize: 26 },
-  serviceChipLabel: {
-    flex: 1,
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
-    color: Colors.text,
+  checkBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 22,
+    height: 22,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  serviceChipLabelSelected: { color: Colors.primary },
-  serviceChipCheck: {
+  checkMark: {
     fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.primary,
+    fontSize: FontSize.sm,
+    color: Colors.white,
   },
-  selectedCount: {
+  serviceEmoji: { fontSize: 40 },
+  serviceLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.xs,
+  },
+  serviceLabelSelected: { color: Colors.primary },
+  selectionHint: {
     fontFamily: FontFamily.medium,
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     textAlign: 'center',
-    marginTop: 16,
+    marginTop: Spacing.base,
   },
 
-  gpsButton: {
+  // ── Location
+  locationBtn: {
     backgroundColor: Colors.primary,
     borderRadius: Radius.xl,
-    paddingVertical: 18,
+    paddingVertical: 20,
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: Spacing.base,
     ...Shadow.md,
   },
-  gpsButtonLoading: { opacity: 0.75 },
-  gpsButtonText: {
+  locationBtnLoading: { opacity: 0.75 },
+  locationBtnDone: { backgroundColor: Colors.success },
+  locationBtnText: {
     fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
+    fontSize: FontSize.md,
     color: Colors.white,
   },
-  gpsBadge: {
+  addressBadge: {
     backgroundColor: Colors.successBg,
-    borderRadius: Radius.full,
-    alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginBottom: 12,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.base,
+    alignItems: 'center',
   },
-  gpsBadgeText: {
+  addressBadgeText: {
     fontFamily: FontFamily.medium,
     fontSize: FontSize.sm,
     color: Colors.success,
+    textAlign: 'center',
   },
-  orText: {
+  locationNote: {
     fontFamily: FontFamily.regular,
     fontSize: FontSize.sm,
     color: Colors.textMuted,
     textAlign: 'center',
-    marginVertical: 16,
+    lineHeight: FontSize.sm * 1.7,
+    marginTop: Spacing.sm,
   },
 
-  reviewCard: {
+  // ── Availability pills
+  slotsRow: {
+    gap: Spacing.md,
+  },
+  slotPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.white,
+    borderRadius: Radius.xl,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    paddingVertical: Spacing.base,
+    paddingHorizontal: Spacing.lg,
+    ...Shadow.sm,
+  },
+  slotPillActive: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
+    backgroundColor: Colors.primaryBg,
+  },
+  slotLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  slotLabelActive: { color: Colors.primary },
+  slotTime: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textMuted,
+  },
+  slotTimeActive: { color: Colors.primary },
+
+  // ── Completion
+  completionContainer: {
+    alignItems: 'center',
+    paddingTop: Spacing['4xl'],
+  },
+  successIcon: {
+    width: 100,
+    height: 100,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.successBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.xl,
+    ...Shadow.md,
+  },
+  successEmoji: { fontSize: 52 },
+  completionTitle: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: FontSize['3xl'],
+    color: Colors.text,
+    letterSpacing: -0.5,
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  completionSub: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.base,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: Spacing['2xl'],
+  },
+  summaryCard: {
+    width: '100%',
     backgroundColor: Colors.white,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.border,
-    padding: 20,
-    gap: 16,
+    padding: Spacing.lg,
+    gap: Spacing.md,
     ...Shadow.sm,
-    marginBottom: 20,
   },
-  reviewRow: {
+  summaryRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    gap: Spacing.md,
   },
-  reviewLabel: {
+  summaryLabel: {
     fontFamily: FontFamily.semibold,
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     width: 70,
   },
-  reviewValue: {
+  summaryValue: {
     fontFamily: FontFamily.medium,
     fontSize: FontSize.sm,
     color: Colors.text,
     flex: 1,
   },
-  infoBox: {
-    backgroundColor: Colors.primaryBg,
-    borderRadius: Radius.xl,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: `${Colors.primary}22`,
-  },
-  infoText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.primary,
-    lineHeight: 22,
-  },
 
+  // ── CTA
   ctaWrap: {
-    paddingHorizontal: 24,
-    paddingBottom: 16,
-    paddingTop: 12,
+    paddingHorizontal: Spacing['2xl'],
+    paddingBottom: Spacing.xl,
+    paddingTop: Spacing.md,
     backgroundColor: Colors.background,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
@@ -577,7 +679,8 @@ const s = StyleSheet.create({
     alignItems: 'center',
     ...Shadow.md,
   },
-  ctaBtnGreen: { backgroundColor: Colors.success },
+  ctaBtnDisabled: { opacity: 0.45 },
+  ctaBtnGo: { backgroundColor: Colors.success },
   ctaBtnText: {
     fontFamily: FontFamily.bold,
     fontSize: FontSize.lg,
