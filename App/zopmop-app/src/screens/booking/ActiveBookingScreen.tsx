@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
@@ -50,12 +50,18 @@ export default function ActiveBookingScreen({ route }: Props) {
 
   const mapRef = useRef<MapView>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const animTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fittedRef = useRef(false);
+  const helperMarkerPos = useRef({ lat: initialHelperLat ?? 0, lng: initialHelperLng ?? 0 });
 
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [bookingStatus, setBookingStatus] = useState<BookingStatus>('accepted');
   const [loading, setLoading] = useState(true);
+  const [markerCoord, setMarkerCoord] = useState({
+    latitude: initialHelperLat ?? 0,
+    longitude: initialHelperLng ?? 0,
+  });
 
   // Decode polyline string → coordinate array
   function decodePolyline(encoded: string) {
@@ -79,6 +85,24 @@ export default function ActiveBookingScreen({ route }: Props) {
     );
   }
 
+  function startSmoothMove(fromLat: number, fromLng: number, toLat: number, toLng: number) {
+    if (animTickRef.current) clearInterval(animTickRef.current);
+    const duration = 10000; // 10 s to match push cadence
+    const startTime = Date.now();
+    animTickRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      setMarkerCoord({
+        latitude: fromLat + (toLat - fromLat) * t,
+        longitude: fromLng + (toLng - fromLng) * t,
+      });
+      if (t >= 1) {
+        clearInterval(animTickRef.current!);
+        animTickRef.current = null;
+      }
+    }, 100);
+  }
+
   const fetchTracking = useCallback(async () => {
     if (!token || token === '__guest__') return;
     try {
@@ -88,9 +112,19 @@ export default function ActiveBookingScreen({ route }: Props) {
       setRouteCoords(coords);
       setLoading(false);
 
-      if (!fittedRef.current && data.helper_lat && data.helper_lng) {
-        fittedRef.current = true;
-        fitMap(data.helper_lat, data.helper_lng, data.customer_lat, data.customer_lng);
+      if (data.helper_lat && data.helper_lng) {
+        const prev = helperMarkerPos.current;
+        const newLat = data.helper_lat;
+        const newLng = data.helper_lng;
+        const moved = Math.abs(newLat - prev.lat) > 0.000001 || Math.abs(newLng - prev.lng) > 0.000001;
+        if (moved) {
+          startSmoothMove(prev.lat || newLat, prev.lng || newLng, newLat, newLng);
+          helperMarkerPos.current = { lat: newLat, lng: newLng };
+        }
+        if (!fittedRef.current) {
+          fittedRef.current = true;
+          fitMap(newLat, newLng, data.customer_lat, data.customer_lng);
+        }
       }
     } catch {
       setLoading(false);
@@ -122,7 +156,10 @@ export default function ActiveBookingScreen({ route }: Props) {
       fetchTracking();
       fetchStatus();
     }, 10000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (animTickRef.current) clearInterval(animTickRef.current);
+    };
   }, [fetchTracking, fetchStatus]);
 
   function handleCancel() {
@@ -182,8 +219,8 @@ export default function ActiveBookingScreen({ route }: Props) {
         showsMyLocationButton={false}
       >
         {/* Helper marker */}
-        {helperLat !== 0 && helperLng !== 0 && (
-          <Marker coordinate={{ latitude: helperLat, longitude: helperLng }} anchor={{ x: 0.5, y: 0.5 }}>
+        {markerCoord.latitude !== 0 && markerCoord.longitude !== 0 && (
+          <Marker coordinate={markerCoord} anchor={{ x: 0.5, y: 0.5 }}>
             <View style={s.helperMarker}>
               <Text style={s.markerEmoji}>🚶</Text>
             </View>

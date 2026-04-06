@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Easing,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -57,6 +58,14 @@ export default function InstantMatchingScreen({ route }: Props) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchedRef = useRef(false);
+  const userCancelledRef = useRef(false);
+  const matchedHelperRef = useRef<{
+    name: string;
+    rating: number;
+    lat: number;
+    lng: number;
+    eta_minutes: number;
+  } | null>(null);
 
   // -- Bounce dots animation
   useEffect(() => {
@@ -159,6 +168,13 @@ export default function InstantMatchingScreen({ route }: Props) {
           const status = await getMatchStatus(token, bookingId);
           if (status.status === 'matched' && status.helper) {
             matchedRef.current = true;
+            matchedHelperRef.current = {
+              name: status.helper.name || 'Your Pro',
+              rating: status.helper.rating,
+              lat: status.helper.lat ?? 0,
+              lng: status.helper.lng ?? 0,
+              eta_minutes: status.helper.eta_minutes,
+            };
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
             progress.stopAnimation();
@@ -167,18 +183,20 @@ export default function InstantMatchingScreen({ route }: Props) {
               Animated.timing(flash, { toValue: 1, duration: 300, useNativeDriver: false }),
             ]).start();
             setTimeout(() => {
-              if (!cancelled) {
+              if (!cancelled && !userCancelledRef.current) {
                 setScreenState('matched');
                 setTimeout(() => {
-                  navigation.replace('ActiveBooking', {
-                    bookingId: bookingId!,
-                    serviceName,
-                    helperName: status.helper!.name || 'Your Pro',
-                    helperRating: status.helper!.rating,
-                    helperLat: status.helper!.lat,
-                    helperLng: status.helper!.lng,
-                    etaMinutes: status.helper!.eta_minutes,
-                  });
+                  if (!cancelled && !userCancelledRef.current) {
+                    navigation.replace('ActiveBooking', {
+                      bookingId: bookingId!,
+                      serviceName,
+                      helperName: status.helper!.name || 'Your Pro',
+                      helperRating: status.helper!.rating,
+                      helperLat: status.helper!.lat,
+                      helperLng: status.helper!.lng,
+                      etaMinutes: status.helper!.eta_minutes,
+                    });
+                  }
                 }, 1200);
               }
             }, 400);
@@ -197,6 +215,51 @@ export default function InstantMatchingScreen({ route }: Props) {
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
     };
   }, []);
+
+  const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+
+  function handleCancel() {
+    const helper = matchedHelperRef.current;
+    const bookingId = bookingIdRef.current;
+
+    if (matchedRef.current && helper && bookingId) {
+      Alert.alert(
+        'Pro Already Assigned',
+        'One of our pros has accepted your request. Are you sure you still want to cancel?',
+        [
+          {
+            text: 'No, Continue Booking',
+            style: 'cancel',
+            onPress: () => {
+              navigation.replace('ActiveBooking', {
+                bookingId,
+                serviceName,
+                helperName: helper.name,
+                helperRating: helper.rating,
+                helperLat: helper.lat,
+                helperLng: helper.lng,
+                etaMinutes: helper.eta_minutes,
+              });
+            },
+          },
+          {
+            text: 'Yes, Cancel',
+            style: 'destructive',
+            onPress: () => {
+              userCancelledRef.current = true;
+              fetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              }).catch(() => {});
+              navigation.goBack();
+            },
+          },
+        ],
+      );
+    } else {
+      navigation.goBack();
+    }
+  }
 
   const progressWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const progressColor = flash.interpolate({ inputRange: [0, 1], outputRange: [Colors.primary, Colors.success] });
@@ -245,7 +308,7 @@ export default function InstantMatchingScreen({ route }: Props) {
         <Text style={s.progressHint}>Usually takes less than 30 seconds</Text>
 
         {/* Cancel */}
-        <TouchableOpacity style={s.cancelBtn} activeOpacity={0.7} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={s.cancelBtn} activeOpacity={0.7} onPress={handleCancel}>
           <Text style={s.cancelText}>Cancel</Text>
         </TouchableOpacity>
       </View>

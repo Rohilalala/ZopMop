@@ -12,8 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import * as Location from 'expo-location';
-import type { LocationSubscription } from 'expo-location';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
@@ -27,6 +26,8 @@ import {
   getLocationWsUrl,
   type TrackingResponse,
 } from '../../api/matching';
+
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
@@ -46,18 +47,21 @@ type Props = {
   route: RouteProp<MainStackParamList, 'ProActive'>;
 };
 
-type BookingStatus = 'accepted' | 'in_progress' | 'completed';
+type BookingStatus = 'accepted' | 'in_progress' | 'completed' | 'cancelled';
 
 export default function ProActiveScreen({ route }: Props) {
-  const { bookingId: bookingIdRaw, serviceName, customerAddress, customerLat, customerLng } = route.params;
-  const bookingId = bookingIdRaw.trim();
+  const { bookingId: bookingIdRaw, customerAddress, customerLat, customerLng } = route.params;
+  const bookingId = bookingIdRaw.replace(/\s/g, '');
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
 
   const mapRef = useRef<MapView>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const locationWatcherRef = useRef<LocationSubscription | null>(null);
+  // Interval that pushes raw GPS coords to Redis every 10 s (no Google Maps involved).
+  const locationPushRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelledAlertShownRef = useRef(false);
   const fittedRef = useRef(false);
 
   const [proLat, setProLat] = useState<number>(0);
@@ -88,62 +92,69 @@ export default function ProActiveScreen({ route }: Props) {
     );
   }
 
-  // ── WebSocket location streaming ──────────────────────────────────────────
+  // ── WebSocket (real-time path, best-effort) ───────────────────────────────
   function connectWs() {
     if (!token || token === '__guest__') return;
     try {
       const ws = new WebSocket(getLocationWsUrl(token));
       wsRef.current = ws;
-      ws.onopen = () => {
-        // Send first location immediately on connect
-        sendCurrentLocation(ws);
-      };
-      ws.onerror = () => {
-        // Silently ignore — REST heartbeat in ProDashboard keeps Redis alive
-      };
-      ws.onclose = () => {
-        wsRef.current = null;
-      };
-    } catch {
-      // WebSocket not supported; fallback to REST via location watcher only
-    }
+      ws.onerror = () => { /* silent — REST fallback handles it */ };
+      ws.onclose = () => { wsRef.current = null; };
+    } catch { /* WS not available */ }
   }
 
-  function sendCurrentLocation(ws: WebSocket) {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      .then(pos => {
-        const { latitude, longitude } = pos.coords;
-        setProLat(latitude);
-        setProLng(longitude);
-        ws.send(JSON.stringify({ lat: latitude, lng: longitude }));
-      })
-      .catch(() => {});
-  }
-
-  // ── Start GPS watcher (streams every ~10s) ────────────────────────────────
-  async function startLocationWatch() {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return;
-
-    locationWatcherRef.current = await Location.watchPositionAsync(
-      {
+  // ── Core location push — raw GPS → Redis, no Google Maps ─────────────────
+  // Called on a hard 10-second interval so it's reliable on the simulator and
+  // on real devices regardless of OS-level location batching.
+  async function pushCurrentLocation() {
+    try {
+      const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
-        timeInterval: 10000,
-        distanceInterval: 20,
-      },
-      pos => {
-        const { latitude, longitude } = pos.coords;
-        setProLat(latitude);
-        setProLng(longitude);
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ lat: latitude, lng: longitude }));
-        }
-      },
-    );
+      });
+      const { latitude, longitude } = pos.coords;
+      setProLat(latitude);
+      setProLng(longitude);
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        // Fast path: WebSocket writes straight to Redis GEO in the location service.
+        wsRef.current.send(JSON.stringify({ lat: latitude, lng: longitude }));
+      } else {
+        // Fallback: REST PUT /helpers/me/location also writes to Redis GEO + Postgres.
+        fetch(`${BASE_URL}/helpers/me/location`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ lat: latitude, lng: longitude }),
+        }).catch(() => {});
+      }
+    } catch { /* GPS unavailable — skip this tick */ }
   }
 
-  // ── Fetch tracking (for route polyline + ETA, from pro's perspective) ─────
+  // ── Poll booking status — detect customer cancellation ───────────────────
+  const fetchStatus = useCallback(async () => {
+    if (!token || token === '__guest__') return;
+    try {
+      const res = await fetch(`${BASE_URL}/bookings/${bookingId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'cancelled' && !cancelledAlertShownRef.current) {
+          cancelledAlertShownRef.current = true;
+          if (statusPollRef.current) clearInterval(statusPollRef.current);
+          Alert.alert(
+            'Booking Cancelled',
+            'The customer has cancelled this booking.',
+            [{ text: 'OK', onPress: () => navigation.replace('ProDashboard') }],
+            { cancelable: false },
+          );
+        } else {
+          setBookingStatus(data.status as BookingStatus);
+        }
+      }
+    } catch { /* silently keep polling */ }
+  }, [token, bookingId, navigation]);
+
+  // ── Fetch tracking (route polyline + ETA from Google Maps, pro's view) ────
   const fetchTracking = useCallback(async () => {
     if (!token || token === '__guest__') return;
     try {
@@ -163,16 +174,29 @@ export default function ProActiveScreen({ route }: Props) {
   }, [token, bookingId, customerLat, customerLng]);
 
   useEffect(() => {
-    connectWs();
-    startLocationWatch();
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      connectWs();
+
+      // Push location immediately, then every 10 s.
+      pushCurrentLocation();
+      locationPushRef.current = setInterval(pushCurrentLocation, 10000);
+    })();
+
     fetchTracking();
-    // Refresh route every 30s (less frequent than customer — pro is moving)
+    fetchStatus();
+    // Refresh route polyline every 30 s (Google Maps call — kept as-is).
     trackingPollRef.current = setInterval(fetchTracking, 30000);
+    // Poll booking status every 5 s to catch customer cancellations quickly.
+    statusPollRef.current = setInterval(fetchStatus, 5000);
 
     return () => {
       wsRef.current?.close();
-      locationWatcherRef.current?.remove();
+      if (locationPushRef.current) clearInterval(locationPushRef.current);
       if (trackingPollRef.current) clearInterval(trackingPollRef.current);
+      if (statusPollRef.current) clearInterval(statusPollRef.current);
     };
   }, []);
 
@@ -269,7 +293,7 @@ export default function ProActiveScreen({ route }: Props) {
           </Marker>
         )}
 
-        {/* Route polyline */}
+        {/* Route polyline (from Google Maps directions) */}
         {routeCoords.length > 1 && (
           <Polyline
             coordinates={routeCoords}
@@ -285,7 +309,7 @@ export default function ProActiveScreen({ route }: Props) {
         </View>
       )}
 
-      {/* Status chip top */}
+      {/* Status chip */}
       <SafeAreaView style={s.topWrap} edges={['top']}>
         <View style={s.topChip}>
           <Text style={s.topChipText}>
@@ -296,18 +320,15 @@ export default function ProActiveScreen({ route }: Props) {
 
       {/* Bottom action bar */}
       <View style={s.bottomBar}>
-        {/* Address */}
         <View style={s.addressRow}>
           <Text style={s.addressLabel}>Customer location</Text>
           <Text style={s.addressText} numberOfLines={2}>{customerAddress}</Text>
         </View>
 
-        {/* Navigation button */}
         <TouchableOpacity style={s.navBtn} activeOpacity={0.85} onPress={openNavigation}>
           <Text style={s.navBtnText}>🗺️  Open Navigation</Text>
         </TouchableOpacity>
 
-        {/* Primary action button */}
         {bookingStatus === 'accepted' && (
           <TouchableOpacity
             style={[s.actionBtn, s.arriveBtn, actionLoading && s.btnDisabled]}

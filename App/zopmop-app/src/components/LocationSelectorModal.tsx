@@ -14,13 +14,15 @@ import {
   Dimensions,
   Platform,
   Keyboard,
+  Alert,
 } from 'react-native';
 import * as Location from 'expo-location';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../theme';
 import { useAuth } from '../context/AuthContext';
-import { listAddresses, createAddress, type ApiAddress } from '../api/addresses';
+import { listAddresses, createAddress, deleteAddress, type ApiAddress } from '../api/addresses';
+import EditAddressModal from './EditAddressModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PANEL_WIDTH = SCREEN_WIDTH * 0.92;
@@ -112,6 +114,7 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
   const [fetchingPlaceId, setFetchingPlaceId] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<ApiAddress | null>(null);
 
   // ── Step 2: address form state ───────────────────────────────────────────────
   const [addressTag, setAddressTag] = useState<AddressTag>('Home');
@@ -273,10 +276,13 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   }
 
   function handleSavedSelect(addr: ApiAddress) {
-    setSelectedPlace({ name: addr.full_address, lat: addr.lat, lon: addr.lon });
-    setSearchQuery(addr.title);
-    Keyboard.dismiss();
-    panMapTo(addr.lat, addr.lon);
+    // Directly select the saved address and close
+    onLocationSelect(addr.full_address, addr.lat, addr.lon);
+    dismissModal();
+  }
+
+  function handleSavedDeleted(id: string) {
+    setSavedAddresses(prev => prev.filter(a => a.id !== id));
   }
 
   // Proceed from map → address details form
@@ -322,6 +328,7 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <Modal transparent visible={isOpen} onRequestClose={dismissModal} statusBarTranslucent animationType="none">
       <TouchableWithoutFeedback onPress={step === 'search' ? dismissModal : undefined}>
         <Animated.View style={[StyleSheet.absoluteFill, s.backdrop, { opacity: fadeAnim }]} />
@@ -435,6 +442,20 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                       {gpsState === 'denied' && <Text style={s.actionError}>Permission denied — tap to retry</Text>}
                     </View>
                   </TouchableOpacity>
+                  <View style={s.actionDivider} />
+                  <TouchableOpacity
+                    style={s.actionRow}
+                    onPress={() => searchInputRef.current?.focus()}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[s.actionIconBox, { backgroundColor: '#F0FDF4' }]}>
+                      <Text style={s.addText}>+</Text>
+                    </View>
+                    <View style={s.actionTextCol}>
+                      <Text style={s.actionTitle}>Add new address</Text>
+                      <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 }}>Search your area in the bar above</Text>
+                    </View>
+                  </TouchableOpacity>
                 </View>
               )}
 
@@ -479,30 +500,21 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     </View>
                   )}
 
-                  {showIdle && savedAddresses.length > 0 && savedAddresses.map((addr, idx) => (
-                    <React.Fragment key={addr.id}>
-                      {idx === 0 && <Text style={s.sectionLabel}>SAVED ADDRESSES</Text>}
-                      <TouchableOpacity style={s.savedRow} onPress={() => handleSavedSelect(addr)} activeOpacity={0.7}>
-                        <View style={s.savedIconBox}>
-                          <View style={[s.resultPinHead, { width: 10, height: 10 }]} />
-                          <View style={[s.resultPinTail, { borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 7 }]} />
-                        </View>
-                        <View style={s.savedTextCol}>
-                          <View style={s.savedTitleRow}>
-                            <Text style={s.savedTitle}>{addr.title}</Text>
-                            <View style={s.tagPill}><Text style={s.tagText}>{addr.tag}</Text></View>
-                            {(addr.receiver_name || addr.receiver_phone) && (
-                              <Text style={s.savedMeta} numberOfLines={1}>
-                                {[addr.receiver_name, addr.receiver_phone ? `+91 ${addr.receiver_phone}` : ''].filter(Boolean).join(' · ')}
-                              </Text>
-                            )}
-                          </View>
-                          <Text style={s.savedSubtitle} numberOfLines={1}>{addr.full_address}</Text>
-                        </View>
-                      </TouchableOpacity>
-                      {idx < savedAddresses.length - 1 && <View style={s.rowDivider} />}
-                    </React.Fragment>
-                  ))}
+                  {showIdle && savedAddresses.length > 0 && (
+                    <>
+                      <Text style={s.sectionLabel}>SAVED ADDRESSES  ·  swipe left to edit, right to delete</Text>
+                      {savedAddresses.map(addr => (
+                        <SwipeSavedRow
+                          key={addr.id}
+                          addr={addr}
+                          token={token}
+                          onSelect={() => handleSavedSelect(addr)}
+                          onEdit={() => setEditTarget(addr)}
+                          onDeleted={handleSavedDeleted}
+                        />
+                      ))}
+                    </>
+                  )}
                 </ScrollView>
               )}
             </>
@@ -649,8 +661,123 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
         </Animated.View>
       </View>
     </Modal>
+
+    <EditAddressModal
+      address={editTarget}
+      token={token}
+      onClose={() => setEditTarget(null)}
+      onSaved={updated => {
+        setSavedAddresses(prev => prev.map(a => a.id === updated.id ? updated : a));
+        setEditTarget(null);
+      }}
+      onDeleted={handleSavedDeleted}
+    />
+    </>
   );
 }
+
+// ── Swipeable saved-address row ───────────────────────────────────────────────
+
+const SWIPE_W = 72;
+
+function SwipeSavedRow({
+  addr, token, onSelect, onEdit, onDeleted,
+}: {
+  addr: ApiAddress;
+  token: string | null;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDeleted: (id: string) => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const state = useRef<'closed' | 'left' | 'right'>('closed');
+
+  const pan = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+    onPanResponderMove: (_, g) => {
+      const base = state.current === 'left' ? -SWIPE_W : state.current === 'right' ? SWIPE_W : 0;
+      translateX.setValue(Math.max(-SWIPE_W, Math.min(SWIPE_W, base + g.dx)));
+    },
+    onPanResponderRelease: (_, g) => {
+      if (state.current === 'closed') {
+        if (g.dx < -30) { snap(-SWIPE_W); state.current = 'left'; }
+        else if (g.dx > 30) { snap(SWIPE_W); state.current = 'right'; }
+        else snap(0);
+      } else {
+        const back = (state.current === 'left' && g.dx > 20) || (state.current === 'right' && g.dx < -20);
+        if (back) { snap(0); state.current = 'closed'; }
+        else snap(state.current === 'left' ? -SWIPE_W : SWIPE_W);
+      }
+    },
+  })).current;
+
+  function snap(to: number) {
+    Animated.spring(translateX, { toValue: to, useNativeDriver: true, bounciness: 4 }).start();
+    if (to === 0) state.current = 'closed';
+  }
+
+  function handleDelete() {
+    Alert.alert('Delete Address', 'Delete this saved address?', [
+      { text: 'Cancel', style: 'cancel', onPress: () => snap(0) },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          if (!token) return;
+          try { await deleteAddress(token, addr.id); onDeleted(addr.id); }
+          catch { Alert.alert('Error', 'Could not delete. Try again.'); snap(0); }
+        },
+      },
+    ]);
+  }
+
+  return (
+    <View style={ss.wrap}>
+      {/* Delete — swipe right */}
+      <View style={[ss.action, ss.actionLeft]}>
+        <TouchableOpacity style={ss.deleteBtn} onPress={handleDelete} activeOpacity={0.85}>
+          <Text style={ss.actionText}>🗑</Text>
+        </TouchableOpacity>
+      </View>
+      {/* Edit — swipe left */}
+      <View style={[ss.action, ss.actionRight]}>
+        <TouchableOpacity style={ss.editBtn} onPress={() => { snap(0); onEdit(); }} activeOpacity={0.85}>
+          <Text style={ss.actionText}>✏️</Text>
+        </TouchableOpacity>
+      </View>
+      <Animated.View style={[ss.row, { transform: [{ translateX }] }]} {...pan.panHandlers}>
+        <TouchableOpacity style={ss.rowInner} onPress={onSelect} activeOpacity={0.7}>
+          <View style={ss.iconBox}>
+            <View style={[s.resultPinHead, { width: 10, height: 10 }]} />
+            <View style={[s.resultPinTail, { borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 7 }]} />
+          </View>
+          <View style={ss.textCol}>
+            <View style={ss.titleRow}>
+              <Text style={ss.title}>{addr.title}</Text>
+              <View style={s.tagPill}><Text style={s.tagText}>{addr.tag}</Text></View>
+            </View>
+            <Text style={ss.sub} numberOfLines={1}>{addr.full_address}</Text>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
+
+const ss = StyleSheet.create({
+  wrap: { height: 60, marginBottom: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  action: { position: 'absolute', top: 0, bottom: 0, width: SWIPE_W },
+  actionLeft: { left: 0 },
+  actionRight: { right: 0 },
+  deleteBtn: { flex: 1, backgroundColor: Colors.danger, alignItems: 'center', justifyContent: 'center', borderTopLeftRadius: Radius.lg, borderBottomLeftRadius: Radius.lg },
+  editBtn: { flex: 1, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', borderTopRightRadius: Radius.lg, borderBottomRightRadius: Radius.lg },
+  actionText: { fontSize: 18 },
+  row: { backgroundColor: Colors.white, height: 60, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
+  rowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 10 },
+  iconBox: { width: 32, height: 32, borderRadius: Radius.md, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  textCol: { flex: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  title: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.text },
+  sub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textSecondary },
+});
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 

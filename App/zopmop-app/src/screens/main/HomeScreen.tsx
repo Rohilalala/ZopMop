@@ -18,7 +18,10 @@ import LocationSelectorModal from '../../components/LocationSelectorModal';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { listServices, type ApiService } from '../../api/services';
 import { checkServiceability } from '../../api/zones';
+import { listAddresses } from '../../api/addresses';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import * as Location from 'expo-location';
 import NotServiceableScreen from './NotServiceableScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -44,8 +47,9 @@ const DEFAULT_LAT = 28.4357;
 const DEFAULT_LON = 77.0763;
 
 export default function HomeScreen() {
+  const { token } = useAuth();
   const [locationModalVisible, setLocationModalVisible] = useState(false);
-  const [locationName, setLocationName] = useState('Sector 51, Gurugram');
+  const [locationName, setLocationName] = useState('Detecting location…');
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
   const [serviceable, setServiceable] = useState<boolean>(true);
 
@@ -53,11 +57,62 @@ export default function HomeScreen() {
     listServices()
       .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
       .catch(() => {});
-    // Check default location on mount
-    checkServiceability(DEFAULT_LAT, DEFAULT_LON)
-      .then(r => setServiceable(r.serviceable))
-      .catch(() => {});
-  }, []);
+
+    // Smart default: GPS → nearest saved address → Home-tagged address → fallback coords
+    (async () => {
+      let lat = DEFAULT_LAT;
+      let lon = DEFAULT_LON;
+      let name = 'Sector 51, Gurugram';
+
+      // Try GPS first
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          lat = pos.coords.latitude;
+          lon = pos.coords.longitude;
+
+          // Try to match nearest saved address (within ~1 km)
+          if (token && token !== '__guest__') {
+            try {
+              const saved = await listAddresses(token);
+              let nearest = null;
+              let minDist = Infinity;
+              for (const addr of saved) {
+                const d = Math.hypot(addr.lat - lat, addr.lon - lon);
+                if (d < minDist) { minDist = d; nearest = addr; }
+              }
+              if (nearest && minDist < 0.009) {
+                name = nearest.full_address.split(',').slice(0, 2).join(',').trim();
+              } else if (saved.length > 0) {
+                // Not near any saved address — use Home-tagged if exists, else first
+                const home = saved.find(a => a.tag === 'Home') ?? saved[0];
+                name = home.full_address.split(',').slice(0, 2).join(',').trim();
+              } else {
+                // No saved addresses — reverse geocode current position
+                const API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
+                if (API_KEY) {
+                  const res = await fetch(
+                    `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${API_KEY}`
+                  );
+                  const data = await res.json();
+                  const parts: string[] = data.results?.[0]?.formatted_address?.split(',') ?? [];
+                  if (parts.length >= 2) name = `${parts[0].trim()}, ${parts[1].trim()}`;
+                }
+              }
+            } catch {
+              // saved addresses unavailable — keep GPS coords, no name
+            }
+          }
+        }
+      } catch { /* GPS denied — use fallback */ }
+
+      setLocationName(name);
+      checkServiceability(lat, lon)
+        .then(r => setServiceable(r.serviceable))
+        .catch(() => {});
+    })();
+  }, [token]);
 
   async function handleLocationSelect(name: string, lat: number, lon: number) {
     setLocationName(name.split(',').slice(0, 2).join(',').trim());
@@ -173,7 +228,7 @@ function BookingCards() {
         <TouchableOpacity
           style={s.bookingCard}
           activeOpacity={0.85}
-          onPress={() => navigation.navigate('Cart')}
+          onPress={() => navigation.navigate('AllServices', { instant: false })}
         >
           <View style={[s.bookingIconBox, { backgroundColor: Colors.primaryBg }]}>
             <Text style={s.bookingEmoji}>📅</Text>
@@ -505,12 +560,13 @@ const s = StyleSheet.create({
 
   // Cart bar
   cartBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
+    position: 'absolute', bottom: 28, left: 24, right: 24,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: Colors.white,
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-    ...Shadow.md,
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderRadius: Radius['2xl'],
+    borderWidth: 1, borderColor: Colors.border,
+    ...Shadow.lg,
   },
   cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cartBarEmoji: { fontSize: 22 },

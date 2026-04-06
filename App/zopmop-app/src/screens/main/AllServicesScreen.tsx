@@ -89,7 +89,7 @@ export default function AllServicesScreen() {
       ) : (
         <ScrollView
           style={s.scroll}
-          contentContainerStyle={[s.scrollContent, itemCount > 0 && { paddingBottom: 84 }]}
+          contentContainerStyle={[s.scrollContent, itemCount > 0 && { paddingBottom: 110 }]}
           showsVerticalScrollIndicator={false}
         >
           {groups.map(group => (
@@ -396,12 +396,13 @@ const s = StyleSheet.create({
   emptySubtext: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
 
   cartBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
+    position: 'absolute', bottom: 28, left: 24, right: 24,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: Colors.white,
-    paddingHorizontal: 16, paddingVertical: 10,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-    ...Shadow.md,
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderRadius: Radius['2xl'],
+    borderWidth: 1, borderColor: Colors.border,
+    ...Shadow.lg,
   },
   cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cartBarEmoji: { fontSize: 22 },

@@ -16,8 +16,10 @@ import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
-import { createScheduledBooking } from '../../api/bookings';
+import { createScheduledBooking, getBookings } from '../../api/bookings';
 import SchedulingModal from '../../components/SchedulingModal';
+import AddressPickerModal from '../../components/AddressPickerModal';
+import * as Location from 'expo-location';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
@@ -30,21 +32,54 @@ export default function CartScreen() {
 
   const [addresses, setAddresses] = useState<ApiAddress[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(null);
+  const [addressPickerVisible, setAddressPickerVisible] = useState(false);
   const [schedulingVisible, setSchedulingVisible] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [selectedSlotLabel, setSelectedSlotLabel] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
 
-  useEffect(() => {
+  async function loadAddresses() {
     if (!token) return;
-    listAddresses(token)
-      .then(list => {
-        setAddresses(list);
-        if (list.length > 0) setSelectedAddress(list[0]);
-      })
-      .catch(() => {});
-  }, [token]);
+    try {
+      const list = await listAddresses(token);
+      setAddresses(list);
+      if (list.length === 0) return;
+
+      // 1. Try to match current GPS to nearest saved address
+      let picked: ApiAddress | null = null;
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const { latitude, longitude } = pos.coords;
+          // Find closest saved address by Euclidean distance on lat/lon
+          let minDist = Infinity;
+          for (const addr of list) {
+            const d = Math.hypot(addr.lat - latitude, addr.lon - longitude);
+            if (d < minDist) { minDist = d; picked = addr; }
+          }
+          // Only auto-select if within ~1 km (≈0.009 degrees)
+          if (minDist > 0.009) picked = null;
+        }
+      } catch { /* location unavailable */ }
+
+      // 2. Fall back to address used in last order
+      if (!picked) {
+        try {
+          const past = await getBookings(token, 'past', 1);
+          if (past.length > 0 && past[0].address_id) {
+            picked = list.find(a => a.id === past[0].address_id) ?? null;
+          }
+        } catch { /* no past bookings */ }
+      }
+
+      // 3. Fall back to first saved address
+      setSelectedAddress(picked ?? list[0]);
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => { loadAddresses(); }, [token]);
 
   const handleRemove = useCallback(async (itemId: string) => {
     setRemoving(itemId);
@@ -91,7 +126,7 @@ export default function CartScreen() {
     return (
       <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
         <View style={s.header}>
-          <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <TouchableOpacity style={s.backBtn} onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Text style={s.backIcon}>←</Text>
           </TouchableOpacity>
           <Text style={s.headerTitle}>Cart</Text>
@@ -113,7 +148,7 @@ export default function CartScreen() {
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+        <TouchableOpacity style={s.backBtn} onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Text style={s.backIcon}>←</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>Cart ({itemCount})</Text>
@@ -126,12 +161,10 @@ export default function CartScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Address */}
-        <View style={s.card}>
+        <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={() => setAddressPickerVisible(true)}>
           <View style={s.cardHeader}>
             <Text style={s.cardLabel}>📍 Delivery Address</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Addresses')} activeOpacity={0.7}>
-              <Text style={s.editLink}>Change</Text>
-            </TouchableOpacity>
+            <Text style={s.editLink}>{selectedAddress ? 'Change' : 'Add'}</Text>
           </View>
           {selectedAddress ? (
             <>
@@ -139,31 +172,9 @@ export default function CartScreen() {
               <Text style={s.addressFull} numberOfLines={2}>{selectedAddress.full_address}</Text>
             </>
           ) : (
-            <TouchableOpacity onPress={() => navigation.navigate('Addresses')} activeOpacity={0.8}>
-              <Text style={s.addAddressText}>+ Add an address</Text>
-            </TouchableOpacity>
+            <Text style={s.addAddressText}>+ Add an address</Text>
           )}
-          {addresses.length > 1 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.addressChips}
-            >
-              {addresses.map(addr => (
-                <TouchableOpacity
-                  key={addr.id}
-                  style={[s.addrChip, selectedAddress?.id === addr.id && s.addrChipActive]}
-                  onPress={() => setSelectedAddress(addr)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[s.addrChipText, selectedAddress?.id === addr.id && s.addrChipTextActive]}>
-                    {addr.tag}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
-        </View>
+        </TouchableOpacity>
 
         {/* Schedule */}
         <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={() => setSchedulingVisible(true)}>
@@ -254,6 +265,40 @@ export default function CartScreen() {
           setSchedulingVisible(false);
         }}
       />
+
+      <AddressPickerModal
+        visible={addressPickerVisible}
+        token={token}
+        addresses={addresses}
+        selectedId={selectedAddress?.id ?? null}
+        onSelect={addr => setSelectedAddress(addr)}
+        onClose={() => setAddressPickerVisible(false)}
+        onAddressEdited={updated => setAddresses(prev => prev.map(a => a.id === updated.id ? updated : a))}
+        onAddressDeleted={id => {
+          setAddresses(prev => {
+            const next = prev.filter(a => a.id !== id);
+            if (selectedAddress?.id === id) setSelectedAddress(next[0] ?? null);
+            return next;
+          });
+        }}
+        onRefreshAddresses={async (newLat?: number, newLon?: number) => {
+          if (!token) return;
+          try {
+            const list = await listAddresses(token);
+            setAddresses(list);
+            if (newLat !== undefined && newLon !== undefined && list.length > 0) {
+              // Select the address closest to where the user just dropped the pin
+              let best = list[0];
+              let minD = Infinity;
+              for (const a of list) {
+                const d = Math.hypot(a.lat - newLat, a.lon - newLon);
+                if (d < minD) { minD = d; best = a; }
+              }
+              setSelectedAddress(best);
+            }
+          } catch { /* ignore */ }
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -303,16 +348,6 @@ const s = StyleSheet.create({
   addressTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
   addressFull: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
   addAddressText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary, paddingVertical: 4 },
-  addressChips: { flexDirection: 'row', gap: 8, paddingTop: 4 },
-  addrChip: {
-    paddingHorizontal: 12, paddingVertical: 5,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  addrChipActive: { backgroundColor: Colors.primaryBg, borderColor: Colors.primary },
-  addrChipText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: Colors.textSecondary },
-  addrChipTextActive: { color: Colors.primary },
 
   // Schedule
   slotLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.primary },
