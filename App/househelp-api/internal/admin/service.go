@@ -251,19 +251,38 @@ func (s *Service) DisablePromotion(ctx context.Context, promoID, adminID, ipAddr
 	return nil
 }
 
-// BroadcastToCustomers fetches all customer FCM tokens and sends a push notification.
-func (s *Service) BroadcastToCustomers(ctx context.Context, title, body string) error {
-	tokens, err := s.repo.GetCustomerFCMTokens(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch customer tokens: %w", err)
+// Broadcast sends a manual push notification to the requested audience.
+// target must be "customers", "pros", or "all" (default: "customers").
+func (s *Service) Broadcast(ctx context.Context, title, body, target string) error {
+	var tokens []string
+	var err error
+
+	switch target {
+	case "pros":
+		tokens, err = s.repo.GetProFCMTokens(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to fetch pro tokens: %w", err)
+		}
+	case "all":
+		tokens, err = s.repo.GetAllFCMTokens(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to fetch all tokens: %w", err)
+		}
+	default: // "customers" or empty
+		tokens, err = s.repo.GetCustomerFCMTokens(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to fetch customer tokens: %w", err)
+		}
 	}
 
 	if len(tokens) == 0 {
+		log.Info().Str("target", target).Msg("[admin] broadcast: no tokens found for target audience")
 		return nil
 	}
 
-	// We pass the raw tokens directly to a new Multicast logic in notification service
+	log.Info().Str("target", target).Int("recipients", len(tokens)).Str("title", title).Msg("[admin] broadcasting notification")
 	return s.notifSvc.SendToTokens(ctx, tokens, title, body, map[string]string{
-		"type": "broadcast",
+		"type":   "broadcast",
+		"target": target,
 	})
 }

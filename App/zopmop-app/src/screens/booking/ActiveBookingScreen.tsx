@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
@@ -254,8 +255,11 @@ export default function ActiveBookingScreen({ route }: Props) {
         </View>
       )}
 
-      {/* Status badge top-left */}
+      {/* Back button + status badge */}
       <SafeAreaView style={s.topBadgeWrap} edges={['top']}>
+        <TouchableOpacity style={s.backBtn} activeOpacity={0.8} onPress={() => navigation.goBack()}>
+          <Ionicons name="chevron-back" size={22} color={Colors.text} />
+        </TouchableOpacity>
         <View style={[s.statusBadge, arrived ? s.badgeArrived : s.badgeActive]}>
           <View style={[s.statusDot, { backgroundColor: arrived ? Colors.success : Colors.primary }]} />
           <Text style={[s.statusText, { color: arrived ? Colors.success : Colors.primary }]}>
@@ -336,8 +340,20 @@ const s = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
+    gap: 10,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadow.sm,
   },
   statusBadge: {
     flexDirection: 'row',

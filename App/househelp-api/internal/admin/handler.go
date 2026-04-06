@@ -247,16 +247,21 @@ func (h *Handler) DisablePromotion(c *fiber.Ctx) error {
 }
 
 // BroadcastNotification handles POST /admin/notifications/broadcast.
+// Body: { "title": "...", "body": "...", "target": "customers|pros|all" }
 func (h *Handler) BroadcastNotification(c *fiber.Ctx) error {
 	var req BroadcastNotificationRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
-	if err := h.service.BroadcastToCustomers(c.Context(), req.Title, req.Body); err != nil {
-		log.Error().Err(err).Msg("failed to broadcast notification")
+	if req.Target == "" {
+		req.Target = "customers"
+	}
+
+	if err := h.service.Broadcast(c.Context(), req.Title, req.Body, req.Target); err != nil {
+		log.Error().Err(err).Str("target", req.Target).Msg("failed to broadcast notification")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to broadcast notification"})
 	}
 
-	return c.JSON(fiber.Map{"message": "broadcast initiated"})
+	return c.JSON(fiber.Map{"message": "broadcast initiated", "target": req.Target})
 }

@@ -222,6 +222,15 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 		go s.matchEngine.ClearMatchOnAccept(context.Background(), bookingID, "")
 	}
 
+	// Notify assigned helper (if any) that the job was cancelled.
+	if s.notifSvc != nil && booking.HelperID != nil {
+		go func() {
+			if notifErr := s.notifSvc.NotifyProBookingCancelled(context.Background(), *booking.HelperID, bookingID); notifErr != nil {
+				log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send cancellation notification to pro")
+			}
+		}()
+	}
+
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
 	return nil
 }
@@ -265,10 +274,10 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		return fmt.Errorf("failed to accept booking: %w", err)
 	}
 
-	// Notify customer that booking was accepted.
+	// Notify customer that their helper is on the way.
 	if s.notifSvc != nil {
-		if notifErr := s.notifSvc.NotifyBookingAccepted(ctx, booking.CustomerID, helperName, bookingID); notifErr != nil {
-			log.Error().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send booking accepted notification")
+		if notifErr := s.notifSvc.NotifyCustomerBookingAccepted(ctx, booking.CustomerID, helperName, bookingID); notifErr != nil {
+			log.Error().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send booking accepted notification to customer")
 		}
 	}
 
@@ -640,7 +649,7 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		return fmt.Errorf("booking not found or cannot be completed")
 	}
 
-	// Increment total_jobs (best-effort, non-blocking).
+	// Increment total_jobs and notify customer — both best-effort, non-blocking.
 	go func() {
 		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -651,6 +660,22 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 			log.Warn().Err(dbErr).Str("helper_id", helperID).Msg("failed to increment total_jobs")
 		}
 	}()
+
+	if s.notifSvc != nil {
+		go func() {
+			// Fetch customer ID for this booking then notify them.
+			var customerID string
+			qCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := s.db.QueryRow(qCtx,
+				`SELECT customer_id FROM bookings WHERE id = $1`, bookingID,
+			).Scan(&customerID); err == nil {
+				if notifErr := s.notifSvc.NotifyCustomerBookingCompleted(context.Background(), customerID, bookingID); notifErr != nil {
+					log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send completion notification to customer")
+				}
+			}
+		}()
+	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking completed")
 	return nil

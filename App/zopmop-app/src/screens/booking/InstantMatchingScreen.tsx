@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
 
 const { width: W } = Dimensions.get('window');
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
 // How long the loading bar runs (ms)
 const MATCH_DURATION = 30000;
@@ -115,7 +116,6 @@ export default function InstantMatchingScreen({ route }: Props) {
         // helpers' invite sets are cleaned up immediately.
         const bid = bookingIdRef.current;
         if (bid && token && token !== '__guest__') {
-          const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
           fetch(`${BASE_URL}/bookings/${bid}/cancel`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -213,10 +213,17 @@ export default function InstantMatchingScreen({ route }: Props) {
       cancelled = true;
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      // If the user left the screen before a match, cancel the booking so the
+      // backend stops re-queueing it and pros stop seeing the invite.
+      const bid = bookingIdRef.current;
+      if (bid && !matchedRef.current && token && token !== '__guest__') {
+        fetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
     };
   }, []);
-
-  const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
   function handleCancel() {
     const helper = matchedHelperRef.current;

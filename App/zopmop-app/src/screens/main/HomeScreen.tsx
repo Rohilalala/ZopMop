@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Dimensions,
   ActivityIndicator,
   Alert,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -52,6 +53,7 @@ export default function HomeScreen() {
   const [locationName, setLocationName] = useState('Detecting location…');
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
   const [serviceable, setServiceable] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     listServices()
@@ -108,9 +110,11 @@ export default function HomeScreen() {
       } catch { /* GPS denied — use fallback */ }
 
       setLocationName(name);
-      checkServiceability(lat, lon)
-        .then(r => setServiceable(r.serviceable))
-        .catch(() => {});
+      try {
+        const svcResult = await checkServiceability(lat, lon);
+        setServiceable(svcResult.serviceable);
+      } catch {}
+      setLoading(false);
     })();
   }, [token]);
 
@@ -128,6 +132,8 @@ export default function HomeScreen() {
       onLocationSelect={(name, lat, lon) => handleLocationSelect(name, lat, lon)}
     />
   );
+
+  if (loading) return <HomeSkeleton />;
 
   if (!serviceable) {
     return (
@@ -455,6 +461,129 @@ function TrustStrip() {
     </View>
   );
 }
+
+// ── Skeleton Loading ──────────────────────────────────────────────────────────
+
+function SkeletonBlock({
+  pulse,
+  w,
+  h,
+  r = Radius.md,
+  style,
+}: {
+  pulse: Animated.Value;
+  w?: number | string;
+  h: number;
+  r?: number;
+  style?: any;
+}) {
+  return (
+    <Animated.View
+      style={[
+        { height: h, borderRadius: r, backgroundColor: Colors.border, opacity: pulse },
+        w !== undefined ? { width: w } : { alignSelf: 'stretch' },
+        style,
+      ]}
+    />
+  );
+}
+
+function HomeSkeleton() {
+  const pulse = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.5, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  const p = pulse;
+
+  return (
+    <SafeAreaView style={sk.safe} edges={['top']}>
+      <ScrollView
+        style={sk.scroll}
+        contentContainerStyle={sk.content}
+        scrollEnabled={false}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={sk.header}>
+          <View style={{ gap: 6 }}>
+            <SkeletonBlock pulse={p} w={60} h={10} r={Radius.sm} />
+            <SkeletonBlock pulse={p} w={150} h={18} />
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+            <SkeletonBlock pulse={p} w={90} h={30} r={Radius.full} />
+            <SkeletonBlock pulse={p} w={36} h={36} r={Radius.full} />
+          </View>
+        </View>
+
+        {/* Hero Card */}
+        <SkeletonBlock pulse={p} h={150} r={Radius['2xl']} style={sk.hero} />
+
+        {/* Booking cards section */}
+        <View style={sk.section}>
+          <SkeletonBlock pulse={p} w={170} h={20} style={{ marginBottom: 14 }} />
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} />
+            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} />
+          </View>
+        </View>
+
+        {/* Services grid */}
+        <View style={sk.section}>
+          <View style={sk.sectionHeader}>
+            <SkeletonBlock pulse={p} w={130} h={20} />
+            <SkeletonBlock pulse={p} w={50} h={16} />
+          </View>
+          <View style={sk.grid}>
+            {[0, 1, 2, 3, 4, 5].map(i => (
+              <SkeletonBlock key={i} pulse={p} w={SERVICE_CARD_WIDTH} h={SERVICE_CARD_WIDTH * 1.5} r={Radius.xl} />
+            ))}
+          </View>
+        </View>
+
+        {/* Trust strip */}
+        <View style={sk.section}>
+          <SkeletonBlock pulse={p} h={100} r={Radius.xl} />
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const sk = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: Colors.background },
+  scroll: { flex: 1 },
+  content: { paddingBottom: 40 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: H_PAD,
+    paddingTop: 12,
+    paddingBottom: 16,
+  },
+  hero: {
+    marginHorizontal: H_PAD,
+    width: SCREEN_WIDTH - H_PAD * 2,
+    marginBottom: 28,
+  },
+  section: { paddingHorizontal: H_PAD, marginBottom: 28 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
+});
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 

@@ -552,3 +552,51 @@ func (r *Repository) GetCustomerFCMTokens(ctx context.Context) ([]string, error)
 
 	return tokens, nil
 }
+
+// GetProFCMTokens retrieves all FCM tokens for users with the 'pro' role.
+func (r *Repository) GetProFCMTokens(ctx context.Context) ([]string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT fcm_token FROM users WHERE role = 'pro' AND fcm_token IS NOT NULL AND fcm_token != ''`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pro FCM tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, rows.Err()
+}
+
+// GetAllFCMTokens retrieves FCM tokens for every registered user.
+func (r *Repository) GetAllFCMTokens(ctx context.Context) ([]string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all FCM tokens: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []string
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, rows.Err()
+}

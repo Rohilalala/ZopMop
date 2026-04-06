@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../theme';
-import { getTimeSlots, type ApiTimeSlot } from '../api/slots';
+import { getTimeSlots, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
 
 interface Props {
   visible: boolean;
@@ -40,7 +40,7 @@ const DAYS = buildDays();
 
 export default function SchedulingModal({ visible, token, onClose, onConfirm }: Props) {
   const [selectedDay, setSelectedDay] = useState(DAYS[0].iso);
-  const [slots, setSlots] = useState<ApiTimeSlot[]>([]);
+  const [periods, setPeriods] = useState<ApiSlotPeriod[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
 
@@ -50,8 +50,8 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
     setLoading(true);
     setSelectedSlot(null);
     getTimeSlots(token, selectedDay)
-      .then(data => { if (!cancelled) setSlots(data); })
-      .catch(() => { if (!cancelled) setSlots([]); })
+      .then(data => { if (!cancelled) setPeriods(data); })
+      .catch(() => { if (!cancelled) setPeriods([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [visible, selectedDay, token]);
@@ -70,9 +70,10 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
       transparent
       onRequestClose={onClose}
     >
-      <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={onClose} />
+      <View style={s.overlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFillObject} activeOpacity={1} onPress={onClose} />
 
-      <View style={s.sheet}>
+        <View style={s.sheet}>
         {/* Handle */}
         <View style={s.handle} />
 
@@ -106,40 +107,47 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
           })}
         </ScrollView>
 
-        {/* Slots grid */}
+        {/* Slots — grouped by period */}
         <View style={s.slotsContainer}>
           {loading ? (
             <ActivityIndicator color={Colors.primary} style={{ marginVertical: 32 }} />
-          ) : slots.length === 0 ? (
+          ) : periods.length === 0 ? (
             <Text style={s.noSlots}>No slots available for this date</Text>
           ) : (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.slotsGrid}>
-              {slots.map(slot => {
-                const active = selectedSlot?.id === slot.id;
-                return (
-                  <TouchableOpacity
-                    key={slot.id}
-                    style={[
-                      s.slotBtn,
-                      active && s.slotBtnActive,
-                      !slot.is_available && s.slotBtnDisabled,
-                    ]}
-                    activeOpacity={0.75}
-                    disabled={!slot.is_available}
-                    onPress={() => setSelectedSlot(slot)}
-                  >
-                    <Text style={[s.slotTime, active && s.slotTimeActive, !slot.is_available && s.slotTimeDisabled]}>
-                      {slot.start_time}
-                    </Text>
-                    <Text style={[s.slotEnd, active && s.slotEndActive, !slot.is_available && s.slotTimeDisabled]}>
-                      – {slot.end_time}
-                    </Text>
-                    {!slot.is_available && (
-                      <Text style={s.slotFull}>Full</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.slotsScroll}>
+              {periods.map(period => (
+                <View key={period.label}>
+                  <Text style={s.periodLabel}>{period.label}</Text>
+                  <View style={s.slotsGrid}>
+                    {period.slots.map(slot => {
+                      const active = selectedSlot?.id === slot.id;
+                      return (
+                        <TouchableOpacity
+                          key={slot.id}
+                          style={[
+                            s.slotBtn,
+                            active && s.slotBtnActive,
+                            !slot.is_available && s.slotBtnDisabled,
+                          ]}
+                          activeOpacity={0.75}
+                          disabled={!slot.is_available}
+                          onPress={() => setSelectedSlot(slot)}
+                        >
+                          <Text style={[s.slotTime, active && s.slotTimeActive, !slot.is_available && s.slotTimeDisabled]}>
+                            {slot.start_time}
+                          </Text>
+                          <Text style={[s.slotEnd, active && s.slotEndActive, !slot.is_available && s.slotTimeDisabled]}>
+                            – {slot.end_time}
+                          </Text>
+                          {!slot.is_available && (
+                            <Text style={s.slotFull}>Full</Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
             </ScrollView>
           )}
         </View>
@@ -157,25 +165,23 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
             </Text>
           </TouchableOpacity>
         </View>
+        </View>
       </View>
     </Modal>
   );
 }
 
 const s = StyleSheet.create({
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     backgroundColor: Colors.white,
     borderTopLeftRadius: Radius['2xl'],
     borderTopRightRadius: Radius['2xl'],
-    maxHeight: SCREEN_H * 0.85,
+    height: SCREEN_H * 0.78,
     ...Shadow.lg,
   },
   handle: {
@@ -218,12 +224,20 @@ const s = StyleSheet.create({
   dayLabel: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text, marginTop: 2 },
   dayLabelActive: { color: Colors.white },
 
-  slotsContainer: { flex: 1, minHeight: 160 },
+  slotsContainer: { flex: 1 },
+  slotsScroll: { paddingHorizontal: 16, paddingBottom: 16 },
+  periodLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.xs,
+    color: Colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 14,
+    marginBottom: 8,
+  },
   slotsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
     gap: 10,
   },
   slotBtn: {

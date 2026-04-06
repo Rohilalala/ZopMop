@@ -17,8 +17,9 @@ import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
-import { acceptBooking } from '../../api/matching';
+import { acceptBooking, getHelperInvites } from '../../api/matching';
 
+const COUNTDOWN_SECONDS = 20;
 
 type Props = {
   route: RouteProp<MainStackParamList, 'ProMatched'>;
@@ -31,6 +32,66 @@ export default function ProMatchedScreen({ route }: Props) {
   const { token } = useAuth();
 
   const [accepting, setAccepting] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS);
+  const [expired, setExpired] = useState(false);
+
+  const invitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelAlertShownRef = useRef(false);
+  const expiredRef = useRef(false);
+
+  // Countdown fill animation: 1 = full, 0 = empty
+  const fillAnim = useRef(new Animated.Value(1)).current;
+
+  // Poll the invite list every 5 s — if this booking disappears the customer cancelled.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    invitePollRef.current = setInterval(async () => {
+      try {
+        const ids = await getHelperInvites(token);
+        if (!ids.includes(bookingId) && !cancelAlertShownRef.current && !expiredRef.current) {
+          cancelAlertShownRef.current = true;
+          if (invitePollRef.current) clearInterval(invitePollRef.current);
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          fillAnim.stopAnimation();
+          Alert.alert(
+            'Booking Cancelled',
+            'The customer has cancelled this booking.',
+            [{ text: 'OK', onPress: () => navigation.goBack() }],
+            { cancelable: false },
+          );
+        }
+      } catch { /* keep polling */ }
+    }, 5000);
+    return () => { if (invitePollRef.current) clearInterval(invitePollRef.current); };
+  }, []);
+
+  // Countdown timer
+  useEffect(() => {
+    // Smooth fill depletion over full duration (non-native: width % needs layout driver)
+    Animated.timing(fillAnim, {
+      toValue: 0,
+      duration: COUNTDOWN_SECONDS * 1000,
+      useNativeDriver: false,
+    }).start();
+
+    // 1-second label ticks
+    countdownRef.current = setInterval(() => {
+      setSecondsLeft(prev => {
+        const next = prev - 1;
+        if (next <= 0) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          expiredRef.current = true;
+          setExpired(true);
+          navigation.goBack();
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
+  }, []);
 
   // Pulse animation for the match icon
   const pulse = useRef(new Animated.Value(1)).current;
@@ -51,7 +112,9 @@ export default function ProMatchedScreen({ route }: Props) {
   }
 
   async function handleAccept() {
-    if (!token || token === '__guest__') return;
+    if (!token || token === '__guest__' || expired || accepting) return;
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    fillAnim.stopAnimation();
     setAccepting(true);
     try {
       await acceptBooking(token, bookingId);
@@ -76,6 +139,7 @@ export default function ProMatchedScreen({ route }: Props) {
   }
 
   const distance = distanceKm != null ? `${distanceKm.toFixed(1)} km away` : '';
+  const fillWidth = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
@@ -137,21 +201,29 @@ export default function ProMatchedScreen({ route }: Props) {
           style={s.declineBtn}
           activeOpacity={0.8}
           onPress={handleDecline}
-          disabled={accepting}
+          disabled={accepting || expired}
         >
           <Text style={s.declineBtnText}>Decline</Text>
         </TouchableOpacity>
 
+        {/* Countdown accept button */}
         <TouchableOpacity
-          style={[s.acceptBtn, accepting && { opacity: 0.7 }]}
+          style={[s.acceptOuter, (accepting || expired) && { opacity: 0.6 }]}
           activeOpacity={0.88}
           onPress={handleAccept}
-          disabled={accepting}
+          disabled={accepting || expired}
         >
-          {accepting
-            ? <ActivityIndicator color={Colors.white} />
-            : <Text style={s.acceptBtnText}>✅  I'm on my way</Text>
-          }
+          {/* Animated fill — depletes right-to-left */}
+          <Animated.View style={[s.acceptFill, { width: fillWidth }]} />
+          {/* Label sits above fill */}
+          <View style={s.acceptContent}>
+            {accepting
+              ? <ActivityIndicator color={Colors.white} />
+              : expired
+                ? <Text style={s.acceptBtnText}>Expired</Text>
+                : <Text style={s.acceptBtnText}>✅  Accept ({secondsLeft}s)</Text>
+            }
+          </View>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -311,13 +383,31 @@ const s = StyleSheet.create({
     fontSize: FontSize.base,
     color: Colors.textSecondary,
   },
-  acceptBtn: {
+
+  // Countdown accept button
+  acceptOuter: {
     flex: 2,
-    paddingVertical: 18,
+    height: 58,
     borderRadius: Radius.xl,
-    backgroundColor: Colors.success,
-    alignItems: 'center',
+    overflow: 'hidden',
+    backgroundColor: `${Colors.success}30`,
     ...Shadow.md,
+  },
+  acceptFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: Colors.success,
+  },
+  acceptContent: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   acceptBtnText: {
     fontFamily: FontFamily.bold,

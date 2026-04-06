@@ -104,7 +104,7 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 
 	// Notification.
-	notificationService := notification.NewService(context.Background())
+	notificationService := notification.NewService(context.Background(), dbPool)
 
 	// Admin.
 	adminRepo := admin.NewRepository(dbPool)

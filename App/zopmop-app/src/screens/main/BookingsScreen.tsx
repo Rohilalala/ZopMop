@@ -12,6 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { MainStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { getBookings, cancelBooking, type ApiBooking, type BookingStatus } from '../../api/bookings';
 import { useAuth } from '../../context/AuthContext';
@@ -19,7 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 type Tab = 'upcoming' | 'past';
 
 export default function BookingsScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
   const [tab, setTab] = useState<Tab>('upcoming');
   const [bookings, setBookings] = useState<ApiBooking[]>([]);
@@ -45,6 +47,16 @@ export default function BookingsScreen() {
     setBookings([]);
     fetchBookings();
   }, [fetchBookings]);
+
+  const handleTrack = useCallback((booking: ApiBooking) => {
+    navigation.navigate('ActiveBooking', {
+      bookingId: booking.id,
+      serviceName: booking.services?.[0]?.service_name ?? 'Service',
+      helperName: '',
+      helperRating: 0,
+      etaMinutes: 0,
+    });
+  }, [navigation]);
 
   const handleCancel = useCallback(async (bookingId: string) => {
     if (!token) return;
@@ -112,6 +124,7 @@ export default function BookingsScreen() {
                 key={booking.id}
                 booking={booking}
                 onCancel={tab === 'upcoming' ? handleCancel : undefined}
+                onTrack={(booking.status === 'accepted' || booking.status === 'in_progress') ? handleTrack : undefined}
               />
             ))
           )}
@@ -126,9 +139,11 @@ export default function BookingsScreen() {
 function BookingCard({
   booking,
   onCancel,
+  onTrack,
 }: {
   booking: ApiBooking;
   onCancel?: (id: string) => void;
+  onTrack?: (booking: ApiBooking) => void;
 }) {
   const statusMeta = STATUS_META[booking.status] ?? STATUS_META.pending;
   const serviceNames = booking.services?.length
@@ -166,6 +181,15 @@ function BookingCard({
       )}
 
       {/* Actions */}
+      {onTrack && (
+        <TouchableOpacity
+          style={s.trackBtn}
+          activeOpacity={0.8}
+          onPress={() => onTrack(booking)}
+        >
+          <Text style={s.trackBtnText}>Track Booking →</Text>
+        </TouchableOpacity>
+      )}
       {onCancel && (booking.status === 'pending' || booking.status === 'accepted') && (
         <TouchableOpacity
           style={s.cancelBtn}

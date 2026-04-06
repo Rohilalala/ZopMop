@@ -109,8 +109,13 @@ type UpdateUserStatusRequest struct {
 	IsSuspended bool `json:"is_suspended"`
 }
 
-// BroadcastNotificationRequest is the payload for manual push notification broadcast
+// BroadcastNotificationRequest is the payload for manual push notification broadcast.
+// Target controls who receives it:
+//   - "customers" — all users with role=customer (default if omitted)
+//   - "pros"      — all users with role=pro
+//   - "all"       — every registered user
 type BroadcastNotificationRequest struct {
-	Title string `json:"title" validate:"required,min=2"`
-	Body  string `json:"body" validate:"required,min=2"`
+	Title  string `json:"title"  validate:"required,min=2"`
+	Body   string `json:"body"   validate:"required,min=2"`
+	Target string `json:"target" validate:"omitempty,oneof=customers pros all"`
 }
