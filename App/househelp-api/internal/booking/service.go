@@ -492,6 +492,12 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 		return &MatchStatusResponse{Status: "matched", Helper: &helper}, nil
 	}
 
+	// If the booking is cancelled, report failed immediately — check this before
+	// Redis so a cancelled-but-still-in-Redis booking doesn't falsely show "searching".
+	if booking.Status == StatusCancelled {
+		return &MatchStatusResponse{Status: "failed"}, nil
+	}
+
 	// Booking not yet accepted. Check if it's still in the match window via Redis.
 	if s.matchEngine != nil {
 		matches, _ := s.matchEngine.GetBookingMatches(ctx, bookingID)
@@ -499,11 +505,6 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 			// Helpers have been notified but none accepted yet.
 			return &MatchStatusResponse{Status: "searching"}, nil
 		}
-	}
-
-	// If the booking is cancelled, report failed.
-	if booking.Status == StatusCancelled {
-		return &MatchStatusResponse{Status: "failed"}, nil
 	}
 
 	// Still pending with no Redis data — matching window may have expired.

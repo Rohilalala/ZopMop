@@ -384,13 +384,14 @@ func (e *Engine) updateSupplyCounter(ctx context.Context, lat, lng float64, coun
 // search window has expired.
 func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error) {
 	// Auto-cancel pending bookings that have outlived the customer-facing timeout.
-	// Condition: tried at least once (invites were sent) AND older than 45s.
+	// We cancel any pending booking older than 2 minutes regardless of match_attempts,
+	// because match_attempts stays 0 when no helpers are available — those bookings
+	// would otherwise stay pending forever and appear stuck in the user's bookings list.
 	if _, expErr := e.db.Exec(ctx, `
 		UPDATE bookings
 		   SET status = 'cancelled', updated_at = NOW()
 		 WHERE status = 'pending'
-		   AND match_attempts > 0
-		   AND created_at < NOW() - INTERVAL '45 seconds'
+		   AND created_at < NOW() - INTERVAL '2 minutes'
 	`); expErr != nil {
 		log.Warn().Err(expErr).Msg("[engine] failed to auto-cancel expired pending bookings")
 	}
