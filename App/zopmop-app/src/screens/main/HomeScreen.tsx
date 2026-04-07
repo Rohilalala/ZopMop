@@ -186,7 +186,7 @@ function Header({ locationName, onLocationPress }: { locationName: string; onLoc
       </TouchableOpacity>
 
       <View style={s.headerRight}>
-        <TouchableOpacity style={s.earnBtn} activeOpacity={0.8}>
+        <TouchableOpacity style={s.earnBtn} activeOpacity={0.8} onPress={() => navigation.navigate('Offers')}>
           <Text style={s.earnIcon}>🪙</Text>
           <Text style={s.earnText}>Earn ₹100</Text>
         </TouchableOpacity>
@@ -205,6 +205,7 @@ function Header({ locationName, onLocationPress }: { locationName: string; onLoc
 // ── Hero Card ─────────────────────────────────────────────────────────────────
 
 function HeroCard() {
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   return (
     <View style={s.heroCard}>
       <View style={[s.heroCircle, s.heroCircle1]} />
@@ -215,7 +216,11 @@ function HeroCard() {
       </View>
       <Text style={s.heroTitle}>Expert help,{'\n'}at your doorstep</Text>
       <Text style={s.heroSub}>Trusted professionals, on demand</Text>
-      <TouchableOpacity style={s.heroCTA} activeOpacity={0.85}>
+      <TouchableOpacity
+        style={s.heroCTA}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('AllServices')}
+      >
         <Text style={s.heroCTAText}>Book a Service  →</Text>
       </TouchableOpacity>
     </View>

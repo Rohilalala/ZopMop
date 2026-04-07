@@ -19,7 +19,7 @@ import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { getHelperInvitesWithDetails } from '../../api/matching';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from '../../api/config';
 
 export default function ProDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();

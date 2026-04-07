@@ -21,7 +21,7 @@ interface Props {
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
-// Generate the next 7 days from today
+// Generate the next 7 days from today — called at render time so dates stay fresh.
 function buildDays(): { iso: string; label: string; dayName: string }[] {
   const days = [];
   const now = new Date();
@@ -36,13 +36,18 @@ function buildDays(): { iso: string; label: string; dayName: string }[] {
   return days;
 }
 
-const DAYS = buildDays();
-
 export default function SchedulingModal({ visible, token, onClose, onConfirm }: Props) {
-  const [selectedDay, setSelectedDay] = useState(DAYS[0].iso);
+  // Recompute every time the modal opens so dates are never stale past midnight.
+  const DAYS = React.useMemo(() => buildDays(), [visible]);
+  const [selectedDay, setSelectedDay] = useState(() => buildDays()[0].iso);
   const [periods, setPeriods] = useState<ApiSlotPeriod[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
+
+  // Sync selectedDay to today whenever modal opens fresh.
+  useEffect(() => {
+    if (visible) setSelectedDay(DAYS[0].iso);
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) return;

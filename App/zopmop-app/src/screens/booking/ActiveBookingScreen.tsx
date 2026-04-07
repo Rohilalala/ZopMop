@@ -21,7 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 import { getBookingTracking, type TrackingResponse } from '../../api/matching';
 import { apiFetch } from '../../api/client';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from '../../api/config';
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },

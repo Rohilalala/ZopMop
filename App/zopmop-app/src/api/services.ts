@@ -1,6 +1,5 @@
 import { apiFetch } from './client';
-
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from './config';
 
 export interface ApiService {
   id: string;

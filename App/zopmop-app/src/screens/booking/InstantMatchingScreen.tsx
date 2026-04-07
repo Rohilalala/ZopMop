@@ -20,7 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
 
 const { width: W } = Dimensions.get('window');
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from '../../api/config';
 
 // How long the loading bar runs (ms)
 const MATCH_DURATION = 30000;

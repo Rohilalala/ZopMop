@@ -11,7 +11,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { MainStackParamList } from '../../types/navigation';
+import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { promoStore } from '../../utils/promoStore';
 
 const OFFERS = [
   {
@@ -35,21 +38,23 @@ const OFFERS = [
 ];
 
 export default function OffersScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [inputCode, setInputCode] = useState('');
 
   function handleApplyInput() {
     const code = inputCode.trim().toUpperCase();
     const match = OFFERS.find(o => o.code === code);
     if (match) {
-      Alert.alert('Offer Applied!', `"${match.title}" has been applied.`);
+      promoStore.set(match.code);
+      Alert.alert('Offer Applied!', `"${match.title}" has been applied to your cart.`);
     } else {
       Alert.alert('Invalid Code', 'This coupon code is not valid or has expired.');
     }
   }
 
   function handleApplyOffer(offer: typeof OFFERS[0]) {
-    Alert.alert('Offer Applied!', `"${offer.title}" has been applied.`);
+    promoStore.set(offer.code);
+    Alert.alert('Offer Applied!', `"${offer.title}" has been applied to your cart.`);
   }
 
   return (

@@ -5,7 +5,7 @@ import { registerSignOutCallback } from '../api/client';
 import { updateFCMToken } from '../api/users';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from '../api/config';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
@@ -113,9 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Sync FCM token to backend when logged in and token is available
   useEffect(() => {
     if (token && token !== '__guest__' && expoPushToken) {
-      updateFCMToken(token, expoPushToken).catch((err) => {
-        console.log('Failed to sync FCM token:', err);
-      });
+      updateFCMToken(token, expoPushToken).catch(() => {});
     }
   }, [token, expoPushToken]);
 

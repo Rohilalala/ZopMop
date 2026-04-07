@@ -81,7 +81,7 @@ export default function ProfileScreen() {
     setFetchingProfile(true);
     getMe(token)
       .then(updateUser)
-      .catch((err) => console.warn('[ProfileScreen] getMe failed:', err))
+      .catch(() => {})
       .finally(() => setFetchingProfile(false));
   }, []);
 
@@ -118,7 +118,12 @@ export default function ProfileScreen() {
         <ListSection
           title="Account"
           items={ACCOUNT_ITEMS}
-          onItemPress={{ addresses: () => navigation.navigate('Addresses') }}
+          onItemPress={{
+            addresses: () => navigation.navigate('Addresses'),
+            experts:   () => Alert.alert('Your Experts', 'Expert history is coming soon.'),
+            payments:  () => Alert.alert('Payment Methods', 'Payment methods are coming soon.'),
+            notifs:    () => Alert.alert('Notifications', 'Notification settings are coming soon.'),
+          }}
         />
         <ListSection title="Info & Legal" items={LEGAL_ITEMS} muted />
         <AccountActions onLogout={handleLogout} />
@@ -382,7 +387,7 @@ function QuickActionsGrid() {
 function ReferralBanner() {
   return (
     <View style={s.section}>
-      <TouchableOpacity style={s.referralCard} activeOpacity={0.85}>
+      <TouchableOpacity style={s.referralCard} activeOpacity={0.85} onPress={() => Alert.alert('Refer & Earn', 'Share ZopMop with friends and earn ₹100 per referral. Referral feature coming soon!')}>
         <View style={s.referralCircle} />
         <View style={s.referralContent}>
           <View style={s.referralIconBox}>

@@ -20,6 +20,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
+import { BASE_URL } from '../../api/config';
 
 const { width: W } = Dimensions.get('window');
 
@@ -121,7 +122,7 @@ export default function ProOnboardingScreen({ route }: Props) {
         Alert.alert('Location required', 'Please detect your location first.');
         return;
       }
-      const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+
       const res = await fetch(`${BASE_URL}/me/onboard-pro`, {
         method: 'POST',
         headers: {

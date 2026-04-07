@@ -20,6 +20,7 @@ import { createScheduledBooking, getBookings } from '../../api/bookings';
 import SchedulingModal from '../../components/SchedulingModal';
 import AddressPickerModal from '../../components/AddressPickerModal';
 import * as Location from 'expo-location';
+import { promoStore } from '../../utils/promoStore';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
@@ -107,10 +108,13 @@ export default function CartScreen() {
 
     setBooking(true);
     try {
+      const promoCode = promoStore.get() ?? undefined;
       await createScheduledBooking(token, {
         address_id: selectedAddress.id,
         time_slot_id: selectedSlotId,
+        ...(promoCode ? { promo_code: promoCode } : {}),
       });
+      promoStore.clear();
       await refreshCart();
       Alert.alert('Booking Confirmed! 🎉', 'Your service has been scheduled.', [
         { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },

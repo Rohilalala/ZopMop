@@ -1,7 +1,6 @@
 import type { AuthUser } from '../context/AuthContext';
 import { apiFetch, triggerSignOut } from './client';
-
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from './config';
 
 function authHeaders(token: string) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };

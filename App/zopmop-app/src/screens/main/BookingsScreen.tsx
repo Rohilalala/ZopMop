@@ -52,8 +52,8 @@ export default function BookingsScreen() {
     navigation.navigate('ActiveBooking', {
       bookingId: booking.id,
       serviceName: booking.services?.[0]?.service_name ?? 'Service',
-      helperName: '',
-      helperRating: 0,
+      helperName: 'Your Pro',
+      helperRating: 5,
       etaMinutes: 0,
     });
   }, [navigation]);

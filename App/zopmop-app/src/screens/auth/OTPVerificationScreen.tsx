@@ -18,6 +18,7 @@ import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../the
 import { getIdToken } from '@react-native-firebase/auth';
 import { otpStore } from '../../utils/otpStore';
 import { useAuth } from '../../context/AuthContext';
+import { BASE_URL } from '../../api/config';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'OTPVerification'>;
@@ -69,7 +70,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
       let backendUser: any | undefined;
       try {
         const idToken = userCredential?.user ? await getIdToken(userCredential.user) : undefined;
-        const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+
         const res = await fetch(`${BASE_URL}/auth/firebase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -112,7 +113,6 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   }
 
   async function exchangeForBackendJWT(firebaseToken: string) {
-    const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
     const res = await fetch(`${BASE_URL}/auth/firebase`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

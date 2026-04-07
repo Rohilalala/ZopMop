@@ -1,6 +1,5 @@
 import { apiFetch } from './client';
-
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+import { BASE_URL } from './config';
 
 function authHeaders(token: string) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -217,8 +216,7 @@ export async function completeBooking(token: string, bookingId: string): Promise
  * Returns the full ws:// URL.
  */
 export function getLocationWsUrl(token: string): string {
-  const base = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1')
-    .replace(/^http/, 'ws');
+  const base = BASE_URL.replace(/^http/, 'ws');
   return `${base}/location/ws?token=${encodeURIComponent(token)}`;
 }
 
