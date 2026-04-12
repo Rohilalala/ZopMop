@@ -16,20 +16,39 @@ import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { updateMe } from '../../api/users';
+import { pendingAuthStore } from '../../utils/pendingAuthStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NameEntry'>;
   route: RouteProp<AuthStackParamList, 'NameEntry'>;
 };
 
+/** Maximum name length accepted by the app — matches backend validation. */
+const NAME_MAX_LENGTH = 50;
+
+/**
+ * Sanitizes a display name:
+ * - Strips leading/trailing whitespace.
+ * - Collapses multiple internal spaces to a single space.
+ * - Removes characters outside printable Unicode letters, spaces, hyphens, and apostrophes.
+ *   This provides defense-in-depth even if the backend validates independently.
+ */
+function sanitizeName(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\p{L}\p{M}'\- ]/gu, '');
+}
+
 export default function NameEntryScreen({ navigation, route }: Props) {
-  const { phone, backendToken, backendUser } = route.params;
+  const { phone } = route.params;
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<TextInput>(null);
 
-  const isValid = name.trim().length >= 2;
+  const sanitized = sanitizeName(name);
+  const isValid = sanitized.length >= 2 && sanitized.length <= NAME_MAX_LENGTH;
 
   async function handleContinue() {
     if (!isValid) return;
@@ -37,14 +56,16 @@ export default function NameEntryScreen({ navigation, route }: Props) {
     setLoading(true);
 
     try {
-      let updatedUser = backendUser;
-      if (backendToken && backendToken !== '__guest__') {
-        updatedUser = await updateMe(backendToken, name.trim());
+      const pending = pendingAuthStore.get();
+      if (pending?.token) {
+        // Send the sanitized name — never the raw input.
+        const updatedUser = await updateMe(pending.token, sanitized);
+        pendingAuthStore.set(pending.token, updatedUser);
       }
-      navigation.replace('RoleSelection', { phone, backendToken, backendUser: updatedUser });
+      navigation.replace('RoleSelection', { phone });
     } catch {
-      // Best-effort — continue even if name save fails.
-      navigation.replace('RoleSelection', { phone, backendToken, backendUser });
+      // Best-effort — continue to next screen even if name save fails.
+      navigation.replace('RoleSelection', { phone });
     } finally {
       setLoading(false);
     }

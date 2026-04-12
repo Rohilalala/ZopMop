@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import { BASE_URL } from './config';
+import { BASE_URL, authHeaders } from './config';
 
 export interface ApiCartItem {
   id: string;
@@ -17,10 +17,6 @@ export interface ApiCart {
   items: ApiCartItem[];
   created_at: string;
   updated_at: string;
-}
-
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
 export async function getCart(token: string): Promise<ApiCart> {

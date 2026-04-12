@@ -17,6 +17,7 @@ export interface ApiService {
   duration_step_minutes: number;
   is_active: boolean;
   display_order: number;
+  category?: string;
 }
 
 export interface ServiceInclude {

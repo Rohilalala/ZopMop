@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { registerSignOutCallback } from '../api/client';
+import { registerSignOutCallback, apiFetch } from '../api/client';
 import { updateFCMToken } from '../api/users';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
 import { BASE_URL } from '../api/config';
+import { otpStore } from '../utils/otpStore';
+import { promoStore } from '../utils/promoStore';
+import { pendingAuthStore } from '../utils/pendingAuthStore';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
@@ -56,13 +59,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!storedToken) return;
 
         // Validate the stored token — catches deleted users and expired tokens.
+        // 5s timeout prevents splash screen hang if backend is unreachable.
         try {
-          const res = await fetch(`${BASE_URL}/me`, {
-            headers: { Authorization: `Bearer ${storedToken}` },
-          });
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 5000);
+          let res: Response | null = null;
+          try {
+            res = await apiFetch(`${BASE_URL}/me`, {
+              headers: { Authorization: `Bearer ${storedToken}` },
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
 
           if (res.status === 401 || res.status === 403 || res.status === 404) {
             // User deleted or token invalid — wipe the session.
+            console.warn('[Auth] token rejected by server — clearing session');
             await Promise.all([
               SecureStore.deleteItemAsync(TOKEN_KEY),
               SecureStore.deleteItemAsync(USER_KEY),
@@ -74,16 +87,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const freshUser: AuthUser = await res.json();
             setToken(storedToken);
             setUser(freshUser);
+            console.info('[Auth] session restored from server');
             SecureStore.setItemAsync(USER_KEY, JSON.stringify(freshUser)).catch(() => {});
             return;
           }
         } catch {
-          // Network error (offline) — restore from cache so the app still works.
+          // Network error or timeout (offline) — restore from cache so app still works.
+          console.info('[Auth] server unreachable — restoring from cache');
         }
 
         // Backend unreachable: restore from SecureStore cache.
         setToken(storedToken);
-        if (storedUser) setUser(JSON.parse(storedUser));
+        if (storedUser) {
+          try {
+            setUser(JSON.parse(storedUser));
+            console.info('[Auth] session restored from cache');
+          } catch {
+            // Corrupted cache — stay authenticated but without user object.
+            // Will be repopulated on next successful /me call.
+            console.warn('[Auth] corrupted user cache — clearing');
+            SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+          }
+        }
       } catch {
         // SecureStore unavailable (simulator without keychain) — start unauthenticated.
       } finally {
@@ -97,13 +122,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   tokenRef.current = token;
 
+  // Keep signOut ref current so the AppState listener (registered once) always
+  // calls the latest signOut without needing to re-subscribe.
+  const signOutRef = useRef(signOut);
+  useEffect(() => { signOutRef.current = signOut; });
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       const currentToken = tokenRef.current;
       if (nextState !== 'active' || !currentToken || currentToken === '__guest__') return;
-      fetch(`${BASE_URL}/me`, { headers: { Authorization: `Bearer ${currentToken}` } })
+      apiFetch(`${BASE_URL}/me`, { headers: { Authorization: `Bearer ${currentToken}` } })
         .then((res) => {
-          if (res.status === 401 || res.status === 403 || res.status === 404) signOut();
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            console.warn('[Auth] foreground re-validation failed — signing out');
+            signOutRef.current();
+          }
         })
         .catch(() => {}); // offline — keep session
     });
@@ -118,6 +151,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [token, expoPushToken]);
 
   function signIn(jwt: string, authUser?: AuthUser) {
+    // Security: reject sentinel/placeholder tokens — they must never be stored
+    // or used to make authenticated API calls.
+    if (!jwt || jwt === '__guest__') {
+      console.warn('[Auth] signIn called with empty or sentinel token — ignoring.');
+      return;
+    }
     setToken(jwt);
     if (authUser) setUser(authUser);
     SecureStore.setItemAsync(TOKEN_KEY, jwt).catch(() => {});
@@ -131,6 +170,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
     SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+    // Clear all module-level singletons so a subsequent user on the same
+    // device cannot inherit stale OTP handles, promo codes, or pending tokens.
+    otpStore.clear();
+    promoStore.clear();
+    pendingAuthStore.clear();
   }
 
   function updateUser(updatedUser: AuthUser) {

@@ -27,7 +27,7 @@ type Props = {
 };
 
 type Mode = 'choose' | 'gps' | 'manual';
-type GpsState = 'idle' | 'requesting' | 'checking' | 'denied';
+type GpsState = 'idle' | 'requesting' | 'checking' | 'denied' | 'error';
 
 export default function LocationCheckScreen({ navigation }: Props) {
   const [mode, setMode] = useState<Mode>('choose');
@@ -78,21 +78,25 @@ export default function LocationCheckScreen({ navigation }: Props) {
       }
 
       setGpsState('checking');
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const { latitude, longitude } = pos.coords;
-      const city = checkServiceability(latitude, longitude);
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const { latitude, longitude } = pos.coords;
+        const city = checkServiceability(latitude, longitude);
 
-      if (city) {
-        navigation.replace('PhoneEntry');
-      } else {
-        let cityName = 'your city';
-        try {
-          const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
-          cityName = geo.city || geo.region || geo.subregion || 'your city';
-        } catch { /* use fallback */ }
-        navigation.replace('NotServiceable', { cityName });
+        if (city) {
+          navigation.replace('PhoneEntry');
+        } else {
+          let cityName = 'your city';
+          try {
+            const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+            cityName = geo.city || geo.region || geo.subregion || 'your city';
+          } catch { /* use fallback */ }
+          navigation.replace('NotServiceable', { cityName });
+        }
+      } catch {
+        setGpsState('error');
       }
     } catch {
       setGpsState('denied');
@@ -222,6 +226,14 @@ export default function LocationCheckScreen({ navigation }: Props) {
               </Text>
             </View>
           )}
+          {gpsState === 'error' && (
+            <View style={styles.deniedCard}>
+              <Text style={styles.deniedTitle}>Couldn't get your location</Text>
+              <Text style={styles.deniedText}>
+                Make sure GPS is on and you have a signal, then try again. You can also enter your city manually.
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.bottomActions}>
@@ -235,7 +247,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
               <ActivityIndicator color={Colors.white} size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>
-                {gpsState === 'denied' ? 'Try again' : 'Allow location access'}
+                {gpsState === 'denied' || gpsState === 'error' ? 'Try again' : 'Allow location access'}
               </Text>
             )}
           </TouchableOpacity>

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/admin"
+	"github.com/adityarohilla/househelp-api/internal/analytics"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
@@ -24,13 +25,17 @@ type Service struct {
 	rdb          *redis.Client
 	configSvc    *config_manager.Service
 	notifSvc     *notification.Service
-	matchBatcher *matching.Batcher  // nil-safe; only used for instant bookings
-	matchEngine  *matching.Engine   // nil-safe; used for status queries
-	maps         *googlemaps.Client // nil-safe; used for tracking ETA + polyline
+	matchBatcher *matching.Batcher    // nil-safe; only used for instant bookings
+	matchEngine  *matching.Engine     // nil-safe; used for status queries
+	maps         *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
+	analytics    *analytics.Service   // nil-safe; fire-and-forget event tracking
 }
 
 // SetMapsClient attaches a Google Maps client for tracking and ETA.
 func (s *Service) SetMapsClient(c *googlemaps.Client) { s.maps = c }
+
+// SetAnalytics attaches the analytics service for event tracking.
+func (s *Service) SetAnalytics(svc *analytics.Service) { s.analytics = svc }
 
 // NewService creates a new booking service.
 func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service, batcher *matching.Batcher) *Service {
@@ -155,6 +160,13 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		Int("discount_cents", discountCents).
 		Msg("booking created")
 
+	// Track booking creation event.
+	s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, booking.ID, map[string]string{
+		"service_category_id": req.ServiceCategoryID,
+		"price_cents":         fmt.Sprintf("%d", totalPriceCents),
+		"has_promo":           fmt.Sprintf("%v", promoCode != nil),
+	})
+
 	// ── Matching (instant bookings only) ──────────────────────────────────────
 	// Track demand for the heatmap and enqueue into the batch matcher.
 	// Scheduled bookings are NOT enqueued here — they are matched closer to
@@ -213,9 +225,14 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 			Msg("booking cancelled outside free cancellation window; fee should be charged")
 	}
 
-	if err := s.repo.UpdateBookingStatus(ctx, bookingID, StatusCancelled); err != nil {
+	if err := s.repo.UpdateBookingStatus(ctx, bookingID, StatusCancelled, "customer"); err != nil {
 		return fmt.Errorf("failed to cancel booking: %w", err)
 	}
+
+	s.analytics.Track(ctx, analytics.EventBookingCancelled, userID, bookingID, map[string]string{
+		"cancelled_by": "customer",
+		"status_was":   string(booking.Status),
+	})
 
 	// Clear Redis match keys so helpers immediately stop seeing this invite.
 	if s.matchEngine != nil {
@@ -273,6 +290,10 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 	if err := s.repo.AcceptBooking(ctx, bookingID, helperID); err != nil {
 		return fmt.Errorf("failed to accept booking: %w", err)
 	}
+
+	s.analytics.Track(ctx, analytics.EventBookingAccepted, helperID, bookingID, map[string]string{
+		"customer_id": booking.CustomerID,
+	})
 
 	// Notify customer that their helper is on the way.
 	if s.notifSvc != nil {
@@ -404,6 +425,12 @@ func (s *Service) CreateScheduledBooking(
 			log.Warn().Err(err).Str("promo_code", *promoCode).Msg("failed to increment promo code usage")
 		}
 	}
+
+	s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, booking.ID, map[string]string{
+		"type":        "scheduled",
+		"price_cents": fmt.Sprintf("%d", totalPriceCents),
+		"has_promo":   fmt.Sprintf("%v", promoCode != nil),
+	})
 
 	log.Info().
 		Str("booking_id", booking.ID).
@@ -619,7 +646,7 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 // Only the assigned helper may call this (marks "I've arrived").
 func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
 	res, err := s.db.Exec(ctx,
-		`UPDATE bookings SET status = 'in_progress', updated_at = NOW()
+		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW()
 		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'`,
 		bookingID, helperID,
 	)
@@ -629,6 +656,7 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) 
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("booking not found or cannot be started")
 	}
+	s.analytics.Track(ctx, analytics.EventBookingStarted, helperID, bookingID, nil)
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
 	return nil
 }
@@ -638,7 +666,7 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) 
 // Only the assigned helper may call this.
 func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
 	res, err := s.db.Exec(ctx,
-		`UPDATE bookings SET status = 'completed', updated_at = NOW()
+		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
 		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'`,
 		bookingID, helperID,
 	)
@@ -648,6 +676,7 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("booking not found or cannot be completed")
 	}
+	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
 
 	// Increment total_jobs and notify customer — both best-effort, non-blocking.
 	go func() {

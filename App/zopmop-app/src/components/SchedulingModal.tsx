@@ -94,6 +94,7 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={s.dateScrollView}
           contentContainerStyle={s.dateStrip}
         >
           {DAYS.map(day => {
@@ -212,8 +213,13 @@ const s = StyleSheet.create({
   },
   closeText: { fontSize: 14, color: Colors.textSecondary, fontFamily: FontFamily.semibold },
 
+  dateScrollView: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
   dateStrip: {
-    paddingHorizontal: 16, paddingVertical: 16, gap: 10,
+    paddingHorizontal: 16, paddingVertical: 12, gap: 10,
+    alignItems: 'center',
   },
   dayChip: {
     alignItems: 'center',

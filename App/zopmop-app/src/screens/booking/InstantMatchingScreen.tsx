@@ -18,12 +18,13 @@ import * as Location from 'expo-location';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
+import { apiFetch } from '../../api/client';
 
 const { width: W } = Dimensions.get('window');
 import { BASE_URL } from '../../api/config';
 
 // How long the loading bar runs (ms)
-const MATCH_DURATION = 30000;
+const MATCH_DURATION = 60000;
 // Phase labels
 const PHASES = [
   { at: 0,    label: 'Finding available pros near you…' },
@@ -116,15 +117,15 @@ export default function InstantMatchingScreen({ route }: Props) {
         // helpers' invite sets are cleaned up immediately.
         const bid = bookingIdRef.current;
         if (bid && token && token !== '__guest__') {
-          fetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+          apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          }).catch(() => {/* best-effort — batcher will auto-expire it anyway */});
+          }).catch(() => { /* best-effort — batcher will auto-expire it anyway */ });
         }
         setScreenState('busy');
       }, MATCH_DURATION);
 
-      // 2. Create the instant booking with a dummy address (we use user's stored location)
+      // 2. Create the instant booking using real GPS — location is required for matching.
       if (!token || token === '__guest__') {
         // Not authenticated — simulate as busy after delay
         setTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
@@ -133,18 +134,31 @@ export default function InstantMatchingScreen({ route }: Props) {
 
       let bookingId: string | null = null;
       try {
-        // Get real GPS coordinates for matching.
-        let lat = 28.4357;
-        let lng = 77.0763;
-        try {
-          const { status } = await Location.requestForegroundPermissionsAsync();
-          if (status === 'granted') {
-            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            lat = pos.coords.latitude;
-            lng = pos.coords.longitude;
+        // Location permission is mandatory — we cannot match without real GPS coords.
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          if (!cancelled) {
+            Alert.alert(
+              'Location Required',
+              'We need your location to find pros near you. Please enable location access in Settings and try again.',
+              [{ text: 'OK', onPress: () => navigation.goBack() }],
+            );
           }
+          return;
+        }
+
+        let lat: number;
+        let lng: number;
+        try {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
         } catch {
-          // Use fallback if GPS fails — matching will still try but may not find nearby pros
+          if (!cancelled) {
+            Alert.alert('Location Unavailable', 'Could not get your current location. Please try again.');
+            navigation.goBack();
+          }
+          return;
         }
 
         const booking = await createInstantBooking(
@@ -217,7 +231,7 @@ export default function InstantMatchingScreen({ route }: Props) {
       // backend stops re-queueing it and pros stop seeing the invite.
       const bid = bookingIdRef.current;
       if (bid && !matchedRef.current && token && token !== '__guest__') {
-        fetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+        apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         }).catch(() => {});
@@ -254,7 +268,7 @@ export default function InstantMatchingScreen({ route }: Props) {
             style: 'destructive',
             onPress: () => {
               userCancelledRef.current = true;
-              fetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
+              apiFetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
               }).catch(() => {});

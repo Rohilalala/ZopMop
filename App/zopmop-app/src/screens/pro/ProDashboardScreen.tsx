@@ -18,7 +18,7 @@ import * as Location from 'expo-location';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { getHelperInvitesWithDetails } from '../../api/matching';
-
+import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 
 export default function ProDashboardScreen() {
@@ -30,7 +30,7 @@ export default function ProDashboardScreen() {
     if (!token || token === '__guest__') return;
     (async () => {
       try {
-        const res = await fetch(`${BASE_URL}/bookings?status=upcoming`, {
+        const res = await apiFetch(`${BASE_URL}/bookings?status=upcoming`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
@@ -127,7 +127,7 @@ export default function ProDashboardScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return false;
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      await fetch(`${BASE_URL}/helpers/me/location`, {
+      await apiFetch(`${BASE_URL}/helpers/me/location`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
@@ -151,7 +151,7 @@ export default function ProDashboardScreen() {
     } else {
       if (locationHeartbeatRef.current) clearInterval(locationHeartbeatRef.current);
       // Mark offline in backend.
-      fetch(`${BASE_URL}/helpers/me/status`, {
+      apiFetch(`${BASE_URL}/helpers/me/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ is_available: false }),

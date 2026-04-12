@@ -10,14 +10,35 @@ export function triggerSignOut() {
   _signOut?.();
 }
 
+/** Default network timeout in milliseconds. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /**
- * Drop-in replacement for fetch that auto-signs-out on 401 (token invalid / expired).
- * Use this for all authenticated API calls.
+ * Drop-in replacement for fetch with two security enhancements:
+ *
+ * 1. Auto-signs-out on 401 (expired / invalid token).
+ * 2. Enforces a 10-second timeout via AbortController to prevent:
+ *    - Slow-loris style attacks that hang the UI indefinitely.
+ *    - Resource exhaustion from piled-up unresolved promises.
+ *
+ * Use this for ALL API calls instead of raw fetch().
  */
 export async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
-  const res = await fetch(url, options);
-  if (res.status === 401) {
-    _signOut?.();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    if (res.status === 401) {
+      _signOut?.();
+    }
+    return res;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return res;
 }

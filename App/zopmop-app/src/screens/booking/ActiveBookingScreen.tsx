@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -101,7 +101,7 @@ export default function ActiveBookingScreen({ route }: Props) {
         clearInterval(animTickRef.current!);
         animTickRef.current = null;
       }
-    }, 100);
+    }, 500);
   }
 
   const fetchTracking = useCallback(async () => {
@@ -195,10 +195,12 @@ export default function ActiveBookingScreen({ route }: Props) {
 
   // Center the map: prefer midpoint between helper and customer, then either
   // individually, then fall back to Gurugram HQ so the map is never blank.
+  const FALLBACK_LAT = 28.4357;
+  const FALLBACK_LNG = 77.0763;
   const centerLat = helperLat && custLat ? (helperLat + custLat) / 2
-    : helperLat || custLat || 28.4357;
+    : helperLat || custLat || initialHelperLat || FALLBACK_LAT;
   const centerLng = helperLng && custLng ? (helperLng + custLng) / 2
-    : helperLng || custLng || 77.0763;
+    : helperLng || custLng || initialHelperLng || FALLBACK_LNG;
 
   const initialRegion: Region = {
     latitude: centerLat,
@@ -221,20 +223,12 @@ export default function ActiveBookingScreen({ route }: Props) {
       >
         {/* Helper marker */}
         {markerCoord.latitude !== 0 && markerCoord.longitude !== 0 && (
-          <Marker coordinate={markerCoord} anchor={{ x: 0.5, y: 0.5 }}>
-            <View style={s.helperMarker}>
-              <Text style={s.markerEmoji}>🚶</Text>
-            </View>
-          </Marker>
+          <HelperMarker coord={markerCoord} />
         )}
 
         {/* Customer (destination) marker */}
         {custLat !== 0 && custLng !== 0 && (
-          <Marker coordinate={{ latitude: custLat, longitude: custLng }} anchor={{ x: 0.5, y: 1.0 }}>
-            <View style={s.customerMarker}>
-              <Text style={s.markerEmoji}>🏠</Text>
-            </View>
-          </Marker>
+          <CustomerMarker coord={{ latitude: custLat, longitude: custLng }} />
         )}
 
         {/* Route polyline */}
@@ -315,6 +309,22 @@ export default function ActiveBookingScreen({ route }: Props) {
     </View>
   );
 }
+
+const HelperMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => (
+  <Marker coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
+    <View style={s.helperMarker}>
+      <Text style={s.markerEmoji}>🚶</Text>
+    </View>
+  </Marker>
+));
+
+const CustomerMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => (
+  <Marker coordinate={coord} anchor={{ x: 0.5, y: 1.0 }}>
+    <View style={s.customerMarker}>
+      <Text style={s.markerEmoji}>🏠</Text>
+    </View>
+  </Marker>
+));
 
 function Step({ label, done, active }: { label: string; done?: boolean; active?: boolean }) {
   return (

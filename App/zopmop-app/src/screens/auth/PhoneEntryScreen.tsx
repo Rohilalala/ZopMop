@@ -41,9 +41,14 @@ export default function PhoneEntryScreen({ navigation }: Props) {
 
     try {
       const firebaseAuth = getAuth();
+      // In dev builds, disable reCAPTCHA/app verification so Firebase sends the OTP
+      // directly without opening a webpage. Real OTPs are still sent and must be entered.
+      // This flag only skips the app attestation step — not the actual OTP check.
       if (__DEV__) {
         firebaseAuth.settings.appVerificationDisabledForTesting = true;
       }
+      // @ts-ignore — react-native-firebase's modular signInWithPhoneNumber does not
+      // require an ApplicationVerifier on native; the web SDK type definition is wrong here.
       const confirmation = await signInWithPhoneNumber(firebaseAuth, fullPhone);
       otpStore.set(confirmation);
       navigation.navigate('OTPVerification', { phone: fullPhone });
@@ -53,7 +58,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
           ? 'Invalid phone number. Please check and try again.'
           : err?.code === 'auth/too-many-requests'
           ? 'Too many attempts. Please try again later.'
-          : `Error: ${err?.code ?? err?.message ?? String(err)}`;
+          : `Failed to send verification code. (${err?.code ?? err?.message ?? 'unknown'})`;
       setError(msg);
     } finally {
       setLoading(false);

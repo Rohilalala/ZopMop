@@ -1,9 +1,5 @@
 import { apiFetch } from './client';
-import { BASE_URL } from './config';
-
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-}
+import { BASE_URL, authHeaders, validateShape } from './config';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -77,7 +73,7 @@ export async function createInstantBooking(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error ?? 'Failed to create instant booking');
   }
-  return res.json() as Promise<InstantBooking>;
+  return validateShape<InstantBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_cents', 'created_at']);
 }
 
 /**
@@ -95,7 +91,7 @@ export async function getMatchStatus(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error ?? 'Failed to get match status');
   }
-  return res.json() as Promise<MatchStatusResponse>;
+  return validateShape<MatchStatusResponse>(await res.json(), ['status']);
 }
 
 // ── Pro (Helper) APIs ─────────────────────────────────────────────────────────
@@ -110,6 +106,7 @@ export async function getHelperInvites(token: string): Promise<string[]> {
   });
   if (!res.ok) throw new Error('Failed to fetch invites');
   const data = await res.json();
+  if (!Array.isArray(data.booking_ids)) throw new Error('Invalid response: booking_ids is not an array');
   return data.booking_ids as string[];
 }
 
@@ -125,18 +122,21 @@ export async function getHelperInvitesWithDetails(token: string): Promise<Helper
   });
   if (!res.ok) throw new Error('Failed to fetch invites');
   const data = await res.json();
-  return (data.invites ?? []) as HelperInviteDetail[];
+  if (!Array.isArray(data.invites ?? [])) throw new Error('Invalid response: invites is not an array');
+  return (data.invites ?? []).map((inv: unknown) =>
+    validateShape<HelperInviteDetail>(inv, ['booking_id', 'address', 'lat', 'lng', 'price_cents']),
+  );
 }
 
 /**
  * GET /bookings/:id — gets a specific booking's full details (including customer address).
  */
-export async function getBookingDetails(token: string, bookingId: string) {
+export async function getBookingDetails(token: string, bookingId: string): Promise<HelperInviteDetail> {
   const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}`, {
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error('Failed to get booking details');
-  return res.json();
+  return validateShape<HelperInviteDetail>(await res.json(), ['booking_id', 'address', 'lat', 'lng', 'price_cents']);
 }
 
 /**
@@ -180,7 +180,7 @@ export async function getBookingTracking(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error ?? 'Failed to get tracking');
   }
-  return res.json() as Promise<TrackingResponse>;
+  return validateShape<TrackingResponse>(await res.json(), ['helper_lat', 'helper_lng', 'customer_lat', 'customer_lng', 'eta_minutes']);
 }
 
 /**
@@ -212,12 +212,23 @@ export async function completeBooking(token: string, bookingId: string): Promise
 }
 
 /**
- * POST /location/ws — WebSocket URL for Pro to stream GPS location.
- * Returns the full ws:// URL.
+ * Returns the WebSocket URL for Pro location streaming.
+ * The token is intentionally NOT included in the URL to avoid it appearing in
+ * server access logs, proxy logs, or browser history.
+ * The caller must send {"type":"auth","token":"..."} as the first WebSocket message.
+ *
+ * Security: BASE_URL.replace(/^http/, 'ws') maps:
+ *   http://  → ws://   (plaintext — only permitted in local dev)
+ *   https:// → wss://  (TLS — required for production)
+ * The EXPO_PUBLIC_API_URL HTTPS check in config.ts throws in production builds,
+ * so a release binary will never reach this point with an http:// base URL.
  */
-export function getLocationWsUrl(token: string): string {
+export function getLocationWsUrl(): string {
+  if (!__DEV__ && BASE_URL.startsWith('http://')) {
+    throw new Error('[Security] WebSocket URL would use unencrypted ws:// in production. Set EXPO_PUBLIC_API_URL to an https:// URL.');
+  }
   const base = BASE_URL.replace(/^http/, 'ws');
-  return `${base}/location/ws?token=${encodeURIComponent(token)}`;
+  return `${base}/location/ws`;
 }
 
 /**
@@ -231,5 +242,5 @@ export async function getHelperLocation(
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error('Location not available');
-  return res.json();
+  return validateShape<{ lat: number; lng: number }>(await res.json(), ['lat', 'lng']);
 }

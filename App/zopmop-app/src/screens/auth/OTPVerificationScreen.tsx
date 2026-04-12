@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Clipboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -17,6 +16,7 @@ import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { getIdToken } from '@react-native-firebase/auth';
 import { otpStore } from '../../utils/otpStore';
+import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
 
@@ -65,12 +65,14 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
     try {
       if (!confirmation) throw new Error('Session expired. Please go back and try again.');
       const userCredential = await confirmation.confirm(fullCode);
-      // Exchange Firebase ID token for backend JWT (best-effort; falls back if backend unavailable).
+
+      // Exchange Firebase ID token for backend JWT.
+      // Security: token is stored in pendingAuthStore (memory-only), NOT in nav params,
+      // to prevent serialization to disk via React Navigation state persistence.
       let backendToken: string | undefined;
-      let backendUser: any | undefined;
+      let backendUser: import('../../context/AuthContext').AuthUser | undefined;
       try {
         const idToken = userCredential?.user ? await getIdToken(userCredential.user) : undefined;
-
         const res = await fetch(`${BASE_URL}/auth/firebase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -81,20 +83,29 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
           backendToken = data.token as string;
           backendUser = data.user;
         }
-      } catch {
-        // Backend unavailable — token will be undefined, address saving is deferred.
+      } catch (backendErr: any) {
+        // Backend unavailable — token will be undefined.
+        console.warn('[Auth] Backend token exchange failed:', backendErr?.message ?? backendErr);
       }
-      // Returning pro/helper — sign in directly, skip onboarding flow.
+
+      // Store auth data in memory store (not nav params).
+      if (backendToken) {
+        pendingAuthStore.set(backendToken, backendUser);
+      }
+
+      // Returning pro/helper — sign in directly, skip onboarding.
       if (backendToken && (backendUser?.role === 'helper' || backendUser?.role === 'pro')) {
         signIn(backendToken, backendUser);
+        pendingAuthStore.clear();
         return;
       }
+
       // Skip name screen for returning users who already have a name.
       const hasName = backendUser?.name && backendUser.name.trim().length > 0;
       if (hasName) {
-        navigation.replace('RoleSelection', { phone, backendToken, backendUser });
+        navigation.replace('RoleSelection', { phone });
       } else {
-        navigation.replace('NameEntry', { phone, backendToken, backendUser });
+        navigation.replace('NameEntry', { phone });
       }
     } catch (err: any) {
       const msg =
@@ -102,9 +113,8 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
           ? 'Incorrect code. Please try again.'
           : err?.code === 'auth/code-expired'
             ? 'Code expired. Please request a new one.'
-            : `Error: ${err?.code ?? err?.message ?? String(err)}`;
+            : 'Verification failed. Please try again.';
       setError(msg);
-      // Clear OTP boxes on error
       setOtp(Array(OTP_LENGTH).fill(''));
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } finally {
@@ -112,27 +122,18 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
     }
   }
 
-  async function exchangeForBackendJWT(firebaseToken: string) {
-    const res = await fetch(`${BASE_URL}/auth/firebase`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ firebase_token: firebaseToken }),
-    });
-
-    if (!res.ok) throw new Error('Backend auth failed');
-
-    const data = await res.json();
-    // TODO: store data.token in SecureStore and set user in Zustand
-    // For now, navigate to main app (placeholder)
-    navigation.reset({ index: 0, routes: [{ name: 'PhoneEntry' }] });
-  }
-
   async function handleResend() {
     setResending(true);
     setError('');
     try {
       const { getAuth, signInWithPhoneNumber } = await import('@react-native-firebase/auth');
-      const newConfirmation = await signInWithPhoneNumber(getAuth(), phone);
+      const firebaseAuth = getAuth();
+      if (__DEV__) {
+        firebaseAuth.settings.appVerificationDisabledForTesting = true;
+      }
+      // @ts-ignore — react-native-firebase's modular signInWithPhoneNumber does not
+      // require an ApplicationVerifier on native; the web SDK type definition is wrong here.
+      const newConfirmation = await signInWithPhoneNumber(firebaseAuth, phone);
       otpStore.set(newConfirmation);
       setCountdown(RESEND_SECONDS);
       setOtp(Array(OTP_LENGTH).fill(''));

@@ -41,11 +41,8 @@ func (h *Handler) RegisterAdminContentRoutes(router fiber.Router) {
 	screens.Get("/", h.AdminGetScreens)
 	screens.Patch("/:key", h.AdminUpdateScreen)
 
-	services := router.Group("/services", middleware.RequirePermission("manage_services"))
-	services.Get("/", h.AdminGetServices)
-	services.Post("/", h.AdminCreateService)
-	services.Patch("/:id", h.AdminUpdateService)
-	services.Delete("/:id", h.AdminDeleteService)
+	// NOTE: /admin/services routes are handled by the services package handler,
+	// registered separately in main.go. Do not add them here.
 }
 
 // --- Public handlers ---

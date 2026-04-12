@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import { BASE_URL } from './config';
+import { BASE_URL, authHeaders } from './config';
 
 export interface ApiTimeSlot {
   id: string;
@@ -15,10 +15,6 @@ export interface ApiTimeSlot {
 export interface ApiSlotPeriod {
   label: string; // "Morning" | "Afternoon" | "Evening"
   slots: ApiTimeSlot[];
-}
-
-function authHeaders(token: string) {
-  return { Authorization: `Bearer ${token}` };
 }
 
 // Returns slots grouped by period as the backend sends them.

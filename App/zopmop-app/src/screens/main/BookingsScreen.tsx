@@ -52,8 +52,10 @@ export default function BookingsScreen() {
     navigation.navigate('ActiveBooking', {
       bookingId: booking.id,
       serviceName: booking.services?.[0]?.service_name ?? 'Service',
-      helperName: 'Your Pro',
-      helperRating: 5,
+      helperName: booking.helper_name ?? 'Your Pro',
+      helperRating: booking.helper_rating ?? 5,
+      helperLat: booking.helper_lat,
+      helperLng: booking.helper_lng,
       etaMinutes: 0,
     });
   }, [navigation]);
@@ -289,6 +291,8 @@ const s = StyleSheet.create({
   serviceItemName: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: Colors.text },
   serviceItemDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
 
+  trackBtn: { backgroundColor: Colors.primary, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
+  trackBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.white },
   cancelBtn: { borderWidth: 1, borderColor: Colors.danger, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
   cancelBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.danger },
 

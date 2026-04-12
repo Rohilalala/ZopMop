@@ -154,7 +154,7 @@ func (b *Batcher) processBatch() {
 	}
 
 	// Global greedy assignment — one helper per booking per window.
-	maxPerBooking := b.engine.cfg.MaxHelpersNotified
+	maxPerBooking := b.engine.getConfig(ctx).MaxHelpersNotified
 	if maxPerBooking < 1 {
 		maxPerBooking = 3
 	}

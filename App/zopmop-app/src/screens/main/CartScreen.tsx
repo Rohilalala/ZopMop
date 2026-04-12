@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,7 @@ export default function CartScreen() {
   const [selectedSlotLabel, setSelectedSlotLabel] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const bookingInFlight = useRef(false);
 
   async function loadAddresses() {
     if (!token) return;
@@ -54,13 +55,11 @@ export default function CartScreen() {
         if (status === 'granted') {
           const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           const { latitude, longitude } = pos.coords;
-          // Find closest saved address by Euclidean distance on lat/lon
           let minDist = Infinity;
           for (const addr of list) {
             const d = Math.hypot(addr.lat - latitude, addr.lon - longitude);
             if (d < minDist) { minDist = d; picked = addr; }
           }
-          // Only auto-select if within ~1 km (≈0.009 degrees)
           if (minDist > 0.009) picked = null;
         }
       } catch { /* location unavailable */ }
@@ -77,7 +76,10 @@ export default function CartScreen() {
 
       // 3. Fall back to first saved address
       setSelectedAddress(picked ?? list[0]);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('[Cart] failed to load addresses', err);
+      Alert.alert('Could not load addresses', 'Check your connection and try again.');
+    }
   }
 
   useEffect(() => { loadAddresses(); }, [token]);
@@ -105,24 +107,40 @@ export default function CartScreen() {
       return;
     }
     if (itemCount === 0) return;
+    if (bookingInFlight.current) return;
 
+    bookingInFlight.current = true;
     setBooking(true);
+    const promoCode = promoStore.get() ?? undefined;
+    console.info('[Cart] checkout start', {
+      addressId: selectedAddress.id,
+      slotId: selectedSlotId,
+      itemCount,
+      hasPromo: !!promoCode,
+    });
     try {
-      const promoCode = promoStore.get() ?? undefined;
       await createScheduledBooking(token, {
         address_id: selectedAddress.id,
         time_slot_id: selectedSlotId,
         ...(promoCode ? { promo_code: promoCode } : {}),
       });
+      console.info('[Cart] booking created successfully');
       promoStore.clear();
       await refreshCart();
       Alert.alert('Booking Confirmed! 🎉', 'Your service has been scheduled.', [
         { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
       ]);
     } catch (err: any) {
-      Alert.alert('Booking Failed', err?.message ?? 'Something went wrong. Please try again.');
+      const msg =
+        err?.response?.data?.error ??
+        err?.response?.data?.message ??
+        err?.message ??
+        'Something went wrong. Please try again.';
+      console.error('[Cart] booking failed', err?.response?.data ?? err?.message);
+      Alert.alert('Booking Failed', msg);
     } finally {
       setBooking(false);
+      bookingInFlight.current = false;
     }
   }, [token, selectedAddress, selectedSlotId, itemCount, refreshCart, navigation]);
 

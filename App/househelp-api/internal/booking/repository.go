@@ -103,8 +103,9 @@ func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string
 }
 
 // UpdateBookingStatus updates the status of a booking.
+// cancelledBy is only used when newStatus == StatusCancelled; pass "" otherwise.
 // It validates that the status transition is allowed.
-func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, newStatus BookingStatus) error {
+func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, newStatus BookingStatus, cancelledBy string) error {
 	// Fetch current booking to validate state transition.
 	b, err := r.getBookingByID(ctx, bookingID)
 	if err != nil {
@@ -118,10 +119,17 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	result, err := r.db.Exec(queryCtx,
-		`UPDATE bookings SET status = $2, updated_at = now() WHERE id = $1`,
-		bookingID, newStatus,
-	)
+	var query string
+	var args []any
+	if newStatus == StatusCancelled {
+		query = `UPDATE bookings SET status = $2, updated_at = now(), cancelled_at = NOW(), cancelled_by = $3 WHERE id = $1`
+		args = []any{bookingID, newStatus, cancelledBy}
+	} else {
+		query = `UPDATE bookings SET status = $2, updated_at = now() WHERE id = $1`
+		args = []any{bookingID, newStatus}
+	}
+
+	result, err := r.db.Exec(queryCtx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update booking status: %w", err)
 	}
@@ -160,7 +168,7 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 	defer cancel()
 
 	result, err := r.db.Exec(queryCtx,
-		`UPDATE bookings SET helper_id = $2, status = $3, updated_at = now() WHERE id = $1 AND status = $4`,
+		`UPDATE bookings SET helper_id = $2, status = $3, updated_at = now(), accepted_at = NOW() WHERE id = $1 AND status = $4`,
 		bookingID, helperID, StatusAccepted, StatusPending,
 	)
 	if err != nil {

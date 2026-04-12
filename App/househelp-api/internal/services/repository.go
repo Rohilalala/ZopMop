@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,7 +28,7 @@ func (r *Repository) List(ctx context.Context) ([]Service, error) {
 		`SELECT id, name, description, short_description, emoji, bg_color,
 		        base_price_cents, mrp_cents, rating, review_count,
 		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
-		        is_active, display_order, created_at
+		        is_active, display_order, created_at, category
 		 FROM service_categories WHERE is_active = true ORDER BY display_order ASC`,
 	)
 	if err != nil {
@@ -42,7 +43,7 @@ func (r *Repository) List(ctx context.Context) ([]Service, error) {
 			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
 			&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 			&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
-			&s.IsActive, &s.DisplayOrder, &s.CreatedAt,
+			&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan service: %w", err)
 		}
@@ -52,6 +53,114 @@ func (r *Repository) List(ctx context.Context) ([]Service, error) {
 		list = []Service{}
 	}
 	return list, rows.Err()
+}
+
+// ListAll returns all services (including inactive) ordered by display_order.
+// Used by the admin panel.
+func (r *Repository) ListAll(ctx context.Context) ([]Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx,
+		`SELECT id, name, description, short_description, emoji, bg_color,
+		        base_price_cents, mrp_cents, rating, review_count,
+		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
+		        is_active, display_order, created_at, category
+		 FROM service_categories ORDER BY display_order ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all services: %w", err)
+	}
+	defer rows.Close()
+
+	var list []Service
+	for rows.Next() {
+		var s Service
+		if err := rows.Scan(
+			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+			&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
+			&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
+			&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan service: %w", err)
+		}
+		list = append(list, s)
+	}
+	if list == nil {
+		list = []Service{}
+	}
+	return list, rows.Err()
+}
+
+// Update applies a partial update to a service category and returns the updated record.
+func (r *Repository) Update(ctx context.Context, id string, req AdminUpdateServiceRequest) (*Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Build SET clause dynamically from non-zero fields.
+	setClauses := []string{"updated_at = NOW()"}
+	args := []any{}
+	i := 1
+
+	if req.Name != "" {
+		setClauses = append(setClauses, fmt.Sprintf("name = $%d", i))
+		args = append(args, strings.TrimSpace(req.Name))
+		i++
+	}
+	if req.BasePriceCents != nil && *req.BasePriceCents > 0 {
+		setClauses = append(setClauses, fmt.Sprintf("base_price_cents = $%d", i))
+		args = append(args, *req.BasePriceCents)
+		i++
+	}
+	if req.IsActive != nil {
+		setClauses = append(setClauses, fmt.Sprintf("is_active = $%d", i))
+		args = append(args, *req.IsActive)
+		i++
+	}
+	if req.DisplayOrder != nil {
+		setClauses = append(setClauses, fmt.Sprintf("display_order = $%d", i))
+		args = append(args, *req.DisplayOrder)
+		i++
+	}
+	if req.Emoji != nil {
+		setClauses = append(setClauses, fmt.Sprintf("emoji = $%d", i))
+		args = append(args, *req.Emoji)
+		i++
+	}
+	if req.BgColor != "" {
+		setClauses = append(setClauses, fmt.Sprintf("bg_color = $%d", i))
+		args = append(args, req.BgColor)
+		i++
+	}
+	if req.Category != "" {
+		setClauses = append(setClauses, fmt.Sprintf("category = $%d", i))
+		args = append(args, req.Category)
+		i++
+	}
+
+	if len(setClauses) == 1 {
+		// Nothing to update — return current record.
+		return r.GetByID(ctx, id)
+	}
+
+	query := "UPDATE service_categories SET "
+	for j, c := range setClauses {
+		if j > 0 {
+			query += ", "
+		}
+		query += c
+	}
+	query += fmt.Sprintf(" WHERE id = $%d", i)
+	args = append(args, id)
+
+	res, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update service: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return nil, fmt.Errorf("service not found")
+	}
+	return r.GetByID(ctx, id)
 }
 
 // GetByID returns a single service by ID.
@@ -64,13 +173,13 @@ func (r *Repository) GetByID(ctx context.Context, serviceID string) (*Service, e
 		`SELECT id, name, description, short_description, emoji, bg_color,
 		        base_price_cents, mrp_cents, rating, review_count,
 		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
-		        is_active, display_order, created_at
+		        is_active, display_order, created_at, category
 		 FROM service_categories WHERE id = $1`, serviceID,
 	).Scan(
 		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
 		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
-		&s.IsActive, &s.DisplayOrder, &s.CreatedAt,
+		&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
 	)
 	if err != nil {
 		return nil, err
@@ -216,4 +325,70 @@ func (r *Repository) listSteps(ctx context.Context, serviceID string) ([]Service
 		list = []ServiceStep{}
 	}
 	return list, rows.Err()
+}
+
+// Create inserts a new service category and returns the created record.
+func (r *Repository) Create(ctx context.Context, req AdminCreateServiceRequest) (*Service, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if req.BgColor == "" {
+		req.BgColor = "#EEF2FF"
+	}
+	if req.MinDurationMinutes == 0 {
+		req.MinDurationMinutes = 30
+	}
+	if req.MaxDurationMinutes == 0 {
+		req.MaxDurationMinutes = 90
+	}
+	if req.DurationStepMinutes == 0 {
+		req.DurationStepMinutes = 15
+	}
+	if req.Category == "" {
+		req.Category = "other"
+	}
+
+	var emojiPtr *string
+	if req.Emoji != "" {
+		emojiPtr = &req.Emoji
+	}
+
+	var s Service
+	err := r.db.QueryRow(ctx,
+		`INSERT INTO service_categories (
+			name, emoji, bg_color, base_price_cents, display_order, category,
+			min_duration_minutes, max_duration_minutes, duration_step_minutes
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, name, description, short_description, emoji, bg_color,
+		          base_price_cents, mrp_cents, rating, review_count,
+		          min_duration_minutes, max_duration_minutes, duration_step_minutes,
+		          is_active, display_order, created_at, category`,
+		req.Name, emojiPtr, req.BgColor, req.BasePriceCents,
+		req.DisplayOrder, req.Category, req.MinDurationMinutes,
+		req.MaxDurationMinutes, req.DurationStepMinutes,
+	).Scan(
+		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
+		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
+		&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create service: %w", err)
+	}
+	return &s, nil
+}
+
+// Delete permanently removes a service category by ID.
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	res, err := r.db.Exec(ctx, `DELETE FROM service_categories WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete service: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("service not found")
+	}
+	return nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/adityarohilla/househelp-api/internal/addresses"
 	"github.com/adityarohilla/househelp-api/internal/admin"
+	"github.com/adityarohilla/househelp-api/internal/analytics"
 	"github.com/adityarohilla/househelp-api/internal/auth"
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
@@ -137,10 +138,15 @@ func main() {
 	}
 	matchEngine.SetMapsClient(mapsClient)
 
+	// Analytics.
+	analyticsSvc := analytics.NewService(dbPool)
+	analyticsHandler := analytics.NewHandler(analyticsSvc)
+
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
 	bookingService.SetMapsClient(mapsClient)
+	bookingService.SetAnalytics(analyticsSvc)
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
@@ -237,6 +243,11 @@ func main() {
 	contentHandler.RegisterAdminContentRoutes(adminGroup)
 	configHandler.RegisterAdminRoutes(adminGroup)
 	zonesHandler.RegisterAdminRoutes(adminGroup.Group("/zones"))
+	analyticsHandler.RegisterAdminRoutes(adminGroup)
+	servicesHandler.RegisterAdminRoutes(adminGroup.Group("/services"))
+
+	// Client-side analytics event ingestion (authenticated users, auth rate limiter).
+	analyticsHandler.RegisterClientRoutes(api.Group("", authMiddleware, authLimiter))
 
 	// --- Start server with graceful shutdown ---
 	go func() {

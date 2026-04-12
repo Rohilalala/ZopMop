@@ -34,6 +34,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 
 	// Bookings management.
 	router.Get("/bookings", middleware.RequirePermission(PermViewAnalytics), h.GetBookings)
+	router.Patch("/bookings/:id/cancel", middleware.RequirePermission(PermManageUsers), h.CancelBooking)
 
 	// Audit log.
 	router.Get("/audit-log", middleware.RequirePermission(PermViewAnalytics), h.GetAuditLog)
@@ -139,6 +140,19 @@ func (h *Handler) GetHelpers(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(result)
+}
+
+// CancelBooking handles PATCH /admin/bookings/:id/cancel.
+func (h *Handler) CancelBooking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if bookingID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing booking id"})
+	}
+	if err := h.service.CancelBooking(c.Context(), bookingID); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Msg("admin cancel booking failed")
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 // GetBookings handles GET /admin/bookings.

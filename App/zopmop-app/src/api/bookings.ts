@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import { BASE_URL } from './config';
+import { BASE_URL, authHeaders, validateShape } from './config';
 
 export type BookingStatus =
   | 'pending'
@@ -28,16 +28,16 @@ export interface ApiBooking {
   discount_cents: number;
   promo_code?: string;
   created_at: string;
+  helper_name?: string;
+  helper_rating?: number;
+  helper_lat?: number;
+  helper_lng?: number;
 }
 
 export interface CreateBookingPayload {
   address_id: string;
   time_slot_id: string;
   promo_code?: string;
-}
-
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
 export async function createScheduledBooking(
@@ -53,7 +53,7 @@ export async function createScheduledBooking(
     const err = await res.json().catch(() => ({}));
     throw new Error((err as any).error ?? 'Failed to create booking');
   }
-  return res.json() as Promise<ApiBooking>;
+  return validateShape<ApiBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_cents', 'created_at']);
 }
 
 export async function getBookings(
@@ -67,7 +67,10 @@ export async function getBookings(
   );
   if (!res.ok) throw new Error('Failed to fetch bookings');
   const data = await res.json();
-  return data.bookings as ApiBooking[];
+  if (!Array.isArray(data.bookings)) throw new Error('Invalid response: bookings is not an array');
+  return (data.bookings as unknown[]).map(b =>
+    validateShape<ApiBooking>(b, ['id', 'customer_id', 'status', 'price_cents', 'created_at']),
+  );
 }
 
 export async function cancelBooking(token: string, bookingId: string): Promise<void> {

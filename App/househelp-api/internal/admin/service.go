@@ -286,3 +286,8 @@ func (s *Service) Broadcast(ctx context.Context, title, body, target string) err
 		"target": target,
 	})
 }
+
+// CancelBooking force-cancels a booking (admin override, bypasses state machine).
+func (s *Service) CancelBooking(ctx context.Context, bookingID string) error {
+	return s.repo.CancelBooking(ctx, bookingID)
+}

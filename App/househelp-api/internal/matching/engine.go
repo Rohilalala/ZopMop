@@ -39,9 +39,6 @@ type Engine struct {
 	rdb       *redis.Client
 	configSvc *config_manager.Service
 	maps      *googlemaps.Client // optional; nil = skip walking-time filter
-
-	// cfg is refreshed at the start of every batch window.
-	cfg *config_manager.MatchingConfig
 }
 
 // NewEngine creates a ready-to-use matching engine.
@@ -51,6 +48,17 @@ func NewEngine(db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Se
 		rdb:       rdb,
 		configSvc: configSvc,
 	}
+}
+
+// getConfig fetches matching config from configSvc, falling back to hardcoded
+// defaults if the fetch fails. Never caches on the Engine struct — callers
+// get a fresh snapshot each time, avoiding concurrent read/write races.
+func (e *Engine) getConfig(ctx context.Context) *config_manager.MatchingConfig {
+	cfg, err := e.configSvc.GetMatchingConfig(ctx)
+	if err != nil || cfg == nil {
+		return defaultCfg()
+	}
+	return cfg
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -63,11 +71,7 @@ func NewEngine(db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Se
 //  1. Search within radius_km.
 //  2. If no qualified helpers found, wait and retry with max_radius_km.
 func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]HelperMatch, error) {
-	cfg, err := e.configSvc.GetMatchingConfig(ctx)
-	if err != nil || cfg == nil {
-		cfg = defaultCfg()
-	}
-	e.cfg = cfg
+	cfg := e.getConfig(ctx)
 
 	candidates, err := e.fetchAndScoreCandidates(ctx, lat, lng)
 	if err != nil {
@@ -171,15 +175,7 @@ func (e *Engine) ClearMatchOnAccept(ctx context.Context, bookingID string, accep
 // fetchAndScoreCandidates runs the full pipeline for a single lat/lng:
 // geo-search → postgres enrich → stale filter → score.
 func (e *Engine) fetchAndScoreCandidates(ctx context.Context, lat, lng float64) ([]HelperCandidate, error) {
-	cfg := e.cfg
-	if cfg == nil {
-		var err error
-		cfg, err = e.configSvc.GetMatchingConfig(ctx)
-		if err != nil || cfg == nil {
-			cfg = defaultCfg()
-		}
-		e.cfg = cfg
-	}
+	cfg := e.getConfig(ctx)
 	return e.geoSearchCandidates(ctx, lat, lng, cfg.RadiusKm, cfg)
 }
 
@@ -211,7 +207,10 @@ func (e *Engine) geoSearchCandidates(
 		},
 	).Result()
 	if err != nil {
-		return nil, fmt.Errorf("Redis GEOSEARCH failed: %w", err)
+		log.Error().Err(err).
+			Float64("lat", lat).Float64("lng", lng).
+			Msg("[engine] Redis GEOSEARCH failed — falling back to Postgres haversine")
+		return e.postgresGeoFallback(ctx, lat, lng, radiusKm, cfg)
 	}
 	log.Debug().
 		Float64("lat", lat).Float64("lng", lng).
@@ -308,10 +307,7 @@ func (e *Engine) storeMatchResults(ctx context.Context, bookingID string, matche
 		return nil
 	}
 
-	cfg := e.cfg
-	if cfg == nil {
-		cfg = defaultCfg()
-	}
+	cfg := e.getConfig(ctx)
 
 	data, err := json.Marshal(matches)
 	if err != nil {
@@ -389,7 +385,8 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 	// would otherwise stay pending forever and appear stuck in the user's bookings list.
 	if _, expErr := e.db.Exec(ctx, `
 		UPDATE bookings
-		   SET status = 'cancelled', updated_at = NOW()
+		   SET status = 'cancelled', updated_at = NOW(),
+		       cancelled_at = NOW(), cancelled_by = 'system'
 		 WHERE status = 'pending'
 		   AND created_at < NOW() - INTERVAL '2 minutes'
 	`); expErr != nil {
@@ -459,6 +456,14 @@ func (e *Engine) filterByWalkingTime(
 
 	for i, c := range toCheck {
 		go func(i int, c HelperCandidate) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error().Interface("panic", r).
+						Str("helper_id", c.HelperID).
+						Msg("[engine] panic in walking time check — keeping candidate")
+					ch <- res{i, 0} // 0 = keep candidate (fail open)
+				}
+			}()
 			mins, _ := e.maps.GetTravelMinutes(tCtx, c.Lat, c.Lng, destLat, destLng)
 			ch <- res{i, mins}
 		}(i, c)
@@ -485,6 +490,86 @@ func (e *Engine) filterByWalkingTime(
 	}
 	filtered = append(filtered, rest...)
 	return filtered
+}
+
+// postgresGeoFallback is used when Redis GEOSEARCH is unavailable.
+// It queries helpers directly using a haversine distance calculation on
+// current_lat/current_lng columns. Slower than Redis GEO but correct.
+// The Redis staleness TTL check is skipped — is_available flag is used instead.
+func (e *Engine) postgresGeoFallback(
+	ctx context.Context,
+	lat, lng, radiusKm float64,
+	cfg *config_manager.MatchingConfig,
+) ([]HelperCandidate, error) {
+	minRatingStr, _ := e.configSvc.GetConfig(ctx, config_manager.ConfigHelperMinRatingToAppear)
+	minRating, _ := strconv.ParseFloat(minRatingStr, 64)
+	if minRating <= 0 {
+		minRating = 3.0
+	}
+
+	fetchCount := cfg.MaxHelpersNotified * 4
+	if fetchCount < 20 {
+		fetchCount = 20
+	}
+
+	rows, err := e.db.Query(ctx, `
+		SELECT id, rating, total_jobs, active_bookings, current_lat, current_lng, dist_km
+		FROM (
+			SELECT
+				h.id,
+				COALESCE(h.rating, 5.0)   AS rating,
+				COALESCE(h.total_jobs, 0) AS total_jobs,
+				COALESCE(active.cnt, 0)   AS active_bookings,
+				h.current_lat,
+				h.current_lng,
+				(2 * 6371 * asin(sqrt(
+					power(sin(radians(h.current_lat - $1) / 2), 2) +
+					cos(radians($1)) * cos(radians(h.current_lat)) *
+					power(sin(radians(h.current_lng - $2) / 2), 2)
+				))) AS dist_km
+			FROM helpers h
+			LEFT JOIN (
+				SELECT helper_id, COUNT(*) AS cnt
+				FROM bookings
+				WHERE status IN ('accepted', 'in_progress')
+				GROUP BY helper_id
+			) active ON active.helper_id = h.id
+			WHERE h.is_available = true
+			  AND h.current_lat IS NOT NULL
+			  AND h.current_lng IS NOT NULL
+			  AND COALESCE(h.rating, 5.0) >= $3
+		) sub
+		WHERE dist_km <= $4
+		ORDER BY dist_km ASC
+		LIMIT $5
+	`, lat, lng, minRating, radiusKm, fetchCount)
+	if err != nil {
+		return nil, fmt.Errorf("Postgres geo fallback failed: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []HelperCandidate
+	for rows.Next() {
+		var c HelperCandidate
+		if err := rows.Scan(&c.HelperID, &c.Rating, &c.TotalJobs, &c.ActiveBookings,
+			&c.Lat, &c.Lng, &c.DistanceKm); err != nil {
+			log.Warn().Err(err).Msg("[engine] fallback: failed to scan helper row")
+			continue
+		}
+		ScoreCandidate(&c)
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("Postgres geo fallback iteration error: %w", err)
+	}
+
+	log.Warn().
+		Float64("lat", lat).Float64("lng", lng).
+		Int("candidates", len(candidates)).
+		Msg("[engine] Postgres geo fallback complete")
+
+	go e.updateSupplyCounter(context.Background(), lat, lng, len(candidates))
+	return candidates, nil
 }
 
 // ── defaults ──────────────────────────────────────────────────────────────────

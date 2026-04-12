@@ -12,7 +12,9 @@ export async function checkServiceability(lat: number, lon: number): Promise<Zon
     if (!res.ok) return { serviceable: false };
     return res.json() as Promise<ZoneCheckResult>;
   } catch {
-    // Network error — default to serviceable so we don't block the app offline
-    return { serviceable: true };
+    // Security: Fail-closed — network errors or unreachable backend must NOT grant
+    // access. Defaulting to serviceable:true would let an attacker block the zone-check
+    // request (DNS poisoning, firewall rule) to bypass geo-restrictions entirely.
+    return { serviceable: false };
   }
 }

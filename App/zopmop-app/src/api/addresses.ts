@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import { BASE_URL } from './config';
+import { BASE_URL, authHeaders } from './config';
 
 export interface ApiAddress {
   id: string;
@@ -30,10 +30,6 @@ export interface CreateAddressPayload {
   receiver_phone: string;
   lat: number;
   lon: number;
-}
-
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 }
 
 export async function listAddresses(token: string): Promise<ApiAddress[]> {

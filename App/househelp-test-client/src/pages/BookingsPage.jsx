@@ -1,131 +1,231 @@
-import { useState } from 'react';
-import { createBooking, getBooking, listBookings } from '../api/booking.api';
-import ResponseViewer from '../components/ResponseViewer';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, ChevronLeft, ChevronRight, XCircle, Search } from 'lucide-react';
+import { getAdminBookings, cancelAdminBooking } from '../api/admin.api';
+import StatusBadge from '../components/StatusBadge';
+import { useToast } from '../hooks/useToast';
+import Toaster from '../components/Toast';
+
+const STATUSES = ['', 'pending', 'accepted', 'in_progress', 'completed', 'cancelled'];
+
+function fmt(cents) {
+  return '₹' + (cents / 100).toFixed(0);
+}
+
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
 export default function BookingsPage() {
-  const [createState, setCreateState] = useState({ loading: false, data: null, status: null });
-  const [getState, setGetState] = useState({ loading: false, data: null, status: null });
-  const [listState, setListState] = useState({ loading: false, data: null, status: null });
+  const [bookings, setBookings] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState('');
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [cancelling, setCancelling] = useState(null);
+  const { toasts, toast } = useToast();
 
-  // Create forms
-  const [categoryId, setCategoryId] = useState('00000000-0000-0000-0000-000000000000');
-  const [address, setAddress] = useState('123 Test Street');
-  const [lat, setLat] = useState('12.9716');
-  const [lng, setLng] = useState('77.5946');
-  const [promo, setPromo] = useState('');
-
-  // Get Form
-  const [bookingId, setBookingId] = useState('');
-
-  const runCall = async (apiFunc, setStateHandler, ...args) => {
-    setStateHandler({ loading: true, data: null, status: null });
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await apiFunc(...args);
-      setStateHandler({ loading: false, data, status: 200 });
-    } catch (err) {
-      setStateHandler({
-        loading: false,
-        data: err.response?.data || err.message,
-        status: err.response?.status || 500
-      });
+      const params = { page, limit: 25 };
+      if (status) params.status = status;
+      if (search) params.search = search;
+      const res = await getAdminBookings(params);
+      setBookings(res.data || []);
+      setTotal(res.total_count || 0);
+      setTotalPages(res.total_pages || 1);
+    } catch {
+      toast('Failed to load bookings', 'error');
+    } finally {
+      setLoading(false);
     }
+  }, [page, status, search]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleStatusFilter = (s) => {
+    setStatus(s);
+    setPage(1);
   };
 
-  const handleCreate = () => {
-    const payload = {
-      service_category_id: categoryId,
-      address,
-      lat: parseFloat(lat),
-      lng: parseFloat(lng)
-    };
-    if (promo) payload.promo_code = promo;
-    runCall(createBooking, setCreateState, payload);
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setSearch(searchInput.trim());
+    setPage(1);
+  };
+
+  const handleCancel = async (id) => {
+    if (!window.confirm('Force-cancel this booking?')) return;
+    setCancelling(id);
+    try {
+      await cancelAdminBooking(id);
+      toast('Booking cancelled');
+      load();
+    } catch (err) {
+      toast(err.response?.data?.error || 'Cancel failed', 'error');
+    } finally {
+      setCancelling(null);
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Bookings Matrix</h1>
-        <p className="text-gray-400">Tests booking endpoints leveraging your authorization context natively.</p>
-      </div>
+      <Toaster toasts={toasts} />
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-sm mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-white mb-4">My Bookings List</h2>
-          <button 
-            onClick={() => runCall(listBookings, setListState)}
-            disabled={listState.loading}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded transition-colors disabled:opacity-50"
-          >
-            GET /api/v1/bookings
-          </button>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Bookings</h1>
+          <p className="text-gray-400 text-sm mt-0.5">{total.toLocaleString()} total</p>
         </div>
-        {listState.loading && <LoadingSpinner />}
-        <ResponseViewer response={listState.data} statusCode={listState.status} />
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-sm mb-6">
-        <h2 className="text-xl font-semibold text-white mb-4">Get Booking by ID</h2>
-        <div className="flex gap-4 items-end mb-4">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-400 mb-1">Booking UUID</label>
-            <input
-              type="text"
-              value={bookingId}
-              onChange={(e) => setBookingId(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-          <button 
-            onClick={() => runCall(getBooking, setGetState, bookingId)}
-            disabled={getState.loading || !bookingId}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded transition-colors disabled:opacity-50 h-[42px]"
-          >
-            Fetch Booking
-          </button>
-        </div>
-        {getState.loading && <LoadingSpinner />}
-        <ResponseViewer response={getState.data} statusCode={getState.status} />
-      </div>
-
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-sm mb-6">
-        <h2 className="text-xl font-semibold text-white mb-4">Create New Booking</h2>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Service Category ID</label>
-            <input type="text" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Address</label>
-            <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Lat</label>
-              <input type="number" step="any" value={lat} onChange={(e) => setLat(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Lng</label>
-              <input type="number" step="any" value={lng} onChange={(e) => setLng(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Promo Code (Optional)</label>
-            <input type="text" value={promo} onChange={(e) => setPromo(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded px-4 py-2 text-white focus:outline-none focus:border-indigo-500" />
-          </div>
-        </div>
-        <button 
-          onClick={handleCreate}
-          disabled={createState.loading}
-          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded transition-colors disabled:opacity-50"
+        <button
+          onClick={load}
+          disabled={loading}
+          className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors disabled:opacity-50"
         >
-          POST /api/v1/bookings
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          Refresh
         </button>
-        {createState.loading && <LoadingSpinner />}
-        <ResponseViewer response={createState.data} statusCode={createState.status} />
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center">
+        {/* Status tabs */}
+        <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+          {STATUSES.map((s) => (
+            <button
+              key={s || 'all'}
+              onClick={() => handleStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors capitalize ${
+                status === s
+                  ? 'bg-indigo-600 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {s || 'All'}
+            </button>
+          ))}
+        </div>
+
+        {/* Search */}
+        <form onSubmit={handleSearch} className="flex gap-2 ml-auto">
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Customer phone or booking ID..."
+            className="w-64 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+          />
+          <button
+            type="submit"
+            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-gray-300 transition-colors"
+          >
+            <Search size={14} />
+          </button>
+        </form>
+      </div>
+
+      {/* Table */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wide">
+              <th className="text-left px-4 py-3 font-medium">Booking</th>
+              <th className="text-left px-4 py-3 font-medium">Customer</th>
+              <th className="text-left px-4 py-3 font-medium">Helper</th>
+              <th className="text-left px-4 py-3 font-medium">Service</th>
+              <th className="text-left px-4 py-3 font-medium">Amount</th>
+              <th className="text-left px-4 py-3 font-medium">Status</th>
+              <th className="text-left px-4 py-3 font-medium">Created</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {loading && bookings.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="text-center py-12 text-gray-500">
+                  Loading...
+                </td>
+              </tr>
+            ) : bookings.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="text-center py-12 text-gray-500">
+                  No bookings found
+                </td>
+              </tr>
+            ) : (
+              bookings.map((b) => (
+                <tr
+                  key={b.id}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors"
+                >
+                  <td className="px-4 py-3">
+                    <span className="font-mono text-xs text-gray-400">{b.id.slice(0, 8)}…</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-200">{b.customer_phone}</td>
+                  <td className="px-4 py-3 text-gray-400">
+                    {b.helper_phone || <span className="text-gray-600">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-300">{b.service_category}</td>
+                  <td className="px-4 py-3">
+                    <span className="text-white">{fmt(b.price_cents)}</span>
+                    {b.discount_cents > 0 && (
+                      <span className="ml-1 text-xs text-green-400">
+                        -{fmt(b.discount_cents)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={b.status} />
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{timeAgo(b.created_at)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {b.status !== 'cancelled' && b.status !== 'completed' && (
+                      <button
+                        onClick={() => handleCancel(b.id)}
+                        disabled={cancelling === b.id}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 ml-auto"
+                      >
+                        <XCircle size={12} />
+                        Cancel
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm text-gray-400">
+          <span>Page {page} of {totalPages}</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1 || loading}
+              className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg disabled:opacity-40 transition-colors"
+            >
+              <ChevronLeft size={14} /> Prev
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages || loading}
+              className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg disabled:opacity-40 transition-colors"
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

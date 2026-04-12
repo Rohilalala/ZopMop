@@ -1,131 +1,242 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { RefreshCw, Plus, XCircle } from 'lucide-react';
 import { getPromotions, createPromotion, disablePromotion } from '../api/admin.api';
-import ResponseViewer from '../components/ResponseViewer';
-import LoadingSpinner from '../components/LoadingSpinner';
+import { useToast } from '../hooks/useToast';
+import Toaster from '../components/Toast';
+import Modal, { Field } from '../components/Modal';
+
+function fmtDiscount(p) {
+  return p.discount_type === 'percent' ? `${p.discount_value}%` : `₹${(p.discount_value / 100).toFixed(0)}`;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString();
+}
+
+const EMPTY_FORM = { code: '', discount_type: 'percent', discount_value: '', min_order_cents: '', max_uses: '0', expires_days: '30' };
 
 export default function PromotionsPage() {
-  const [listState, setListState] = useState({ loading: false, data: null, status: null });
-  const [createState, setCreateState] = useState({ loading: false, data: null, status: null });
+  const [promotions, setPromotions] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [disabling, setDisabling] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [creating, setCreating] = useState(false);
+  const { toasts, toast } = useToast();
 
-  const [code, setCode] = useState('FIRST20');
-  const [discountType, setDiscountType] = useState('percent');
-  const [discountValue, setDiscountValue] = useState('20');
-  const [minOrder, setMinOrder] = useState('500');
-  const [maxUses, setMaxUses] = useState('0'); // 0 = unlimited
-  const [expiresInDays, setExpiresInDays] = useState('30');
-
-  const runList = async () => {
-    setListState({ loading: true, data: null, status: null });
+  const load = async () => {
+    setLoading(true);
     try {
-      const data = await getPromotions();
-      setListState({ loading: false, data, status: 200 });
-    } catch (err) {
-      setListState({
-        loading: false,
-        data: err.response?.data || err.message,
-        status: err.response?.status || 500
-      });
+      const res = await getPromotions({ limit: 50 });
+      setPromotions(res.data || res.promotions || []);
+      setTotal(res.total_count || 0);
+    } catch {
+      toast('Failed to load promotions', 'error');
+    } finally {
+      setLoading(false);
     }
   };
+
+  useEffect(() => { load(); }, []);
+
+  const f = (key) => (e) => setForm((prev) => ({ ...prev, [key]: e.target.value }));
 
   const handleCreate = async () => {
-    setCreateState({ loading: true, data: null, status: null });
+    if (!form.code || !form.discount_value) {
+      toast('Code and discount value required', 'error');
+      return;
+    }
+    setCreating(true);
     try {
-      const expiresAt = new Date(Date.now() + parseInt(expiresInDays) * 86400000).toISOString();
+      const expiresAt = new Date(Date.now() + parseInt(form.expires_days) * 86400000).toISOString();
       const payload = {
-        code: code.toUpperCase(),
-        discount_type: discountType,
-        discount_value: parseInt(discountValue),
-        min_order_cents: parseInt(minOrder),
-        expires_at: expiresAt
+        code: form.code.toUpperCase().trim(),
+        discount_type: form.discount_type,
+        discount_value: parseInt(form.discount_value),
+        min_order_cents: parseInt(form.min_order_cents) || 0,
+        expires_at: expiresAt,
       };
-      if (parseInt(maxUses) > 0) payload.max_uses = parseInt(maxUses);
-
-      const data = await createPromotion(payload);
-      setCreateState({ loading: false, data, status: 200 });
-      runList();
+      if (parseInt(form.max_uses) > 0) payload.max_uses = parseInt(form.max_uses);
+      await createPromotion(payload);
+      toast(`${payload.code} created`);
+      setShowCreate(false);
+      setForm(EMPTY_FORM);
+      load();
     } catch (err) {
-      setCreateState({ loading: false, data: err.response?.data || err.message, status: err.response?.status || 500 });
+      toast(err.response?.data?.error || 'Create failed', 'error');
+    } finally {
+      setCreating(false);
     }
   };
 
-  const handleDisable = async (id) => {
+  const handleDisable = async (promo) => {
+    if (!window.confirm(`Disable promo code "${promo.code}"?`)) return;
+    setDisabling(promo.id);
     try {
-      await disablePromotion(id);
-      runList();
+      await disablePromotion(promo.id);
+      toast(`${promo.code} disabled`);
+      setPromotions((prev) => prev.map((p) => p.id === promo.id ? { ...p, is_active: false } : p));
     } catch (err) {
-      alert("Failed to disable: " + (err.response?.data?.error || err.message));
+      toast(err.response?.data?.error || 'Disable failed', 'error');
+    } finally {
+      setDisabling(null);
     }
   };
+
+  const active = promotions.filter((p) => p.is_active);
+  const inactive = promotions.filter((p) => !p.is_active);
 
   return (
     <div className="space-y-6">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Promotions & Vouchers</h1>
-        <p className="text-gray-400">Marketing team codes issuance module.</p>
+      <Toaster toasts={toasts} />
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Promotions</h1>
+          <p className="text-gray-400 text-sm mt-0.5">{total || promotions.length} codes</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition-colors"
+          >
+            <Plus size={14} /> New Promo
+          </button>
+        </div>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-sm mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-white">Active Promo Codes</h2>
-          <button onClick={runList} className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded text-sm transition-colors">Load Promotions</button>
+      {/* Active promos */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-white">Active ({active.length})</h2>
         </div>
-
-        {listState.status === 200 && listState.data?.promotions && (
-          <div className="overflow-x-auto mb-4 border border-gray-800 rounded">
-            <table className="w-full text-sm text-left text-gray-300">
-              <thead className="text-xs text-gray-400 uppercase bg-gray-800">
-                <tr>
-                  <th className="px-4 py-3">Code</th>
-                  <th className="px-4 py-3">Discount</th>
-                  <th className="px-4 py-3">Uses / Max</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Action</th>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wide">
+              <th className="text-left px-4 py-3 font-medium">Code</th>
+              <th className="text-left px-4 py-3 font-medium">Discount</th>
+              <th className="text-left px-4 py-3 font-medium">Min Order</th>
+              <th className="text-left px-4 py-3 font-medium">Uses</th>
+              <th className="text-left px-4 py-3 font-medium">Expires</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {loading && active.length === 0 ? (
+              <tr><td colSpan={6} className="text-center py-8 text-gray-500">Loading...</td></tr>
+            ) : active.length === 0 ? (
+              <tr><td colSpan={6} className="text-center py-8 text-gray-500">No active promotions</td></tr>
+            ) : (
+              active.map((p) => (
+                <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                  <td className="px-4 py-3 font-mono font-bold text-green-400">{p.code}</td>
+                  <td className="px-4 py-3 text-white">{fmtDiscount(p)}</td>
+                  <td className="px-4 py-3 text-gray-400">₹{(p.min_order_cents / 100).toFixed(0)}</td>
+                  <td className="px-4 py-3 text-gray-300">
+                    {p.uses_count} / {p.max_uses === 0 ? '∞' : p.max_uses}
+                  </td>
+                  <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(p.expires_at)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => handleDisable(p)}
+                      disabled={disabling === p.id}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors disabled:opacity-50 ml-auto"
+                    >
+                      <XCircle size={12} /> Disable
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {listState.data.promotions.map(p => (
-                  <tr key={p.id} className="border-b border-gray-800 hover:bg-gray-800/50">
-                    <td className="px-4 py-3 font-mono font-bold text-green-400">{p.code}</td>
-                    <td className="px-4 py-3">{p.discount_type === 'percent' ? `${p.discount_value}%` : `₹${p.discount_value/100}`}</td>
-                    <td className="px-4 py-3">{p.uses_count} / {p.max_uses === 0 ? '∞' : p.max_uses}</td>
-                    <td className="px-4 py-3">{p.is_active ? 'Active' : 'Disabled'}</td>
-                    <td className="px-4 py-3 text-right">
-                       {p.is_active && (
-                         <button onClick={() => handleDisable(p.id)} className="text-red-400 hover:underline hover:text-white text-xs">Disable</button>
-                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {listState.loading && <LoadingSpinner />}
-        <ResponseViewer response={listState.data} statusCode={listState.status} />
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-sm mb-6">
-        <h2 className="text-xl font-semibold text-white mb-4">Mint New Promotion</h2>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div><label className="block text-sm text-gray-400 mb-1">Code</label><input type="text" value={code} onChange={e=>setCode(e.target.value)} className="w-full bg-gray-800 uppercase border-gray-700 rounded px-4 py-2 text-white font-mono" /></div>
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Discount Type</label>
-            <select value={discountType} onChange={e=>setDiscountType(e.target.value)} className="w-full bg-gray-800 border-gray-700 rounded px-4 py-2 text-white">
-              <option value="percent">Percentage (%)</option>
-              <option value="fixed">Fixed Amount (Cents/Rupees)</option>
-            </select>
+      {/* Inactive promos */}
+      {inactive.length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-800">
+            <h2 className="text-sm font-semibold text-gray-500">Disabled ({inactive.length})</h2>
           </div>
-          <div><label className="block text-sm text-gray-400 mb-1">Discount Value</label><input type="number" value={discountValue} onChange={e=>setDiscountValue(e.target.value)} className="w-full bg-gray-800 border-gray-700 rounded px-4 py-2 text-white" /></div>
-          <div><label className="block text-sm text-gray-400 mb-1">Min Order Values (cents)</label><input type="number" value={minOrder} onChange={e=>setMinOrder(e.target.value)} className="w-full bg-gray-800 border-gray-700 rounded px-4 py-2 text-white" /></div>
-          <div><label className="block text-sm text-gray-400 mb-1">Max Uses Overall (0 = inf)</label><input type="number" value={maxUses} onChange={e=>setMaxUses(e.target.value)} className="w-full bg-gray-800 border-gray-700 rounded px-4 py-2 text-white" /></div>
-          <div><label className="block text-sm text-gray-400 mb-1">Expires In (Days)</label><input type="number" value={expiresInDays} onChange={e=>setExpiresInDays(e.target.value)} className="w-full bg-gray-800 border-gray-700 rounded px-4 py-2 text-white" /></div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="text-left px-4 py-3 font-medium">Code</th>
+                <th className="text-left px-4 py-3 font-medium">Discount</th>
+                <th className="text-left px-4 py-3 font-medium">Uses</th>
+                <th className="text-left px-4 py-3 font-medium">Expired</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inactive.map((p) => (
+                <tr key={p.id} className="border-b border-gray-800/50 opacity-50">
+                  <td className="px-4 py-3 font-mono text-gray-400">{p.code}</td>
+                  <td className="px-4 py-3 text-gray-400">{fmtDiscount(p)}</td>
+                  <td className="px-4 py-3 text-gray-500">{p.uses_count} / {p.max_uses === 0 ? '∞' : p.max_uses}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{fmtDate(p.expires_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <button onClick={handleCreate} className="bg-green-600 hover:bg-green-700 text-white w-full py-2 rounded">MINT PROMOTION</button>
-        {createState.loading && <LoadingSpinner />}
-        <ResponseViewer response={createState.data} statusCode={createState.status} />
-      </div>
+      )}
+
+      {/* Create modal */}
+      <Modal
+        isOpen={showCreate}
+        onClose={() => { setShowCreate(false); setForm(EMPTY_FORM); }}
+        title="New Promotion"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Code">
+              <input
+                type="text"
+                value={form.code}
+                onChange={f('code')}
+                placeholder="SAVE20"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono uppercase placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+              />
+            </Field>
+            <Field label="Discount Type">
+              <select value={form.discount_type} onChange={f('discount_type')} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                <option value="percent">Percent (%)</option>
+                <option value="fixed">Fixed (₹)</option>
+              </select>
+            </Field>
+            <Field label={form.discount_type === 'percent' ? 'Discount %' : 'Discount ₹'}>
+              <input type="number" value={form.discount_value} onChange={f('discount_value')} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            </Field>
+            <Field label="Min Order (₹)">
+              <input type="number" value={form.min_order_cents} onChange={f('min_order_cents')} placeholder="0" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            </Field>
+            <Field label="Max Uses (0 = unlimited)">
+              <input type="number" value={form.max_uses} onChange={f('max_uses')} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            </Field>
+            <Field label="Expires In (days)">
+              <input type="number" value={form.expires_days} onChange={f('expires_days')} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+            </Field>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={() => { setShowCreate(false); setForm(EMPTY_FORM); }} className="px-4 py-2 text-sm text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button onClick={handleCreate} disabled={creating} className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50">
+              {creating ? 'Creating...' : 'Create Promo'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

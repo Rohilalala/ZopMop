@@ -600,3 +600,23 @@ func (r *Repository) GetAllFCMTokens(ctx context.Context) ([]string, error) {
 	}
 	return tokens, rows.Err()
 }
+
+// CancelBooking force-cancels a booking regardless of current state (admin override).
+func (r *Repository) CancelBooking(ctx context.Context, bookingID string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	result, err := r.db.Exec(queryCtx,
+		`UPDATE bookings
+		 SET status = 'cancelled', updated_at = now(), cancelled_at = now(), cancelled_by = 'admin'
+		 WHERE id = $1 AND status NOT IN ('cancelled', 'completed')`,
+		bookingID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to cancel booking: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("booking not found or already in terminal state")
+	}
+	return nil
+}

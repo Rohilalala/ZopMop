@@ -8,7 +8,7 @@ type Service struct {
 	Name                string    `json:"name"`
 	Description         *string   `json:"description,omitempty"`
 	ShortDescription    *string   `json:"short_description,omitempty"`
-	Emoji               *string   `json:"emoji,omitempty"`
+	Emoji               *string   `json:"emoji"`
 	BgColor             string    `json:"bg_color"`
 	BasePriceCents      int       `json:"base_price_cents"`
 	MrpCents            *int      `json:"mrp_cents,omitempty"`
@@ -19,6 +19,7 @@ type Service struct {
 	DurationStepMinutes int       `json:"duration_step_minutes"`
 	IsActive            bool      `json:"is_active"`
 	DisplayOrder        int       `json:"display_order"`
+	Category            string    `json:"category"`
 	CreatedAt           time.Time `json:"created_at"`
 }
 
@@ -61,4 +62,29 @@ type ServiceDetails struct {
 	Includes []ServiceInclude `json:"includes"`
 	Excludes []ServiceExclude `json:"excludes"`
 	Steps    []ServiceStep    `json:"steps"`
+}
+
+// AdminUpdateServiceRequest is the payload for PATCH /admin/services/:id.
+// All fields are optional — only non-zero/non-nil values are applied.
+type AdminUpdateServiceRequest struct {
+	Name           string  `json:"name,omitempty"`
+	BasePriceCents *int    `json:"base_price_cents,omitempty"`
+	IsActive       *bool   `json:"is_active,omitempty"`
+	DisplayOrder   *int    `json:"display_order,omitempty"`
+	Emoji          *string `json:"emoji,omitempty"`
+	BgColor        string  `json:"bg_color,omitempty"`
+	Category       string  `json:"category,omitempty"`
+}
+
+// AdminCreateServiceRequest is the payload for POST /admin/services.
+type AdminCreateServiceRequest struct {
+	Name                string `json:"name"`
+	Emoji               string `json:"emoji,omitempty"`
+	BgColor             string `json:"bg_color,omitempty"`
+	BasePriceCents      int    `json:"base_price_cents"`
+	DisplayOrder        int    `json:"display_order"`
+	Category            string `json:"category,omitempty"`
+	MinDurationMinutes  int    `json:"min_duration_minutes,omitempty"`
+	MaxDurationMinutes  int    `json:"max_duration_minutes,omitempty"`
+	DurationStepMinutes int    `json:"duration_step_minutes,omitempty"`
 }

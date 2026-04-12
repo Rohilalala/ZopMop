@@ -21,6 +21,8 @@ import type { AuthStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
+import { pendingAuthStore } from '../../utils/pendingAuthStore';
+import { apiFetch } from '../../api/client';
 
 const { width: W } = Dimensions.get('window');
 
@@ -46,7 +48,7 @@ type Props = {
 };
 
 export default function ProOnboardingScreen({ route }: Props) {
-  const { phone, backendToken, backendUser } = route.params;
+  const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signIn } = useAuth();
 
@@ -114,7 +116,8 @@ export default function ProOnboardingScreen({ route }: Props) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      if (!backendToken) {
+      const pending = pendingAuthStore.get();
+      if (!pending?.token) {
         Alert.alert('Connection Error', 'Cannot reach the server. Check your network and try again.');
         return;
       }
@@ -123,11 +126,11 @@ export default function ProOnboardingScreen({ route }: Props) {
         return;
       }
 
-      const res = await fetch(`${BASE_URL}/me/onboard-pro`, {
+      const res = await apiFetch(`${BASE_URL}/me/onboard-pro`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${backendToken}`,
+          Authorization: `Bearer ${pending.token}`,
         },
         body: JSON.stringify({
           lat: gpsLat,
@@ -139,14 +142,13 @@ export default function ProOnboardingScreen({ route }: Props) {
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Onboarding failed (HTTP ${res.status}): ${text}`);
+        throw new Error('Onboarding failed. Please check your details and try again.');
       }
 
       const data = await res.json();
 
       // Push GPS to Redis so matching engine can find this pro immediately.
-      await fetch(`${BASE_URL}/helpers/me/location`, {
+      await apiFetch(`${BASE_URL}/helpers/me/location`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -156,8 +158,9 @@ export default function ProOnboardingScreen({ route }: Props) {
       });
 
       signIn(data.token, data.user);
+      pendingAuthStore.clear();
     } catch (err: any) {
-      Alert.alert('Something went wrong', err.message ?? 'Please try again.');
+      Alert.alert('Something went wrong', 'Please check your details and try again.');
     } finally {
       setSubmitting(false);
     }

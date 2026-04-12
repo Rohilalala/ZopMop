@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
@@ -55,6 +55,15 @@ export default function HomeScreen() {
   const [serviceable, setServiceable] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
 
+  // Silently refresh services whenever the screen comes into focus.
+  useFocusEffect(
+    useCallback(() => {
+      listServices()
+        .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
+        .catch(() => {});
+    }, [])
+  );
+
   useEffect(() => {
     listServices()
       .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
@@ -91,16 +100,15 @@ export default function HomeScreen() {
                 const home = saved.find(a => a.tag === 'Home') ?? saved[0];
                 name = home.full_address.split(',').slice(0, 2).join(',').trim();
               } else {
-                // No saved addresses — reverse geocode current position
-                const API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
-                if (API_KEY) {
-                  const res = await fetch(
-                    `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${API_KEY}`
-                  );
-                  const data = await res.json();
-                  const parts: string[] = data.results?.[0]?.formatted_address?.split(',') ?? [];
-                  if (parts.length >= 2) name = `${parts[0].trim()}, ${parts[1].trim()}`;
-                }
+                // No saved addresses — reverse-geocode current position using the
+                // on-device geocoder. No API key needed or compiled into the bundle.
+                try {
+                  const [place] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lon });
+                  if (place) {
+                    const parts = [place.name, place.district ?? place.subregion ?? place.city].filter(Boolean);
+                    if (parts.length > 0) name = parts.join(', ');
+                  }
+                } catch { /* geocoder unavailable — keep default name */ }
               }
             } catch {
               // saved addresses unavailable — keep GPS coords, no name

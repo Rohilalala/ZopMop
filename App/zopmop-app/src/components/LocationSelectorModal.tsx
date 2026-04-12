@@ -29,8 +29,6 @@ const PANEL_WIDTH = SCREEN_WIDTH * 0.92;
 const PANEL_HEIGHT = SCREEN_HEIGHT * 0.82;
 const PANEL_BOTTOM = Platform.OS === 'ios' ? 36 : 16;
 
-const API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
-
 const DEFAULT_REGION: Region = {
   latitude: 28.4595,
   longitude: 77.0266,
@@ -78,13 +76,10 @@ export interface SavedAddress {
   lon: number;
 }
 
-interface PlacePrediction {
-  placeId: string;
-  text: { text: string };
-  structuredFormat: {
-    mainText: { text: string };
-    secondaryText?: { text: string };
-  };
+interface GeocodedResult {
+  name: string;
+  lat: number;
+  lon: number;
 }
 
 interface SelectedPlace {
@@ -110,10 +105,9 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   // ── Step 1: search state ─────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
   const [searchState, setSearchState] = useState<SearchState>('idle');
-  const [results, setResults] = useState<PlacePrediction[]>([]);
+  const [results, setResults] = useState<GeocodedResult[]>([]);
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
-  const [fetchingPlaceId, setFetchingPlaceId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<ApiAddress | null>(null);
 
   // ── Step 2: address form state ───────────────────────────────────────────────
@@ -158,7 +152,6 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
     setResults([]);
     setGpsState('idle');
     setSelectedPlace(null);
-    setFetchingPlaceId(null);
     setAddressTag('Home');
     setFlatNo('');
     setFloor('');
@@ -217,42 +210,33 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
     debounceRef.current = setTimeout(() => fetchSearch(text.trim()), 400);
   }
 
+  // Uses expo-location's on-device geocoder — no API key compiled into the bundle.
+  // iOS resolves via Apple Maps; Android uses the device's built-in geocoding service.
   async function fetchSearch(query: string) {
     try {
-      const res = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': API_KEY },
-        body: JSON.stringify({ input: query, includedRegionCodes: ['IN'] }),
+      const coords = await Location.geocodeAsync(query);
+      if (coords.length === 0) { setSearchState('no_results'); setResults([]); return; }
+      // Reverse-geocode the top result to produce a human-readable label.
+      const [top] = coords;
+      const [place] = await Location.reverseGeocodeAsync({
+        latitude: top.latitude,
+        longitude: top.longitude,
       });
-      const data = await res.json();
-      if (!res.ok) { console.error('[Places]', JSON.stringify(data)); setSearchState('error'); return; }
-      const suggestions: Array<{ placePrediction: PlacePrediction }> = data.suggestions ?? [];
-      if (suggestions.length === 0) { setSearchState('no_results'); setResults([]); }
-      else { setSearchState('results'); setResults(suggestions.map(s => s.placePrediction).slice(0, 8)); }
-    } catch (e) { console.error('[Places] fetch failed:', e); setSearchState('error'); }
+      const label = place
+        ? [place.name, place.district ?? place.subregion ?? place.city].filter(Boolean).join(', ')
+        : query;
+      setSearchState('results');
+      setResults([{ name: label || query, lat: top.latitude, lon: top.longitude }]);
+    } catch { setSearchState('error'); }
   }
 
-  async function fetchPlaceDetails(placeId: string): Promise<{ latitude: number; longitude: number }> {
-    const res = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
-      headers: { 'X-Goog-Api-Key': API_KEY, 'X-Goog-FieldMask': 'location' },
-    });
-    if (!res.ok) throw new Error('api_error');
-    return (await res.json()).location;
-  }
-
-  async function handleResultSelect(prediction: PlacePrediction) {
-    setFetchingPlaceId(prediction.placeId);
-    try {
-      const location = await fetchPlaceDetails(prediction.placeId);
-      const place = { name: prediction.text.text, lat: location.latitude, lon: location.longitude };
-      setSelectedPlace(place);
-      setSearchQuery(prediction.structuredFormat.mainText.text);
-      setSearchState('idle');
-      setResults([]);
-      Keyboard.dismiss();
-      panMapTo(place.lat, place.lon);
-    } catch { /* stay in results */ }
-    finally { setFetchingPlaceId(null); }
+  async function handleResultSelect(result: GeocodedResult) {
+    setSelectedPlace({ name: result.name, lat: result.lat, lon: result.lon });
+    setSearchQuery(result.name);
+    setSearchState('idle');
+    setResults([]);
+    Keyboard.dismiss();
+    panMapTo(result.lat, result.lon);
   }
 
   async function handleGps() {
@@ -262,13 +246,12 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
       if (status !== 'granted') { setGpsState('denied'); return; }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const { latitude, longitude } = pos.coords;
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${API_KEY}`
-      );
-      if (!res.ok) throw new Error('api_error');
-      const data = await res.json();
-      const address: string = data.results?.[0]?.formatted_address ?? 'Current Location';
-      setSelectedPlace({ name: address, lat: latitude, lon: longitude });
+      // expo-location's on-device reverse geocoder — no API key required.
+      const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const address = place
+        ? [place.name, place.district ?? place.subregion ?? place.city].filter(Boolean).join(', ')
+        : 'Current Location';
+      setSelectedPlace({ name: address || 'Current Location', lat: latitude, lon: longitude });
       setGpsState('idle');
       Keyboard.dismiss();
       panMapTo(latitude, longitude);
@@ -462,20 +445,14 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
               {/* Results / saved addresses */}
               {!selectedPlace && (
                 <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                  {searchState === 'results' && results.map((prediction, idx) => (
-                    <React.Fragment key={prediction.placeId}>
-                      <TouchableOpacity style={s.resultRow} onPress={() => handleResultSelect(prediction)} disabled={fetchingPlaceId !== null} activeOpacity={0.7}>
+                  {searchState === 'results' && results.map((result, idx) => (
+                    <React.Fragment key={`${result.lat}-${result.lon}`}>
+                      <TouchableOpacity style={s.resultRow} onPress={() => handleResultSelect(result)} activeOpacity={0.7}>
                         <View style={s.resultIconBox}>
-                          {fetchingPlaceId === prediction.placeId
-                            ? <ActivityIndicator size="small" color={Colors.primary} />
-                            : <><View style={s.resultPinHead} /><View style={s.resultPinTail} /></>
-                          }
+                          <><View style={s.resultPinHead} /><View style={s.resultPinTail} /></>
                         </View>
                         <View style={s.resultTextCol}>
-                          <Text style={s.resultPrimary} numberOfLines={1}>{prediction.structuredFormat.mainText.text}</Text>
-                          {prediction.structuredFormat.secondaryText && (
-                            <Text style={s.resultSecondary} numberOfLines={1}>{prediction.structuredFormat.secondaryText.text}</Text>
-                          )}
+                          <Text style={s.resultPrimary} numberOfLines={2}>{result.name}</Text>
                         </View>
                       </TouchableOpacity>
                       {idx < results.length - 1 && <View style={s.rowDivider} />}

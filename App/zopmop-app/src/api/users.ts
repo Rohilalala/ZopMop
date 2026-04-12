@@ -1,10 +1,6 @@
 import type { AuthUser } from '../context/AuthContext';
 import { apiFetch, triggerSignOut } from './client';
-import { BASE_URL } from './config';
-
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-}
+import { BASE_URL, authHeaders, validateShape } from './config';
 
 export async function getMe(token: string): Promise<AuthUser> {
   const res = await apiFetch(`${BASE_URL}/me`, { headers: authHeaders(token) });
@@ -13,7 +9,7 @@ export async function getMe(token: string): Promise<AuthUser> {
     throw new Error('User not found');
   }
   if (!res.ok) throw new Error('Failed to fetch profile');
-  return res.json() as Promise<AuthUser>;
+  return validateShape<AuthUser>(await res.json(), ['id', 'phone', 'role']);
 }
 
 export async function updateMe(token: string, name: string): Promise<AuthUser> {
@@ -23,7 +19,7 @@ export async function updateMe(token: string, name: string): Promise<AuthUser> {
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error('Failed to update profile');
-  return res.json() as Promise<AuthUser>;
+  return validateShape<AuthUser>(await res.json(), ['id', 'phone', 'role']);
 }
 
 export async function updateFCMToken(token: string, fcmToken: string): Promise<void> {

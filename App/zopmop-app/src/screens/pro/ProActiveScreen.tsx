@@ -26,7 +26,7 @@ import {
   getLocationWsUrl,
   type TrackingResponse,
 } from '../../api/matching';
-
+import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 
 const MAP_STYLE = [
@@ -96,8 +96,13 @@ export default function ProActiveScreen({ route }: Props) {
   function connectWs() {
     if (!token || token === '__guest__') return;
     try {
-      const ws = new WebSocket(getLocationWsUrl(token));
+      // Security: token is NOT in the URL (would appear in server/proxy logs).
+      // It is sent as the first message after the connection is established.
+      const ws = new WebSocket(getLocationWsUrl());
       wsRef.current = ws;
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'auth', token }));
+      };
       ws.onerror = () => { /* silent — REST fallback handles it */ };
       ws.onclose = () => { wsRef.current = null; };
     } catch { /* WS not available */ }
@@ -120,7 +125,7 @@ export default function ProActiveScreen({ route }: Props) {
         wsRef.current.send(JSON.stringify({ lat: latitude, lng: longitude }));
       } else {
         // Fallback: REST PUT /helpers/me/location also writes to Redis GEO + Postgres.
-        fetch(`${BASE_URL}/helpers/me/location`, {
+        apiFetch(`${BASE_URL}/helpers/me/location`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ lat: latitude, lng: longitude }),
@@ -133,7 +138,7 @@ export default function ProActiveScreen({ route }: Props) {
   const fetchStatus = useCallback(async () => {
     if (!token || token === '__guest__') return;
     try {
-      const res = await fetch(`${BASE_URL}/bookings/${bookingId}`, {
+      const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,28 +26,39 @@ const CARD_GAP = 12;
 const CARD_WIDTH = (SCREEN_WIDTH - H_PAD * 2 - CARD_GAP) / 2;
 
 // ── Category grouping ─────────────────────────────────────────────────────────
-// Services come from the real API; only the structural grouping is defined here.
 
-const CATEGORY_DEFS: { id: string; title: string; match: (name: string) => boolean }[] = [
-  { id: 'home_cleaning', title: 'Home Cleaning',        match: n => /sweep|mop|dust|wipe|window|balcony|bathroom/i.test(n) },
-  { id: 'kitchen',       title: 'Kitchen Services',      match: n => /kitchen|dish|utensil|fridge|cabinet/i.test(n) },
-  { id: 'laundry',       title: 'Laundry & Fabric Care', match: n => /laundry|iron|fold|wardrobe/i.test(n) },
-  { id: 'outdoor',       title: 'Outdoor & Garden',      match: n => /garden|plant|outdoor/i.test(n) },
-  { id: 'vehicle',       title: 'Vehicle Care',          match: n => /\bcar\b|vehicle|bike/i.test(n) },
-  { id: 'pet',           title: 'Pet Care',              match: n => /pet|dog|cat|walk/i.test(n) },
-  { id: 'other',         title: 'Other Services',        match: () => true },
-];
+const CATEGORY_TITLES: Record<string, string> = {
+  home_cleaning: 'Home Cleaning',
+  kitchen:       'Kitchen Services',
+  laundry:       'Laundry & Fabric Care',
+  outdoor:       'Outdoor & Garden',
+  vehicle:       'Vehicle Care',
+  pet:           'Pet Care',
+  other:         'Other Services',
+};
+
+// Category display order
+const CATEGORY_ORDER = ['home_cleaning', 'kitchen', 'laundry', 'outdoor', 'vehicle', 'pet', 'other'];
 
 interface Group { id: string; title: string; services: ApiService[] }
 
 function groupServices(services: ApiService[]): Group[] {
   const map = new Map<string, Group>();
   for (const svc of services) {
-    const cat = CATEGORY_DEFS.find(c => c.match(svc.name)) ?? CATEGORY_DEFS[CATEGORY_DEFS.length - 1];
-    if (!map.has(cat.id)) map.set(cat.id, { id: cat.id, title: cat.title, services: [] });
-    map.get(cat.id)!.services.push(svc);
+    const catId = svc.category || 'other';
+    const title = CATEGORY_TITLES[catId] ?? catId;
+    if (!map.has(catId)) map.set(catId, { id: catId, title, services: [] });
+    map.get(catId)!.services.push(svc);
   }
-  return Array.from(map.values()).filter(g => g.services.length > 0);
+  // Return in defined order, then any unknown categories alphabetically
+  const result: Group[] = [];
+  for (const id of CATEGORY_ORDER) {
+    if (map.has(id)) result.push(map.get(id)!);
+  }
+  for (const [id, group] of map) {
+    if (!CATEGORY_ORDER.includes(id)) result.push(group);
+  }
+  return result.filter(g => g.services.length > 0);
 }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -61,12 +72,14 @@ export default function AllServicesScreen() {
   const [loading, setLoading] = useState(true);
   const { itemCount, subtotalCents } = useCart();
 
-  useEffect(() => {
-    listServices()
-      .then(data => { if (data.length > 0) setServices(data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      listServices()
+        .then(data => { if (data.length > 0) setServices(data); })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }, [])
+  );
 
   const groups = groupServices(services);
 

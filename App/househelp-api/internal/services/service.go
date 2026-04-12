@@ -27,3 +27,24 @@ func (c *Catalog) GetDetails(ctx context.Context, serviceID string) (*ServiceDet
 func (c *Catalog) GetAddons(ctx context.Context, serviceID string) ([]ServiceAddon, error) {
 	return c.repo.GetAddons(ctx, serviceID)
 }
+
+// ListAll returns all services including inactive ones (admin use).
+func (c *Catalog) ListAll(ctx context.Context) ([]Service, error) {
+	return c.repo.ListAll(ctx)
+}
+
+// Update applies a partial update to a service category (admin use).
+// Returns the updated service record.
+func (c *Catalog) Update(ctx context.Context, id string, req AdminUpdateServiceRequest) (*Service, error) {
+	return c.repo.Update(ctx, id, req)
+}
+
+// Create adds a new service category (admin use).
+func (c *Catalog) Create(ctx context.Context, req AdminCreateServiceRequest) (*Service, error) {
+	return c.repo.Create(ctx, req)
+}
+
+// Delete permanently removes a service category (admin use).
+func (c *Catalog) Delete(ctx context.Context, id string) error {
+	return c.repo.Delete(ctx, id)
+}

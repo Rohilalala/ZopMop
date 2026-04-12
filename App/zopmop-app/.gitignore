@@ -39,6 +39,10 @@ GoogleService-Info.plist
 .env.local
 .env*.local
 
+# Android release keystore — credentials supplied via CI/CD env vars
+android/app/release.keystore
+release.keystore
+
 # typescript
 *.tsbuildinfo
 

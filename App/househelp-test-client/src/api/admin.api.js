@@ -1,40 +1,51 @@
 import client from './client';
 
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 export const getDashboard = async () => {
   const { data } = await client.get('/admin/dashboard');
   return data;
 };
 
+// ── Users ─────────────────────────────────────────────────────────────────────
 export const getUsers = async (params) => {
   const { data } = await client.get('/admin/users', { params });
   return data;
 };
 
 export const suspendUser = async (id) => {
-  const { data } = await client.post(`/admin/users/${id}/suspend`);
+  const { data } = await client.patch(`/admin/users/${id}/suspend`);
   return data;
 };
 
 export const unsuspendUser = async (id) => {
-  const { data } = await client.post(`/admin/users/${id}/unsuspend`);
+  const { data } = await client.patch(`/admin/users/${id}/unsuspend`);
   return data;
 };
 
-export const getHelpers = async () => {
-  const { data } = await client.get('/admin/helpers');
+// ── Helpers ───────────────────────────────────────────────────────────────────
+export const getHelpers = async (params) => {
+  const { data } = await client.get('/admin/helpers', { params });
   return data;
 };
 
-export const getBookings = async (params) => {
+// ── Bookings ──────────────────────────────────────────────────────────────────
+export const getAdminBookings = async (params) => {
   const { data } = await client.get('/admin/bookings', { params });
   return data;
 };
 
-export const getAuditLog = async () => {
-  const { data } = await client.get('/admin/audit-log');
+export const cancelAdminBooking = async (id) => {
+  const { data } = await client.patch(`/admin/bookings/${id}/cancel`);
   return data;
 };
 
+// ── Audit Log ─────────────────────────────────────────────────────────────────
+export const getAuditLog = async (params) => {
+  const { data } = await client.get('/admin/audit-log', { params });
+  return data;
+};
+
+// ── Config ────────────────────────────────────────────────────────────────────
 export const getConfig = async () => {
   const { data } = await client.get('/admin/config');
   return data;
@@ -50,6 +61,7 @@ export const bulkUpdateConfig = async (configs) => {
   return data;
 };
 
+// ── Content ───────────────────────────────────────────────────────────────────
 export const getBanners = async () => {
   const { data } = await client.get('/admin/content/banners');
   return data;
@@ -80,18 +92,19 @@ export const updateScreen = async (key, content) => {
   return data;
 };
 
-export const getServices = async () => {
+// ── Services ──────────────────────────────────────────────────────────────────
+export const getAdminServices = async () => {
   const { data } = await client.get('/admin/services');
   return data;
 };
 
-export const createService = async (postData) => {
-  const { data } = await client.post('/admin/services', postData);
+export const updateService = async (id, payload) => {
+  const { data } = await client.patch(`/admin/services/${id}`, payload);
   return data;
 };
 
-export const updateService = async (id, postData) => {
-  const { data } = await client.patch(`/admin/services/${id}`, postData);
+export const createService = async (payload) => {
+  const { data } = await client.post('/admin/services', payload);
   return data;
 };
 
@@ -100,8 +113,9 @@ export const deleteService = async (id) => {
   return data;
 };
 
-export const getPromotions = async () => {
-  const { data } = await client.get('/admin/promotions');
+// ── Promotions ────────────────────────────────────────────────────────────────
+export const getPromotions = async (params) => {
+  const { data } = await client.get('/admin/promotions', { params });
   return data;
 };
 
@@ -116,6 +130,12 @@ export const updatePromotion = async (id, postData) => {
 };
 
 export const disablePromotion = async (id) => {
-  const { data } = await client.post(`/admin/promotions/${id}/disable`);
+  const { data } = await client.patch(`/admin/promotions/${id}/disable`);
+  return data;
+};
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+export const broadcastNotification = async ({ title, body, target }) => {
+  const { data } = await client.post('/admin/notifications/broadcast', { title, body, target });
   return data;
 };

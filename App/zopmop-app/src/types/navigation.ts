@@ -7,20 +7,17 @@ export type AuthStackParamList = {
   OTPVerification: {
     phone: string;
   };
+  // Security: backendToken and backendUser have been removed from nav params.
+  // They are stored in pendingAuthStore (in-memory only) to prevent serialization
+  // to disk via React Navigation state persistence.
   NameEntry: {
     phone: string;
-    backendToken?: string;
-    backendUser?: any;
   };
   RoleSelection: {
     phone: string;
-    backendToken?: string;
-    backendUser?: any;
   };
   ProOnboarding: {
     phone: string;
-    backendToken?: string;
-    backendUser?: any;
   };
 };
 
