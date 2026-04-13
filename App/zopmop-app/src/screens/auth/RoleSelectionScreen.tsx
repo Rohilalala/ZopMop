@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 
@@ -26,6 +28,8 @@ export default function RoleSelectionScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signIn } = useAuth();
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
   const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -131,7 +135,7 @@ export default function RoleSelectionScreen({ route }: Props) {
             activeOpacity={1}
           >
             {loading
-              ? <ActivityIndicator color={Colors.white} size="small" />
+              ? <ActivityIndicator color="#FFFFFF" size="small" />
               : <Text style={styles.continueButtonText}>Continue</Text>}
           </TouchableOpacity>
         </Animated.View>
@@ -147,6 +151,8 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
   title: string;
   desc: string;
 }) {
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
   return (
     <TouchableOpacity
       style={[styles.card, selected && styles.cardSelected]}
@@ -170,7 +176,9 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
 }
 
 function PersonIcon({ active }: { active: boolean }) {
-  const color = active ? Colors.white : Colors.primary;
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
+  const color = active ? '#FFFFFF' : c.primary;
   return (
     <View style={styles.personIcon}>
       <View style={[styles.personHead, { backgroundColor: color }]} />
@@ -180,7 +188,9 @@ function PersonIcon({ active }: { active: boolean }) {
 }
 
 function BriefcaseIcon({ active }: { active: boolean }) {
-  const color = active ? Colors.white : Colors.primary;
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
+  const color = active ? '#FFFFFF' : c.primary;
   return (
     <View style={styles.briefcaseIcon}>
       <View style={[styles.briefcaseHandle, { borderColor: color }]} />
@@ -189,180 +199,47 @@ function BriefcaseIcon({ active }: { active: boolean }) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  container: {
-    flex: 1,
-    paddingHorizontal: Spacing['2xl'],
-    paddingTop: Spacing['3xl'],
-  },
-
-  header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-  logoMark: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-  },
-  logoMarkText: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize.xl,
-    color: Colors.white,
-  },
-  title: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['3xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-  },
-
-  cards: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  card: {
-    flex: 1,
-    aspectRatio: 0.82,
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    ...Shadow.sm,
-  },
-  cardSelected: {
-    borderColor: Colors.primary,
-    borderWidth: 2,
-    ...Shadow.md,
-  },
-
-  // Check badge top-right
-  checkBadge: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 20,
-    height: 20,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0,
-  },
-  checkBadgeVisible: {
-    backgroundColor: Colors.primary,
-    opacity: 1,
-  },
-  checkmark: {
-    position: 'absolute',
-    width: 4,
-    height: 7,
-    borderRightWidth: 2,
-    borderBottomWidth: 2,
-    borderColor: Colors.white,
-    transform: [{ rotate: '45deg' }, { translateY: -1 }],
-  },
-  checkmarkArm: { display: 'none' }, // using border trick above
-
-  // Icon box
-  iconBox: {
-    width: 56,
-    height: 56,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.xs,
-  },
-  iconBoxSelected: {
-    backgroundColor: Colors.primary,
-  },
-
-  cardTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.md,
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  cardTitleSelected: {
-    color: Colors.primary,
-  },
-  cardDesc: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    paddingHorizontal: Spacing.sm,
-  },
-
-  // Person icon
-  personIcon: { alignItems: 'center' },
-  personHead: {
-    width: 13,
-    height: 13,
-    borderRadius: Radius.full,
-    marginBottom: 3,
-  },
-  personBody: {
-    width: 20,
-    height: 10,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-  },
-
-  // Briefcase icon
-  briefcaseIcon: { alignItems: 'center' },
-  briefcaseHandle: {
-    width: 13,
-    height: 5,
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
-    borderWidth: 2,
-    borderBottomWidth: 0,
-    backgroundColor: 'transparent',
-    marginBottom: -1,
-  },
-  briefcaseBody: {
-    width: 24,
-    height: 15,
-    borderRadius: 3,
-  },
-
-  errorText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.danger,
-    textAlign: 'center',
-    marginTop: Spacing.md,
-  },
-
-  bottom: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingBottom: Spacing['2xl'],
-  },
-  continueButton: {
-    height: 54,
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.md,
-  },
-  continueButtonDisabled: { opacity: 0.45 },
-  continueButtonText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-});
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    container: { flex: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['3xl'] },
+    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
+    logoMark: { width: 44, height: 44, borderRadius: Radius.lg, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#FFFFFF' },
+    title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5 },
+    subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary },
+    cards: { flexDirection: 'row', gap: Spacing.md },
+    card: {
+      flex: 1, aspectRatio: 0.82, backgroundColor: c.white,
+      borderRadius: Radius.xl, borderWidth: 1.5, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, ...Shadow.sm,
+    },
+    cardSelected: { borderColor: c.primary, borderWidth: 2, ...Shadow.md },
+    checkBadge: {
+      position: 'absolute', top: 12, right: 12, width: 20, height: 20,
+      borderRadius: Radius.full, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center', opacity: 0,
+    },
+    checkBadgeVisible: { backgroundColor: c.primary, opacity: 1 },
+    checkmark: {
+      position: 'absolute', width: 4, height: 7, borderRightWidth: 2, borderBottomWidth: 2,
+      borderColor: '#FFFFFF', transform: [{ rotate: '45deg' }, { translateY: -1 }],
+    },
+    checkmarkArm: { display: 'none' },
+    iconBox: { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: c.primaryBg, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
+    iconBoxSelected: { backgroundColor: c.primary },
+    cardTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.md, color: c.text, textAlign: 'center' },
+    cardTitleSelected: { color: c.primary },
+    cardDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, textAlign: 'center', paddingHorizontal: Spacing.sm },
+    personIcon: { alignItems: 'center' },
+    personHead: { width: 13, height: 13, borderRadius: Radius.full, marginBottom: 3 },
+    personBody: { width: 20, height: 10, borderTopLeftRadius: 10, borderTopRightRadius: 10 },
+    briefcaseIcon: { alignItems: 'center' },
+    briefcaseHandle: { width: 13, height: 5, borderTopLeftRadius: 4, borderTopRightRadius: 4, borderWidth: 2, borderBottomWidth: 0, backgroundColor: 'transparent', marginBottom: -1 },
+    briefcaseBody: { width: 24, height: 15, borderRadius: 3 },
+    errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, textAlign: 'center', marginTop: Spacing.md },
+    bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'] },
+    continueButton: { height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    continueButtonDisabled: { opacity: 0.45 },
+    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+  });
+}

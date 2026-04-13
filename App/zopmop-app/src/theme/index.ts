@@ -1,4 +1,4 @@
-export { Colors } from './colors';
+export { Colors, lightColors, darkColors } from './colors';
 export { FontFamily, FontSize, LineHeight } from './typography';
 
 export const Spacing = {

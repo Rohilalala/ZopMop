@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors, Colors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import LocationSelectorModal from '../../components/LocationSelectorModal';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { listServices, type ApiService } from '../../api/services';
@@ -49,6 +51,8 @@ const DEFAULT_LON = 77.0763;
 
 export default function HomeScreen() {
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationName, setLocationName] = useState('Detecting location…');
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
@@ -182,6 +186,8 @@ export default function HomeScreen() {
 
 function Header({ locationName, onLocationPress }: { locationName: string; onLocationPress: () => void }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   return (
     <View style={s.header}>
@@ -214,6 +220,8 @@ function Header({ locationName, onLocationPress }: { locationName: string; onLoc
 
 function HeroCard() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.heroCard}>
       <View style={[s.heroCircle, s.heroCircle1]} />
@@ -239,6 +247,8 @@ function HeroCard() {
 
 function BookingCards() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   return (
     <View style={s.section}>
@@ -249,7 +259,7 @@ function BookingCards() {
           activeOpacity={0.85}
           onPress={() => navigation.navigate('AllServices', { instant: false })}
         >
-          <View style={[s.bookingIconBox, { backgroundColor: Colors.primaryBg }]}>
+          <View style={[s.bookingIconBox, { backgroundColor: c.primaryBg }]}>
             <Text style={s.bookingEmoji}>📅</Text>
           </View>
           <Text style={s.bookingCardTitle}>Schedule</Text>
@@ -276,6 +286,8 @@ function BookingCards() {
 
 function ServicesGrid({ services }: { services: ApiService[] }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.section}>
       <View style={s.sectionHeader}>
@@ -296,6 +308,8 @@ function ServicesGrid({ services }: { services: ApiService[] }) {
 function ServiceCard({ service }: { service: ApiService }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [busy, setBusy] = useState(false);
 
   // Check if this service is already in cart
@@ -368,7 +382,7 @@ function ServiceCard({ service }: { service: ApiService }) {
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
             >
               {busy
-                ? <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.55 }] }} />
+                ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.55 }] }} />
                 : <Text style={s.stepBtnText}>−</Text>
               }
             </TouchableOpacity>
@@ -399,7 +413,7 @@ function ServiceCard({ service }: { service: ApiService }) {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             {busy
-              ? <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.7 }] }} />
+              ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.7 }] }} />
               : <Text style={s.addBtnText}>+</Text>
             }
           </TouchableOpacity>
@@ -422,6 +436,8 @@ function ServiceCard({ service }: { service: ApiService }) {
 function CartBar() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { itemCount, subtotalCents } = useCart();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   if (itemCount === 0) return null;
 
@@ -450,6 +466,8 @@ function CartBar() {
 // ── Trust Strip ───────────────────────────────────────────────────────────────
 
 function TrustStrip() {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const items = [
     { icon: '✅', label: 'Verified\nPros' },
     { icon: '🛡️', label: 'Background\nChecked' },
@@ -483,17 +501,19 @@ function SkeletonBlock({
   h,
   r = Radius.md,
   style,
+  borderColor,
 }: {
   pulse: Animated.Value;
   w?: number | string;
   h: number;
   r?: number;
   style?: any;
+  borderColor?: string;
 }) {
   return (
     <Animated.View
       style={[
-        { height: h, borderRadius: r, backgroundColor: Colors.border, opacity: pulse },
+        { height: h, borderRadius: r, backgroundColor: borderColor ?? '#E5E7EB', opacity: pulse },
         w !== undefined ? { width: w } : { alignSelf: 'stretch' },
         style,
       ]}
@@ -503,6 +523,8 @@ function SkeletonBlock({
 
 function HomeSkeleton() {
   const pulse = useRef(new Animated.Value(0.5)).current;
+  const c = useColors();
+  const sk = useMemo(() => createSkeletonStyles(c), [c]);
 
   useEffect(() => {
     const anim = Animated.loop(
@@ -516,6 +538,7 @@ function HomeSkeleton() {
   }, []);
 
   const p = pulse;
+  const bc = c.border;
 
   return (
     <SafeAreaView style={sk.safe} edges={['top']}>
@@ -528,205 +551,207 @@ function HomeSkeleton() {
         {/* Header */}
         <View style={sk.header}>
           <View style={{ gap: 6 }}>
-            <SkeletonBlock pulse={p} w={60} h={10} r={Radius.sm} />
-            <SkeletonBlock pulse={p} w={150} h={18} />
+            <SkeletonBlock pulse={p} w={60} h={10} r={Radius.sm} borderColor={bc} />
+            <SkeletonBlock pulse={p} w={150} h={18} borderColor={bc} />
           </View>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <SkeletonBlock pulse={p} w={90} h={30} r={Radius.full} />
-            <SkeletonBlock pulse={p} w={36} h={36} r={Radius.full} />
+            <SkeletonBlock pulse={p} w={90} h={30} r={Radius.full} borderColor={bc} />
+            <SkeletonBlock pulse={p} w={36} h={36} r={Radius.full} borderColor={bc} />
           </View>
         </View>
 
         {/* Hero Card */}
-        <SkeletonBlock pulse={p} h={150} r={Radius['2xl']} style={sk.hero} />
+        <SkeletonBlock pulse={p} h={150} r={Radius['2xl']} style={sk.hero} borderColor={bc} />
 
         {/* Booking cards section */}
         <View style={sk.section}>
-          <SkeletonBlock pulse={p} w={170} h={20} style={{ marginBottom: 14 }} />
+          <SkeletonBlock pulse={p} w={170} h={20} style={{ marginBottom: 14 }} borderColor={bc} />
           <View style={{ flexDirection: 'row', gap: 12 }}>
-            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} />
-            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} />
+            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} borderColor={bc} />
+            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} borderColor={bc} />
           </View>
         </View>
 
         {/* Services grid */}
         <View style={sk.section}>
           <View style={sk.sectionHeader}>
-            <SkeletonBlock pulse={p} w={130} h={20} />
-            <SkeletonBlock pulse={p} w={50} h={16} />
+            <SkeletonBlock pulse={p} w={130} h={20} borderColor={bc} />
+            <SkeletonBlock pulse={p} w={50} h={16} borderColor={bc} />
           </View>
           <View style={sk.grid}>
             {[0, 1, 2, 3, 4, 5].map(i => (
-              <SkeletonBlock key={i} pulse={p} w={SERVICE_CARD_WIDTH} h={SERVICE_CARD_WIDTH * 1.5} r={Radius.xl} />
+              <SkeletonBlock key={i} pulse={p} w={SERVICE_CARD_WIDTH} h={SERVICE_CARD_WIDTH * 1.5} r={Radius.xl} borderColor={bc} />
             ))}
           </View>
         </View>
 
         {/* Trust strip */}
         <View style={sk.section}>
-          <SkeletonBlock pulse={p} h={100} r={Radius.xl} />
+          <SkeletonBlock pulse={p} h={100} r={Radius.xl} borderColor={bc} />
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const sk = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  content: { paddingBottom: 40 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: H_PAD,
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
-  hero: {
-    marginHorizontal: H_PAD,
-    width: SCREEN_WIDTH - H_PAD * 2,
-    marginBottom: 28,
-  },
-  section: { paddingHorizontal: H_PAD, marginBottom: 28 },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
-});
+type C = typeof lightColors;
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+function createSkeletonStyles(c: C) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    content: { paddingBottom: 40 },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: H_PAD,
+      paddingTop: 12,
+      paddingBottom: 16,
+    },
+    hero: {
+      marginHorizontal: H_PAD,
+      width: SCREEN_WIDTH - H_PAD * 2,
+      marginBottom: 28,
+    },
+    section: { paddingHorizontal: H_PAD, marginBottom: 28 },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 14,
+    },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
+  });
+}
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  content: { paddingBottom: Spacing.base },
+function createStyles(c: C) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    content: { paddingBottom: Spacing.base },
 
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16,
-  },
-  locationBtn: { flex: 1 },
-  locationLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginBottom: 2 },
-  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  locationName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text, maxWidth: SCREEN_WIDTH * 0.42 },
-  chevron: { fontSize: 16, color: Colors.textSecondary, marginTop: -2 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  earnBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.primaryBg, paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: Radius.full, borderWidth: 1, borderColor: `${Colors.primary}22`,
-  },
-  earnIcon: { fontSize: 12 },
-  earnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: Colors.primary },
-  avatarBtn: {
-    width: 36, height: 36, borderRadius: Radius.full,
-    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarIcon: { fontSize: 18 },
+    header: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16,
+    },
+    locationBtn: { flex: 1 },
+    locationLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginBottom: 2 },
+    locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    locationName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, maxWidth: SCREEN_WIDTH * 0.42 },
+    chevron: { fontSize: 16, color: c.textSecondary, marginTop: -2 },
+    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    earnBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      backgroundColor: c.primaryBg, paddingHorizontal: 10, paddingVertical: 6,
+      borderRadius: Radius.full, borderWidth: 1, borderColor: `${c.primary}22`,
+    },
+    earnIcon: { fontSize: 12 },
+    earnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: c.primary },
+    avatarBtn: {
+      width: 36, height: 36, borderRadius: Radius.full,
+      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    avatarIcon: { fontSize: 18 },
 
-  heroCard: {
-    marginHorizontal: H_PAD, backgroundColor: Colors.primary,
-    borderRadius: Radius['2xl'], padding: 24, paddingBottom: 28,
-    overflow: 'hidden', marginBottom: 28,
-  },
-  heroCircle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: Colors.white },
-  heroCircle1: { width: 150, height: 150, opacity: 0.07, top: -55, right: -35 },
-  heroCircle2: { width: 90, height: 90, opacity: 0.05, bottom: -25, right: 90 },
-  heroPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'flex-start',
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.full, marginBottom: 16,
-  },
-  heroPillDot: { width: 6, height: 6, borderRadius: Radius.full, backgroundColor: '#4ADE80' },
-  heroPillText: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: Colors.white },
-  heroTitle: { fontFamily: FontFamily.extrabold, fontSize: FontSize['3xl'], color: Colors.white, lineHeight: FontSize['3xl'] * 1.2, marginBottom: 8, letterSpacing: -0.5 },
-  heroSub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: 'rgba(255,255,255,0.72)', marginBottom: 22 },
-  heroCTA: { backgroundColor: Colors.white, alignSelf: 'flex-start', paddingHorizontal: 20, paddingVertical: 12, borderRadius: Radius.xl },
-  heroCTAText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary },
+    heroCard: {
+      marginHorizontal: H_PAD, backgroundColor: c.primary,
+      borderRadius: Radius['2xl'], padding: 24, paddingBottom: 28,
+      overflow: 'hidden', marginBottom: 28,
+    },
+    heroCircle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
+    heroCircle1: { width: 150, height: 150, opacity: 0.07, top: -55, right: -35 },
+    heroCircle2: { width: 90, height: 90, opacity: 0.05, bottom: -25, right: 90 },
+    heroPill: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'flex-start',
+      paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.full, marginBottom: 16,
+    },
+    heroPillDot: { width: 6, height: 6, borderRadius: Radius.full, backgroundColor: '#4ADE80' },
+    heroPillText: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: '#FFFFFF' },
+    heroTitle: { fontFamily: FontFamily.extrabold, fontSize: FontSize['3xl'], color: '#FFFFFF', lineHeight: FontSize['3xl'] * 1.2, marginBottom: 8, letterSpacing: -0.5 },
+    heroSub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: 'rgba(255,255,255,0.72)', marginBottom: 22 },
+    heroCTA: { backgroundColor: '#FFFFFF', alignSelf: 'flex-start', paddingHorizontal: 20, paddingVertical: 12, borderRadius: Radius.xl },
+    heroCTAText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary },
 
-  section: { paddingHorizontal: H_PAD, marginBottom: 28 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  sectionTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text, letterSpacing: -0.2, marginBottom: 14 },
-  seeAll: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary, marginBottom: 14 },
+    section: { paddingHorizontal: H_PAD, marginBottom: 28 },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+    sectionTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text, letterSpacing: -0.2, marginBottom: 14 },
+    seeAll: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, marginBottom: 14 },
 
-  bookingRow: { flexDirection: 'row', gap: 12 },
-  bookingCard: { flex: 1, backgroundColor: Colors.white, borderRadius: Radius.xl, padding: 16, borderWidth: 1.5, borderColor: Colors.border, ...Shadow.sm, overflow: 'hidden' },
-  bookingCardInstant: { borderColor: `${Colors.accent}44`, backgroundColor: '#F7FFFE' },
-  bookingIconBox: { width: 48, height: 48, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  bookingEmoji: { fontSize: 22 },
-  bookingCardTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text, marginBottom: 3 },
-  bookingCardSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
-  timePill: { position: 'absolute', top: 12, right: 12, backgroundColor: Colors.accent, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
-  timePillText: { fontFamily: FontFamily.semibold, fontSize: 10, color: Colors.white },
+    bookingRow: { flexDirection: 'row', gap: 12 },
+    bookingCard: { flex: 1, backgroundColor: c.white, borderRadius: Radius.xl, padding: 16, borderWidth: 1.5, borderColor: c.border, ...Shadow.sm, overflow: 'hidden' },
+    bookingCardInstant: { borderColor: `${c.accent}44`, backgroundColor: c.background },
+    bookingIconBox: { width: 48, height: 48, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+    bookingEmoji: { fontSize: 22 },
+    bookingCardTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, marginBottom: 3 },
+    bookingCardSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+    timePill: { position: 'absolute', top: 12, right: 12, backgroundColor: c.accent, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
+    timePillText: { fontFamily: FontFamily.semibold, fontSize: 10, color: '#FFFFFF' },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
-  serviceCard: { backgroundColor: Colors.white, borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border, ...Shadow.sm },
-  serviceImgBox: { width: '100%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  ratingBadge: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(255,255,255,0.88)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: Radius.sm },
-  ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: Colors.text },
-  serviceEmoji: { fontSize: 32 },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
+    serviceCard: { backgroundColor: c.white, borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: c.border, ...Shadow.sm },
+    serviceImgBox: { width: '100%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+    ratingBadge: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(255,255,255,0.88)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: Radius.sm },
+    ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: c.text },
+    serviceEmoji: { fontSize: 32 },
 
-  // Plain add button (when not in cart)
-  addBtn: {
-    position: 'absolute', bottom: 6, right: 6,
-    width: 26, height: 26, borderRadius: Radius.md,
-    backgroundColor: Colors.white, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: Colors.border, ...Shadow.sm,
-  },
-  addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: Colors.primary, lineHeight: 20, marginTop: -1 },
+    addBtn: {
+      position: 'absolute', bottom: 6, right: 6,
+      width: 26, height: 26, borderRadius: Radius.md,
+      backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.border, ...Shadow.sm,
+    },
+    addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: c.primary, lineHeight: 20, marginTop: -1 },
 
-  // Inline stepper (when in cart)
-  stepper: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    paddingHorizontal: 8, paddingVertical: 5,
-    borderTopWidth: 1, borderTopColor: `${Colors.primary}22`,
-  },
-  stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: Colors.primary, lineHeight: 22 },
-  stepBtnDisabled: { color: Colors.border },
-  stepCenter: { alignItems: 'center', flex: 1 },
-  stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: Colors.text, lineHeight: 16 },
-  stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: Colors.textMuted, lineHeight: 10 },
+    stepper: {
+      position: 'absolute', bottom: 0, left: 0, right: 0,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      paddingHorizontal: 8, paddingVertical: 5,
+      borderTopWidth: 1, borderTopColor: `${c.primary}22`,
+    },
+    stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+    stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: c.primary, lineHeight: 22 },
+    stepBtnDisabled: { color: c.border },
+    stepCenter: { alignItems: 'center', flex: 1 },
+    stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: c.text, lineHeight: 16 },
+    stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: c.textMuted, lineHeight: 10 },
 
-  serviceName: { fontFamily: FontFamily.semibold, fontSize: 11, color: Colors.text, paddingHorizontal: 8, paddingTop: 8, lineHeight: 16 },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingBottom: 10, paddingTop: 3 },
-  servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text },
-  serviceMrp: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, textDecorationLine: 'line-through' },
+    serviceName: { fontFamily: FontFamily.semibold, fontSize: 11, color: c.text, paddingHorizontal: 8, paddingTop: 8, lineHeight: 16 },
+    priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingBottom: 10, paddingTop: 3 },
+    servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    serviceMrp: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, textDecorationLine: 'line-through' },
 
-  // Cart bar
-  cartBar: {
-    position: 'absolute', bottom: 28, left: 24, right: 24,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: Colors.white,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderRadius: Radius['2xl'],
-    borderWidth: 1, borderColor: Colors.border,
-    ...Shadow.lg,
-  },
-  cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cartBarEmoji: { fontSize: 22 },
-  cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text },
-  cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 1 },
-  cartBarBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 18, paddingVertical: 10,
-    borderRadius: Radius.xl,
-    ...Shadow.sm,
-  },
-  cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.white },
+    cartBar: {
+      position: 'absolute', bottom: 28, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: c.white,
+      paddingHorizontal: 16, paddingVertical: 12,
+      borderRadius: Radius['2xl'],
+      borderWidth: 1, borderColor: c.border,
+      ...Shadow.lg,
+    },
+    cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    cartBarEmoji: { fontSize: 22 },
+    cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
+    cartBarBtn: {
+      backgroundColor: c.primary,
+      paddingHorizontal: 18, paddingVertical: 10,
+      borderRadius: Radius.xl,
+      ...Shadow.sm,
+    },
+    cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: '#FFFFFF' },
 
-  trustCard: { backgroundColor: Colors.white, borderRadius: Radius.xl, padding: 20, borderWidth: 1, borderColor: Colors.border, ...Shadow.sm },
-  trustTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text, textAlign: 'center', marginBottom: 18 },
-  trustRow: { flexDirection: 'row', alignItems: 'center' },
-  trustItem: { flex: 1, alignItems: 'center', gap: 6 },
-  trustIcon: { fontSize: 24 },
-  trustLabel: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: Colors.textSecondary, textAlign: 'center', lineHeight: 16 },
-  trustDivider: { width: 1, height: 40, backgroundColor: Colors.border },
-});
+    trustCard: { backgroundColor: c.white, borderRadius: Radius.xl, padding: 20, borderWidth: 1, borderColor: c.border, ...Shadow.sm },
+    trustTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, textAlign: 'center', marginBottom: 18 },
+    trustRow: { flexDirection: 'row', alignItems: 'center' },
+    trustItem: { flex: 1, alignItems: 'center', gap: 6 },
+    trustIcon: { fontSize: 24 },
+    trustLabel: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: c.textSecondary, textAlign: 'center', lineHeight: 16 },
+    trustDivider: { width: 1, height: 40, backgroundColor: c.border },
+  });
+}
+

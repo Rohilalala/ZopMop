@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,15 +14,69 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors, Colors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { getBookings, cancelBooking, type ApiBooking, type BookingStatus } from '../../api/bookings';
 import { useAuth } from '../../context/AuthContext';
 
 type Tab = 'upcoming' | 'past';
+type C = typeof lightColors;
+
+function createStyles(c: C) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16, gap: 4 },
+    backBtn: { padding: 4, marginLeft: -4 },
+    headerTitle: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, letterSpacing: -0.5 },
+    tabBar: {
+      flexDirection: 'row',
+      borderBottomWidth: 1, borderBottomColor: c.border,
+      paddingHorizontal: 16,
+      backgroundColor: c.white,
+    },
+    tab: { paddingVertical: 12, marginRight: 24, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+    tabActive: { borderBottomColor: c.primary },
+    tabText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: c.textSecondary },
+    tabTextActive: { color: c.primary },
+    scroll: { flex: 1 },
+    scrollContent: { padding: 16, gap: 12 },
+    scrollEmpty: { flexGrow: 1 },
+    card: {
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      padding: 16,
+      borderWidth: 1, borderColor: c.border,
+      ...Shadow.sm,
+      gap: 8,
+    },
+    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full },
+    statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs },
+    bookingDate: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+    serviceNames: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    serviceMeta: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    serviceList: { backgroundColor: c.surface, borderRadius: Radius.lg, padding: 10, gap: 6 },
+    serviceItem: { flexDirection: 'row', justifyContent: 'space-between' },
+    serviceItemName: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: c.text },
+    serviceItemDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+    trackBtn: { backgroundColor: c.primary, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
+    trackBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: '#FFFFFF' },
+    cancelBtn: { borderWidth: 1, borderColor: c.danger, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
+    cancelBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.danger },
+    empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 48, gap: 10 },
+    emptyIconWrap: { width: 80, height: 80, borderRadius: Radius.full, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 6, borderWidth: 1, borderColor: c.border },
+    emptyEmoji: { fontSize: 36 },
+    emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center', maxWidth: 220, lineHeight: 20 },
+  });
+}
 
 export default function BookingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [tab, setTab] = useState<Tab>('upcoming');
   const [bookings, setBookings] = useState<ApiBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,7 +136,7 @@ export default function BookingsScreen() {
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={24} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Your Bookings</Text>
       </View>
@@ -104,7 +158,7 @@ export default function BookingsScreen() {
       </View>
 
       {loading ? (
-        <ActivityIndicator color={Colors.primary} style={{ marginTop: 48 }} />
+        <ActivityIndicator color={c.primary} style={{ marginTop: 48 }} />
       ) : (
         <ScrollView
           style={s.scroll}
@@ -114,7 +168,7 @@ export default function BookingsScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => fetchBookings(true)}
-              tintColor={Colors.primary}
+              tintColor={c.primary}
             />
           }
         >
@@ -147,7 +201,9 @@ function BookingCard({
   onCancel?: (id: string) => void;
   onTrack?: (booking: ApiBooking) => void;
 }) {
-  const statusMeta = STATUS_META[booking.status] ?? STATUS_META.pending;
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  const statusMeta = getStatusMeta(c)[booking.status] ?? getStatusMeta(c).pending;
   const serviceNames = booking.services?.length
     ? booking.services.map(s => s.service_name).join(', ')
     : 'Service';
@@ -208,6 +264,8 @@ function BookingCard({
 // ── Empty State ───────────────────────────────────────────────────────────────
 
 function EmptyState({ tab }: { tab: Tab }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const isUpcoming = tab === 'upcoming';
   return (
     <View style={s.empty}>
@@ -226,13 +284,15 @@ function EmptyState({ tab }: { tab: Tab }) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const STATUS_META: Record<BookingStatus, { label: string; icon: string; color: string; bg: string }> = {
-  pending:     { label: 'Pending',     icon: '🕐', color: Colors.warning,     bg: `${Colors.warning}18` },
-  accepted:    { label: 'Accepted',    icon: '✅', color: Colors.success,     bg: `${Colors.success}18` },
-  in_progress: { label: 'In Progress', icon: '⚡', color: Colors.info,        bg: `${Colors.info}18`    },
-  completed:   { label: 'Completed',   icon: '🎉', color: Colors.success,     bg: `${Colors.success}18` },
-  cancelled:   { label: 'Cancelled',   icon: '✕',  color: Colors.textMuted,   bg: Colors.surface        },
-};
+function getStatusMeta(c: C): Record<BookingStatus, { label: string; icon: string; color: string; bg: string }> {
+  return {
+    pending:     { label: 'Pending',     icon: '🕐', color: c.warning,     bg: `${c.warning}18` },
+    accepted:    { label: 'Accepted',    icon: '✅', color: c.success,     bg: `${c.success}18` },
+    in_progress: { label: 'In Progress', icon: '⚡', color: c.info,        bg: `${c.info}18`    },
+    completed:   { label: 'Completed',   icon: '🎉', color: c.success,     bg: `${c.success}18` },
+    cancelled:   { label: 'Cancelled',   icon: '✕',  color: c.textMuted,   bg: c.surface        },
+  };
+}
 
 function formatDate(iso: string): string {
   try {
@@ -245,61 +305,3 @@ function formatDate(iso: string): string {
   }
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 16, gap: 4 },
-  backBtn: { padding: 4, marginLeft: -4 },
-  headerTitle: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: Colors.text, letterSpacing: -0.5 },
-
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
-    paddingHorizontal: 16,
-    backgroundColor: Colors.white,
-  },
-  tab: { paddingVertical: 12, marginRight: 24, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: Colors.primary },
-  tabText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.textSecondary },
-  tabTextActive: { color: Colors.primary },
-
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 12 },
-  scrollEmpty: { flexGrow: 1 },
-
-  // Booking card
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 16,
-    borderWidth: 1, borderColor: Colors.border,
-    ...Shadow.sm,
-    gap: 8,
-  },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full },
-  statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs },
-  bookingDate: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
-
-  serviceNames: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
-  serviceMeta: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-
-  serviceList: { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: 10, gap: 6 },
-  serviceItem: { flexDirection: 'row', justifyContent: 'space-between' },
-  serviceItemName: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: Colors.text },
-  serviceItemDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
-
-  trackBtn: { backgroundColor: Colors.primary, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
-  trackBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.white },
-  cancelBtn: { borderWidth: 1, borderColor: Colors.danger, borderRadius: Radius.lg, paddingVertical: 8, alignItems: 'center', marginTop: 4 },
-  cancelBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.danger },
-
-  // Empty
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 48, gap: 10 },
-  emptyIconWrap: { width: 80, height: 80, borderRadius: Radius.full, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 6, borderWidth: 1, borderColor: Colors.border },
-  emptyEmoji: { fontSize: 36 },
-  emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text },
-  emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center', maxWidth: 220, lineHeight: 20 },
-});

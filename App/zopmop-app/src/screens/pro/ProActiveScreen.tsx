@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import polyline from '@mapbox/polyline';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import {
   getBookingTracking,
@@ -54,6 +56,8 @@ export default function ProActiveScreen({ route }: Props) {
   const bookingId = bookingIdRaw.replace(/\s/g, '');
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const mapRef = useRef<MapView>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -302,7 +306,7 @@ export default function ProActiveScreen({ route }: Props) {
         {routeCoords.length > 1 && (
           <Polyline
             coordinates={routeCoords}
-            strokeColor={Colors.primary}
+            strokeColor={c.primary}
             strokeWidth={4}
           />
         )}
@@ -310,7 +314,7 @@ export default function ProActiveScreen({ route }: Props) {
 
       {loading && (
         <View style={s.loadingOverlay}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <ActivityIndicator size="large" color={c.primary} />
         </View>
       )}
 
@@ -342,7 +346,7 @@ export default function ProActiveScreen({ route }: Props) {
             disabled={actionLoading}
           >
             {actionLoading
-              ? <ActivityIndicator color={Colors.white} />
+              ? <ActivityIndicator color="#FFFFFF" />
               : <Text style={s.actionBtnText}>✅  I've Arrived</Text>
             }
           </TouchableOpacity>
@@ -356,7 +360,7 @@ export default function ProActiveScreen({ route }: Props) {
             disabled={actionLoading}
           >
             {actionLoading
-              ? <ActivityIndicator color={Colors.white} />
+              ? <ActivityIndicator color="#FFFFFF" />
               : <Text style={s.actionBtnText}>🏁  Complete Service</Text>
             }
           </TouchableOpacity>
@@ -366,113 +370,115 @@ export default function ProActiveScreen({ route }: Props) {
   );
 }
 
-const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: c.background },
 
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    loadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(255,255,255,0.5)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  topWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    paddingTop: 8,
-  },
-  topChip: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.full,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-  },
-  topChipText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-  },
+    topWrap: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      paddingTop: 8,
+    },
+    topChip: {
+      backgroundColor: c.white,
+      borderRadius: Radius.full,
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: c.border,
+      ...Shadow.sm,
+    },
+    topChipText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.text,
+    },
 
-  proMarker: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    padding: 6,
-    borderWidth: 2,
-    borderColor: Colors.primary,
-    ...Shadow.sm,
-  },
-  customerMarker: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    padding: 6,
-    borderWidth: 2,
-    borderColor: Colors.danger,
-    ...Shadow.sm,
-  },
-  markerEmoji: { fontSize: 22 },
+    proMarker: {
+      backgroundColor: c.white,
+      borderRadius: 20,
+      padding: 6,
+      borderWidth: 2,
+      borderColor: c.primary,
+      ...Shadow.sm,
+    },
+    customerMarker: {
+      backgroundColor: c.white,
+      borderRadius: 20,
+      padding: 6,
+      borderWidth: 2,
+      borderColor: c.danger,
+      ...Shadow.sm,
+    },
+    markerEmoji: { fontSize: 22 },
 
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.white,
-    borderTopLeftRadius: Radius['2xl'],
-    borderTopRightRadius: Radius['2xl'],
-    padding: 24,
-    paddingBottom: 40,
-    gap: 12,
-    ...Shadow.lg,
-  },
+    bottomBar: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: c.white,
+      borderTopLeftRadius: Radius['2xl'],
+      borderTopRightRadius: Radius['2xl'],
+      padding: 24,
+      paddingBottom: 40,
+      gap: 12,
+      ...Shadow.lg,
+    },
 
-  addressRow: { gap: 2 },
-  addressLabel: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  addressText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    lineHeight: 22,
-  },
+    addressRow: { gap: 2 },
+    addressLabel: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    addressText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.text,
+      lineHeight: 22,
+    },
 
-  navBtn: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.xl,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: Colors.accent,
-  },
-  navBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.accent,
-  },
+    navBtn: {
+      backgroundColor: c.surface,
+      borderRadius: Radius.xl,
+      paddingVertical: 14,
+      alignItems: 'center',
+      borderWidth: 1.5,
+      borderColor: c.accent,
+    },
+    navBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.accent,
+    },
 
-  actionBtn: {
-    borderRadius: Radius.xl,
-    paddingVertical: 18,
-    alignItems: 'center',
-    ...Shadow.md,
-  },
-  arriveBtn: { backgroundColor: Colors.success },
-  completeBtn: { backgroundColor: Colors.primary },
-  btnDisabled: { opacity: 0.65 },
-  actionBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-});
+    actionBtn: {
+      borderRadius: Radius.xl,
+      paddingVertical: 18,
+      alignItems: 'center',
+      ...Shadow.md,
+    },
+    arriveBtn: { backgroundColor: c.success },
+    completeBtn: { backgroundColor: c.primary },
+    btnDisabled: { opacity: 0.65 },
+    actionBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.base,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
+  });
+}

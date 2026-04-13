@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
+import React, { useEffect, useRef, useState, useCallback, memo, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import polyline from '@mapbox/polyline';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getBookingTracking, type TrackingResponse } from '../../api/matching';
 import { apiFetch } from '../../api/client';
@@ -48,6 +50,8 @@ export default function ActiveBookingScreen({ route }: Props) {
     route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const mapRef = useRef<MapView>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -235,7 +239,7 @@ export default function ActiveBookingScreen({ route }: Props) {
         {routeCoords.length > 1 && (
           <Polyline
             coordinates={routeCoords}
-            strokeColor={Colors.primary}
+            strokeColor={c.primary}
             strokeWidth={4}
             lineDashPattern={undefined}
           />
@@ -245,18 +249,18 @@ export default function ActiveBookingScreen({ route }: Props) {
       {/* Loading overlay */}
       {loading && (
         <View style={s.loadingOverlay}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <ActivityIndicator size="large" color={c.primary} />
         </View>
       )}
 
       {/* Back button + status badge */}
       <SafeAreaView style={s.topBadgeWrap} edges={['top']}>
         <TouchableOpacity style={s.backBtn} activeOpacity={0.8} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={22} color={Colors.text} />
+          <Ionicons name="chevron-back" size={22} color={c.text} />
         </TouchableOpacity>
         <View style={[s.statusBadge, arrived ? s.badgeArrived : s.badgeActive]}>
-          <View style={[s.statusDot, { backgroundColor: arrived ? Colors.success : Colors.primary }]} />
-          <Text style={[s.statusText, { color: arrived ? Colors.success : Colors.primary }]}>
+          <View style={[s.statusDot, { backgroundColor: arrived ? c.success : c.primary }]} />
+          <Text style={[s.statusText, { color: arrived ? c.success : c.primary }]}>
             {bookingStatus === 'completed' ? 'Service Complete' : arrived ? 'Pro has arrived!' : 'Pro on the way'}
           </Text>
         </View>
@@ -310,23 +314,33 @@ export default function ActiveBookingScreen({ route }: Props) {
   );
 }
 
-const HelperMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => (
-  <Marker coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
-    <View style={s.helperMarker}>
-      <Text style={s.markerEmoji}>🚶</Text>
-    </View>
-  </Marker>
-));
+const HelperMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <Marker coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
+      <View style={s.helperMarker}>
+        <Text style={s.markerEmoji}>🚶</Text>
+      </View>
+    </Marker>
+  );
+});
 
-const CustomerMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => (
-  <Marker coordinate={coord} anchor={{ x: 0.5, y: 1.0 }}>
-    <View style={s.customerMarker}>
-      <Text style={s.markerEmoji}>🏠</Text>
-    </View>
-  </Marker>
-));
+const CustomerMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <Marker coordinate={coord} anchor={{ x: 0.5, y: 1.0 }}>
+      <View style={s.customerMarker}>
+        <Text style={s.markerEmoji}>🏠</Text>
+      </View>
+    </Marker>
+  );
+});
 
 function Step({ label, done, active }: { label: string; done?: boolean; active?: boolean }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.stepItem}>
       <View style={[s.stepDot, done && s.stepDotDone, active && !done && s.stepDotActive]} />
@@ -335,168 +349,170 @@ function Step({ label, done, active }: { label: string; done?: boolean; active?:
   );
 }
 
-const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: c.background },
 
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    loadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(255,255,255,0.6)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  topBadgeWrap: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    gap: 10,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.sm,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    ...Shadow.sm,
-  },
-  badgeActive: { borderColor: `${Colors.primary}44`, backgroundColor: Colors.white },
-  badgeArrived: { borderColor: `${Colors.success}44`, backgroundColor: Colors.white },
-  statusDot: { width: 8, height: 8, borderRadius: Radius.full },
-  statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm },
+    topBadgeWrap: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      gap: 10,
+    },
+    backBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: c.white,
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...Shadow.sm,
+    },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: Radius.full,
+      borderWidth: 1,
+      ...Shadow.sm,
+    },
+    badgeActive: { borderColor: `${c.primary}44`, backgroundColor: c.white },
+    badgeArrived: { borderColor: `${c.success}44`, backgroundColor: c.white },
+    statusDot: { width: 8, height: 8, borderRadius: Radius.full },
+    statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm },
 
-  // Markers
-  helperMarker: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    padding: 6,
-    borderWidth: 2,
-    borderColor: Colors.accent,
-    ...Shadow.sm,
-  },
-  customerMarker: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
-    padding: 6,
-    borderWidth: 2,
-    borderColor: Colors.primary,
-    ...Shadow.sm,
-  },
-  markerEmoji: { fontSize: 22 },
+    // Markers
+    helperMarker: {
+      backgroundColor: c.white,
+      borderRadius: 20,
+      padding: 6,
+      borderWidth: 2,
+      borderColor: c.accent,
+      ...Shadow.sm,
+    },
+    customerMarker: {
+      backgroundColor: c.white,
+      borderRadius: 20,
+      padding: 6,
+      borderWidth: 2,
+      borderColor: c.primary,
+      ...Shadow.sm,
+    },
+    markerEmoji: { fontSize: 22 },
 
-  // Bottom sheet
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: Colors.white,
-    borderTopLeftRadius: Radius['2xl'],
-    borderTopRightRadius: Radius['2xl'],
-    padding: 24,
-    paddingBottom: 36,
-    gap: 16,
-    ...Shadow.lg,
-  },
+    // Bottom sheet
+    sheet: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: c.white,
+      borderTopLeftRadius: Radius['2xl'],
+      borderTopRightRadius: Radius['2xl'],
+      padding: 24,
+      paddingBottom: 36,
+      gap: 16,
+      ...Shadow.lg,
+    },
 
-  etaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  etaLabel: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  bookingRef: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-  },
-  etaBadge: {
-    backgroundColor: Colors.primaryBg,
-    borderRadius: Radius.full,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: `${Colors.primary}33`,
-  },
-  etaBadgeText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.primary,
-  },
+    etaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    etaLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: c.text,
+      marginBottom: 2,
+    },
+    bookingRef: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+    },
+    etaBadge: {
+      backgroundColor: c.primaryBg,
+      borderRadius: Radius.full,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderWidth: 1,
+      borderColor: `${c.primary}33`,
+    },
+    etaBadgeText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.primary,
+    },
 
-  proRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  proAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: `${Colors.primary}22`,
-  },
-  proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: Colors.primary },
-  proInfo: { flex: 1 },
-  proName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text, marginBottom: 2 },
-  proRating: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
+    proRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    proAvatar: {
+      width: 48,
+      height: 48,
+      borderRadius: Radius.full,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: `${c.primary}22`,
+    },
+    proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: c.primary },
+    proInfo: { flex: 1 },
+    proName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, marginBottom: 2 },
+    proRating: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
 
-  stepsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  stepItem: { alignItems: 'center', gap: 4, flex: 0 },
-  stepDot: {
-    width: 12,
-    height: 12,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.border,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-  },
-  stepDotDone: { backgroundColor: Colors.success, borderColor: Colors.success },
-  stepDotActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  stepLabel: {
-    fontFamily: FontFamily.regular,
-    fontSize: 10,
-    color: Colors.textMuted,
-  },
-  stepLabelActive: { color: Colors.text, fontFamily: FontFamily.semibold },
-  stepLine: { flex: 1, height: 2, backgroundColor: Colors.border, marginBottom: 14 },
-  stepLineActive: { backgroundColor: Colors.primary },
+    stepsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    stepItem: { alignItems: 'center', gap: 4, flex: 0 },
+    stepDot: {
+      width: 12,
+      height: 12,
+      borderRadius: Radius.full,
+      backgroundColor: c.border,
+      borderWidth: 1.5,
+      borderColor: c.border,
+    },
+    stepDotDone: { backgroundColor: c.success, borderColor: c.success },
+    stepDotActive: { backgroundColor: c.primary, borderColor: c.primary },
+    stepLabel: {
+      fontFamily: FontFamily.regular,
+      fontSize: 10,
+      color: c.textMuted,
+    },
+    stepLabelActive: { color: c.text, fontFamily: FontFamily.semibold },
+    stepLine: { flex: 1, height: 2, backgroundColor: c.border, marginBottom: 14 },
+    stepLineActive: { backgroundColor: c.primary },
 
-  cancelBtn: {
-    alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.danger,
-  },
-  cancelBtnText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.danger,
-  },
-});
+    cancelBtn: {
+      alignSelf: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 24,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.danger,
+    },
+    cancelBtnText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.danger,
+    },
+  });
+}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 
 const FAQS = [
   {
@@ -58,13 +60,15 @@ const CONTACT_OPTIONS = [
 
 export default function HelpSupportScreen() {
   const navigation = useNavigation();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [expanded, setExpanded] = React.useState<number | null>(null);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={24} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Help & Support</Text>
       </View>
@@ -77,13 +81,13 @@ export default function HelpSupportScreen() {
             <React.Fragment key={opt.id}>
               <TouchableOpacity style={s.listRow} activeOpacity={0.7} onPress={opt.action}>
                 <View style={s.iconBox}>
-                  <Ionicons name={opt.icon} size={20} color={Colors.primary} />
+                  <Ionicons name={opt.icon} size={20} color={c.primary} />
                 </View>
                 <View style={s.listText}>
                   <Text style={s.listLabel}>{opt.label}</Text>
                   <Text style={s.listSub}>{opt.sublabel}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
+                <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
               </TouchableOpacity>
               {idx < CONTACT_OPTIONS.length - 1 && <View style={s.divider} />}
             </React.Fragment>
@@ -106,7 +110,7 @@ export default function HelpSupportScreen() {
                 <Ionicons
                   name={expanded === idx ? 'chevron-up' : 'chevron-down'}
                   size={16}
-                  color={Colors.textMuted}
+                  color={c.textMuted}
                 />
               </TouchableOpacity>
               {expanded === idx && (
@@ -125,98 +129,100 @@ export default function HelpSupportScreen() {
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    gap: 4,
-  },
-  backBtn: { padding: 4, marginLeft: -4 },
-  headerTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 16,
+      gap: 4,
+    },
+    backBtn: { padding: 4, marginLeft: -4 },
+    headerTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+    },
 
-  scroll: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 40 },
+    scroll: { flex: 1 },
+    content: { paddingHorizontal: 16, paddingBottom: 40 },
 
-  sectionLabel: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.xs,
-    color: Colors.textSecondary,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    marginBottom: 10,
-    marginTop: 4,
-  },
+    sectionLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.xs,
+      color: c.textSecondary,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+      marginBottom: 10,
+      marginTop: 4,
+    },
 
-  listCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
-    marginBottom: 20,
-    ...Shadow.sm,
-  },
-  listRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 12,
-  },
-  iconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  listText: { flex: 1 },
-  listLabel: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  listSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-  },
+    listCard: {
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      overflow: 'hidden',
+      marginBottom: 20,
+      ...Shadow.sm,
+    },
+    listRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      gap: 12,
+    },
+    iconBox: {
+      width: 40,
+      height: 40,
+      borderRadius: Radius.md,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    listText: { flex: 1 },
+    listLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.text,
+      marginBottom: 2,
+    },
+    listSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+    },
 
-  divider: { height: 1, backgroundColor: Colors.border, marginLeft: 68 },
+    divider: { height: 1, backgroundColor: c.border, marginLeft: 68 },
 
-  faqRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 10,
-  },
-  faqQ: {
-    flex: 1,
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    lineHeight: 22,
-  },
-  faqAnswer: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-  },
-  faqA: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    lineHeight: 20,
-  },
-});
+    faqRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      gap: 10,
+    },
+    faqQ: {
+      flex: 1,
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.base,
+      color: c.text,
+      lineHeight: 22,
+    },
+    faqAnswer: {
+      paddingHorizontal: 16,
+      paddingBottom: 14,
+    },
+    faqA: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      lineHeight: 20,
+    },
+  });
+}

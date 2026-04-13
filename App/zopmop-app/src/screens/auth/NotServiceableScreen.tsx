@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NotServiceable'>;
@@ -19,6 +21,8 @@ type Props = {
 
 export default function NotServiceableScreen({ navigation, route }: Props) {
   const { cityName } = route.params;
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
 
@@ -30,51 +34,51 @@ export default function NotServiceableScreen({ navigation, route }: Props) {
   }, []);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <Animated.View style={[styles.container, { opacity, transform: [{ translateY }] }]}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <Animated.View style={[s.container, { opacity, transform: [{ translateY }] }]}>
 
         {/* Illustration */}
-        <View style={styles.illustrationWrapper}>
+        <View style={s.illustrationWrapper}>
           {/* Outer map shape */}
-          <View style={styles.mapShape}>
+          <View style={s.mapShape}>
             {/* Location pin */}
-            <View style={styles.pinHead}>
-              <View style={styles.pinDot} />
+            <View style={s.pinHead}>
+              <View style={s.pinDot} />
             </View>
-            <View style={styles.pinTail} />
+            <View style={s.pinTail} />
           </View>
           {/* Dashed expansion rings */}
-          <View style={[styles.dashedRing, styles.ring1]} />
-          <View style={[styles.dashedRing, styles.ring2]} />
+          <View style={[s.dashedRing, s.ring1]} />
+          <View style={[s.dashedRing, s.ring2]} />
           {/* Sparkle dots */}
-          <View style={[styles.sparkle, { top: 10, right: 24 }]} />
-          <View style={[styles.sparkle, styles.sparkleSm, { bottom: 24, left: 20 }]} />
-          <View style={[styles.sparkle, styles.sparkleSm, { top: 32, left: 8 }]} />
+          <View style={[s.sparkle, { top: 10, right: 24 }]} />
+          <View style={[s.sparkle, s.sparkleSm, { bottom: 24, left: 20 }]} />
+          <View style={[s.sparkle, s.sparkleSm, { top: 32, left: 8 }]} />
         </View>
 
         {/* Copy */}
-        <View style={styles.copyWrapper}>
-          <Text style={styles.heading}>Not in {cityName} yet</Text>
-          <Text style={styles.subheading}>
+        <View style={s.copyWrapper}>
+          <Text style={s.heading}>Not in {cityName} yet</Text>
+          <Text style={s.subheading}>
             ZopMop isn't available in {cityName} right now, but we're growing fast.{'\n'}
             We'll be serving your city soon!
           </Text>
         </View>
 
         {/* Expansion badge */}
-        <View style={styles.badge}>
-          <View style={styles.badgeDot} />
-          <Text style={styles.badgeText}>Currently serving Gurugram</Text>
+        <View style={s.badge}>
+          <View style={s.badgeDot} />
+          <Text style={s.badgeText}>Currently serving Gurugram</Text>
         </View>
 
         {/* CTA */}
-        <View style={styles.actions}>
+        <View style={s.actions}>
           <TouchableOpacity
-            style={styles.retryButton}
+            style={s.retryButton}
             onPress={() => navigation.replace('Location')}
             activeOpacity={0.8}
           >
-            <Text style={styles.retryText}>Try a different location</Text>
+            <Text style={s.retryText}>Try a different location</Text>
           </TouchableOpacity>
         </View>
       </Animated.View>
@@ -82,157 +86,159 @@ export default function NotServiceableScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing['2xl'],
-    gap: Spacing['2xl'],
-  },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: {
+      flex: 1,
+      backgroundColor: c.background,
+    },
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: Spacing['2xl'],
+      gap: Spacing['2xl'],
+    },
 
-  // Illustration
-  illustrationWrapper: {
-    width: 180,
-    height: 180,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  mapShape: {
-    width: 88,
-    height: 88,
-    borderRadius: 20,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  pinHead: {
-    width: 34,
-    height: 34,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.5,
-  },
-  pinDot: {
-    width: 12,
-    height: 12,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.white,
-  },
-  pinTail: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 9,
-    borderRightWidth: 9,
-    borderTopWidth: 15,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: Colors.primary,
-    opacity: 0.5,
-    marginTop: -2,
-  },
-  dashedRing: {
-    position: 'absolute',
-    borderRadius: Radius.full,
-    borderStyle: 'dashed',
-    borderColor: Colors.primary,
-    zIndex: 1,
-  },
-  ring1: {
-    width: 120,
-    height: 120,
-    borderWidth: 1.5,
-    opacity: 0.2,
-  },
-  ring2: {
-    width: 160,
-    height: 160,
-    borderWidth: 1,
-    opacity: 0.1,
-  },
-  sparkle: {
-    position: 'absolute',
-    width: 8,
-    height: 8,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-    opacity: 0.35,
-    zIndex: 3,
-  },
-  sparkleSm: {
-    width: 5,
-    height: 5,
-    opacity: 0.2,
-  },
+    // Illustration
+    illustrationWrapper: {
+      width: 180,
+      height: 180,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    mapShape: {
+      width: 88,
+      height: 88,
+      borderRadius: 20,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 2,
+    },
+    pinHead: {
+      width: 34,
+      height: 34,
+      borderRadius: Radius.full,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      opacity: 0.5,
+    },
+    pinDot: {
+      width: 12,
+      height: 12,
+      borderRadius: Radius.full,
+      backgroundColor: '#FFFFFF',
+    },
+    pinTail: {
+      width: 0,
+      height: 0,
+      borderLeftWidth: 9,
+      borderRightWidth: 9,
+      borderTopWidth: 15,
+      borderLeftColor: 'transparent',
+      borderRightColor: 'transparent',
+      borderTopColor: c.primary,
+      opacity: 0.5,
+      marginTop: -2,
+    },
+    dashedRing: {
+      position: 'absolute',
+      borderRadius: Radius.full,
+      borderStyle: 'dashed',
+      borderColor: c.primary,
+      zIndex: 1,
+    },
+    ring1: {
+      width: 120,
+      height: 120,
+      borderWidth: 1.5,
+      opacity: 0.2,
+    },
+    ring2: {
+      width: 160,
+      height: 160,
+      borderWidth: 1,
+      opacity: 0.1,
+    },
+    sparkle: {
+      position: 'absolute',
+      width: 8,
+      height: 8,
+      borderRadius: Radius.full,
+      backgroundColor: c.primary,
+      opacity: 0.35,
+      zIndex: 3,
+    },
+    sparkleSm: {
+      width: 5,
+      height: 5,
+      opacity: 0.2,
+    },
 
-  // Copy
-  copyWrapper: {
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-  },
-  heading: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    textAlign: 'center',
-    letterSpacing: -0.3,
-  },
-  subheading: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: FontSize.base * 1.65,
-  },
+    // Copy
+    copyWrapper: {
+      alignItems: 'center',
+      gap: Spacing.md,
+      paddingHorizontal: Spacing.sm,
+    },
+    heading: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      textAlign: 'center',
+      letterSpacing: -0.3,
+    },
+    subheading: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      textAlign: 'center',
+      lineHeight: FontSize.base * 1.65,
+    },
 
-  // Badge
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    backgroundColor: Colors.successBg,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: Radius.full,
-  },
-  badgeDot: {
-    width: 7,
-    height: 7,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.success,
-  },
-  badgeText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.success,
-  },
+    // Badge
+    badge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.xs,
+      backgroundColor: c.successBg,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: Spacing.sm,
+      borderRadius: Radius.full,
+    },
+    badgeDot: {
+      width: 7,
+      height: 7,
+      borderRadius: Radius.full,
+      backgroundColor: c.success,
+    },
+    badgeText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.success,
+    },
 
-  // Actions
-  actions: {
-    width: '100%',
-    paddingHorizontal: Spacing.xs,
-  },
-  retryButton: {
-    width: '100%',
-    height: 52,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  retryText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.primary,
-  },
-});
+    // Actions
+    actions: {
+      width: '100%',
+      paddingHorizontal: Spacing.xs,
+    },
+    retryButton: {
+      width: '100%',
+      height: 52,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    retryText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: c.primary,
+    },
+  });
+}

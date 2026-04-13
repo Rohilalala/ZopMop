@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors, useTheme } from '../../context/ThemeContext';
 import { useCart } from '../../context/CartContext';
 import { listServices, type ApiService } from '../../api/services';
 import type { MainStackParamList } from '../../types/navigation';
@@ -67,7 +69,10 @@ export default function AllServicesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const instant = route.params?.instant ?? false;
-  
+  const c = useColors();
+  const { isDark } = useTheme();
+  const s = useMemo(() => createStyles(c), [c]);
+
   const [services, setServices] = useState<ApiService[]>([]);
   const [loading, setLoading] = useState(true);
   const { itemCount, subtotalCents } = useCart();
@@ -85,19 +90,19 @@ export default function AllServicesScreen() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={24} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Explore Services</Text>
       </View>
 
       {loading ? (
         <View style={s.loadingWrap}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <ActivityIndicator size="large" color={c.primary} />
         </View>
       ) : (
         <ScrollView
@@ -154,6 +159,8 @@ export default function AllServicesScreen() {
 function ServiceCard({ service, instant }: { service: ApiService, instant: boolean }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [busy, setBusy] = useState(false);
 
   const cartItem = items.find(i => i.service_id === service.id);
@@ -250,7 +257,7 @@ function ServiceCard({ service, instant }: { service: ApiService, instant: boole
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
             >
               {busy
-                ? <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.55 }] }} />
+                ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.55 }] }} />
                 : <Text style={s.stepBtnText}>−</Text>
               }
             </TouchableOpacity>
@@ -280,7 +287,7 @@ function ServiceCard({ service, instant }: { service: ApiService, instant: boole
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             {busy
-              ? <ActivityIndicator size="small" color={Colors.primary} style={{ transform: [{ scale: 0.7 }] }} />
+              ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.7 }] }} />
               : <Text style={s.addBtnText}>+</Text>
             }
           </TouchableOpacity>
@@ -301,131 +308,133 @@ function ServiceCard({ service, instant }: { service: ApiService, instant: boole
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: Spacing.xl },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    scrollContent: { paddingBottom: Spacing.xl },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: H_PAD,
-    paddingTop: 12,
-    paddingBottom: 16,
-    gap: 4,
-  },
-  backBtn: { padding: 4, marginLeft: -4 },
-  headerTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: H_PAD,
+      paddingTop: 12,
+      paddingBottom: 16,
+      gap: 4,
+    },
+    backBtn: { padding: 4, marginLeft: -4 },
+    headerTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+    },
 
-  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  section: { paddingHorizontal: H_PAD, marginBottom: 32 },
-  sectionTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    letterSpacing: -0.2,
-    marginBottom: 14,
-  },
+    section: { paddingHorizontal: H_PAD, marginBottom: 32 },
+    sectionTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: c.text,
+      letterSpacing: -0.2,
+      marginBottom: 14,
+    },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
 
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-  },
-  cardImgBox: {
-    width: '100%',
-    aspectRatio: 1.2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  ratingBadge: {
-    position: 'absolute', top: 6, left: 6,
-    backgroundColor: 'rgba(255,255,255,0.88)',
-    paddingHorizontal: 5, paddingVertical: 2,
-    borderRadius: Radius.sm,
-  },
-  ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: Colors.text },
-  cardEmoji: { fontSize: 36 },
+    card: {
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: c.border,
+      ...Shadow.sm,
+    },
+    cardImgBox: {
+      width: '100%',
+      aspectRatio: 1.2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    ratingBadge: {
+      position: 'absolute', top: 6, left: 6,
+      backgroundColor: 'rgba(255,255,255,0.88)',
+      paddingHorizontal: 5, paddingVertical: 2,
+      borderRadius: Radius.sm,
+    },
+    ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: c.text },
+    cardEmoji: { fontSize: 36 },
 
-  addBtn: {
-    position: 'absolute', bottom: 6, right: 6,
-    width: 26, height: 26, borderRadius: Radius.md,
-    backgroundColor: Colors.white,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: Colors.border,
-    ...Shadow.sm,
-  },
-  addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: Colors.primary, lineHeight: 20, marginTop: -1 },
+    addBtn: {
+      position: 'absolute', bottom: 6, right: 6,
+      width: 26, height: 26, borderRadius: Radius.md,
+      backgroundColor: c.white,
+      alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: c.border,
+      ...Shadow.sm,
+    },
+    addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: c.primary, lineHeight: 20, marginTop: -1 },
 
-  stepper: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    paddingHorizontal: 8, paddingVertical: 5,
-    borderTopWidth: 1, borderTopColor: `${Colors.primary}22`,
-  },
-  stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: Colors.primary, lineHeight: 22 },
-  stepBtnDisabled: { color: Colors.border },
-  stepCenter: { alignItems: 'center', flex: 1 },
-  stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: Colors.text, lineHeight: 16 },
-  stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: Colors.textMuted, lineHeight: 10 },
+    stepper: {
+      position: 'absolute', bottom: 0, left: 0, right: 0,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      paddingHorizontal: 8, paddingVertical: 5,
+      borderTopWidth: 1, borderTopColor: `${c.primary}22`,
+    },
+    stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+    stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: c.primary, lineHeight: 22 },
+    stepBtnDisabled: { color: c.border },
+    stepCenter: { alignItems: 'center', flex: 1 },
+    stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: c.text, lineHeight: 16 },
+    stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: c.textMuted, lineHeight: 10 },
 
-  cardName: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    lineHeight: 18,
-  },
-  priceRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 10, paddingBottom: 10, paddingTop: 3,
-  },
-  cardPrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text },
-  cardMrp: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-    textDecorationLine: 'line-through',
-  },
+    cardName: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.text,
+      paddingHorizontal: 10,
+      paddingTop: 8,
+      lineHeight: 18,
+    },
+    priceRow: {
+      flexDirection: 'row', alignItems: 'center', gap: 5,
+      paddingHorizontal: 10, paddingBottom: 10, paddingTop: 3,
+    },
+    cardPrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    cardMrp: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      textDecorationLine: 'line-through',
+    },
 
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 8 },
-  emptyEmoji: { fontSize: 40 },
-  emptyText: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text },
-  emptySubtext: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
+    emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 8 },
+    emptyEmoji: { fontSize: 40 },
+    emptyText: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    emptySubtext: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
 
-  cartBar: {
-    position: 'absolute', bottom: 28, left: 24, right: 24,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: Colors.white,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderRadius: Radius['2xl'],
-    borderWidth: 1, borderColor: Colors.border,
-    ...Shadow.lg,
-  },
-  cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cartBarEmoji: { fontSize: 22 },
-  cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text },
-  cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 1 },
-  cartBarBtn: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 18, paddingVertical: 10,
-    borderRadius: Radius.xl,
-    ...Shadow.sm,
-  },
-  cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.white },
-});
+    cartBar: {
+      position: 'absolute', bottom: 28, left: 24, right: 24,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: c.white,
+      paddingHorizontal: 16, paddingVertical: 12,
+      borderRadius: Radius['2xl'],
+      borderWidth: 1, borderColor: c.border,
+      ...Shadow.lg,
+    },
+    cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    cartBarEmoji: { fontSize: 22 },
+    cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
+    cartBarBtn: {
+      backgroundColor: c.primary,
+      paddingHorizontal: 18, paddingVertical: 10,
+      borderRadius: Radius.xl,
+      ...Shadow.sm,
+    },
+    cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: '#FFFFFF' },
+  });
+}

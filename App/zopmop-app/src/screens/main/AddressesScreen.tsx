@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
 import EditAddressModal from '../../components/EditAddressModal';
@@ -32,6 +34,8 @@ const ACTION_WIDTH = 80;
 
 export default function AddressesScreen({ navigation }: Props) {
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [addresses, setAddresses] = useState<ApiAddress[]>([]);
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState<ApiAddress | null>(null);
@@ -58,7 +62,7 @@ export default function AddressesScreen({ navigation }: Props) {
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={20} color={Colors.text} />
+          <Ionicons name="arrow-back" size={20} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Saved Addresses</Text>
         <View style={{ width: 36 }} />
@@ -66,11 +70,11 @@ export default function AddressesScreen({ navigation }: Props) {
 
       {loading ? (
         <View style={s.center}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <ActivityIndicator size="large" color={c.primary} />
         </View>
       ) : addresses.length === 0 ? (
         <View style={s.center}>
-          <Ionicons name="location-outline" size={48} color={Colors.textMuted} />
+          <Ionicons name="location-outline" size={48} color={c.textMuted} />
           <Text style={s.emptyTitle}>No saved addresses</Text>
           <Text style={s.emptySub}>Addresses you save will appear here</Text>
         </View>
@@ -115,6 +119,8 @@ function SwipeableRow({
   onEdit: () => void;
   onDeleted: (id: string) => void;
 }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeState = useRef<'closed' | 'left' | 'right'>('closed');
 
@@ -178,7 +184,7 @@ function SwipeableRow({
       {/* Delete — revealed on swipe right */}
       <View style={[s.actionSlot, s.actionLeft]}>
         <TouchableOpacity style={s.deleteAction} activeOpacity={0.85} onPress={confirmDelete}>
-          <Ionicons name="trash-outline" size={20} color={Colors.white} />
+          <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
           <Text style={s.actionText}>Delete</Text>
         </TouchableOpacity>
       </View>
@@ -186,14 +192,14 @@ function SwipeableRow({
       {/* Edit — revealed on swipe left */}
       <View style={[s.actionSlot, s.actionRight]}>
         <TouchableOpacity style={s.editAction} activeOpacity={0.85} onPress={() => { close(); onEdit(); }}>
-          <Ionicons name="create-outline" size={20} color={Colors.white} />
+          <Ionicons name="create-outline" size={20} color="#FFFFFF" />
           <Text style={s.actionText}>Edit</Text>
         </TouchableOpacity>
       </View>
 
       <Animated.View style={[s.row, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
         <View style={s.tagIconBox}>
-          <Ionicons name={TAG_ICONS[address.tag] as any} size={20} color={Colors.primary} />
+          <Ionicons name={TAG_ICONS[address.tag] as any} size={20} color={c.primary} />
         </View>
         <View style={s.rowInfo}>
           <View style={s.rowTopLine}>
@@ -218,117 +224,119 @@ function SwipeableRow({
 
 const H_PAD = 16;
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  content: { paddingTop: 4 },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    content: { paddingTop: 4 },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: H_PAD,
-    paddingTop: 8,
-    paddingBottom: 14,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    flex: 1,
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    textAlign: 'center',
-    letterSpacing: -0.3,
-  },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: H_PAD,
+      paddingTop: 8,
+      paddingBottom: 14,
+    },
+    backBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: Radius.full,
+      backgroundColor: c.surface,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerTitle: {
+      flex: 1,
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: c.text,
+      textAlign: 'center',
+      letterSpacing: -0.3,
+    },
 
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  emptyTitle: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    marginTop: 8,
-  },
-  emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+    emptyTitle: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      marginTop: 8,
+    },
+    emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
 
-  hint: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    paddingVertical: 10,
-  },
+    hint: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      textAlign: 'center',
+      paddingVertical: 10,
+    },
 
-  // Swipeable row
-  rowWrap: {
-    marginHorizontal: H_PAD,
-    marginBottom: 10,
-    borderRadius: Radius.xl,
-    overflow: 'hidden',
-    height: 76,
-    ...Shadow.sm,
-  },
-  actionSlot: { position: 'absolute', top: 0, bottom: 0, width: ACTION_WIDTH },
-  actionLeft: { left: 0 },
-  actionRight: { right: 0 },
-  deleteAction: {
-    flex: 1,
-    backgroundColor: Colors.danger,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    borderTopLeftRadius: Radius.xl,
-    borderBottomLeftRadius: Radius.xl,
-  },
-  editAction: {
-    flex: 1,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    borderTopRightRadius: Radius.xl,
-    borderBottomRightRadius: Radius.xl,
-  },
-  actionText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: Colors.white },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.white,
-    paddingHorizontal: Spacing.base,
-    paddingVertical: 14,
-    gap: 14,
-    borderRadius: Radius.xl,
-    height: 76,
-  },
-  tagIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rowInfo: { flex: 1 },
-  rowTopLine: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  rowTag: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text },
-  rowReceiver: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.xs,
-    color: Colors.textMuted,
-    flex: 1,
-  },
-  rowAddress: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    lineHeight: 18,
-  },
-  rowDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 },
-});
+    // Swipeable row
+    rowWrap: {
+      marginHorizontal: H_PAD,
+      marginBottom: 10,
+      borderRadius: Radius.xl,
+      overflow: 'hidden',
+      height: 76,
+      ...Shadow.sm,
+    },
+    actionSlot: { position: 'absolute', top: 0, bottom: 0, width: ACTION_WIDTH },
+    actionLeft: { left: 0 },
+    actionRight: { right: 0 },
+    deleteAction: {
+      flex: 1,
+      backgroundColor: c.danger,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      borderTopLeftRadius: Radius.xl,
+      borderBottomLeftRadius: Radius.xl,
+    },
+    editAction: {
+      flex: 1,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      borderTopRightRadius: Radius.xl,
+      borderBottomRightRadius: Radius.xl,
+    },
+    actionText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: '#FFFFFF' },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.white,
+      paddingHorizontal: Spacing.base,
+      paddingVertical: 14,
+      gap: 14,
+      borderRadius: Radius.xl,
+      height: 76,
+    },
+    tagIconBox: {
+      width: 44,
+      height: 44,
+      borderRadius: Radius.lg,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rowInfo: { flex: 1 },
+    rowTopLine: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+    rowTag: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    rowReceiver: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      flex: 1,
+    },
+    rowAddress: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      lineHeight: 18,
+    },
+    rowDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 2 },
+  });
+}

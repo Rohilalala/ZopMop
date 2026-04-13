@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { acceptBooking, getHelperInvites } from '../../api/matching';
 
@@ -30,6 +32,8 @@ export default function ProMatchedScreen({ route }: Props) {
     route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const [accepting, setAccepting] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS);
@@ -218,7 +222,7 @@ export default function ProMatchedScreen({ route }: Props) {
           {/* Label sits above fill */}
           <View style={s.acceptContent}>
             {accepting
-              ? <ActivityIndicator color={Colors.white} />
+              ? <ActivityIndicator color="#FFFFFF" />
               : expired
                 ? <Text style={s.acceptBtnText}>Expired</Text>
                 : <Text style={s.acceptBtnText}>✅  Accept ({secondsLeft}s)</Text>
@@ -231,6 +235,8 @@ export default function ProMatchedScreen({ route }: Props) {
 }
 
 function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.detailRow}>
       <Text style={s.detailIcon}>{icon}</Text>
@@ -242,177 +248,179 @@ function DetailRow({ icon, label, value }: { icon: string; label: string; value:
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  content: { paddingBottom: 24 },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    content: { paddingBottom: 24 },
 
-  bannerWrap: { paddingHorizontal: 20, paddingTop: 20, marginBottom: 20 },
-  banner: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius['2xl'],
-    padding: 32,
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  bannerCircles: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  circle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: Colors.white },
-  c1: { width: 160, height: 160, opacity: 0.06, top: -60, right: -40 },
-  c2: { width: 80, height: 80, opacity: 0.05, bottom: -20, left: 30 },
+    bannerWrap: { paddingHorizontal: 20, paddingTop: 20, marginBottom: 20 },
+    banner: {
+      backgroundColor: c.primary,
+      borderRadius: Radius['2xl'],
+      padding: 32,
+      alignItems: 'center',
+      overflow: 'hidden',
+    },
+    bannerCircles: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+    circle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
+    c1: { width: 160, height: 160, opacity: 0.06, top: -60, right: -40 },
+    c2: { width: 80, height: 80, opacity: 0.05, bottom: -20, left: 30 },
 
-  matchIcon: { fontSize: 64, marginBottom: 14 },
-  bannerTitle: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['2xl'],
-    color: Colors.white,
-    letterSpacing: -0.5,
-    marginBottom: 6,
-  },
-  bannerSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: 'rgba(255,255,255,0.78)',
-    textAlign: 'center',
-  },
+    matchIcon: { fontSize: 64, marginBottom: 14 },
+    bannerTitle: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['2xl'],
+      color: '#FFFFFF',
+      letterSpacing: -0.5,
+      marginBottom: 6,
+    },
+    bannerSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: 'rgba(255,255,255,0.78)',
+      textAlign: 'center',
+    },
 
-  detailCard: {
-    marginHorizontal: 20,
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 20,
-    marginBottom: 16,
-    ...Shadow.sm,
-  },
-  detailHeading: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.text,
-    marginBottom: 18,
-    letterSpacing: -0.2,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 14,
-    paddingVertical: 4,
-  },
-  detailIcon: { fontSize: 26, width: 32, textAlign: 'center', marginTop: 2 },
-  detailTexts: { flex: 1 },
-  detailLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    lineHeight: 22,
-  },
-  divider: { height: 1, backgroundColor: Colors.border, marginVertical: 12, marginLeft: 46 },
+    detailCard: {
+      marginHorizontal: 20,
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: 20,
+      marginBottom: 16,
+      ...Shadow.sm,
+    },
+    detailHeading: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: c.text,
+      marginBottom: 18,
+      letterSpacing: -0.2,
+    },
+    detailRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 14,
+      paddingVertical: 4,
+    },
+    detailIcon: { fontSize: 26, width: 32, textAlign: 'center', marginTop: 2 },
+    detailTexts: { flex: 1 },
+    detailLabel: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.textMuted,
+      marginBottom: 2,
+    },
+    detailValue: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.text,
+      lineHeight: 22,
+    },
+    divider: { height: 1, backgroundColor: c.border, marginVertical: 12, marginLeft: 46 },
 
-  mapsBtn: {
-    marginHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.accent,
-    padding: 18,
-    gap: 14,
-    marginBottom: 16,
-    ...Shadow.sm,
-  },
-  mapsBtnIcon: { fontSize: 32 },
-  mapsBtnText: { flex: 1 },
-  mapsBtnTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.accent,
-    marginBottom: 2,
-  },
-  mapsBtnSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-  },
-  mapsBtnArrow: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.accent,
-  },
+    mapsBtn: {
+      marginHorizontal: 20,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.accent,
+      padding: 18,
+      gap: 14,
+      marginBottom: 16,
+      ...Shadow.sm,
+    },
+    mapsBtnIcon: { fontSize: 32 },
+    mapsBtnText: { flex: 1 },
+    mapsBtnTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.base,
+      color: c.accent,
+      marginBottom: 2,
+    },
+    mapsBtnSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textMuted,
+    },
+    mapsBtnArrow: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: c.accent,
+    },
 
-  infoBox: {
-    marginHorizontal: 20,
-    backgroundColor: Colors.warningBg,
-    borderRadius: Radius.xl,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: `${Colors.warning}44`,
-  },
-  infoText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-    lineHeight: 22,
-  },
+    infoBox: {
+      marginHorizontal: 20,
+      backgroundColor: c.warningBg,
+      borderRadius: Radius.xl,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: `${c.warning}44`,
+    },
+    infoText: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.text,
+      lineHeight: 22,
+    },
 
-  bottomBar: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    gap: 12,
-    backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  declineBtn: {
-    flex: 1,
-    paddingVertical: 18,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    backgroundColor: Colors.white,
-  },
-  declineBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-  },
+    bottomBar: {
+      flexDirection: 'row',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      gap: 12,
+      backgroundColor: c.background,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    declineBtn: {
+      flex: 1,
+      paddingVertical: 18,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      alignItems: 'center',
+      backgroundColor: c.white,
+    },
+    declineBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+    },
 
-  // Countdown accept button
-  acceptOuter: {
-    flex: 2,
-    height: 58,
-    borderRadius: Radius.xl,
-    overflow: 'hidden',
-    backgroundColor: `${Colors.success}30`,
-    ...Shadow.md,
-  },
-  acceptFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: Colors.success,
-  },
-  acceptContent: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  acceptBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-});
+    // Countdown accept button
+    acceptOuter: {
+      flex: 2,
+      height: 58,
+      borderRadius: Radius.xl,
+      overflow: 'hidden',
+      backgroundColor: `${c.success}30`,
+      ...Shadow.md,
+    },
+    acceptFill: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      backgroundColor: c.success,
+    },
+    acceptContent: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    acceptBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.base,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
+  });
+}

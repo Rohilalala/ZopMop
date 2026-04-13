@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { updateMe } from '../../api/users';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 
@@ -42,6 +44,8 @@ function sanitizeName(raw: string): string {
 
 export default function NameEntryScreen({ navigation, route }: Props) {
   const { phone } = route.params;
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -106,7 +110,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
               onChangeText={(t) => { setName(t); if (error) setError(''); }}
               keyboardType="default"
               placeholder="Your full name"
-              placeholderTextColor={Colors.textMuted}
+              placeholderTextColor={c.textMuted}
               maxLength={60}
               returnKeyType="done"
               onSubmitEditing={handleContinue}
@@ -131,7 +135,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color={Colors.white} size="small" />
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Continue</Text>
             )}
@@ -142,90 +146,25 @@ export default function NameEntryScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: {
-    flexGrow: 1,
-    paddingHorizontal: Spacing['2xl'],
-    paddingTop: Spacing['4xl'],
-  },
-
-  header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-  logoMark: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-  },
-  logoMarkText: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize.xl,
-    color: Colors.white,
-  },
-  title: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['3xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-    lineHeight: FontSize['3xl'] * 1.2,
-  },
-  subtitle: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.base * 1.6,
-  },
-
-  inputCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    height: 60,
-    paddingHorizontal: Spacing.base,
-    ...Shadow.sm,
-  },
-  inputCardError: {
-    borderColor: Colors.danger,
-  },
-  nameInput: {
-    flex: 1,
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.xl,
-    color: Colors.text,
-    paddingVertical: 0,
-  },
-
-  errorText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.danger,
-    marginTop: Spacing.sm,
-    marginLeft: Spacing.xs,
-  },
-
-  bottom: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingBottom: Spacing['2xl'],
-  },
-  continueButton: {
-    height: 54,
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.md,
-  },
-  continueButtonDisabled: { opacity: 0.45 },
-  continueButtonText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-});
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flexGrow: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['4xl'] },
+    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
+    logoMark: { width: 44, height: 44, borderRadius: Radius.lg, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#FFFFFF' },
+    title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5, lineHeight: FontSize['3xl'] * 1.2 },
+    subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, lineHeight: FontSize.base * 1.6 },
+    inputCard: {
+      flexDirection: 'row', alignItems: 'center', backgroundColor: c.white,
+      borderRadius: Radius.xl, borderWidth: 1.5, borderColor: c.border, height: 60, paddingHorizontal: Spacing.base, ...Shadow.sm,
+    },
+    inputCardError: { borderColor: c.danger },
+    nameInput: { flex: 1, fontFamily: FontFamily.semibold, fontSize: FontSize.xl, color: c.text, paddingVertical: 0 },
+    errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, marginTop: Spacing.sm, marginLeft: Spacing.xs },
+    bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'] },
+    continueButton: { height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    continueButtonDisabled: { opacity: 0.45 },
+    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+  });
+}

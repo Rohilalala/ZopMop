@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
@@ -51,6 +53,8 @@ export default function ProOnboardingScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signIn } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const [step, setStep] = useState(1);
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -228,7 +232,7 @@ export default function ProOnboardingScreen({ route }: Props) {
                   {
                     backgroundColor: dotAnims[i].interpolate({
                       inputRange: [0, 1],
-                      outputRange: [Colors.border, Colors.primary],
+                      outputRange: [c.border, c.primary],
                     }),
                     width: dotAnims[i].interpolate({
                       inputRange: [0, 1],
@@ -297,7 +301,7 @@ export default function ProOnboardingScreen({ route }: Props) {
                 disabled={gpsLoading}
               >
                 {gpsLoading ? (
-                  <ActivityIndicator size="small" color={Colors.white} />
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : gpsLat != null ? (
                   <Text style={s.locationBtnText}>✓  Location captured</Text>
                 ) : (
@@ -394,7 +398,7 @@ export default function ProOnboardingScreen({ route }: Props) {
               disabled={submitting}
             >
               {submitting ? (
-                <ActivityIndicator color={Colors.white} />
+                <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={s.ctaBtnText}>Start Working</Text>
               )}
@@ -407,6 +411,8 @@ export default function ProOnboardingScreen({ route }: Props) {
 }
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.summaryRow}>
       <Text style={s.summaryLabel}>{label}</Text>
@@ -417,278 +423,280 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 const CARD_SIZE = (W - Spacing['2xl'] * 2 - Spacing.md) / 2;
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: Spacing.xl },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    scrollContent: { paddingBottom: Spacing.xl },
 
-  // ── Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing['2xl'],
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.base,
-    gap: Spacing.md,
-    minHeight: 56,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  backArrow: {
-    fontSize: 28,
-    color: Colors.text,
-    lineHeight: 32,
-    marginTop: -2,
-  },
-  dotsRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-  },
-  dot: {
-    height: 8,
-    borderRadius: Radius.full,
-  },
+    // ── Header
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing['2xl'],
+      paddingTop: Spacing.md,
+      paddingBottom: Spacing.base,
+      gap: Spacing.md,
+      minHeight: 56,
+    },
+    backBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: Radius.full,
+      backgroundColor: c.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    backArrow: {
+      fontSize: 28,
+      color: c.text,
+      lineHeight: 32,
+      marginTop: -2,
+    },
+    dotsRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.xs,
+    },
+    dot: {
+      height: 8,
+      borderRadius: Radius.full,
+    },
 
-  // ── Step content
-  stepContainer: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingTop: Spacing.lg,
-  },
-  stepTitle: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['3xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-    marginBottom: Spacing.sm,
-  },
-  stepSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.base * 1.6,
-    marginBottom: Spacing['2xl'],
-  },
+    // ── Step content
+    stepContainer: {
+      paddingHorizontal: Spacing['2xl'],
+      paddingTop: Spacing.lg,
+    },
+    stepTitle: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['3xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+      marginBottom: Spacing.sm,
+    },
+    stepSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      lineHeight: FontSize.base * 1.6,
+      marginBottom: Spacing['2xl'],
+    },
 
-  // ── Service grid
-  serviceGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.md,
-  },
-  serviceCard: {
-    width: CARD_SIZE,
-    aspectRatio: 1,
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    ...Shadow.sm,
-  },
-  serviceCardSelected: {
-    borderColor: Colors.primary,
-    borderWidth: 2,
-    backgroundColor: Colors.primaryBg,
-    ...Shadow.md,
-  },
-  checkBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 22,
-    height: 22,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkMark: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.sm,
-    color: Colors.white,
-  },
-  serviceEmoji: { fontSize: 40 },
-  serviceLabel: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-    textAlign: 'center',
-    paddingHorizontal: Spacing.xs,
-  },
-  serviceLabelSelected: { color: Colors.primary },
-  selectionHint: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginTop: Spacing.base,
-  },
+    // ── Service grid
+    serviceGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: Spacing.md,
+    },
+    serviceCard: {
+      width: CARD_SIZE,
+      aspectRatio: 1,
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Spacing.sm,
+      ...Shadow.sm,
+    },
+    serviceCardSelected: {
+      borderColor: c.primary,
+      borderWidth: 2,
+      backgroundColor: c.primaryBg,
+      ...Shadow.md,
+    },
+    checkBadge: {
+      position: 'absolute',
+      top: 10,
+      right: 10,
+      width: 22,
+      height: 22,
+      borderRadius: Radius.full,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkMark: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.sm,
+      color: '#FFFFFF',
+    },
+    serviceEmoji: { fontSize: 40 },
+    serviceLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.text,
+      textAlign: 'center',
+      paddingHorizontal: Spacing.xs,
+    },
+    serviceLabelSelected: { color: c.primary },
+    selectionHint: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginTop: Spacing.base,
+    },
 
-  // ── Location
-  locationBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    paddingVertical: 20,
-    alignItems: 'center',
-    marginBottom: Spacing.base,
-    ...Shadow.md,
-  },
-  locationBtnLoading: { opacity: 0.75 },
-  locationBtnDone: { backgroundColor: Colors.success },
-  locationBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.white,
-  },
-  addressBadge: {
-    backgroundColor: Colors.successBg,
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.sm,
-    marginBottom: Spacing.base,
-    alignItems: 'center',
-  },
-  addressBadgeText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.success,
-    textAlign: 'center',
-  },
-  locationNote: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    textAlign: 'center',
-    lineHeight: FontSize.sm * 1.7,
-    marginTop: Spacing.sm,
-  },
+    // ── Location
+    locationBtn: {
+      backgroundColor: c.primary,
+      borderRadius: Radius.xl,
+      paddingVertical: 20,
+      alignItems: 'center',
+      marginBottom: Spacing.base,
+      ...Shadow.md,
+    },
+    locationBtnLoading: { opacity: 0.75 },
+    locationBtnDone: { backgroundColor: c.success },
+    locationBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: '#FFFFFF',
+    },
+    addressBadge: {
+      backgroundColor: c.successBg,
+      borderRadius: Radius.lg,
+      paddingHorizontal: Spacing.base,
+      paddingVertical: Spacing.sm,
+      marginBottom: Spacing.base,
+      alignItems: 'center',
+    },
+    addressBadgeText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.success,
+      textAlign: 'center',
+    },
+    locationNote: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textMuted,
+      textAlign: 'center',
+      lineHeight: FontSize.sm * 1.7,
+      marginTop: Spacing.sm,
+    },
 
-  // ── Availability pills
-  slotsRow: {
-    gap: Spacing.md,
-  },
-  slotPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    paddingVertical: Spacing.base,
-    paddingHorizontal: Spacing.lg,
-    ...Shadow.sm,
-  },
-  slotPillActive: {
-    borderColor: Colors.primary,
-    borderWidth: 2,
-    backgroundColor: Colors.primaryBg,
-  },
-  slotLabel: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.text,
-  },
-  slotLabelActive: { color: Colors.primary },
-  slotTime: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-  },
-  slotTimeActive: { color: Colors.primary },
+    // ── Availability pills
+    slotsRow: {
+      gap: Spacing.md,
+    },
+    slotPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      paddingVertical: Spacing.base,
+      paddingHorizontal: Spacing.lg,
+      ...Shadow.sm,
+    },
+    slotPillActive: {
+      borderColor: c.primary,
+      borderWidth: 2,
+      backgroundColor: c.primaryBg,
+    },
+    slotLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: c.text,
+    },
+    slotLabelActive: { color: c.primary },
+    slotTime: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textMuted,
+    },
+    slotTimeActive: { color: c.primary },
 
-  // ── Completion
-  completionContainer: {
-    alignItems: 'center',
-    paddingTop: Spacing['4xl'],
-  },
-  successIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.successBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.xl,
-    ...Shadow.md,
-  },
-  successEmoji: { fontSize: 52 },
-  completionTitle: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['3xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-    marginBottom: Spacing.sm,
-    textAlign: 'center',
-  },
-  completionSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: Spacing['2xl'],
-  },
-  summaryCard: {
-    width: '100%',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-    ...Shadow.sm,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-  },
-  summaryLabel: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    width: 70,
-  },
-  summaryValue: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.text,
-    flex: 1,
-  },
+    // ── Completion
+    completionContainer: {
+      alignItems: 'center',
+      paddingTop: Spacing['4xl'],
+    },
+    successIcon: {
+      width: 100,
+      height: 100,
+      borderRadius: Radius.full,
+      backgroundColor: c.successBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: Spacing.xl,
+      ...Shadow.md,
+    },
+    successEmoji: { fontSize: 52 },
+    completionTitle: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['3xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+      marginBottom: Spacing.sm,
+      textAlign: 'center',
+    },
+    completionSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginBottom: Spacing['2xl'],
+    },
+    summaryCard: {
+      width: '100%',
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: Spacing.lg,
+      gap: Spacing.md,
+      ...Shadow.sm,
+    },
+    summaryRow: {
+      flexDirection: 'row',
+      gap: Spacing.md,
+    },
+    summaryLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      width: 70,
+    },
+    summaryValue: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: c.text,
+      flex: 1,
+    },
 
-  // ── CTA
-  ctaWrap: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingBottom: Spacing.xl,
-    paddingTop: Spacing.md,
-    backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  ctaBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    paddingVertical: 18,
-    alignItems: 'center',
-    ...Shadow.md,
-  },
-  ctaBtnDisabled: { opacity: 0.45 },
-  ctaBtnGo: { backgroundColor: Colors.success },
-  ctaBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-});
+    // ── CTA
+    ctaWrap: {
+      paddingHorizontal: Spacing['2xl'],
+      paddingBottom: Spacing.xl,
+      paddingTop: Spacing.md,
+      backgroundColor: c.background,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    ctaBtn: {
+      backgroundColor: c.primary,
+      borderRadius: Radius.xl,
+      paddingVertical: 18,
+      alignItems: 'center',
+      ...Shadow.md,
+    },
+    ctaBtnDisabled: { opacity: 0.45 },
+    ctaBtnGo: { backgroundColor: c.success },
+    ctaBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
+  });
+}

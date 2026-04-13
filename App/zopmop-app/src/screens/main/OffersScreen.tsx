@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { promoStore } from '../../utils/promoStore';
 
 const OFFERS = [
@@ -39,6 +41,8 @@ const OFFERS = [
 
 export default function OffersScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const [inputCode, setInputCode] = useState('');
 
   function handleApplyInput() {
@@ -61,7 +65,7 @@ export default function OffersScreen() {
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={24} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Apply coupon</Text>
       </View>
@@ -77,7 +81,7 @@ export default function OffersScreen() {
           <TextInput
             style={s.input}
             placeholder="Type coupon code here"
-            placeholderTextColor={Colors.textMuted}
+            placeholderTextColor={c.textMuted}
             value={inputCode}
             onChangeText={setInputCode}
             autoCapitalize="characters"
@@ -111,12 +115,15 @@ function OfferCard({
   offer: typeof OFFERS[0];
   onApply: () => void;
 }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+
   return (
     <View style={s.card}>
       {/* Top row */}
       <View style={s.cardTop}>
         <View style={s.offerIconBox}>
-          <Ionicons name="pricetag-outline" size={22} color={Colors.primary} />
+          <Ionicons name="pricetag-outline" size={22} color={c.primary} />
         </View>
         <View style={s.cardMeta}>
           <Text style={s.cardTitle}>{offer.title}</Text>
@@ -144,133 +151,135 @@ function OfferCard({
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    gap: 4,
-  },
-  backBtn: { padding: 4, marginLeft: -4 },
-  headerTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 16,
+      gap: 4,
+    },
+    backBtn: { padding: 4, marginLeft: -4 },
+    headerTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+    },
 
-  scroll: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 40 },
+    scroll: { flex: 1 },
+    content: { paddingHorizontal: 16, paddingBottom: 40 },
 
-  // Input
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingLeft: 16,
-    paddingRight: 6,
-    paddingVertical: 6,
-    marginBottom: 24,
-    ...Shadow.sm,
-  },
-  input: {
-    flex: 1,
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    paddingVertical: 8,
-  },
-  applyBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.lg,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  applyBtnDisabled: { opacity: 0.4 },
-  applyBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.white,
-  },
+    // Input
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      paddingLeft: 16,
+      paddingRight: 6,
+      paddingVertical: 6,
+      marginBottom: 24,
+      ...Shadow.sm,
+    },
+    input: {
+      flex: 1,
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.text,
+      paddingVertical: 8,
+    },
+    applyBtn: {
+      backgroundColor: c.primary,
+      borderRadius: Radius.lg,
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+    },
+    applyBtnDisabled: { opacity: 0.4 },
+    applyBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: '#FFFFFF',
+    },
 
-  sectionLabel: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.md,
-    color: Colors.text,
-    marginBottom: 14,
-    textAlign: 'center',
-  },
+    sectionLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.md,
+      color: c.text,
+      marginBottom: 14,
+      textAlign: 'center',
+    },
 
-  // Card
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 14,
-    overflow: 'hidden',
-    ...Shadow.sm,
-  },
-  cardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    gap: 10,
-  },
-  offerIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardMeta: { flex: 1 },
-  cardTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    marginBottom: 3,
-  },
-  cardCode: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  cardCodeBold: {
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  cardApplyBtn: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  cardApplyText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
+    // Card
+    card: {
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      marginBottom: 14,
+      overflow: 'hidden',
+      ...Shadow.sm,
+    },
+    cardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      gap: 10,
+    },
+    offerIconBox: {
+      width: 48,
+      height: 48,
+      borderRadius: Radius.lg,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    cardMeta: { flex: 1 },
+    cardTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.base,
+      color: c.text,
+      marginBottom: 3,
+    },
+    cardCode: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+    },
+    cardCodeBold: {
+      fontFamily: FontFamily.bold,
+      color: c.text,
+    },
+    cardApplyBtn: {
+      backgroundColor: c.surface,
+      borderRadius: Radius.lg,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    cardApplyText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+    },
 
-  divider: { height: 1, backgroundColor: Colors.border, marginHorizontal: 14 },
+    divider: { height: 1, backgroundColor: c.border, marginHorizontal: 14 },
 
-  terms: { padding: 14, gap: 4 },
-  termRow: { flexDirection: 'row', gap: 6 },
-  bullet: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  termText: {
-    flex: 1,
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    lineHeight: 20,
-  },
-});
+    terms: { padding: 14, gap: 4 },
+    termRow: { flexDirection: 'row', gap: 6 },
+    bullet: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    termText: {
+      flex: 1,
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      lineHeight: 20,
+    },
+  });
+}

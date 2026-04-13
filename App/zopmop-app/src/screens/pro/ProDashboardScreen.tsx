@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,15 @@ import {
   Animated,
   Alert,
   ActivityIndicator,
-  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getHelperInvitesWithDetails } from '../../api/matching';
 import { apiFetch } from '../../api/client';
@@ -24,8 +25,10 @@ import { BASE_URL } from '../../api/config';
 export default function ProDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token, user, signOut } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
-  // On mount: if there's an active booking already (e.g. app resumed), go straight to ProActive.
+  // On mount: if there's an active booking, go straight to ProActive.
   useEffect(() => {
     if (!token || token === '__guest__') return;
     (async () => {
@@ -48,51 +51,56 @@ export default function ProDashboardScreen() {
             customerLng: active.lng ?? 0,
           });
         }
-      } catch { /* silently ignore — not critical */ }
+      } catch { /* silently ignore */ }
     })();
   }, [token]);
 
   const [isOnline, setIsOnline] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [checkingInvites, setCheckingInvites] = useState(false);
-  const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [inviteCount, setInviteCount] = useState(0);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const navigatingToBookingRef = useRef(false);
 
-  // Pulse for the online dot
-  const dotPulse = useRef(new Animated.Value(1)).current;
+  // Pulse ring for GO ONLINE button
+  const ringScale = useRef(new Animated.Value(1)).current;
+  const ringOpacity = useRef(new Animated.Value(0.4)).current;
+
   useEffect(() => {
     if (isOnline) {
       Animated.loop(
-        Animated.sequence([
-          Animated.timing(dotPulse, { toValue: 1.5, duration: 700, useNativeDriver: true }),
-          Animated.timing(dotPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        ]),
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(ringScale, { toValue: 1.35, duration: 1000, useNativeDriver: true }),
+            Animated.timing(ringScale, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          ]),
+          Animated.sequence([
+            Animated.timing(ringOpacity, { toValue: 0, duration: 1000, useNativeDriver: true }),
+            Animated.timing(ringOpacity, { toValue: 0.4, duration: 1000, useNativeDriver: true }),
+          ]),
+        ])
       ).start();
     } else {
-      dotPulse.stopAnimation();
-      dotPulse.setValue(1);
+      ringScale.stopAnimation(); ringScale.setValue(1);
+      ringOpacity.stopAnimation(); ringOpacity.setValue(0.4);
     }
   }, [isOnline]);
 
-  // Poll for invites when online
   const checkInvites = useCallback(async () => {
     if (!token || token === '__guest__') return;
     if (navigatingToBookingRef.current) return;
     setCheckingInvites(true);
     try {
       const invites = await getHelperInvitesWithDetails(token);
-      setLastChecked(new Date());
       setInviteCount(invites.length);
       if (invites.length > 0 && !navigatingToBookingRef.current) {
         navigatingToBookingRef.current = true;
-        // Stop poll immediately so we don't navigate again on the next tick.
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         const invite = invites[0];
-        const bookingId = invite.booking_id.trim();
         navigation.navigate('ProMatched', {
-          bookingId,
+          bookingId: invite.booking_id.trim(),
           serviceName: invite.services?.[0] ?? 'Home Service',
           customerAddress: invite.address || 'Customer Location',
           customerLat: invite.lat,
@@ -100,7 +108,7 @@ export default function ProDashboardScreen() {
         });
       }
     } catch {
-      // silently fail — retry on next cycle
+      // retry on next cycle
     } finally {
       setCheckingInvites(false);
     }
@@ -110,11 +118,10 @@ export default function ProDashboardScreen() {
     navigatingToBookingRef.current = false;
     if (isOnline) {
       checkInvites();
-      pollRef.current = setInterval(checkInvites, 8000); // poll every 8s
+      pollRef.current = setInterval(checkInvites, 8000);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
       setInviteCount(0);
-      setLastChecked(null);
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -138,25 +145,29 @@ export default function ProDashboardScreen() {
     }
   }
 
-  async function toggleOnline(val: boolean) {
-    if (val) {
-      const ok = await pushLocation();
-      if (!ok) {
-        Alert.alert('Location needed', 'Enable location permission to go online.');
-        return;
+  async function handleToggle() {
+    if (toggling) return;
+    setToggling(true);
+    try {
+      if (!isOnline) {
+        const ok = await pushLocation();
+        if (!ok) {
+          Alert.alert('Location needed', 'Enable location permission to go online.');
+          return;
+        }
+        locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
+        setIsOnline(true);
+      } else {
+        if (locationHeartbeatRef.current) clearInterval(locationHeartbeatRef.current);
+        apiFetch(`${BASE_URL}/helpers/me/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ is_available: false }),
+        }).catch(() => {});
+        setIsOnline(false);
       }
-      // Heartbeat every 2 minutes to keep the Redis TTL marker alive.
-      locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
-      setIsOnline(true);
-    } else {
-      if (locationHeartbeatRef.current) clearInterval(locationHeartbeatRef.current);
-      // Mark offline in backend.
-      apiFetch(`${BASE_URL}/helpers/me/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ is_available: false }),
-      }).catch(() => {});
-      setIsOnline(false);
+    } finally {
+      setToggling(false);
     }
   }
 
@@ -167,221 +178,189 @@ export default function ProDashboardScreen() {
     ]);
   }
 
-  const statusColor = isOnline ? Colors.success : Colors.textMuted;
-  const statusText = isOnline ? 'Online — Looking for bookings' : 'Offline — Not accepting bookings';
+  const firstName = user?.name?.split(' ')[0] ?? 'Pro';
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={s.content} bounces={false}>
+      <ScrollView contentContainerStyle={s.content} bounces={false} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
         <View style={s.header}>
           <View>
-            <Text style={s.greeting}>Hey, {user?.name?.split(' ')[0] ?? 'Pro'} 👋</Text>
-            <Text style={s.subGreeting}>Welcome to your dashboard</Text>
+            <Text style={s.greeting}>Hey, {firstName} 👋</Text>
+            <Text style={s.subGreeting}>Ready to earn today?</Text>
           </View>
-          <TouchableOpacity style={s.signOutBtn} onPress={handleSignOut} activeOpacity={0.8}>
-            <Text style={s.signOutText}>Sign out</Text>
+          {checkingInvites && <ActivityIndicator size="small" color={c.primary} />}
+        </View>
+
+        {/* Stats row */}
+        <View style={s.statsRow}>
+          <StatCard icon="⭐" label="Rating" value="4.9" />
+          <StatCard icon="✅" label="Jobs Done" value="—" />
+          <StatCard icon="💰" label="Earned" value="₹—" />
+        </View>
+
+        {/* GO ONLINE button */}
+        <View style={s.goOnlineSection}>
+          <TouchableOpacity
+            onPress={handleToggle}
+            activeOpacity={0.88}
+            disabled={toggling}
+            style={s.goOnlineTouchable}
+          >
+            <View style={s.goOnlineOuter}>
+              {isOnline && (
+                <Animated.View style={[
+                  s.goOnlineRing,
+                  { transform: [{ scale: ringScale }], opacity: ringOpacity },
+                ]} />
+              )}
+              <View style={[s.goOnlineBtn, isOnline && s.goOnlineBtnActive]}>
+                {toggling
+                  ? <ActivityIndicator color={isOnline ? '#FFFFFF' : c.primary} size="large" />
+                  : <Text style={s.goOnlineEmoji}>{isOnline ? '🟢' : '⚫'}</Text>
+                }
+                <Text style={[s.goOnlineLabel, isOnline && { color: '#FFFFFF' }]}>
+                  {isOnline ? 'YOU\'RE LIVE' : 'GO ONLINE'}
+                </Text>
+                <Text style={[s.goOnlineSub, isOnline && { color: 'rgba(255,255,255,0.75)' }]}>
+                  {isOnline ? 'Tap to go offline' : 'Tap to start earning'}
+                </Text>
+              </View>
+            </View>
           </TouchableOpacity>
-        </View>
 
-        {/* Online Toggle Card */}
-        <View style={[s.toggleCard, isOnline && s.toggleCardActive]}>
-          <View style={s.toggleLeft}>
-            <Animated.View style={[s.onlineDot, { backgroundColor: statusColor, transform: [{ scale: dotPulse }] }]} />
-            <View>
-              <Text style={[s.toggleTitle, isOnline && s.toggleTitleActive]}>
-                {isOnline ? 'You are Online' : 'You are Offline'}
+          {isOnline && (
+            <View style={s.scanningRow}>
+              <View style={s.scanningDot} />
+              <Text style={s.scanningText}>
+                {inviteCount > 0
+                  ? `${inviteCount} booking invite${inviteCount > 1 ? 's' : ''} waiting!`
+                  : 'Scanning for nearby bookings…'
+                }
               </Text>
-              <Text style={s.toggleSub}>{statusText}</Text>
             </View>
-          </View>
-          <Switch
-            value={isOnline}
-            onValueChange={toggleOnline}
-            trackColor={{ false: Colors.border, true: `${Colors.success}55` }}
-            thumbColor={isOnline ? Colors.success : Colors.textMuted}
-            ios_backgroundColor={Colors.border}
-          />
+          )}
         </View>
 
-        {/* Status Panel */}
-        {isOnline && (
-          <View style={s.statusPanel}>
-            <View style={s.statusRow}>
-              <Text style={s.statusIcon}>📡</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={s.statusTitle}>Scanning for nearby bookings…</Text>
-                {lastChecked && (
-                  <Text style={s.statusSub}>
-                    Last checked: {lastChecked.toLocaleTimeString()}
-                  </Text>
-                )}
-              </View>
-              {checkingInvites && <ActivityIndicator size="small" color={Colors.primary} />}
-            </View>
-            {inviteCount > 0 && (
-              <View style={s.inviteBadge}>
-                <Text style={s.inviteBadgeText}>{inviteCount} booking invite{inviteCount > 1 ? 's' : ''} waiting!</Text>
-              </View>
-            )}
+        {/* How it works */}
+        <View style={s.howCard}>
+          <Text style={s.howTitle}>How ZopMop works</Text>
+          <View style={s.howSteps}>
+            <HowStep n="1" text="Go online — we find customers near you" />
+            <HowStep n="2" text="Accept a booking invite when it appears" />
+            <HowStep n="3" text="Complete the job and get rated" />
           </View>
-        )}
-
-        {/* Info cards */}
-        <View style={s.infoGrid}>
-          <InfoCard
-            icon="⚡"
-            title="How it works"
-            body={'Go online and we\'ll auto-match you with nearby customers. You\'ll be notified instantly when there\'s a match.'}
-          />
-          <InfoCard
-            icon="📍"
-            title="Location"
-            body="Your GPS location is used ONLY for matching. Customers never see your precise coordinates."
-          />
-          <InfoCard
-            icon="⭐"
-            title="Ratings"
-            body="Complete bookings on time to maintain your rating. A higher rating means more bookings."
-          />
         </View>
+
+        {/* Sign out */}
+        <TouchableOpacity style={s.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
+          <Text style={s.signOutText}>Sign Out</Text>
+        </TouchableOpacity>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function InfoCard({ icon, title, body }: { icon: string; title: string; body: string }) {
+function StatCard({ icon, label, value }: { icon: string; label: string; value: string }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   return (
-    <View style={s.infoCard}>
-      <Text style={s.infoCardIcon}>{icon}</Text>
-      <Text style={s.infoCardTitle}>{title}</Text>
-      <Text style={s.infoCardBody}>{body}</Text>
+    <View style={s.statCard}>
+      <Text style={s.statIcon}>{icon}</Text>
+      <Text style={s.statValue}>{value}</Text>
+      <Text style={s.statLabel}>{label}</Text>
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  content: { padding: 20, gap: 16, paddingBottom: 40 },
+function HowStep({ n, text }: { n: string; text: string }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <View style={s.howStep}>
+      <View style={s.howStepNum}><Text style={s.howStepNumText}>{n}</Text></View>
+      <Text style={s.howStepText}>{text}</Text>
+    </View>
+  );
+}
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  greeting: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
-  subGreeting: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  signOutBtn: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  signOutText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
+const BUTTON_SIZE = 164;
 
-  toggleCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-  },
-  toggleCardActive: {
-    borderColor: `${Colors.success}55`,
-    backgroundColor: Colors.successBg,
-  },
-  toggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
-  onlineDot: { width: 14, height: 14, borderRadius: Radius.full },
-  toggleTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  toggleTitleActive: { color: Colors.success },
-  toggleSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    maxWidth: 180,
-  },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    content: { padding: 20, gap: 20, paddingBottom: 40 },
 
-  statusPanel: {
-    backgroundColor: Colors.primaryBg,
-    borderRadius: Radius.xl,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: `${Colors.primary}22`,
-    gap: 12,
-  },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  statusIcon: { fontSize: 26 },
-  statusTitle: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.primary,
-    marginBottom: 2,
-  },
-  statusSub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  inviteBadge: {
-    backgroundColor: Colors.success,
-    borderRadius: Radius.full,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  inviteBadgeText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.sm,
-    color: Colors.white,
-  },
+    header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+    greeting: { fontFamily: FontFamily.extrabold, fontSize: FontSize['2xl'], color: c.text, letterSpacing: -0.5 },
+    subGreeting: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, marginTop: 2 },
 
-  infoGrid: { gap: 12 },
-  infoCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-  },
-  infoCardIcon: { fontSize: 30, marginBottom: 10 },
-  infoCardTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    marginBottom: 6,
-  },
-  infoCardBody: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    lineHeight: 22,
-  },
-});
+    statsRow: { flexDirection: 'row', gap: 10 },
+    statCard: {
+      flex: 1, backgroundColor: c.white,
+      borderRadius: Radius.xl, padding: 14,
+      alignItems: 'center', gap: 4,
+      borderWidth: 1, borderColor: c.border,
+      ...Shadow.sm,
+    },
+    statIcon: { fontSize: 20 },
+    statValue: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: c.text },
+    statLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+
+    goOnlineSection: { alignItems: 'center', gap: 16, paddingVertical: 8 },
+    goOnlineTouchable: { alignItems: 'center' },
+    goOnlineOuter: { width: BUTTON_SIZE + 40, height: BUTTON_SIZE + 40, alignItems: 'center', justifyContent: 'center' },
+    goOnlineRing: {
+      position: 'absolute',
+      width: BUTTON_SIZE + 32,
+      height: BUTTON_SIZE + 32,
+      borderRadius: (BUTTON_SIZE + 32) / 2,
+      backgroundColor: c.primary,
+    },
+    goOnlineBtn: {
+      width: BUTTON_SIZE, height: BUTTON_SIZE,
+      borderRadius: BUTTON_SIZE / 2,
+      backgroundColor: c.surface,
+      borderWidth: 3, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center',
+      gap: 4,
+      ...Shadow.lg,
+    },
+    goOnlineBtnActive: {
+      backgroundColor: c.primary,
+      borderColor: c.primary,
+    },
+    goOnlineEmoji: { fontSize: 36 },
+    goOnlineLabel: { fontFamily: FontFamily.extrabold, fontSize: FontSize.base, color: c.text, letterSpacing: 0.5 },
+    goOnlineSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+
+    scanningRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    scanningDot: { width: 8, height: 8, borderRadius: Radius.full, backgroundColor: c.success },
+    scanningText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.success },
+
+    howCard: {
+      backgroundColor: c.white, borderRadius: Radius.xl,
+      padding: 20, borderWidth: 1, borderColor: c.border, gap: 14, ...Shadow.sm,
+    },
+    howTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    howSteps: { gap: 12 },
+    howStep: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    howStepNum: {
+      width: 28, height: 28, borderRadius: Radius.full,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    howStepNumText: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.primary },
+    howStepText: { flex: 1, fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, lineHeight: 20 },
+
+    signOutBtn: {
+      alignSelf: 'center', paddingHorizontal: 24, paddingVertical: 10,
+      borderRadius: Radius.full,
+      borderWidth: 1, borderColor: c.border,
+      backgroundColor: c.white,
+    },
+    signOutText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.textMuted },
+  });
+}

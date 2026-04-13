@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
 import { apiFetch } from '../../api/client';
@@ -43,6 +45,8 @@ export default function InstantMatchingScreen({ route }: Props) {
   const { serviceId, serviceName } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token, user } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const [screenState, setScreenState] = useState<ScreenState>('searching');
   const [phaseIdx, setPhaseIdx] = useState(0);
@@ -283,7 +287,7 @@ export default function InstantMatchingScreen({ route }: Props) {
   }
 
   const progressWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const progressColor = flash.interpolate({ inputRange: [0, 1], outputRange: [Colors.primary, Colors.success] });
+  const progressColor = flash.interpolate({ inputRange: [0, 1], outputRange: [c.primary, c.success] });
 
   // ── Renders ────────────────────────────────────────────────────────────────
 
@@ -339,6 +343,8 @@ export default function InstantMatchingScreen({ route }: Props) {
 
 // ── Busy Screen ───────────────────────────────────────────────────────────────
 function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -365,6 +371,8 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
 
 // ── Matched Flash ─────────────────────────────────────────────────────────────
 function MatchedFlash() {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
   const scale = useRef(new Animated.Value(0.4)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -375,10 +383,10 @@ function MatchedFlash() {
   }, []);
 
   return (
-    <SafeAreaView style={[s.safe, { backgroundColor: Colors.successBg }]} edges={['top', 'bottom']}>
+    <SafeAreaView style={[s.safe, { backgroundColor: c.successBg }]} edges={['top', 'bottom']}>
       <Animated.View style={[s.container, { opacity }]}>
         <Animated.Text style={[s.successEmoji, { transform: [{ scale }] }]}>✅</Animated.Text>
-        <Text style={[s.busyTitle, { color: Colors.success }]}>Pro Matched!</Text>
+        <Text style={[s.busyTitle, { color: c.success }]}>Pro Matched!</Text>
         <Text style={s.busySub}>Heading to your booking…</Text>
       </Animated.View>
     </SafeAreaView>
@@ -386,139 +394,141 @@ function MatchedFlash() {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
 
-  iconArea: { alignItems: 'center', marginBottom: 32 },
-  iconCircle: {
-    width: 110,
-    height: 110,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: `${Colors.primary}33`,
-    marginBottom: 20,
-    ...Shadow.md,
-  },
-  iconEmoji: { fontSize: 52 },
-  dotsRow: { flexDirection: 'row', gap: 10 },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-  },
+    iconArea: { alignItems: 'center', marginBottom: 32 },
+    iconCircle: {
+      width: 110,
+      height: 110,
+      borderRadius: Radius.full,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: `${c.primary}33`,
+      marginBottom: 20,
+      ...Shadow.md,
+    },
+    iconEmoji: { fontSize: 52 },
+    dotsRow: { flexDirection: 'row', gap: 10 },
+    dot: {
+      width: 12,
+      height: 12,
+      borderRadius: Radius.full,
+      backgroundColor: c.primary,
+    },
 
-  title: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  phaseLabel: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 24,
-    minHeight: 48,
-  },
-  serviceChip: {
-    backgroundColor: Colors.primaryBg,
-    borderRadius: Radius.full,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: `${Colors.primary}33`,
-    marginBottom: 32,
-  },
-  serviceChipText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.primary,
-  },
+    title: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+      marginBottom: 10,
+      textAlign: 'center',
+    },
+    phaseLabel: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginBottom: 24,
+      lineHeight: 24,
+      minHeight: 48,
+    },
+    serviceChip: {
+      backgroundColor: c.primaryBg,
+      borderRadius: Radius.full,
+      paddingHorizontal: 20,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: `${c.primary}33`,
+      marginBottom: 32,
+    },
+    serviceChipText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.primary,
+    },
 
-  progressTrack: {
-    width: '100%',
-    height: 10,
-    backgroundColor: Colors.border,
-    borderRadius: Radius.full,
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: Radius.full,
-  },
-  progressHint: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-    marginBottom: 40,
-  },
+    progressTrack: {
+      width: '100%',
+      height: 10,
+      backgroundColor: c.border,
+      borderRadius: Radius.full,
+      overflow: 'hidden',
+      marginBottom: 12,
+    },
+    progressFill: {
+      height: '100%',
+      borderRadius: Radius.full,
+    },
+    progressHint: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textMuted,
+      marginBottom: 40,
+    },
 
-  cancelBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.white,
-  },
-  cancelText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-  },
+    cancelBtn: {
+      paddingVertical: 14,
+      paddingHorizontal: 32,
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.white,
+    },
+    cancelText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+    },
 
-  // Busy state
-  busyEmoji: { fontSize: 72, marginBottom: 24 },
-  busyTitle: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  busySub: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 26,
-    marginBottom: 36,
-    maxWidth: 280,
-  },
-  retryBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    paddingVertical: 18,
-    paddingHorizontal: 48,
-    marginBottom: 14,
-    ...Shadow.md,
-  },
-  retryBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.lg,
-    color: Colors.white,
-  },
-  backBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-  },
-  backBtnText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-  },
+    // Busy state
+    busyEmoji: { fontSize: 72, marginBottom: 24 },
+    busyTitle: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['2xl'],
+      color: c.text,
+      letterSpacing: -0.5,
+      marginBottom: 12,
+      textAlign: 'center',
+    },
+    busySub: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+      textAlign: 'center',
+      lineHeight: 26,
+      marginBottom: 36,
+      maxWidth: 280,
+    },
+    retryBtn: {
+      backgroundColor: c.primary,
+      borderRadius: Radius.xl,
+      paddingVertical: 18,
+      paddingHorizontal: 48,
+      marginBottom: 14,
+      ...Shadow.md,
+    },
+    retryBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: '#FFFFFF',
+    },
+    backBtn: {
+      paddingVertical: 14,
+      paddingHorizontal: 32,
+    },
+    backBtnText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.base,
+      color: c.textSecondary,
+    },
 
-  // Matched flash
-  successEmoji: { fontSize: 80, marginBottom: 24 },
-});
+    // Matched flash
+    successEmoji: { fontSize: 80, marginBottom: 24 },
+  });
+}

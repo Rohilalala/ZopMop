@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { getIdToken } from '@react-native-firebase/auth';
 import { otpStore } from '../../utils/otpStore';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
@@ -32,6 +34,8 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone } = route.params;
   const confirmation = otpStore.get();
   const { signIn } = useAuth();
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [loading, setLoading] = useState(false);
@@ -242,7 +246,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             ) : (
               <TouchableOpacity onPress={handleResend} disabled={resending}>
                 {resending ? (
-                  <ActivityIndicator size="small" color={Colors.primary} />
+                  <ActivityIndicator size="small" color={c.primary} />
                 ) : (
                   <Text style={styles.resendLink}>Resend OTP</Text>
                 )}
@@ -263,7 +267,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color={Colors.white} size="small" />
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.verifyButtonText}>Verify & Continue</Text>
             )}
@@ -283,136 +287,40 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
 
 const BOX_SIZE = 52;
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  container: {
-    flex: 1,
-    paddingHorizontal: Spacing['2xl'],
-    paddingTop: Spacing['2xl'],
-  },
-
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'flex-start',
-    marginBottom: Spacing.xl,
-  },
-  backArrow: {
-    width: 9,
-    height: 9,
-    borderLeftWidth: 2,
-    borderBottomWidth: 2,
-    borderColor: Colors.text,
-    transform: [{ rotate: '45deg' }],
-    marginLeft: 3,
-    marginBottom: 1,
-  },
-
-  header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-  title: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['3xl'],
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textSecondary,
-    lineHeight: FontSize.base * 1.6,
-  },
-  phoneHighlight: {
-    fontFamily: FontFamily.semibold,
-    color: Colors.text,
-  },
-
-  // OTP boxes
-  otpRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    justifyContent: 'space-between',
-  },
-  otpBox: {
-    width: BOX_SIZE,
-    height: BOX_SIZE + 8,
-    borderRadius: Radius.lg,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.white,
-    textAlign: 'center',
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize['2xl'],
-    color: Colors.text,
-    ...Shadow.sm,
-  },
-  otpBoxFilled: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryBg,
-  },
-  otpBoxError: {
-    borderColor: Colors.danger,
-    backgroundColor: Colors.dangerBg,
-  },
-
-  errorText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.danger,
-    textAlign: 'center',
-    marginTop: Spacing.md,
-  },
-
-  resendRow: {
-    alignItems: 'center',
-    marginTop: Spacing.xl,
-  },
-  resendCountdown: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  resendCountdownNum: {
-    fontFamily: FontFamily.semibold,
-    color: Colors.text,
-  },
-  resendLink: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.primary,
-    textDecorationLine: 'underline',
-  },
-
-  // Bottom
-  bottom: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingBottom: Spacing['2xl'],
-    gap: Spacing.md,
-    alignItems: 'center',
-  },
-  verifyButton: {
-    width: '100%',
-    height: 54,
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.md,
-  },
-  verifyButtonDisabled: { opacity: 0.45 },
-  verifyButtonText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.md,
-    color: Colors.white,
-    letterSpacing: 0.2,
-  },
-  changeNumber: { paddingVertical: Spacing.xs },
-  changeNumberText: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-});
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    container: { flex: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['2xl'] },
+    backButton: {
+      width: 40, height: 40, borderRadius: Radius.md, backgroundColor: c.surface,
+      alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-start', marginBottom: Spacing.xl,
+    },
+    backArrow: {
+      width: 9, height: 9, borderLeftWidth: 2, borderBottomWidth: 2,
+      borderColor: c.text, transform: [{ rotate: '45deg' }], marginLeft: 3, marginBottom: 1,
+    },
+    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
+    title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5 },
+    subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, lineHeight: FontSize.base * 1.6 },
+    phoneHighlight: { fontFamily: FontFamily.semibold, color: c.text },
+    otpRow: { flexDirection: 'row', gap: Spacing.sm, justifyContent: 'space-between' },
+    otpBox: {
+      width: BOX_SIZE, height: BOX_SIZE + 8, borderRadius: Radius.lg,
+      borderWidth: 1.5, borderColor: c.border, backgroundColor: c.white,
+      textAlign: 'center', fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, ...Shadow.sm,
+    },
+    otpBoxFilled: { borderColor: c.primary, backgroundColor: c.primaryBg },
+    otpBoxError: { borderColor: c.danger, backgroundColor: c.dangerBg },
+    errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, textAlign: 'center', marginTop: Spacing.md },
+    resendRow: { alignItems: 'center', marginTop: Spacing.xl },
+    resendCountdown: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    resendCountdownNum: { fontFamily: FontFamily.semibold, color: c.text },
+    resendLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, textDecorationLine: 'underline' },
+    bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'], gap: Spacing.md, alignItems: 'center' },
+    verifyButton: { width: '100%', height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    verifyButtonDisabled: { opacity: 0.45 },
+    verifyButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+    changeNumber: { paddingVertical: Spacing.xs },
+    changeNumberText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.textSecondary },
+  });
+}

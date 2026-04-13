@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { Colors, FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { lightColors, Colors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
@@ -23,13 +25,103 @@ import * as Location from 'expo-location';
 import { promoStore } from '../../utils/promoStore';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
+type C = typeof lightColors;
 
 const PLATFORM_FEE_CENTS = 2000; // ₹20
+
+function createStyles(c: C) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    content: { padding: 16, gap: 12 },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: c.white,
+      borderBottomWidth: 1,
+      borderBottomColor: c.border,
+    },
+    backBtn: {
+      width: 36, height: 36, borderRadius: Radius.full,
+      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    backIcon: { fontSize: 18, color: c.text, marginTop: -1 },
+    headerTitle: {
+      flex: 1, textAlign: 'center',
+      fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text,
+    },
+    card: {
+      backgroundColor: c.white,
+      borderRadius: Radius.xl,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: c.border,
+      ...Shadow.sm,
+      gap: 8,
+    },
+    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    cardLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
+    editLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary },
+    addressTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    addressFull: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    addAddressText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, paddingVertical: 4 },
+    slotLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: c.primary },
+    slotPlaceholder: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+    serviceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
+    serviceRowBorder: { borderTopWidth: 1, borderTopColor: c.border },
+    serviceLeft: { flex: 1 },
+    serviceName: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
+    serviceDuration: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 2 },
+    serviceRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    removeBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+    removeBtnText: { fontSize: 14, color: c.danger, fontFamily: FontFamily.semibold },
+    priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+    priceKey: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    priceVal: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.text },
+    totalRow: { borderTopWidth: 1, borderTopColor: c.border, marginTop: 6, paddingTop: 10 },
+    totalKey: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    totalVal: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.primary },
+    emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
+    emptyEmoji: { fontSize: 56, marginBottom: 4 },
+    emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: c.text },
+    emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center' },
+    browseBtn: {
+      marginTop: 8, backgroundColor: c.primary,
+      paddingHorizontal: 28, paddingVertical: 12, borderRadius: Radius.xl, ...Shadow.sm,
+    },
+    browseBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: '#FFFFFF' },
+    bottomBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16, paddingVertical: 12,
+      backgroundColor: c.white,
+      borderTopWidth: 1, borderTopColor: c.border,
+      gap: 16,
+      ...Shadow.md,
+    },
+    totalInfo: { flex: 1 },
+    totalInfoLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
+    totalInfoValue: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: c.text },
+    payBtn: {
+      flex: 1, backgroundColor: c.primary,
+      borderRadius: Radius.xl, paddingVertical: 14,
+      alignItems: 'center', ...Shadow.sm,
+    },
+    payBtnDisabled: { opacity: 0.6 },
+    payBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: '#FFFFFF' },
+  });
+}
 
 export default function CartScreen() {
   const navigation = useNavigation<Nav>();
   const { items, itemCount, subtotalCents, removeItem, refreshCart } = useCart();
   const { token } = useAuth();
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
 
   const [addresses, setAddresses] = useState<ApiAddress[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(null);
@@ -229,7 +321,7 @@ export default function CartScreen() {
                   style={s.removeBtn}
                 >
                   {removing === item.id
-                    ? <ActivityIndicator size="small" color={Colors.danger} />
+                    ? <ActivityIndicator size="small" color={c.danger} />
                     : <Text style={s.removeBtnText}>✕</Text>
                   }
                 </TouchableOpacity>
@@ -271,7 +363,7 @@ export default function CartScreen() {
           onPress={handleCheckout}
         >
           {booking
-            ? <ActivityIndicator color={Colors.white} />
+            ? <ActivityIndicator color="#FFFFFF" />
             : <Text style={s.payBtnText}>Pay Now</Text>
           }
         </TouchableOpacity>
@@ -325,104 +417,3 @@ export default function CartScreen() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  content: { padding: 16, gap: 12 },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: Colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    width: 36, height: 36, borderRadius: Radius.full,
-    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  backIcon: { fontSize: 18, color: Colors.text, marginTop: -1 },
-  headerTitle: {
-    flex: 1, textAlign: 'center',
-    fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text,
-  },
-
-  // Card
-  card: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadow.sm,
-    gap: 8,
-  },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.text },
-  editLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary },
-
-  // Address
-  addressTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
-  addressFull: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  addAddressText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary, paddingVertical: 4 },
-
-  // Schedule
-  slotLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.primary },
-  slotPlaceholder: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textMuted },
-
-  // Services
-  serviceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-  serviceRowBorder: { borderTopWidth: 1, borderTopColor: Colors.border },
-  serviceLeft: { flex: 1 },
-  serviceName: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.text },
-  serviceDuration: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 },
-  serviceRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
-  removeBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-  removeBtnText: { fontSize: 14, color: Colors.danger, fontFamily: FontFamily.semibold },
-
-  // Price
-  priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  priceKey: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  priceVal: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: Colors.text },
-  totalRow: { borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6, paddingTop: 10 },
-  totalKey: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
-  totalVal: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.primary },
-
-  // Empty state
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
-  emptyEmoji: { fontSize: 56, marginBottom: 4 },
-  emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: Colors.text },
-  emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary, textAlign: 'center' },
-  browseBtn: {
-    marginTop: 8, backgroundColor: Colors.primary,
-    paddingHorizontal: 28, paddingVertical: 12, borderRadius: Radius.xl, ...Shadow.sm,
-  },
-  browseBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.white },
-
-  // Bottom
-  bottomBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 12,
-    backgroundColor: Colors.white,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-    gap: 16,
-    ...Shadow.md,
-  },
-  totalInfo: { flex: 1 },
-  totalInfoLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted },
-  totalInfoValue: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: Colors.text },
-  payBtn: {
-    flex: 1, backgroundColor: Colors.primary,
-    borderRadius: Radius.xl, paddingVertical: 14,
-    alignItems: 'center', ...Shadow.sm,
-  },
-  payBtnDisabled: { opacity: 0.6 },
-  payBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.white },
-});

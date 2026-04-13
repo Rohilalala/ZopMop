@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import {
@@ -15,7 +15,7 @@ import SplashScreen from './src/screens/auth/SplashScreen';
 import AuthNavigator from './src/navigation/AuthNavigator';
 import MainNavigator from './src/navigation/MainNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
-import { Colors } from './src/theme';
+import { ThemeProvider, useColors } from './src/context/ThemeContext';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -25,6 +25,23 @@ function Navigation() {
     <NavigationContainer>
       {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
     </NavigationContainer>
+  );
+}
+
+function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
+  splashDone: boolean;
+  setSplashDone: (v: boolean) => void;
+  onLayout: () => void;
+}) {
+  const colors = useColors();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }} onLayout={onLayout}>
+      {!splashDone ? (
+        <SplashScreen onReady={() => setSplashDone(true)} />
+      ) : (
+        <Navigation />
+      )}
+    </View>
   );
 }
 
@@ -49,22 +66,15 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <View style={styles.root} onLayout={onLayoutRootView}>
-          {!splashDone ? (
-            <SplashScreen onReady={() => setSplashDone(true)} />
-          ) : (
-            <Navigation />
-          )}
-        </View>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <ThemedRoot
+            splashDone={splashDone}
+            setSplashDone={setSplashDone}
+            onLayout={onLayoutRootView}
+          />
+        </AuthProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-});

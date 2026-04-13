@@ -20,7 +20,9 @@ import {
   findCityByName,
   ALL_KNOWN_CITIES,
 } from '../../utils/serviceability';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { useColors } from '../../context/ThemeContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Location'>;
@@ -30,6 +32,8 @@ type Mode = 'choose' | 'gps' | 'manual';
 type GpsState = 'idle' | 'requesting' | 'checking' | 'denied' | 'error';
 
 export default function LocationCheckScreen({ navigation }: Props) {
+  const c = useColors();
+  const styles = useMemo(() => createStyles(c), [c]);
   const [mode, setMode] = useState<Mode>('choose');
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [searchQuery, setSearchQuery] = useState('');
@@ -146,7 +150,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
               onPress={handleGps}
               activeOpacity={0.8}
             >
-              <View style={[styles.optionIcon, { backgroundColor: Colors.primaryBg }]}>
+              <View style={[styles.optionIcon, { backgroundColor: c.primaryBg }]}>
                 {/* GPS crosshair */}
                 <View style={styles.crosshairOuter}>
                   <View style={styles.crosshairInner} />
@@ -244,7 +248,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             {isGpsLoading ? (
-              <ActivityIndicator color={Colors.white} size="small" />
+              <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>
                 {gpsState === 'denied' || gpsState === 'error' ? 'Try again' : 'Allow location access'}
@@ -293,7 +297,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
             <TextInput
               style={styles.searchInput}
               placeholder="Search city…"
-              placeholderTextColor={Colors.textMuted}
+              placeholderTextColor={c.textMuted}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoFocus
@@ -352,271 +356,66 @@ export default function LocationCheckScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.background },
-
-  // ── Shared ──
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing['2xl'],
-  },
-  illustrationWrapper: {
-    width: 160, height: 160,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: Spacing['2xl'],
-    position: 'relative',
-  },
-  outerRing: {
-    width: 96, height: 96,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primaryBg,
-    alignItems: 'center', justifyContent: 'center',
-    zIndex: 2,
-  },
-  innerCircle: { alignItems: 'center', justifyContent: 'flex-end', height: 52 },
-  pinHead: {
-    width: 32, height: 32,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  pinDot: { width: 10, height: 10, borderRadius: Radius.full, backgroundColor: Colors.white },
-  pinTail: {
-    width: 0, height: 0,
-    borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 14,
-    borderLeftColor: 'transparent', borderRightColor: 'transparent',
-    borderTopColor: Colors.primary,
-    marginTop: -2,
-  },
-  ripple: {
-    position: 'absolute', borderRadius: Radius.full,
-    borderWidth: 1.5, borderColor: Colors.primary, zIndex: 1,
-  },
-  ripple1: { width: 120, height: 120, opacity: 0.25 },
-  ripple2: { width: 156, height: 156, opacity: 0.1 },
-  copyWrapper: {
-    alignItems: 'center', gap: Spacing.md,
-    paddingHorizontal: Spacing.md, marginBottom: Spacing['2xl'],
-  },
-  heading: {
-    fontFamily: FontFamily.bold, fontSize: FontSize['2xl'],
-    color: Colors.text, textAlign: 'center', letterSpacing: -0.3,
-  },
-  subheading: {
-    fontFamily: FontFamily.regular, fontSize: FontSize.base,
-    color: Colors.textSecondary, textAlign: 'center',
-    lineHeight: FontSize.base * 1.6,
-  },
-
-  // ── Choose mode ──
-  optionsWrapper: { width: '100%', gap: Spacing.md },
-  optionCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.white, borderRadius: Radius.xl,
-    padding: Spacing.base, gap: Spacing.md,
-    ...Shadow.sm,
-  },
-  optionIcon: {
-    width: 48, height: 48,
-    borderRadius: Radius.lg,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  optionText: { flex: 1, gap: 2 },
-  optionTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: Colors.text },
-  optionDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  chevron: {
-    width: 8, height: 8,
-    borderTopWidth: 2, borderRightWidth: 2,
-    borderColor: Colors.textMuted,
-    transform: [{ rotate: '45deg' }],
-    marginRight: Spacing.xs,
-  },
-  dividerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-    marginVertical: Spacing.xs,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: {
-    fontFamily: FontFamily.regular, fontSize: FontSize.sm,
-    color: Colors.textMuted,
-  },
-
-  // GPS icon
-  crosshairOuter: {
-    width: 24, height: 24,
-    borderRadius: Radius.full,
-    borderWidth: 2, borderColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  crosshairInner: {
-    width: 8, height: 8,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary,
-  },
-
-  // Manual list icon
-  listIcon: { gap: 4, alignItems: 'flex-start' },
-  listLine: {
-    width: 20, height: 2,
-    backgroundColor: Colors.success,
-    borderRadius: 1,
-  },
-
-  // ── GPS screen bottom ──
-  bottomActions: {
-    paddingHorizontal: Spacing['2xl'],
-    paddingBottom: Spacing['2xl'],
-    alignItems: 'center', gap: Spacing.sm,
-  },
-  primaryButton: {
-    width: '100%', height: 52,
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
-    alignItems: 'center', justifyContent: 'center',
-    ...Shadow.md,
-  },
-  buttonLoading: { opacity: 0.8 },
-  primaryButtonText: {
-    fontFamily: FontFamily.semibold, fontSize: FontSize.md,
-    color: Colors.white, letterSpacing: 0.1,
-  },
-  statusHint: {
-    fontFamily: FontFamily.regular, fontSize: FontSize.sm,
-    color: Colors.textMuted, height: 18,
-  },
-  switchLink: {
-    fontFamily: FontFamily.medium, fontSize: FontSize.sm,
-    color: Colors.primary,
-    textDecorationLine: 'underline',
-  },
-
-  // Denied card
-  deniedCard: {
-    marginTop: Spacing.xl,
-    backgroundColor: Colors.dangerBg,
-    borderRadius: Radius.lg,
-    padding: Spacing.base,
-    width: '100%', gap: Spacing.xs,
-  },
-  deniedTitle: {
-    fontFamily: FontFamily.semibold, fontSize: FontSize.sm,
-    color: Colors.danger,
-  },
-  deniedText: {
-    fontFamily: FontFamily.regular, fontSize: FontSize.sm,
-    color: Colors.danger, lineHeight: FontSize.sm * 1.6,
-  },
-
-  // ── Manual picker ──
-  manualHeader: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.md,
-    gap: Spacing.md,
-  },
-  backButton: {
-    width: 36, height: 36,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  backArrow: {
-    width: 8, height: 8,
-    borderLeftWidth: 2, borderBottomWidth: 2,
-    borderColor: Colors.text,
-    transform: [{ rotate: '45deg' }],
-    marginLeft: 4,
-  },
-  manualTitle: {
-    fontFamily: FontFamily.bold, fontSize: FontSize.lg,
-    color: Colors.text,
-  },
-  searchWrapper: {
-    paddingHorizontal: Spacing.base,
-    paddingBottom: Spacing.sm,
-  },
-  searchBar: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    paddingHorizontal: Spacing.md,
-    height: 48,
-    gap: Spacing.sm,
-    ...Shadow.sm,
-  },
-  searchIcon: { position: 'relative', width: 18, height: 18 },
-  searchCircle: {
-    width: 12, height: 12,
-    borderRadius: Radius.full,
-    borderWidth: 2, borderColor: Colors.textMuted,
-    position: 'absolute', top: 0, left: 0,
-  },
-  searchHandle: {
-    width: 6, height: 2,
-    backgroundColor: Colors.textMuted,
-    position: 'absolute', bottom: 0, right: 0,
-    transform: [{ rotate: '45deg' }],
-    borderRadius: 1,
-  },
-  searchInput: {
-    flex: 1,
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    paddingVertical: 0,
-  },
-  clearDot: {
-    width: 16, height: 16,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.border,
-  },
-  cityList: {
-    paddingHorizontal: Spacing.base,
-    paddingBottom: Spacing.base,
-  },
-  cityRow: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
-  },
-  cityRowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  cityName: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.md, color: Colors.text,
-  },
-  availablePill: {
-    backgroundColor: Colors.successBg,
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-  },
-  availablePillText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.xs,
-    color: Colors.success,
-  },
-  comingSoon: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textMuted,
-  },
-  separator: { height: 1, backgroundColor: Colors.border },
-  emptyState: {
-    paddingTop: Spacing['3xl'],
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.textMuted,
-    textAlign: 'center',
-  },
-  gpsLinkWrapper: {
-    alignItems: 'center',
-    paddingVertical: Spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-});
+function createStyles(c: typeof lightColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing['2xl'] },
+    illustrationWrapper: { width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing['2xl'], position: 'relative' },
+    outerRing: { width: 96, height: 96, borderRadius: Radius.full, backgroundColor: c.primaryBg, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
+    innerCircle: { alignItems: 'center', justifyContent: 'flex-end', height: 52 },
+    pinHead: { width: 32, height: 32, borderRadius: Radius.full, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
+    pinDot: { width: 10, height: 10, borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
+    pinTail: { width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 14, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: c.primary, marginTop: -2 },
+    ripple: { position: 'absolute', borderRadius: Radius.full, borderWidth: 1.5, borderColor: c.primary, zIndex: 1 },
+    ripple1: { width: 120, height: 120, opacity: 0.25 },
+    ripple2: { width: 156, height: 156, opacity: 0.1 },
+    copyWrapper: { alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.md, marginBottom: Spacing['2xl'] },
+    heading: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, textAlign: 'center', letterSpacing: -0.3 },
+    subheading: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, textAlign: 'center', lineHeight: FontSize.base * 1.6 },
+    optionsWrapper: { width: '100%', gap: Spacing.md },
+    optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.white, borderRadius: Radius.xl, padding: Spacing.base, gap: Spacing.md, ...Shadow.sm },
+    optionIcon: { width: 48, height: 48, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
+    optionText: { flex: 1, gap: 2 },
+    optionTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: c.text },
+    optionDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
+    chevron: { width: 8, height: 8, borderTopWidth: 2, borderRightWidth: 2, borderColor: c.textMuted, transform: [{ rotate: '45deg' }], marginRight: Spacing.xs },
+    dividerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginVertical: Spacing.xs },
+    dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
+    dividerText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+    crosshairOuter: { width: 24, height: 24, borderRadius: Radius.full, borderWidth: 2, borderColor: c.primary, alignItems: 'center', justifyContent: 'center' },
+    crosshairInner: { width: 8, height: 8, borderRadius: Radius.full, backgroundColor: c.primary },
+    listIcon: { gap: 4, alignItems: 'flex-start' },
+    listLine: { width: 20, height: 2, backgroundColor: c.success, borderRadius: 1 },
+    bottomActions: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'], alignItems: 'center', gap: Spacing.sm },
+    primaryButton: { width: '100%', height: 52, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    buttonLoading: { opacity: 0.8 },
+    primaryButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.1 },
+    statusHint: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, height: 18 },
+    switchLink: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.primary, textDecorationLine: 'underline' },
+    deniedCard: { marginTop: Spacing.xl, backgroundColor: c.dangerBg, borderRadius: Radius.lg, padding: Spacing.base, width: '100%', gap: Spacing.xs },
+    deniedTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.danger },
+    deniedText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, lineHeight: FontSize.sm * 1.6 },
+    manualHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md },
+    backButton: { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' },
+    backArrow: { width: 8, height: 8, borderLeftWidth: 2, borderBottomWidth: 2, borderColor: c.text, transform: [{ rotate: '45deg' }], marginLeft: 4 },
+    manualTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    searchWrapper: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.sm },
+    searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.white, borderRadius: Radius.xl, paddingHorizontal: Spacing.md, height: 48, gap: Spacing.sm, ...Shadow.sm },
+    searchIcon: { position: 'relative', width: 18, height: 18 },
+    searchCircle: { width: 12, height: 12, borderRadius: Radius.full, borderWidth: 2, borderColor: c.textMuted, position: 'absolute', top: 0, left: 0 },
+    searchHandle: { width: 6, height: 2, backgroundColor: c.textMuted, position: 'absolute', bottom: 0, right: 0, transform: [{ rotate: '45deg' }], borderRadius: 1 },
+    searchInput: { flex: 1, fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.text, paddingVertical: 0 },
+    clearDot: { width: 16, height: 16, borderRadius: Radius.full, backgroundColor: c.border },
+    cityList: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.base },
+    cityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md },
+    cityRowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    cityName: { fontFamily: FontFamily.medium, fontSize: FontSize.md, color: c.text },
+    availablePill: { backgroundColor: c.successBg, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 2 },
+    availablePillText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: c.success },
+    comingSoon: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+    separator: { height: 1, backgroundColor: c.border },
+    emptyState: { paddingTop: Spacing['3xl'], alignItems: 'center' },
+    emptyText: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textMuted, textAlign: 'center' },
+    gpsLinkWrapper: { alignItems: 'center', paddingVertical: Spacing.lg, borderTopWidth: 1, borderTopColor: c.border },
+  });
+}
