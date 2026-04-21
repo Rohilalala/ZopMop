@@ -195,6 +195,15 @@ func (s *Service) NotifyCustomerBookingCompleted(ctx context.Context, customerID
 	)
 }
 
+// NotifyCustomerReengagement sends a generic personalized reminder notification.
+func (s *Service) NotifyCustomerReengagement(ctx context.Context, customerID, title, body string, data map[string]string) error {
+	token := s.fcmToken(ctx, customerID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token, title, body, data)
+}
+
 // ── Pro notifications ─────────────────────────────────────────────────────────
 
 // NotifyProNewBookingInvite notifies a set of matched pros about a nearby job.
