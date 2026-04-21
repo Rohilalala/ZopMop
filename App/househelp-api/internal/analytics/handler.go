@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/adityarohilla/househelp-api/internal/admin"
@@ -125,8 +126,11 @@ func (h *Handler) TrackClientEvent(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.TrackClientEvent(c.Context(), &req, userID); err != nil {
-		// Unknown event name — return 400 so the client knows to fix its payload.
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrUnknownClientEvent) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown event name"})
+		}
+		log.Error().Err(err).Msg("[analytics] TrackClientEvent error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to track event"})
 	}
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"ok": true})

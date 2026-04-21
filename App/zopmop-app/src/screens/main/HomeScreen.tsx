@@ -24,6 +24,7 @@ import { checkServiceability } from '../../api/zones';
 import { listAddresses } from '../../api/addresses';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
+import { useRoomies } from '../../context/RoomiesContext';
 import * as Location from 'expo-location';
 import NotServiceableScreen from './NotServiceableScreen';
 
@@ -55,6 +56,7 @@ export default function HomeScreen() {
   const s = useMemo(() => createStyles(c), [c]);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationName, setLocationName] = useState('Detecting location…');
+  const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>(undefined);
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
   const [serviceable, setServiceable] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
@@ -99,10 +101,12 @@ export default function HomeScreen() {
               }
               if (nearest && minDist < 0.009) {
                 name = nearest.full_address.split(',').slice(0, 2).join(',').trim();
+                setSelectedAddressId(nearest.id);
               } else if (saved.length > 0) {
                 // Not near any saved address — use Home-tagged if exists, else first
                 const home = saved.find(a => a.tag === 'Home') ?? saved[0];
                 name = home.full_address.split(',').slice(0, 2).join(',').trim();
+                setSelectedAddressId(home.id);
               } else {
                 // No saved addresses — reverse-geocode current position using the
                 // on-device geocoder. No API key needed or compiled into the bundle.
@@ -130,8 +134,9 @@ export default function HomeScreen() {
     })();
   }, [token]);
 
-  async function handleLocationSelect(name: string, lat: number, lon: number) {
+  async function handleLocationSelect(name: string, lat: number, lon: number, addressId?: string) {
     setLocationName(name.split(',').slice(0, 2).join(',').trim());
+    setSelectedAddressId(addressId);
     const result = await checkServiceability(lat, lon).catch(() => ({ serviceable: true }));
     setServiceable(result.serviceable);
   }
@@ -141,7 +146,7 @@ export default function HomeScreen() {
     <LocationSelectorModal
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
-      onLocationSelect={(name, lat, lon) => handleLocationSelect(name, lat, lon)}
+      onLocationSelect={(name, lat, lon, addressId) => handleLocationSelect(name, lat, lon, addressId)}
     />
   );
 
@@ -167,7 +172,7 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         bounces
       >
-        <Header locationName={locationName} onLocationPress={() => setLocationModalVisible(true)} />
+        <Header locationName={locationName} onLocationPress={() => setLocationModalVisible(true)} selectedAddressId={selectedAddressId} />
         <HeroCard />
         <BookingCards />
         <ServicesGrid services={services} />
@@ -175,7 +180,7 @@ export default function HomeScreen() {
         <View style={{ height: 80 }} />
       </ScrollView>
 
-      <CartBar />
+      <CartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
       {locationModal}
     </SafeAreaView>
@@ -184,10 +189,13 @@ export default function HomeScreen() {
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ locationName, onLocationPress }: { locationName: string; onLocationPress: () => void }) {
+function Header({ locationName, onLocationPress, selectedAddressId }: { locationName: string; onLocationPress: () => void; selectedAddressId?: string }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
+  const { myGroup } = useRoomies();
+
+  const isRoomiesAddress = !!myGroup && !!selectedAddressId && selectedAddressId === myGroup.group.address_id;
 
   return (
     <View style={s.header}>
@@ -200,6 +208,15 @@ function Header({ locationName, onLocationPress }: { locationName: string; onLoc
       </TouchableOpacity>
 
       <View style={s.headerRight}>
+        {isRoomiesAddress && (
+          <TouchableOpacity
+            style={s.manageHouseholdBtn}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('ManageHousehold', { groupId: myGroup.group.id })}
+          >
+            <Text style={s.manageHouseholdText}>Manage Household</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={s.earnBtn} activeOpacity={0.8} onPress={() => navigation.navigate('Offers')}>
           <Text style={s.earnIcon}>🪙</Text>
           <Text style={s.earnText}>Earn ₹100</Text>
@@ -433,7 +450,7 @@ function ServiceCard({ service }: { service: ApiService }) {
 
 // ── Cart Bar ──────────────────────────────────────────────────────────────────
 
-function CartBar() {
+function CartBar({ selectedAddressId }: { selectedAddressId?: string }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { itemCount, subtotalCents } = useCart();
   const c = useColors();
@@ -455,13 +472,15 @@ function CartBar() {
       <TouchableOpacity
         style={s.cartBarBtn}
         activeOpacity={0.85}
-        onPress={() => navigation.navigate('Cart')}
+        onPress={() => navigation.navigate('Cart', { selectedAddressId })}
       >
         <Text style={s.cartBarBtnText}>Go to cart  →</Text>
       </TouchableOpacity>
     </View>
   );
 }
+
+// ── Roomies Banner ────────────────────────────────────────────────────────────
 
 // ── Trust Strip ───────────────────────────────────────────────────────────────
 
@@ -641,6 +660,11 @@ function createStyles(c: C) {
     locationName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, maxWidth: SCREEN_WIDTH * 0.42 },
     chevron: { fontSize: 16, color: c.textSecondary, marginTop: -2 },
     headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    manageHouseholdBtn: {
+      backgroundColor: c.primary, paddingHorizontal: 10, paddingVertical: 6,
+      borderRadius: Radius.full,
+    },
+    manageHouseholdText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: '#FFF' },
     earnBtn: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
       backgroundColor: c.primaryBg, paddingHorizontal: 10, paddingVertical: 6,

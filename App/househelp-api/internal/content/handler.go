@@ -166,6 +166,9 @@ func (h *Handler) AdminCreateBanner(c *fiber.Ctx) error {
 // AdminUpdateBanner handles PATCH /admin/content/banners/:id.
 func (h *Handler) AdminUpdateBanner(c *fiber.Ctx) error {
 	bannerID := c.Params("id")
+	if !validator.IsUUID(bannerID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid banner id"})
+	}
 
 	var req CreateBannerRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -199,6 +202,9 @@ func (h *Handler) AdminUpdateBanner(c *fiber.Ctx) error {
 // AdminDeleteBanner handles DELETE /admin/content/banners/:id (soft delete).
 func (h *Handler) AdminDeleteBanner(c *fiber.Ctx) error {
 	bannerID := c.Params("id")
+	if !validator.IsUUID(bannerID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid banner id"})
+	}
 
 	if err := h.service.DeleteBanner(c.Context(), bannerID); err != nil {
 		log.Error().Err(err).Msg("failed to delete banner")
@@ -338,6 +344,9 @@ func (h *Handler) AdminCreateService(c *fiber.Ctx) error {
 // AdminUpdateService handles PATCH /admin/services/:id.
 func (h *Handler) AdminUpdateService(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 
 	var req CreateServiceCategoryRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -369,6 +378,9 @@ func (h *Handler) AdminUpdateService(c *fiber.Ctx) error {
 // AdminDeleteService handles DELETE /admin/services/:id (soft delete).
 func (h *Handler) AdminDeleteService(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 
 	if err := h.service.DeleteServiceCategory(c.Context(), serviceID); err != nil {
 		log.Error().Err(err).Msg("failed to delete service category")

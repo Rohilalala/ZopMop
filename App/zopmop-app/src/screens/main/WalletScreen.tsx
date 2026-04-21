@@ -19,6 +19,19 @@ function createStyles(c: typeof lightColors) {
     iconWrap: { width: 112, height: 112, borderRadius: Radius.full, backgroundColor: c.primaryBg, alignItems: 'center', justifyContent: 'center', marginBottom: 24, ...Shadow.sm },
     title: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, marginBottom: 12, letterSpacing: -0.4 },
     subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, textAlign: 'center', lineHeight: 22 },
+    testBtn: {
+      marginTop: 22,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: Radius.lg,
+      backgroundColor: c.primary,
+      ...Shadow.sm,
+    },
+    testBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: '#FFFFFF',
+    },
   });
 }
 
@@ -44,6 +57,13 @@ export default function WalletScreen() {
         <Text style={s.subtitle}>
           Your wallet is on its way. You'll be able to check your balance and transactions right here.
         </Text>
+        <TouchableOpacity
+          style={s.testBtn}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Payment')}
+        >
+          <Text style={s.testBtnText}>Open Payment Test</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );

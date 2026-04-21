@@ -6,7 +6,7 @@ import ResponseViewer from '../components/ResponseViewer';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 export default function LoginPage() {
-  const { token, login } = useContext(AuthContext);
+  const { user, login } = useContext(AuthContext);
   
   const [step, setStep] = useState(1);
   const [phone, setPhone] = useState('+919876543210');
@@ -16,7 +16,7 @@ export default function LoginPage() {
   const [response, setResponse] = useState(null);
   const [statusCode, setStatusCode] = useState(null);
 
-  if (token) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/dashboard" replace />;
 
   const handleSendOTP = async (e) => {
     e.preventDefault();

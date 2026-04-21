@@ -211,3 +211,116 @@ func (c *Client) GetDirections(ctx context.Context, oLat, oLng, dLat, dLng float
 
 	return result, nil
 }
+
+// ── Places Autocomplete ───────────────────────────────────────────────────────
+
+// PlaceResult is a single result from the Places Autocomplete API.
+type PlaceResult struct {
+	PlaceID     string  `json:"place_id"`
+	Description string  `json:"description"`
+	MainText    string  `json:"main_text"`
+	SecondText  string  `json:"secondary_text"`
+	Lat         float64 `json:"lat"`
+	Lon         float64 `json:"lon"`
+}
+
+// PlacesAutocomplete returns address suggestions for the given input string.
+// It calls Autocomplete then fetches coordinates for each result via Geocoding.
+// Results are NOT cached (queries are highly variable).
+func (c *Client) PlacesAutocomplete(ctx context.Context, input string) ([]PlaceResult, error) {
+	params := url.Values{}
+	params.Set("input", input)
+	params.Set("types", "geocode")
+	params.Set("components", "country:in")
+	params.Set("key", c.apiKey)
+
+	apiURL := "https://maps.googleapis.com/maps/api/place/autocomplete/json?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("autocomplete request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("autocomplete request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Status      string `json:"status"`
+		Predictions []struct {
+			PlaceID              string `json:"place_id"`
+			Description          string `json:"description"`
+			StructuredFormatting struct {
+				MainText      string `json:"main_text"`
+				SecondaryText string `json:"secondary_text"`
+			} `json:"structured_formatting"`
+		} `json:"predictions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("autocomplete decode: %w", err)
+	}
+	if body.Status != "OK" && body.Status != "ZERO_RESULTS" {
+		return nil, fmt.Errorf("autocomplete status: %s", body.Status)
+	}
+
+	if len(body.Predictions) == 0 {
+		return []PlaceResult{}, nil
+	}
+
+	// Fetch coordinates for each prediction via Geocoding API.
+	results := make([]PlaceResult, 0, len(body.Predictions))
+	for _, p := range body.Predictions {
+		lat, lon, err := c.geocodePlaceID(ctx, p.PlaceID)
+		if err != nil {
+			log.Warn().Err(err).Str("place_id", p.PlaceID).Msg("[gmaps] geocode failed for prediction")
+			continue
+		}
+		results = append(results, PlaceResult{
+			PlaceID:    p.PlaceID,
+			Description: p.Description,
+			MainText:   p.StructuredFormatting.MainText,
+			SecondText: p.StructuredFormatting.SecondaryText,
+			Lat:        lat,
+			Lon:        lon,
+		})
+	}
+	return results, nil
+}
+
+// geocodePlaceID resolves a place_id to lat/lon via the Geocoding API.
+func (c *Client) geocodePlaceID(ctx context.Context, placeID string) (float64, float64, error) {
+	params := url.Values{}
+	params.Set("place_id", placeID)
+	params.Set("key", c.apiKey)
+
+	apiURL := "https://maps.googleapis.com/maps/api/geocode/json?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Status  string `json:"status"`
+		Results []struct {
+			Geometry struct {
+				Location struct {
+					Lat float64 `json:"lat"`
+					Lng float64 `json:"lng"`
+				} `json:"location"`
+			} `json:"geometry"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, 0, err
+	}
+	if body.Status != "OK" || len(body.Results) == 0 {
+		return 0, 0, fmt.Errorf("geocode status: %s", body.Status)
+	}
+	loc := body.Results[0].Geometry.Location
+	return loc.Lat, loc.Lng, nil
+}

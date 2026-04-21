@@ -109,6 +109,34 @@ type UpdateUserStatusRequest struct {
 	IsSuspended bool `json:"is_suspended"`
 }
 
+// PromotionRequest is the admin-facing DTO for creating or updating a
+// promotion. Server-owned fields (ID, UsesCount, CreatedBy, CreatedAt) are
+// intentionally NOT present here to prevent mass-assignment via request body.
+type PromotionRequest struct {
+	Code          string     `json:"code"            validate:"required,min=3,max=32,alphanum"`
+	DiscountType  string     `json:"discount_type"   validate:"required,oneof=percent fixed"`
+	DiscountValue int        `json:"discount_value"  validate:"required,min=1,max=100000"`
+	MinOrderCents int        `json:"min_order_cents" validate:"min=0,max=10000000"`
+	MaxUses       int        `json:"max_uses"        validate:"min=0,max=1000000"`
+	IsActive      bool       `json:"is_active"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+}
+
+// ToPromotion converts the request DTO into the persisted Promotion model,
+// leaving server-owned fields (ID, UsesCount, CreatedBy, CreatedAt) zero so
+// they are set exclusively by the service/repository layer.
+func (r PromotionRequest) ToPromotion() Promotion {
+	return Promotion{
+		Code:          r.Code,
+		DiscountType:  r.DiscountType,
+		DiscountValue: r.DiscountValue,
+		MinOrderCents: r.MinOrderCents,
+		MaxUses:       r.MaxUses,
+		IsActive:      r.IsActive,
+		ExpiresAt:     r.ExpiresAt,
+	}
+}
+
 // BroadcastNotificationRequest is the payload for manual push notification broadcast.
 // Target controls who receives it:
 //   - "customers" — all users with role=customer (default if omitted)

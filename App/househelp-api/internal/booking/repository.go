@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -367,15 +368,33 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		statusFilter = `true`
 	}
 
-	rows, err := r.db.Query(queryCtx,
-		`SELECT id, customer_id, address_id, time_slot_id,
-		        to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		        total_duration_minutes, status, price_cents, discount_cents, promo_code, created_at
-		 FROM bookings
-		 WHERE customer_id = $1 AND `+statusFilter+`
-		 ORDER BY COALESCE(scheduled_time, created_at) DESC LIMIT $2 OFFSET $3`,
-		customerID, limit, offset,
-	)
+	rows, err := r.db.Query(queryCtx, `
+		SELECT
+			b.id, b.customer_id, b.address_id, b.time_slot_id,
+			to_char(b.scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_time,
+			b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at,
+			COALESCE(
+				json_agg(
+					json_build_object(
+						'service_id', bs.service_id::text,
+						'service_name', sc.name,
+						'duration_minutes', bs.duration_minutes,
+						'price_cents', bs.price_cents
+					)
+					ORDER BY bs.id
+				) FILTER (WHERE bs.service_id IS NOT NULL),
+				'[]'::json
+			) AS services
+		FROM bookings b
+		LEFT JOIN booking_services bs ON bs.booking_id = b.id
+		LEFT JOIN service_categories sc ON sc.id = bs.service_id
+		WHERE b.customer_id = $1
+		  AND `+statusFilter+`
+		GROUP BY b.id, b.customer_id, b.address_id, b.time_slot_id, b.scheduled_time,
+		         b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at
+		ORDER BY COALESCE(b.scheduled_time, b.created_at) DESC
+		LIMIT $2 OFFSET $3`,
+		customerID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query bookings: %w", err)
 	}
@@ -384,17 +403,16 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 	var bookings []ScheduledBooking
 	for rows.Next() {
 		var b ScheduledBooking
+		var servicesJSON []byte
 		if err := rows.Scan(
 			&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
 			&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
-			&b.PromoCode, &b.CreatedAt,
+			&b.PromoCode, &b.CreatedAt, &servicesJSON,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan booking: %w", err)
 		}
-		// Fetch services for this booking.
-		b.Services, err = r.getBookingServices(queryCtx, b.ID)
-		if err != nil {
-			return nil, err
+		if err := json.Unmarshal(servicesJSON, &b.Services); err != nil {
+			return nil, fmt.Errorf("failed to decode booking services: %w", err)
 		}
 		bookings = append(bookings, b)
 	}
@@ -402,34 +420,6 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		bookings = []ScheduledBooking{}
 	}
 	return bookings, rows.Err()
-}
-
-// getBookingServices returns the services for a booking.
-func (r *Repository) getBookingServices(ctx context.Context, bookingID string) ([]BookingServiceItem, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT bs.service_id, sc.name, bs.duration_minutes, bs.price_cents
-		 FROM booking_services bs
-		 JOIN service_categories sc ON sc.id = bs.service_id
-		 WHERE bs.booking_id = $1`,
-		bookingID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query booking services: %w", err)
-	}
-	defer rows.Close()
-
-	var items []BookingServiceItem
-	for rows.Next() {
-		var item BookingServiceItem
-		if err := rows.Scan(&item.ServiceID, &item.ServiceName, &item.DurationMinutes, &item.PriceCents); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if items == nil {
-		items = []BookingServiceItem{}
-	}
-	return items, rows.Err()
 }
 
 // IncrementPromoCodeUsage atomically increments the usage count of a promo code

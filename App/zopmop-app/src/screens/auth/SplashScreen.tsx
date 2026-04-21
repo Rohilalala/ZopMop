@@ -7,6 +7,8 @@ import {
   Animated,
   StatusBar,
 } from 'react-native';
+
+const BRAND_FONT_SIZE = 64;
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing } from '../../theme';
@@ -130,15 +132,18 @@ function createStyles(c: typeof lightColors) {
       gap: Spacing.sm,
     },
     brandText: {
-      fontSize: FontSize['4xl'],
-      letterSpacing: -0.5,
+      fontSize: BRAND_FONT_SIZE,
+      lineHeight: BRAND_FONT_SIZE,
+      letterSpacing: BRAND_FONT_SIZE * -0.04,
     },
     brandZop: {
-      fontFamily: FontFamily.extrabold,
+      fontFamily: 'Qurova_500Medium',
+      fontWeight: '500',
       color: c.primary,
     },
     brandMop: {
-      fontFamily: FontFamily.bold,
+      fontFamily: 'Qurova_500Medium',
+      fontWeight: '500',
       color: c.text,
     },
     tagline: {

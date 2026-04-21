@@ -28,8 +28,9 @@ export type MainStackParamList = {
   Addresses: undefined;
   AllServices: { instant?: boolean } | undefined;
   ServiceAbout: { service: ApiService };
-  Cart: undefined;
+  Cart: { selectedAddressId?: string } | undefined;
   Wallet: undefined;
+  Payment: undefined;
   Offers: undefined;
   HelpSupport: undefined;
   InstantMatching: { serviceId: string; serviceName: string };
@@ -58,6 +59,11 @@ export type MainStackParamList = {
     customerLat: number;
     customerLng: number;
   };
+  RoomiesSetup: undefined;
+  RoomiesCodeShare: { groupId: string; code: string; groupName: string };
+  RoomiesJoin: undefined;
+  RoomiesWelcome: { groupName: string; addressLabel: string; addressAdded: boolean };
+  ManageHousehold: { groupId: string };
 };
 
 export type RootStackParamList = {

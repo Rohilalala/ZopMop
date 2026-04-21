@@ -24,7 +24,7 @@ import { lightColors, Colors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme, useColors } from '../../context/ThemeContext';
-import { getMe, updateMe } from '../../api/users';
+import { getMe, updateMe, deleteMe } from '../../api/users';
 
 type C = typeof lightColors;
 
@@ -45,6 +45,7 @@ const QUICK_ACTIONS = [
 
 const ACCOUNT_ITEMS = [
   { id: 'addresses', label: 'Saved Addresses',             icon: 'location-outline'      },
+  { id: 'roomies',   label: 'Roomies',                     icon: 'home-outline'          },
   { id: 'experts',   label: 'Your Experts',                icon: 'people-outline'        },
   { id: 'payments',  label: 'Payment Methods',             icon: 'card-outline'          },
   { id: 'notifs',    label: 'Notifications & Preferences', icon: 'notifications-outline' },
@@ -422,6 +423,49 @@ export default function ProfileScreen() {
     ]);
   };
 
+  // Account deletion — required by App Store Guideline 5.1.1(v). Two-step
+  // confirm: a warning Alert explaining the destructive consequences, then a
+  // final Alert before we hit the backend. On success we sign the user out
+  // locally so the app returns to the phone-entry screen.
+  const handleDeleteAccount = () => {
+    if (!token || token === '__guest__') return;
+    Alert.alert(
+      'Delete Account',
+      'This permanently removes your profile, bookings history, saved addresses, and pro data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Are you absolutely sure?',
+              'Tap Delete to permanently remove your ZopMop account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deleteMe(token);
+                      signOut();
+                    } catch (err) {
+                      Alert.alert(
+                        'Delete Failed',
+                        err instanceof Error ? err.message : 'Please try again.',
+                      );
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.header}>
@@ -447,7 +491,7 @@ export default function ProfileScreen() {
         <ReferralBanner />
         <AccountSection onNavigate={navigation} />
         <ListSection title="Info & Legal" items={LEGAL_ITEMS} muted />
-        <AccountActions onLogout={handleLogout} />
+        <AccountActions onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} />
         <View style={{ height: 32 }} />
       </ScrollView>
 
@@ -482,8 +526,9 @@ function AccountSection({ onNavigate }: { onNavigate: NativeStackNavigationProp<
               onPress={() => {
                 switch (item.id) {
                   case 'addresses': onNavigate.navigate('Addresses'); break;
+                  case 'roomies': onNavigate.navigate('RoomiesSetup'); break;
                   case 'experts': Alert.alert('Your Experts', 'Expert history is coming soon.'); break;
-                  case 'payments': Alert.alert('Payment Methods', 'Payment methods are coming soon.'); break;
+                  case 'payments': onNavigate.navigate('Payment'); break;
                   case 'notifs': Alert.alert('Notifications', 'Notification settings are coming soon.'); break;
                 }
               }}
@@ -815,7 +860,13 @@ function ListSection({
 
 // ── Account Actions ───────────────────────────────────────────────────────────
 
-function AccountActions({ onLogout }: { onLogout: () => void }) {
+function AccountActions({
+  onLogout,
+  onDeleteAccount,
+}: {
+  onLogout: () => void;
+  onDeleteAccount: () => void;
+}) {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
   return (
@@ -826,6 +877,14 @@ function AccountActions({ onLogout }: { onLogout: () => void }) {
             <Ionicons name="log-out-outline" size={18} color={c.danger} />
           </View>
           <Text style={[s.listLabel, s.listLabelDanger]}>Log Out</Text>
+          <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+        </TouchableOpacity>
+        <View style={s.divider} />
+        <TouchableOpacity style={s.listRow} onPress={onDeleteAccount} activeOpacity={0.7}>
+          <View style={[s.listIconBox, s.listIconBoxDanger]}>
+            <Ionicons name="trash-outline" size={18} color={c.danger} />
+          </View>
+          <Text style={[s.listLabel, s.listLabelDanger]}>Delete Account</Text>
           <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
         </TouchableOpacity>
       </View>

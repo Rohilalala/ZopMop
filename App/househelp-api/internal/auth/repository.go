@@ -56,7 +56,7 @@ func (r *Repository) GetUserByPhone(ctx context.Context, phone string) (*User, e
 
 	user := &User{}
 	err := scanUser(r.db.QueryRow(queryCtx,
-		`SELECT `+userSelectFields+` FROM users WHERE phone = $1`,
+		`SELECT `+userSelectFields+` FROM users WHERE phone = $1 AND deleted_at IS NULL`,
 		phone,
 	), user)
 	if err != nil {
@@ -76,7 +76,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID string) (*User, err
 
 	user := &User{}
 	err := scanUser(r.db.QueryRow(queryCtx,
-		`SELECT `+userSelectFields+` FROM users WHERE id = $1`,
+		`SELECT `+userSelectFields+` FROM users WHERE id = $1 AND deleted_at IS NULL`,
 		userID,
 	), user)
 	if err != nil {
@@ -158,6 +158,65 @@ func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardP
 	}
 
 	return user, nil
+}
+
+// SoftDeleteUser marks a user account as deleted and scrubs the PII fields
+// that are not required for audit/legal retention. The row is kept so that
+// foreign-key references (bookings, roomies ledgers, audit logs) remain valid.
+//
+//   - phone is replaced with a deterministic anonymised value so uniqueness
+//     holds and the original number is no longer retrievable. The deleted
+//     user can re-register with the same phone because the original phone
+//     is freed.
+//   - name is cleared.
+//   - fcm_token is cleared (suppress push).
+//   - role is forced to 'customer' and is_suspended=true so any lingering
+//     JWT cannot resurrect helper/admin privileges.
+//   - deleted_at is stamped; a nightly job can hard-purge after the grace
+//     window defined in product policy (~30 days).
+func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	// Anonymise phone to free it for re-registration while keeping UNIQUE.
+	res, err := tx.Exec(queryCtx,
+		`UPDATE users
+		   SET phone           = 'del:' || substr(id::text, 25, 12),
+		       name            = NULL,
+		       fcm_token       = NULL,
+		       role            = 'customer',
+		       is_suspended    = true,
+		       deleted_at      = now(),
+		       deletion_reason = NULLIF($2, ''),
+		       updated_at      = now()
+		 WHERE id = $1
+		   AND deleted_at IS NULL`,
+		userID, reason,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to soft-delete user: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+
+	// Drop helper row so the user no longer appears in matching.
+	if _, err := tx.Exec(queryCtx, `DELETE FROM helpers WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("failed to remove helper row: %w", err)
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit tx: %w", err)
+	}
+
+	log.Info().Str("user_id", userID).Msg("user account soft-deleted")
+	return nil
 }
 
 // UpdateFCMToken updates the FCM token for a user.

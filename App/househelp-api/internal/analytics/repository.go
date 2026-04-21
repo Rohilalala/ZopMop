@@ -3,9 +3,11 @@ package analytics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -54,6 +56,197 @@ func (r *Repository) TrackEvent(ctx context.Context, eventName, userID, bookingI
 	); execErr != nil {
 		log.Warn().Err(execErr).Str("event", eventName).Msg("[analytics] failed to write event")
 	}
+
+	// Maintain a compact distinct user/event/day rollup for funnel reads.
+	if uid != nil {
+		if _, rollupErr := r.db.Exec(qCtx,
+			`INSERT INTO analytics_event_user_daily (event_date, event_name, user_id)
+			 VALUES (CURRENT_DATE, $1, $2)
+			 ON CONFLICT (event_date, event_name, user_id) DO NOTHING`,
+			eventName, uid,
+		); rollupErr != nil && !isUndefinedTable(rollupErr) {
+			log.Warn().Err(rollupErr).Str("event", eventName).Msg("[analytics] failed to write event daily rollup")
+		}
+	}
+}
+
+// RefreshRollups recomputes recent analytics rollups used by dashboard endpoints.
+func (r *Repository) RefreshRollups(ctx context.Context) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("analytics repository db is nil")
+	}
+
+	qCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	tx, err := r.db.Begin(qCtx)
+	if err != nil {
+		return fmt.Errorf("begin rollup refresh tx: %w", err)
+	}
+	defer tx.Rollback(qCtx)
+
+	if _, err := tx.Exec(qCtx, `
+		INSERT INTO analytics_event_user_daily (event_date, event_name, user_id, created_at)
+		SELECT
+			DATE_TRUNC('day', created_at)::date AS event_date,
+			event_name,
+			user_id,
+			NOW()
+		FROM analytics_events
+		WHERE user_id IS NOT NULL
+		  AND created_at >= NOW() - INTERVAL '7 days'
+		GROUP BY 1, 2, 3
+		ON CONFLICT (event_date, event_name, user_id)
+		DO UPDATE SET created_at = EXCLUDED.created_at
+	`); err != nil {
+		return fmt.Errorf("refresh analytics_event_user_daily: %w", err)
+	}
+
+	if _, err := tx.Exec(qCtx, `
+		INSERT INTO analytics_funnel_hourly (bucket_hour, event_name, distinct_users, updated_at)
+		SELECT
+			DATE_TRUNC('hour', created_at) AS bucket_hour,
+			event_name,
+			COUNT(DISTINCT user_id) AS distinct_users,
+			NOW() AS updated_at
+		FROM analytics_events
+		WHERE user_id IS NOT NULL
+		  AND created_at >= NOW() - INTERVAL '72 hours'
+		GROUP BY 1, 2
+		ON CONFLICT (bucket_hour, event_name)
+		DO UPDATE SET
+			distinct_users = EXCLUDED.distinct_users,
+			updated_at = EXCLUDED.updated_at
+	`); err != nil {
+		return fmt.Errorf("refresh analytics_funnel_hourly: %w", err)
+	}
+
+	if _, err := tx.Exec(qCtx, `
+		INSERT INTO analytics_booking_kpi_hourly (
+			bucket_hour,
+			total_bookings,
+			completed_bookings,
+			cancelled_bookings,
+			pending_bookings,
+			matched_bookings,
+			started_bookings,
+			auto_expired_bookings,
+			total_match_attempts,
+			revenue_gross_cents,
+			revenue_discount_cents,
+			revenue_net_cents,
+			assign_seconds_sum,
+			assign_seconds_samples,
+			job_minutes_sum,
+			job_minutes_samples,
+			updated_at
+		)
+		SELECT
+			DATE_TRUNC('hour', created_at) AS bucket_hour,
+			COUNT(*) AS total_bookings,
+			COUNT(*) FILTER (WHERE status = 'completed') AS completed_bookings,
+			COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_bookings,
+			COUNT(*) FILTER (WHERE status = 'pending') AS pending_bookings,
+			COUNT(*) FILTER (WHERE status IN ('accepted','in_progress','completed')) AS matched_bookings,
+			COUNT(*) FILTER (WHERE started_at IS NOT NULL) AS started_bookings,
+			COUNT(*) FILTER (WHERE status = 'cancelled' AND cancelled_by = 'system') AS auto_expired_bookings,
+			COALESCE(SUM(match_attempts), 0) AS total_match_attempts,
+			COALESCE(SUM(price_cents), 0) AS revenue_gross_cents,
+			COALESCE(SUM(discount_cents), 0) AS revenue_discount_cents,
+			COALESCE(SUM(price_cents - discount_cents), 0) AS revenue_net_cents,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (accepted_at - created_at)))
+				FILTER (WHERE accepted_at IS NOT NULL),
+				0
+			) AS assign_seconds_sum,
+			COUNT(*) FILTER (WHERE accepted_at IS NOT NULL) AS assign_seconds_samples,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (completed_at - started_at)) / 60.0)
+				FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL),
+				0
+			) AS job_minutes_sum,
+			COUNT(*) FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS job_minutes_samples,
+			NOW() AS updated_at
+		FROM bookings
+		WHERE created_at >= NOW() - INTERVAL '72 hours'
+		GROUP BY 1
+		ON CONFLICT (bucket_hour)
+		DO UPDATE SET
+			total_bookings = EXCLUDED.total_bookings,
+			completed_bookings = EXCLUDED.completed_bookings,
+			cancelled_bookings = EXCLUDED.cancelled_bookings,
+			pending_bookings = EXCLUDED.pending_bookings,
+			matched_bookings = EXCLUDED.matched_bookings,
+			started_bookings = EXCLUDED.started_bookings,
+			auto_expired_bookings = EXCLUDED.auto_expired_bookings,
+			total_match_attempts = EXCLUDED.total_match_attempts,
+			revenue_gross_cents = EXCLUDED.revenue_gross_cents,
+			revenue_discount_cents = EXCLUDED.revenue_discount_cents,
+			revenue_net_cents = EXCLUDED.revenue_net_cents,
+			assign_seconds_sum = EXCLUDED.assign_seconds_sum,
+			assign_seconds_samples = EXCLUDED.assign_seconds_samples,
+			job_minutes_sum = EXCLUDED.job_minutes_sum,
+			job_minutes_samples = EXCLUDED.job_minutes_samples,
+			updated_at = EXCLUDED.updated_at
+	`); err != nil {
+		return fmt.Errorf("refresh analytics_booking_kpi_hourly: %w", err)
+	}
+
+	if _, err := tx.Exec(qCtx, `
+		INSERT INTO analytics_helper_daily (
+			bucket_date,
+			helper_id,
+			total_assigned,
+			total_completed,
+			total_cancelled,
+			response_seconds_sum,
+			response_seconds_samples,
+			job_minutes_sum,
+			job_minutes_samples,
+			updated_at
+		)
+		SELECT
+			DATE_TRUNC('day', created_at)::date AS bucket_date,
+			helper_id,
+			COUNT(*) AS total_assigned,
+			COUNT(*) FILTER (WHERE status = 'completed') AS total_completed,
+			COUNT(*) FILTER (WHERE status = 'cancelled') AS total_cancelled,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (accepted_at - created_at)))
+				FILTER (WHERE accepted_at IS NOT NULL),
+				0
+			) AS response_seconds_sum,
+			COUNT(*) FILTER (WHERE accepted_at IS NOT NULL) AS response_seconds_samples,
+			COALESCE(
+				SUM(EXTRACT(EPOCH FROM (completed_at - started_at)) / 60.0)
+				FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL),
+				0
+			) AS job_minutes_sum,
+			COUNT(*) FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL) AS job_minutes_samples,
+			NOW() AS updated_at
+		FROM bookings
+		WHERE helper_id IS NOT NULL
+		  AND created_at >= NOW() - INTERVAL '14 days'
+		GROUP BY 1, 2
+		ON CONFLICT (bucket_date, helper_id)
+		DO UPDATE SET
+			total_assigned = EXCLUDED.total_assigned,
+			total_completed = EXCLUDED.total_completed,
+			total_cancelled = EXCLUDED.total_cancelled,
+			response_seconds_sum = EXCLUDED.response_seconds_sum,
+			response_seconds_samples = EXCLUDED.response_seconds_samples,
+			job_minutes_sum = EXCLUDED.job_minutes_sum,
+			job_minutes_samples = EXCLUDED.job_minutes_samples,
+			updated_at = EXCLUDED.updated_at
+	`); err != nil {
+		return fmt.Errorf("refresh analytics_helper_daily: %w", err)
+	}
+
+	if err := tx.Commit(qCtx); err != nil {
+		return fmt.Errorf("commit rollup refresh tx: %w", err)
+	}
+
+	return nil
 }
 
 // ── Read / Aggregation ────────────────────────────────────────────────────────
@@ -67,18 +260,17 @@ func (r *Repository) GetOverview(ctx context.Context, days int) (*OverviewRespon
 		Period: fmt.Sprintf("last_%d_days", days),
 	}
 
-	// Booking counts + revenue from the bookings table.
+	// Booking counts + revenue from hourly KPI rollups.
 	err := r.db.QueryRow(qCtx, `
 		SELECT
-			COUNT(*)                                              AS total,
-			COUNT(*) FILTER (WHERE status = 'completed')         AS completed,
-			COUNT(*) FILTER (WHERE status = 'cancelled')         AS cancelled,
-			COUNT(*) FILTER (WHERE status = 'pending')           AS pending_cnt,
-			COUNT(*) FILTER (WHERE status IN ('accepted','in_progress','completed')) AS matched,
-			COALESCE(SUM(price_cents - discount_cents)
-				FILTER (WHERE status = 'completed'), 0)          AS revenue
-		FROM bookings
-		WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')
+			COALESCE(SUM(total_bookings), 0)         AS total,
+			COALESCE(SUM(completed_bookings), 0)     AS completed,
+			COALESCE(SUM(cancelled_bookings), 0)     AS cancelled,
+			COALESCE(SUM(pending_bookings), 0)       AS pending_cnt,
+			COALESCE(SUM(matched_bookings), 0)       AS matched,
+			COALESCE(SUM(revenue_net_cents), 0)      AS revenue
+		FROM analytics_booking_kpi_hourly
+		WHERE bucket_hour >= NOW() - ($1 * INTERVAL '1 day')
 	`, days).Scan(
 		&resp.TotalBookings,
 		&resp.CompletedBookings,
@@ -132,13 +324,13 @@ func (r *Repository) GetFunnel(ctx context.Context, days int) (*FunnelResponse, 
 	qCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// Client-side event counts: distinct users per event.
+	// Client-side event counts from hourly rollup.
 	clientEventCounts := map[string]int{}
 	rows, err := r.db.Query(qCtx, `
-		SELECT event_name, COUNT(DISTINCT user_id) AS cnt
-		FROM analytics_events
+		SELECT event_name, COALESCE(SUM(distinct_users), 0) AS cnt
+		FROM analytics_funnel_hourly
 		WHERE event_name = ANY($1)
-		  AND created_at >= NOW() - ($2 * INTERVAL '1 day')
+		  AND bucket_hour >= NOW() - ($2 * INTERVAL '1 day')
 		GROUP BY event_name
 	`, []string{EventServiceViewed, EventBookingFlowStarted, EventBookingFlowDropped}, days)
 	if err != nil {
@@ -153,16 +345,16 @@ func (r *Repository) GetFunnel(ctx context.Context, days int) (*FunnelResponse, 
 		}
 	}
 
-	// Backend booking lifecycle counts.
+	// Backend booking lifecycle counts from hourly rollup.
 	var created, accepted, started, completed int
 	if err := r.db.QueryRow(qCtx, `
 		SELECT
-			COUNT(*)                                              AS created,
-			COUNT(*) FILTER (WHERE status IN ('accepted','in_progress','completed')) AS accepted,
-			COUNT(*) FILTER (WHERE started_at IS NOT NULL)        AS started,
-			COUNT(*) FILTER (WHERE status = 'completed')          AS completed
-		FROM bookings
-		WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')
+			COALESCE(SUM(total_bookings), 0)      AS created,
+			COALESCE(SUM(matched_bookings), 0)    AS accepted,
+			COALESCE(SUM(started_bookings), 0)    AS started,
+			COALESCE(SUM(completed_bookings), 0)  AS completed
+		FROM analytics_booking_kpi_hourly
+		WHERE bucket_hour >= NOW() - ($1 * INTERVAL '1 day')
 	`, days).Scan(&created, &accepted, &started, &completed); err != nil {
 		return nil, fmt.Errorf("funnel booking query failed: %w", err)
 	}
@@ -211,12 +403,12 @@ func (r *Repository) GetBookingTrends(ctx context.Context, days int) ([]BookingT
 
 	rows, err := r.db.Query(qCtx, `
 		SELECT
-			DATE_TRUNC('day', created_at)::date::text        AS date,
-			COUNT(*)                                          AS created,
-			COUNT(*) FILTER (WHERE status = 'completed')     AS completed,
-			COUNT(*) FILTER (WHERE status = 'cancelled')     AS cancelled
-		FROM bookings
-		WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')
+			DATE_TRUNC('day', bucket_hour)::date::text       AS date,
+			COALESCE(SUM(total_bookings), 0)                 AS created,
+			COALESCE(SUM(completed_bookings), 0)             AS completed,
+			COALESCE(SUM(cancelled_bookings), 0)             AS cancelled
+		FROM analytics_booking_kpi_hourly
+		WHERE bucket_hour >= NOW() - ($1 * INTERVAL '1 day')
 		GROUP BY 1
 		ORDER BY 1 ASC
 	`, days)
@@ -236,6 +428,14 @@ func (r *Repository) GetBookingTrends(ctx context.Context, days int) ([]BookingT
 	return result, rows.Err()
 }
 
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	if ok := errors.As(err, &pgErr); !ok {
+		return false
+	}
+	return pgErr.Code == "42P01"
+}
+
 // GetWorkerPerformance returns per-helper performance metrics for the past `days` days.
 func (r *Repository) GetWorkerPerformance(ctx context.Context, days, limit int) ([]WorkerMetrics, error) {
 	qCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -243,27 +443,24 @@ func (r *Repository) GetWorkerPerformance(ctx context.Context, days, limit int) 
 
 	rows, err := r.db.Query(qCtx, `
 		SELECT
-			h.id                                                                      AS helper_id,
+			hd.helper_id                                                              AS helper_id,
 			COALESCE(u.name, 'Unknown')                                               AS name,
-			COUNT(b.id) FILTER (WHERE b.id IS NOT NULL)                               AS total_assigned,
-			COUNT(b.id) FILTER (WHERE b.status = 'completed')                         AS total_completed,
-			COUNT(b.id) FILTER (WHERE b.status = 'cancelled')                         AS total_cancelled,
+			COALESCE(SUM(hd.total_assigned), 0)                                       AS total_assigned,
+			COALESCE(SUM(hd.total_completed), 0)                                      AS total_completed,
+			COALESCE(SUM(hd.total_cancelled), 0)                                      AS total_cancelled,
 			COALESCE(
-				AVG(EXTRACT(EPOCH FROM (b.accepted_at - b.created_at)))
-				FILTER (WHERE b.accepted_at IS NOT NULL), 0
+				SUM(hd.response_seconds_sum) / NULLIF(SUM(hd.response_seconds_samples), 0), 0
 			)                                                                          AS avg_response_sec,
 			COALESCE(
-				AVG(EXTRACT(EPOCH FROM (b.completed_at - b.started_at)) / 60.0)
-				FILTER (WHERE b.completed_at IS NOT NULL AND b.started_at IS NOT NULL), 0
+				SUM(hd.job_minutes_sum) / NULLIF(SUM(hd.job_minutes_samples), 0), 0
 			)                                                                          AS avg_job_min,
 			COALESCE(h.rating, 5.0)                                                    AS rating
-		FROM helpers h
+		FROM analytics_helper_daily hd
+		JOIN helpers h ON h.id = hd.helper_id
 		JOIN users u ON u.id = h.id
-		LEFT JOIN bookings b
-			ON b.helper_id = h.id
-			AND b.created_at >= NOW() - ($1 * INTERVAL '1 day')
-		GROUP BY h.id, u.name, h.rating
-		HAVING COUNT(b.id) FILTER (WHERE b.id IS NOT NULL) > 0
+		WHERE hd.bucket_date >= (CURRENT_DATE - $1::int)
+		GROUP BY hd.helper_id, u.name, h.rating
+		HAVING COALESCE(SUM(hd.total_assigned), 0) > 0
 		ORDER BY total_completed DESC, avg_response_sec ASC
 		LIMIT $2
 	`, days, limit)
@@ -302,22 +499,18 @@ func (r *Repository) GetOperationalMetrics(ctx context.Context, days int) (*Oper
 	err := r.db.QueryRow(qCtx, `
 		SELECT
 			COALESCE(
-				AVG(EXTRACT(EPOCH FROM (accepted_at - created_at)))
-				FILTER (WHERE accepted_at IS NOT NULL), 0
+				SUM(assign_seconds_sum) / NULLIF(SUM(assign_seconds_samples), 0), 0
 			)                                                                      AS avg_assign_sec,
 			COALESCE(
-				AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) / 60.0)
-				FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL), 0
+				SUM(job_minutes_sum) / NULLIF(SUM(job_minutes_samples), 0), 0
 			)                                                                      AS avg_job_min,
-			COUNT(*) FILTER (
-				WHERE status IN ('accepted','in_progress','completed')
-			) * 100.0 / NULLIF(COUNT(*), 0)                                        AS match_rate,
-			COUNT(*) FILTER (
-				WHERE status = 'cancelled' AND cancelled_by = 'system'
-			)                                                                      AS auto_expired,
-			COALESCE(SUM(match_attempts), 0)                                       AS total_attempts
-		FROM bookings
-		WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')
+			COALESCE(
+				SUM(matched_bookings) * 100.0 / NULLIF(SUM(total_bookings), 0), 0
+			)                                                                      AS match_rate,
+			COALESCE(SUM(auto_expired_bookings), 0)                                AS auto_expired,
+			COALESCE(SUM(total_match_attempts), 0)                                 AS total_attempts
+		FROM analytics_booking_kpi_hourly
+		WHERE bucket_hour >= NOW() - ($1 * INTERVAL '1 day')
 	`, days).Scan(
 		&resp.AvgTimeToAssignSec,
 		&resp.AvgJobDurationMin,
@@ -339,14 +532,13 @@ func (r *Repository) GetRevenueTrends(ctx context.Context, days int) ([]RevenueT
 
 	rows, err := r.db.Query(qCtx, `
 		SELECT
-			DATE_TRUNC('day', completed_at)::date::text         AS date,
-			COALESCE(SUM(price_cents), 0)                       AS gross,
-			COALESCE(SUM(discount_cents), 0)                    AS discount,
-			COALESCE(SUM(price_cents - discount_cents), 0)      AS net,
-			COUNT(*)                                             AS booking_count
-		FROM bookings
-		WHERE status = 'completed'
-		  AND completed_at >= NOW() - ($1 * INTERVAL '1 day')
+			DATE_TRUNC('day', bucket_hour)::date::text          AS date,
+			COALESCE(SUM(revenue_gross_cents), 0)               AS gross,
+			COALESCE(SUM(revenue_discount_cents), 0)            AS discount,
+			COALESCE(SUM(revenue_net_cents), 0)                 AS net,
+			COALESCE(SUM(completed_bookings), 0)                AS booking_count
+		FROM analytics_booking_kpi_hourly
+		WHERE bucket_hour >= NOW() - ($1 * INTERVAL '1 day')
 		GROUP BY 1
 		ORDER BY 1 ASC
 	`, days)
@@ -365,3 +557,4 @@ func (r *Repository) GetRevenueTrends(ctx context.Context, days int) ([]RevenueT
 	}
 	return result, rows.Err()
 }
+

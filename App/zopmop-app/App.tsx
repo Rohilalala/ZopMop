@@ -16,6 +16,7 @@ import AuthNavigator from './src/navigation/AuthNavigator';
 import MainNavigator from './src/navigation/MainNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider, useColors } from './src/context/ThemeContext';
+import { RoomiesProvider } from './src/context/RoomiesContext';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -54,6 +55,7 @@ export default function App() {
     PlusJakartaSans_600SemiBold,
     PlusJakartaSans_700Bold,
     PlusJakartaSans_800ExtraBold,
+    Qurova_500Medium: require('./assets/qurovademomedium-dygo9.otf'),
   });
 
   const onLayoutRootView = useCallback(async () => {
@@ -68,11 +70,13 @@ export default function App() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
+          <RoomiesProvider>
           <ThemedRoot
             splashDone={splashDone}
             setSplashDone={setSplashDone}
             onLayout={onLayoutRootView}
           />
+          </RoomiesProvider>
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>

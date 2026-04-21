@@ -66,3 +66,10 @@ type OnboardProRequest struct {
 type UpdateFCMTokenRequest struct {
 	Token string `json:"fcm_token" validate:"required"`
 }
+
+// DeleteAccountRequest is the input for DELETE /me. The reason field is
+// optional free-text collected by the client-side delete confirmation sheet
+// for product analytics; it is stored once and never surfaced back.
+type DeleteAccountRequest struct {
+	Reason string `json:"reason" validate:"omitempty,max=200"`
+}

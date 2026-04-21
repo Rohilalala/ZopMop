@@ -4,9 +4,9 @@ import { useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 
 export default function Layout({ requireAuth = true }) {
-  const { token } = useContext(AuthContext);
+  const { user } = useContext(AuthContext);
 
-  if (requireAuth && !token) {
+  if (requireAuth && !user) {
     return <Navigate to="/login" replace />;
   }
 

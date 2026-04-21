@@ -2,9 +2,12 @@ package admin
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/adityarohilla/househelp-api/internal/middleware"
+	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -81,6 +84,9 @@ func (h *Handler) GetUsers(c *fiber.Ctx) error {
 // SuspendUser handles PATCH /admin/users/:id/suspend.
 func (h *Handler) SuspendUser(c *fiber.Ctx) error {
 	targetUserID := c.Params("id")
+	if _, err := uuid.Parse(targetUserID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user id"})
+	}
 	adminID, _ := c.Locals("adminID").(string)
 
 	if err := h.service.SuspendUser(c.Context(), adminID, targetUserID, c.IP()); err != nil {
@@ -102,6 +108,9 @@ func (h *Handler) SuspendUser(c *fiber.Ctx) error {
 // UnsuspendUser handles PATCH /admin/users/:id/unsuspend.
 func (h *Handler) UnsuspendUser(c *fiber.Ctx) error {
 	targetUserID := c.Params("id")
+	if _, err := uuid.Parse(targetUserID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid user id"})
+	}
 	adminID, _ := c.Locals("adminID").(string)
 
 	if err := h.service.UnsuspendUser(c.Context(), adminID, targetUserID, c.IP()); err != nil {
@@ -148,9 +157,27 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	if bookingID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing booking id"})
 	}
-	if err := h.service.CancelBooking(c.Context(), bookingID); err != nil {
+	if _, err := uuid.Parse(bookingID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	adminID, ok := c.Locals("adminID").(string)
+	if !ok || adminID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+
+	if err := h.service.CancelBooking(c.Context(), adminID, bookingID, c.IP()); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("admin cancel booking failed")
-		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+		status := fiber.StatusInternalServerError
+		message := "failed to cancel booking"
+		switch {
+		case err.Error() == "booking not found":
+			status = fiber.StatusNotFound
+			message = "booking not found"
+		case strings.HasPrefix(err.Error(), "invalid status transition"):
+			status = fiber.StatusBadRequest
+			message = "booking cannot be cancelled in current status"
+		}
+		return c.Status(status).JSON(fiber.Map{"error": message})
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }
@@ -204,13 +231,20 @@ func (h *Handler) GetPromotions(c *fiber.Ctx) error {
 
 // CreatePromotion handles POST /admin/promotions.
 func (h *Handler) CreatePromotion(c *fiber.Ctx) error {
-	var promo Promotion
-	if err := c.BodyParser(&promo); err != nil {
+	var req PromotionRequest
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "invalid request body",
 		})
 	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
 
+	promo := req.ToPromotion()
 	adminID, _ := c.Locals("adminID").(string)
 	if err := h.service.CreatePromotion(c.Context(), &promo, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Msg("failed to create promotion")
@@ -225,13 +259,24 @@ func (h *Handler) CreatePromotion(c *fiber.Ctx) error {
 // UpdatePromotion handles PATCH /admin/promotions/:id.
 func (h *Handler) UpdatePromotion(c *fiber.Ctx) error {
 	promoID := c.Params("id")
+	if _, err := uuid.Parse(promoID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid promotion id"})
+	}
 
-	var promo Promotion
-	if err := c.BodyParser(&promo); err != nil {
+	var req PromotionRequest
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "invalid request body",
 		})
 	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	promo := req.ToPromotion()
 	promo.ID = promoID
 
 	adminID, _ := c.Locals("adminID").(string)
@@ -248,6 +293,9 @@ func (h *Handler) UpdatePromotion(c *fiber.Ctx) error {
 // DisablePromotion handles PATCH /admin/promotions/:id/disable.
 func (h *Handler) DisablePromotion(c *fiber.Ctx) error {
 	promoID := c.Params("id")
+	if _, err := uuid.Parse(promoID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid promotion id"})
+	}
 	adminID, _ := c.Locals("adminID").(string)
 
 	if err := h.service.DisablePromotion(c.Context(), promoID, adminID, c.IP()); err != nil {
@@ -270,6 +318,13 @@ func (h *Handler) BroadcastNotification(c *fiber.Ctx) error {
 
 	if req.Target == "" {
 		req.Target = "customers"
+	}
+
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
 	}
 
 	if err := h.service.Broadcast(c.Context(), req.Title, req.Body, req.Target); err != nil {

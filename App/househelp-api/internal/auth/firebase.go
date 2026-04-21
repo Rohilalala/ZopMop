@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -16,6 +17,12 @@ var (
 	firebaseClient *firebaseauth.Client
 	firebaseOnce   sync.Once
 	firebaseErr    error
+)
+
+var (
+	ErrFirebaseClientUnavailable = errors.New("firebase client unavailable")
+	ErrInvalidFirebaseToken      = errors.New("invalid firebase token")
+	ErrFirebasePhoneMissing      = errors.New("phone number not found in firebase token")
 )
 
 // getFirebaseClient returns the Firebase Auth client, initialising it once.
@@ -44,17 +51,17 @@ func getFirebaseClient(ctx context.Context) (*firebaseauth.Client, error) {
 func VerifyFirebaseToken(ctx context.Context, idToken string) (string, error) {
 	client, err := getFirebaseClient(ctx)
 	if err != nil {
-		return "", fmt.Errorf("firebase client unavailable: %w", err)
+		return "", fmt.Errorf("%w", ErrFirebaseClientUnavailable)
 	}
 
 	token, err := client.VerifyIDToken(ctx, idToken)
 	if err != nil {
-		return "", fmt.Errorf("invalid firebase token: %w", err)
+		return "", fmt.Errorf("%w", ErrInvalidFirebaseToken)
 	}
 
 	phone, ok := token.Claims["phone_number"].(string)
 	if !ok || phone == "" {
-		return "", fmt.Errorf("phone number not found in firebase token")
+		return "", fmt.Errorf("%w", ErrFirebasePhoneMissing)
 	}
 
 	return phone, nil

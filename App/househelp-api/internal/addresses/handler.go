@@ -81,6 +81,9 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if addressID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "address id required"})
 	}
+	if !validator.IsUUID(addressID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid address id"})
+	}
 
 	var req UpdateAddressRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -117,10 +120,16 @@ func (h *Handler) Delete(c *fiber.Ctx) error {
 	if addressID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "address id required"})
 	}
+	if !validator.IsUUID(addressID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid address id"})
+	}
 
 	if err := h.service.Delete(c.Context(), userID, addressID); err != nil {
 		if err == pgx.ErrNoRows {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "address not found"})
+		}
+		if err == ErrAddressInUse || err == ErrAddressHasGroup {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Error().Err(err).Str("user_id", userID).Str("address_id", addressID).Msg("failed to delete address")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete address"})

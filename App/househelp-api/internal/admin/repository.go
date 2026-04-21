@@ -319,35 +319,34 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 
 	offset := (page - 1) * limit
 
-	baseQuery := `FROM bookings b
-		JOIN users cu ON b.customer_id = cu.id
-		LEFT JOIN users hu ON b.helper_id = hu.id
-		JOIN service_categories sc ON b.service_category_id = sc.id
-		WHERE 1=1`
-	args := []interface{}{}
-	argIdx := 1
-
-	if status != "" {
-		baseQuery += fmt.Sprintf(` AND b.status = $%d`, argIdx)
-		args = append(args, status)
-		argIdx++
-	}
-
 	var totalCount int
-	err := r.db.QueryRow(queryCtx, `SELECT COUNT(*) `+baseQuery, args...).Scan(&totalCount)
+	err := r.db.QueryRow(queryCtx, `
+		SELECT COUNT(*)
+		FROM bookings
+		WHERE ($1 = '' OR status = $1)
+	`, status).Scan(&totalCount)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count bookings: %w", err)
 	}
 
-	selectQuery := fmt.Sprintf(
-		`SELECT b.id, b.customer_id, cu.phone, b.helper_id, hu.phone,
-		        sc.name, b.status, b.price_cents, b.discount_cents, b.created_at
-		 %s ORDER BY b.created_at DESC LIMIT $%d OFFSET $%d`,
-		baseQuery, argIdx, argIdx+1,
-	)
-	args = append(args, limit, offset)
-
-	rows, err := r.db.Query(queryCtx, selectQuery, args...)
+	rows, err := r.db.Query(queryCtx, `
+		WITH page AS (
+			SELECT id
+			FROM bookings
+			WHERE ($1 = '' OR status = $1)
+			ORDER BY created_at DESC
+			LIMIT $2 OFFSET $3
+		)
+		SELECT
+			b.id, b.customer_id, cu.phone, b.helper_id, hu.phone,
+			sc.name, b.status, b.price_cents, b.discount_cents, b.created_at
+		FROM page p
+		JOIN bookings b ON b.id = p.id
+		JOIN users cu ON b.customer_id = cu.id
+		LEFT JOIN users hu ON b.helper_id = hu.id
+		JOIN service_categories sc ON b.service_category_id = sc.id
+		ORDER BY b.created_at DESC
+	`, status, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query bookings: %w", err)
 	}
@@ -619,4 +618,23 @@ func (r *Repository) CancelBooking(ctx context.Context, bookingID string) error 
 		return fmt.Errorf("booking not found or already in terminal state")
 	}
 	return nil
+}
+
+// GetBookingStatus returns the current status for a booking.
+func (r *Repository) GetBookingStatus(ctx context.Context, bookingID string) (string, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var status string
+	if err := r.db.QueryRow(queryCtx,
+		`SELECT status FROM bookings WHERE id = $1`,
+		bookingID,
+	).Scan(&status); err != nil {
+		if err == pgx.ErrNoRows {
+			return "", fmt.Errorf("booking not found")
+		}
+		return "", fmt.Errorf("failed to get booking status: %w", err)
+	}
+
+	return status, nil
 }

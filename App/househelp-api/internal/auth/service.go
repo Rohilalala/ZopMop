@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -16,8 +17,18 @@ import (
 const (
 	otpExpiry         = 10 * time.Minute
 	otpLockDuration   = 15 * time.Minute
+	otpSendCooldown   = 60 * time.Second
 	maxFailedAttempts = 5
 )
+
+// ErrOTPCooldown is returned when a phone has requested an OTP too recently.
+type ErrOTPCooldown struct {
+	RetryAfter time.Duration
+}
+
+func (e *ErrOTPCooldown) Error() string {
+	return fmt.Sprintf("please wait %d seconds before requesting another OTP", int(e.RetryAfter.Seconds()))
+}
 
 // Custom error types for type-safe error handling.
 type ErrOTPLocked struct{}
@@ -32,23 +43,42 @@ func (e *ErrAccountSuspended) Error() string {
 	return "account suspended"
 }
 
+var (
+	ErrInvalidOTP           = errors.New("invalid OTP")
+	ErrOTPExpiredOrNotFound = errors.New("OTP expired or not found")
+)
+
 // Service handles auth business logic.
 type Service struct {
-	repo      *Repository
-	rdb       *redis.Client
-	jwtSecret string
-	jwtExpiry time.Duration
+	repo          *Repository
+	rdb           *redis.Client
+	jwtSecret     string
+	jwtSecretID   string
+	jwtExpiry     time.Duration
+	devOTPEnabled bool
 }
 
 // NewService creates a new auth service.
-func NewService(repo *Repository, rdb *redis.Client, jwtSecret string, jwtExpiryHours int) *Service {
+// devOTPEnabled controls whether SendOTP returns the plaintext OTP alongside the
+// success response. This MUST be false in production — it exists only so local
+// dev/integration tests can complete the phone flow without a real SMS gateway.
+func NewService(repo *Repository, rdb *redis.Client, jwtSecret, jwtSecretID string, jwtExpiryHours int, devOTPEnabled bool) *Service {
 	return &Service{
-		repo:      repo,
-		rdb:       rdb,
-		jwtSecret: jwtSecret,
-		jwtExpiry: time.Duration(jwtExpiryHours) * time.Hour,
+		repo:          repo,
+		rdb:           rdb,
+		jwtSecret:     jwtSecret,
+		jwtSecretID:   jwtSecretID,
+		jwtExpiry:     time.Duration(jwtExpiryHours) * time.Hour,
+		devOTPEnabled: devOTPEnabled,
 	}
 }
+
+// DevOTPEnabled reports whether the service may echo OTPs in responses.
+func (s *Service) DevOTPEnabled() bool { return s.devOTPEnabled }
+
+// JWTExpiry returns the JWT token TTL. Exposed so the auth handler can set a
+// matching Max-Age on the httpOnly auth cookie.
+func (s *Service) JWTExpiry() time.Duration { return s.jwtExpiry }
 
 // SendOTP generates a cryptographically secure 6-digit OTP,
 // stores it in Redis with 10-minute expiry.
@@ -60,6 +90,24 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (string, error) {
 	}
 	if locked > 0 {
 		return "", &ErrOTPLocked{}
+	}
+
+	// Per-phone send cooldown: SetNX creates the sentinel only if absent, so
+	// any caller (any IP) asking for an OTP for this phone within the cooldown
+	// window is rejected with a Retry-After hint. This protects against SMS
+	// spam / toll-fraud targeting a single phone even when the global IP
+	// limiter (SensitivePublicRateLimit) allows the request.
+	cooldownKey := fmt.Sprintf("otp:cooldown:%s", phone)
+	ok, err := s.rdb.SetNX(ctx, cooldownKey, "1", otpSendCooldown).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to set OTP cooldown: %w", err)
+	}
+	if !ok {
+		ttl, ttlErr := s.rdb.TTL(ctx, cooldownKey).Result()
+		if ttlErr != nil || ttl <= 0 {
+			ttl = otpSendCooldown
+		}
+		return "", &ErrOTPCooldown{RetryAfter: ttl}
 	}
 
 	otp, err := generateSecureOTP()
@@ -77,7 +125,14 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (string, error) {
 		log.Warn().Err(err).Str("phone", phone).Msg("failed to reset OTP failure counter")
 	}
 
+	// Never log the OTP value itself — logs aggregate to shared systems.
 	log.Info().Str("phone", phone).Msg("OTP generated and stored")
+
+	// Only expose the plaintext OTP to the caller in dev mode. In production
+	// the SMS gateway is the sole delivery channel.
+	if !s.devOTPEnabled {
+		return "", nil
+	}
 	return otp, nil
 }
 
@@ -96,7 +151,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*LoginResp
 	storedOTP, err := s.rdb.Get(ctx, otpKey).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, fmt.Errorf("OTP expired or not found")
+			return nil, ErrOTPExpiredOrNotFound
 		}
 		return nil, fmt.Errorf("failed to retrieve OTP: %w", err)
 	}
@@ -117,7 +172,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*LoginResp
 			log.Warn().Str("phone", phone).Msg("phone locked due to too many failed OTP attempts")
 			return nil, &ErrOTPLocked{}
 		}
-		return nil, fmt.Errorf("invalid OTP")
+		return nil, ErrInvalidOTP
 	}
 
 	if delErr := s.rdb.Del(ctx, otpKey).Err(); delErr != nil {
@@ -216,6 +271,13 @@ func (s *Service) UpdateFCMToken(ctx context.Context, userID, token string) erro
 	return s.repo.UpdateFCMToken(ctx, userID, token)
 }
 
+// DeleteAccount soft-deletes the user account. Surfaced as DELETE /me from
+// the client to satisfy App Store Guideline 5.1.1(v). Reason is optional and
+// comes straight from the user-provided form; the caller should cap its size.
+func (s *Service) DeleteAccount(ctx context.Context, userID, reason string) error {
+	return s.repo.SoftDeleteUser(ctx, userID, reason)
+}
+
 // generateJWT creates a signed JWT token with userID, role, issuer, iat, exp claims.
 func (s *Service) generateJWT(user *User) (string, error) {
 	now := time.Now()
@@ -230,6 +292,9 @@ func (s *Service) generateJWT(user *User) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	if s.jwtSecretID != "" {
+		token.Header["kid"] = s.jwtSecretID
+	}
 	signedToken, err := token.SignedString([]byte(s.jwtSecret))
 	if err != nil {
 		return "", fmt.Errorf("failed to sign JWT: %w", err)

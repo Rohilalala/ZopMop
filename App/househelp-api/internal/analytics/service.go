@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -18,6 +19,8 @@ type Service struct {
 	writer   eventWriter
 	dispatch func(func())
 }
+
+var ErrUnknownClientEvent = errors.New("unknown client event")
 
 // NewService creates a new analytics service.
 func NewService(db *pgxpool.Pool) *Service {
@@ -84,7 +87,7 @@ func (s *Service) TrackCanonicalEvent(ctx context.Context, req *CanonicalEventRe
 		return err
 	}
 	if !AllowedClientEvents[req.EventName] {
-		return fmt.Errorf("unknown event: %s", req.EventName)
+		return ErrUnknownClientEvent
 	}
 	if strings.TrimSpace(authenticatedUserID) == "" {
 		return fmt.Errorf("authenticated user is required")

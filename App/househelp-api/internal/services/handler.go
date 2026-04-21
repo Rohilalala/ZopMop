@@ -3,6 +3,7 @@ package services
 import (
 	"strings"
 
+	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -47,6 +48,9 @@ func (h *Handler) List(c *fiber.Ctx) error {
 // GetDetails handles GET /services/:id/details.
 func (h *Handler) GetDetails(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 	details, err := h.svc.GetDetails(c.Context(), serviceID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -61,6 +65,9 @@ func (h *Handler) GetDetails(c *fiber.Ctx) error {
 // GetAddons handles GET /services/:id/addons.
 func (h *Handler) GetAddons(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 	addons, err := h.svc.GetAddons(c.Context(), serviceID)
 	if err != nil {
 		log.Error().Err(err).Str("service_id", serviceID).Msg("failed to get service addons")
@@ -84,6 +91,9 @@ func (h *Handler) ListAll(c *fiber.Ctx) error {
 // Update handles PATCH /admin/services/:id — partial update of a service.
 func (h *Handler) Update(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 	var req AdminUpdateServiceRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
@@ -130,6 +140,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // Delete handles DELETE /admin/services/:id — permanently remove a service category.
 func (h *Handler) Delete(c *fiber.Ctx) error {
 	serviceID := c.Params("id")
+	if !validator.IsUUID(serviceID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
+	}
 	if err := h.svc.Delete(c.Context(), serviceID); err != nil {
 		log.Error().Err(err).Str("service_id", serviceID).Msg("failed to delete service")
 		if err.Error() == "service not found" {

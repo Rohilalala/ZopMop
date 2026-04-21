@@ -16,6 +16,11 @@ import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
 import ProActiveScreen from '../screens/pro/ProActiveScreen';
+import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
+import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
+import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
+import RoomiesWelcomeScreen from '../screens/main/RoomiesWelcomeScreen';
+import ManageHouseholdScreen from '../screens/main/ManageHouseholdScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -67,6 +72,11 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
+          name="Payment"
+          getComponent={() => require('../screens/main/PaymentScreen').default}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
           name="Offers"
           component={OffersScreen}
           options={{ animation: 'slide_from_right' }}
@@ -100,6 +110,31 @@ export default function MainNavigator() {
           name="ProActive"
           component={ProActiveScreen}
           options={{ animation: 'fade', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="RoomiesSetup"
+          component={RoomiesSetupScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="RoomiesCodeShare"
+          component={RoomiesCodeShareScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="RoomiesJoin"
+          component={RoomiesJoinScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="RoomiesWelcome"
+          component={RoomiesWelcomeScreen}
+          options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="ManageHousehold"
+          component={ManageHouseholdScreen}
+          options={{ animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
     </CartProvider>

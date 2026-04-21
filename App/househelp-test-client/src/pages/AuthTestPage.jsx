@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { sendOTP, verifyOTP } from '../api/auth.api';
-import client from '../api/client';
+import client, { API_ORIGIN } from '../api/client';
 import ResponseViewer from '../components/ResponseViewer';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -31,7 +31,7 @@ export default function AuthTestPage() {
     let promises = [];
     for (let i = 0; i < 35; i++) {
       promises.push(
-        client.get('http://localhost:8080/health', { baseURL: '' }).then(res => res.status).catch(err => err.response?.status || 500)
+        client.get('/health', { baseURL: API_ORIGIN }).then(res => res.status).catch(err => err.response?.status || 500)
       );
     }
     

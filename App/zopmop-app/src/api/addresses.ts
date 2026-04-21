@@ -64,5 +64,8 @@ export async function deleteAddress(token: string, id: string): Promise<void> {
     method: 'DELETE',
     headers: authHeaders(token),
   });
-  if (!res.ok && res.status !== 404) throw new Error('Failed to delete address');
+  if (!res.ok && res.status !== 404) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error ?? 'Failed to delete address');
+  }
 }

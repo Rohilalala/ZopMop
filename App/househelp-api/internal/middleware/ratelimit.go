@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -15,16 +17,83 @@ import (
 type RateLimitConfig struct {
 	MaxRequests int
 	Window      time.Duration
+	FailureMode string
 }
 
 var (
 	// PublicRateLimit: 30 req/min by IP.
-	PublicRateLimit = RateLimitConfig{MaxRequests: 30, Window: time.Minute}
+	PublicRateLimit = RateLimitConfig{MaxRequests: 30, Window: time.Minute, FailureMode: "local-fallback"}
+	// SensitivePublicRateLimit: 20 req/min by IP, fail-closed (e.g. OTP/auth endpoints).
+	SensitivePublicRateLimit = RateLimitConfig{MaxRequests: 20, Window: time.Minute, FailureMode: "fail-closed"}
 	// AuthRateLimit: 100 req/min by userID.
-	AuthRateLimit = RateLimitConfig{MaxRequests: 100, Window: time.Minute}
+	AuthRateLimit = RateLimitConfig{MaxRequests: 100, Window: time.Minute, FailureMode: "fail-closed"}
 	// AdminRateLimit: 200 req/min by userID.
-	AdminRateLimit = RateLimitConfig{MaxRequests: 200, Window: time.Minute}
+	AdminRateLimit = RateLimitConfig{MaxRequests: 200, Window: time.Minute, FailureMode: "fail-closed"}
 )
+
+var (
+	localLimiterMu      sync.Mutex
+	localLimiterBuckets = map[string]*localCounter{}
+
+	rateLimiterRedisFailures       atomic.Int64
+	rateLimiterFailClosedRejects   atomic.Int64
+	rateLimiterLocalFallbackAllows atomic.Int64
+	rateLimiterLocalFallbackReject atomic.Int64
+)
+
+type localCounter struct {
+	windowStart int64
+	count       int
+}
+
+func allowWithLocalFallback(key string, config RateLimitConfig, now time.Time) (allowed bool, remaining int, retryAfter int) {
+	windowSeconds := int(config.Window.Seconds())
+	if windowSeconds <= 0 {
+		windowSeconds = 60
+	}
+	windowStart := now.Unix() / int64(windowSeconds)
+
+	localLimiterMu.Lock()
+	defer localLimiterMu.Unlock()
+
+	// Opportunistic cleanup to keep memory bounded.
+	if len(localLimiterBuckets) > 10000 {
+		cutoff := windowStart - 2
+		for k, v := range localLimiterBuckets {
+			if v.windowStart < cutoff {
+				delete(localLimiterBuckets, k)
+			}
+		}
+	}
+
+	bucket, ok := localLimiterBuckets[key]
+	if !ok || bucket.windowStart != windowStart {
+		bucket = &localCounter{windowStart: windowStart, count: 0}
+		localLimiterBuckets[key] = bucket
+	}
+
+	if bucket.count >= config.MaxRequests {
+		retryAfter = windowSeconds - (int(now.Unix()) % windowSeconds)
+		if retryAfter <= 0 {
+			retryAfter = windowSeconds
+		}
+		return false, 0, retryAfter
+	}
+
+	bucket.count++
+	remaining = config.MaxRequests - bucket.count
+	return true, remaining, 0
+}
+
+// RateLimiterMetrics exposes limiter health counters for observability endpoints.
+func RateLimiterMetrics() map[string]int64 {
+	return map[string]int64{
+		"redis_failures_total":         rateLimiterRedisFailures.Load(),
+		"fail_closed_rejections_total": rateLimiterFailClosedRejects.Load(),
+		"local_fallback_allows_total":  rateLimiterLocalFallbackAllows.Load(),
+		"local_fallback_rejects_total": rateLimiterLocalFallbackReject.Load(),
+	}
+}
 
 // RateLimiter returns a Fiber middleware that enforces a sliding window
 // rate limit using Redis. keyPrefix is used to distinguish limit buckets.
@@ -78,9 +147,38 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig, keyType string) fibe
 
 		result, err := script.Run(ctx, rdb, []string{key}, nowMilli, windowStart, config.MaxRequests, int(config.Window.Seconds())).Slice()
 		if err != nil {
+			rateLimiterRedisFailures.Add(1)
 			log.Error().Err(err).Str("key", key).Msg("rate limiter script failed")
-			// Fail open: allow the request but log the error.
-			return c.Next()
+
+			switch config.FailureMode {
+			case "fail-closed":
+				rateLimiterFailClosedRejects.Add(1)
+				c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
+				c.Set("X-RateLimit-Remaining", "0")
+				c.Set("Retry-After", strconv.Itoa(int(config.Window.Seconds())))
+				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+					"error":       "rate limiter unavailable",
+					"retry_after": int(config.Window.Seconds()),
+				})
+			case "local-fallback":
+				allowed, remaining, retryAfter := allowWithLocalFallback(key, config, now)
+				c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
+				c.Set("X-RateLimit-Remaining", strconv.Itoa(max(0, remaining)))
+				c.Set("X-RateLimit-Policy", "local-fallback")
+				if !allowed {
+					rateLimiterLocalFallbackReject.Add(1)
+					c.Set("Retry-After", strconv.Itoa(retryAfter))
+					return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+						"error":       "rate limit exceeded",
+						"retry_after": retryAfter,
+					})
+				}
+				rateLimiterLocalFallbackAllows.Add(1)
+				return c.Next()
+			default:
+				// Legacy fallback behavior.
+				return c.Next()
+			}
 		}
 
 		allowed := result[0].(int64)

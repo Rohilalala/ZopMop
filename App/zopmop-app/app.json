@@ -17,6 +17,8 @@
       "bundleIdentifier": "com.zopmop.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
+        "CFBundleDisplayName": "ZopMop",
+        "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -47,7 +49,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "ZopMop needs your location to check if we're available in your area."
+          "locationWhenInUsePermission": "ZopMop uses your location to show available services in your area and dispatch the nearest helper to your booking."
         }
       ],
       "@react-native-firebase/app",

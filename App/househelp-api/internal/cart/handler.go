@@ -80,6 +80,9 @@ func (h *Handler) RemoveItem(c *fiber.Ctx) error {
 	if itemID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "item id required"})
 	}
+	if !validator.IsUUID(itemID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid item id"})
+	}
 
 	cart, err := h.service.RemoveItem(c.Context(), userID, itemID)
 	if err != nil {

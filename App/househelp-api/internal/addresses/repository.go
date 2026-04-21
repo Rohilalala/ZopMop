@@ -2,12 +2,20 @@ package addresses
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrAddressInUse is returned when deleting an address that is referenced by bookings.
+var ErrAddressInUse = errors.New("address is used by existing bookings and cannot be deleted")
+
+// ErrAddressHasGroup is returned when deleting an address that has an active household group.
+var ErrAddressHasGroup = errors.New("address has an active household group — dissolve the group before deleting this address")
 
 // Repository handles database operations for user addresses.
 type Repository struct {
@@ -64,6 +72,18 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateAddres
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	// Enforce one Home / one Work per user: demote any existing same-tag address to Other.
+	if req.Tag == "Home" || req.Tag == "Work" {
+		_, err := r.db.Exec(queryCtx,
+			`UPDATE user_addresses SET tag = 'Other', updated_at = now()
+			 WHERE user_id = $1 AND tag = $2`,
+			userID, req.Tag,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to demote existing %s address: %w", req.Tag, err)
+		}
+	}
+
 	a := &Address{}
 	err := r.db.QueryRow(queryCtx,
 		`INSERT INTO user_addresses
@@ -90,6 +110,18 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateAddres
 func (r *Repository) Update(ctx context.Context, userID, addressID string, req UpdateAddressRequest) (*Address, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	// Enforce one Home / one Work per user: demote conflicting address (excluding this one).
+	if req.Tag == "Home" || req.Tag == "Work" {
+		_, err := r.db.Exec(queryCtx,
+			`UPDATE user_addresses SET tag = 'Other', updated_at = now()
+			 WHERE user_id = $1 AND tag = $2 AND id != $3`,
+			userID, req.Tag, addressID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to demote existing %s address: %w", req.Tag, err)
+		}
+	}
 
 	a := &Address{}
 	err := r.db.QueryRow(queryCtx,
@@ -133,15 +165,49 @@ func (r *Repository) Delete(ctx context.Context, userID, addressID string) error
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	tag, err := r.db.Exec(queryCtx,
+	tx, err := r.db.Begin(queryCtx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	// Block deletion if a household group is attached to this address.
+	var groupCount int
+	if err := tx.QueryRow(queryCtx,
+		`SELECT COUNT(*) FROM address_groups WHERE address_id = $1`,
+		addressID,
+	).Scan(&groupCount); err != nil {
+		return fmt.Errorf("failed to check for household group: %w", err)
+	}
+	if groupCount > 0 {
+		return ErrAddressHasGroup
+	}
+
+	// Nullify any booking references so historical records are preserved.
+	if _, err := tx.Exec(queryCtx,
+		`UPDATE bookings SET address_id = NULL WHERE address_id = $1`,
+		addressID,
+	); err != nil {
+		return fmt.Errorf("failed to nullify booking references: %w", err)
+	}
+
+	tag, err := tx.Exec(queryCtx,
 		`DELETE FROM user_addresses WHERE id = $1 AND user_id = $2`,
 		addressID, userID,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return ErrAddressInUse
+		}
 		return fmt.Errorf("failed to delete address: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit address deletion: %w", err)
 	}
 	return nil
 }

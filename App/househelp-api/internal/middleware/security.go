@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,25 +12,63 @@ import (
 )
 
 // SecurityHeaders applies Helmet security headers to every response.
-func SecurityHeaders() fiber.Handler {
-	return helmet.New()
+//
+// In addition to Helmet defaults (X-Frame-Options, X-Content-Type-Options,
+// Referrer-Policy, etc.) we set:
+//   - Strict-Transport-Security: force HTTPS for 1 year incl. subdomains.
+//     Only applied in production — local dev runs over plain HTTP.
+//   - Content-Security-Policy: JSON APIs render no HTML, so the strictest
+//     default-src 'none' policy is safe and prevents any accidental HTML
+//     error page from loading attacker-controlled scripts/frames.
+//   - X-Permitted-Cross-Domain-Policies: none.
+func SecurityHeaders(isProduction bool) fiber.Handler {
+	cfg := helmet.Config{
+		ContentSecurityPolicy:     "default-src 'none'; frame-ancestors 'none'",
+		XFrameOptions:             "DENY",
+		ContentTypeNosniff:        "nosniff",
+		ReferrerPolicy:            "no-referrer",
+		CrossOriginOpenerPolicy:   "same-origin",
+		CrossOriginResourcePolicy: "same-site",
+	}
+	if isProduction {
+		cfg.HSTSMaxAge = 31536000
+		cfg.HSTSExcludeSubdomains = false
+		cfg.HSTSPreloadEnabled = true
+	}
+	return helmet.New(cfg)
 }
 
 // CORS configures Cross-Origin Resource Sharing locked to specific origins.
+// An empty allowlist is treated as "no origins permitted" — Fiber's default
+// for an empty AllowOrigins is "*", which is unsafe when ALLOWED_ORIGINS is
+// accidentally unset. We emit a warning and lock the policy to a sentinel
+// origin no client will actually use, so cross-origin requests are rejected
+// until the operator configures the list explicitly.
 func CORS(allowedOrigins []string) fiber.Handler {
-	originsStr := ""
-	for i, origin := range allowedOrigins {
-		if i > 0 {
-			originsStr += ","
+	// Filter empty entries so "a, , b" env values don't silently widen policy.
+	filtered := make([]string, 0, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		if o := strings.TrimSpace(origin); o != "" {
+			filtered = append(filtered, o)
 		}
-		originsStr += origin
+	}
+
+	originsStr := strings.Join(filtered, ",")
+	if originsStr == "" {
+		log.Warn().Msg(
+			"ALLOWED_ORIGINS is empty — locking CORS to reject all cross-origin requests. " +
+				"Set ALLOWED_ORIGINS to the comma-separated list of trusted origins.",
+		)
+		// Sentinel that no real browser origin will ever match.
+		originsStr = "https://cors-disabled.invalid"
 	}
 
 	return cors.New(cors.Config{
 		AllowOrigins:     originsStr,
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Request-ID",
-		AllowCredentials: false,
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Request-ID,X-Csrf-Token",
+		ExposeHeaders:    "X-Request-ID",
+		AllowCredentials: true,
 		MaxAge:           3600,
 	})
 }

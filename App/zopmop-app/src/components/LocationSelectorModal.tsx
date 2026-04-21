@@ -22,6 +22,7 @@ import type { Region } from 'react-native-maps';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../theme';
 import { useAuth } from '../context/AuthContext';
 import { listAddresses, createAddress, deleteAddress, type ApiAddress } from '../api/addresses';
+import { searchPlaces, type PlaceResult } from '../api/places';
 import EditAddressModal from './EditAddressModal';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -76,11 +77,7 @@ export interface SavedAddress {
   lon: number;
 }
 
-interface GeocodedResult {
-  name: string;
-  lat: number;
-  lon: number;
-}
+type GeocodedResult = PlaceResult;
 
 interface SelectedPlace {
   name: string;
@@ -91,7 +88,7 @@ interface SelectedPlace {
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onLocationSelect: (name: string, lat: number, lon: number) => void;
+  onLocationSelect: (name: string, lat: number, lon: number, addressId?: string) => void;
 }
 
 export default function LocationSelectorModal({ visible, onClose, onLocationSelect }: Props) {
@@ -210,29 +207,19 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
     debounceRef.current = setTimeout(() => fetchSearch(text.trim()), 400);
   }
 
-  // Uses expo-location's on-device geocoder — no API key compiled into the bundle.
-  // iOS resolves via Apple Maps; Android uses the device's built-in geocoding service.
   async function fetchSearch(query: string) {
+    if (!token) { setSearchState('error'); return; }
     try {
-      const coords = await Location.geocodeAsync(query);
-      if (coords.length === 0) { setSearchState('no_results'); setResults([]); return; }
-      // Reverse-geocode the top result to produce a human-readable label.
-      const [top] = coords;
-      const [place] = await Location.reverseGeocodeAsync({
-        latitude: top.latitude,
-        longitude: top.longitude,
-      });
-      const label = place
-        ? [place.name, place.district ?? place.subregion ?? place.city].filter(Boolean).join(', ')
-        : query;
+      const items = await searchPlaces(token, query);
+      if (items.length === 0) { setSearchState('no_results'); setResults([]); return; }
       setSearchState('results');
-      setResults([{ name: label || query, lat: top.latitude, lon: top.longitude }]);
+      setResults(items);
     } catch { setSearchState('error'); }
   }
 
   async function handleResultSelect(result: GeocodedResult) {
-    setSelectedPlace({ name: result.name, lat: result.lat, lon: result.lon });
-    setSearchQuery(result.name);
+    setSelectedPlace({ name: result.description || result.main_text, lat: result.lat, lon: result.lon });
+    setSearchQuery(result.description || result.main_text);
     setSearchState('idle');
     setResults([]);
     Keyboard.dismiss();
@@ -260,7 +247,7 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
 
   function handleSavedSelect(addr: ApiAddress) {
     // Directly select the saved address and close
-    onLocationSelect(addr.full_address, addr.lat, addr.lon);
+    onLocationSelect(addr.full_address, addr.lat, addr.lon, addr.id);
     dismissModal();
   }
 
@@ -452,7 +439,10 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                           <><View style={s.resultPinHead} /><View style={s.resultPinTail} /></>
                         </View>
                         <View style={s.resultTextCol}>
-                          <Text style={s.resultPrimary} numberOfLines={2}>{result.name}</Text>
+                          <Text style={s.resultPrimary} numberOfLines={1}>{result.main_text}</Text>
+                          {result.secondary_text ? (
+                            <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 }} numberOfLines={1}>{result.secondary_text}</Text>
+                          ) : null}
                         </View>
                       </TouchableOpacity>
                       {idx < results.length - 1 && <View style={s.rowDivider} />}
@@ -700,7 +690,7 @@ function SwipeSavedRow({
         text: 'Delete', style: 'destructive', onPress: async () => {
           if (!token) return;
           try { await deleteAddress(token, addr.id); onDeleted(addr.id); }
-          catch { Alert.alert('Error', 'Could not delete. Try again.'); snap(0); }
+          catch (err: any) { Alert.alert('Cannot delete', err?.message ?? 'Could not delete. Try again.'); snap(0); }
         },
       },
     ]);

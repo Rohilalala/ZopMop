@@ -30,3 +30,18 @@ export async function updateFCMToken(token: string, fcmToken: string): Promise<v
   });
   if (!res.ok) throw new Error('Failed to update FCM token');
 }
+
+// Permanently deletes the caller's account. Required by App Store
+// Guideline 5.1.1(v). The server soft-deletes the row and returns 200; the
+// caller MUST clear local auth state after resolution.
+export async function deleteMe(token: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/me`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+    body: JSON.stringify({ reason: reason ?? '' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? 'Failed to delete account');
+  }
+}

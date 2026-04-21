@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "app-store-review": {
+      "source": "JustinPerea/app-store-review-skill",
+      "sourceType": "github",
+      "computedHash": "cd1caf72823dacedd650e52bf7d2863ac2856781309728abb0510bb1f9e38db4"
+    }
+  }
+}

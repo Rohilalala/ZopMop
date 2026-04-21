@@ -287,7 +287,29 @@ func (s *Service) Broadcast(ctx context.Context, title, body, target string) err
 	})
 }
 
-// CancelBooking force-cancels a booking (admin override, bypasses state machine).
-func (s *Service) CancelBooking(ctx context.Context, bookingID string) error {
-	return s.repo.CancelBooking(ctx, bookingID)
+// CancelBooking force-cancels a booking (admin override, bypasses state machine)
+// and writes an audit trail entry.
+func (s *Service) CancelBooking(ctx context.Context, adminID, bookingID, ipAddress string) error {
+	previousStatus, err := s.repo.GetBookingStatus(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.CancelBooking(ctx, bookingID); err != nil {
+		return err
+	}
+
+	oldVal, _ := json.Marshal(map[string]string{
+		"status": previousStatus,
+	})
+	newVal, _ := json.Marshal(map[string]string{
+		"status":       "cancelled",
+		"cancelled_by": "admin",
+	})
+
+	if err := s.repo.LogAdminAction(ctx, adminID, "cancel_booking_override", "booking", bookingID, oldVal, newVal, ipAddress); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to log admin booking cancel override")
+	}
+
+	return nil
 }

@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"github.com/adityarohilla/househelp-api/internal/middleware"
+	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog/log"
 )
@@ -15,8 +17,11 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-// RegisterRoutes mounts helper routes (all require JWT auth).
+// RegisterRoutes mounts helper routes (all require JWT auth + pro role).
+// Customer JWTs must not reach helper workflows (location broadcasts,
+// invite queues, online/offline toggle).
 func (h *Handler) RegisterRoutes(router fiber.Router) {
+	router.Use(middleware.RequireRole("pro"))
 	router.Get("/me/profile", h.GetProfile)
 	router.Get("/me/invites", h.GetInvites)
 	router.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
@@ -51,6 +56,9 @@ func (h *Handler) GetInvites(c *fiber.Ctx) error {
 func (h *Handler) DeclineInvite(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
 	bookingID := c.Params("bookingId")
+	if !validator.IsUUID(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
 	if err := h.service.DeclineInvite(c.Context(), helperID, bookingID); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to decline invite"})
 	}

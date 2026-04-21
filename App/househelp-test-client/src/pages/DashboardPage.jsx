@@ -5,7 +5,7 @@ import { getAnalyticsOverview, getOperationalMetrics } from '../api/analytics.ap
 import StatCard from '../components/StatCard';
 import Toaster from '../components/Toast';
 import { useToast } from '../hooks/useToast';
-import client from '../api/client';
+import client, { API_ORIGIN } from '../api/client';
 
 const fmt = (cents) => `₹${((cents || 0) / 100).toLocaleString('en-IN')}`;
 
@@ -40,7 +40,7 @@ export default function DashboardPage() {
 
     const checkHealth = async () => {
       try {
-        await client.get('/health', { baseURL: 'http://localhost:8080' });
+        await client.get('/health', { baseURL: API_ORIGIN });
         if (!cancelled) setHealth('ok');
       } catch {
         if (!cancelled) setHealth('error');
