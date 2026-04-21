@@ -27,6 +27,7 @@ const (
 	EventBookingFlowAddressSet = "booking_flow.address_set"
 	EventBookingFlowSlotPicked = "booking_flow.slot_picked"
 	EventBookingFlowDropped    = "booking_flow.dropped"
+	EventBookingRequested      = "booking_requested"
 )
 
 // AllowedClientEvents is the whitelist for mobile-ingested event names.
@@ -39,6 +40,7 @@ var AllowedClientEvents = map[string]bool{
 	EventBookingFlowAddressSet: true,
 	EventBookingFlowSlotPicked: true,
 	EventBookingFlowDropped:    true,
+	EventBookingRequested:      true,
 }
 
 // ── Request / response types ──────────────────────────────────────────────────

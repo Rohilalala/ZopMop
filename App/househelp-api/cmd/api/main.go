@@ -23,6 +23,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/reengagement"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
 	zonesmod "github.com/adityarohilla/househelp-api/internal/zones"
@@ -142,6 +143,13 @@ func main() {
 	analyticsSvc := analytics.NewService(dbPool)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 
+	// Re-engagement reminders.
+	reengagementRepo := reengagement.NewRepository(dbPool)
+	reengagementSvc := reengagement.NewService(reengagementRepo, notificationService, 30*time.Minute)
+	reengagementWorker := reengagement.NewWorker(reengagementSvc, 5*time.Minute)
+	reengagementWorker.Start()
+	defer reengagementWorker.Stop()
+
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
@@ -166,6 +174,7 @@ func main() {
 	// Cart.
 	cartRepo := cartmod.NewRepository(dbPool)
 	cartService := cartmod.NewService(cartRepo)
+	cartService.SetAnalytics(analyticsSvc)
 	cartHandler := cartmod.NewHandler(cartService)
 
 	// Helper (pro-side profile, invites, location, status).
