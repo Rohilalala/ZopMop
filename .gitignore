@@ -14,3 +14,9 @@
 .env
 .env.local
 .env.*.local
+
+# Git worktrees (local isolated branches)
+.worktrees/
+
+# Added by code-review-graph
+.code-review-graph/
