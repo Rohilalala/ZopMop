@@ -36,6 +36,7 @@ func (h *Handler) RegisterAdminRoutes(router fiber.Router) {
 // by the caller using the auth-scoped limiter.
 func (h *Handler) RegisterClientRoutes(router fiber.Router) {
 	router.Post("/analytics/events", h.TrackClientEvent)
+	router.Post("/events", h.TrackCanonicalEvent)
 }
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
@@ -125,6 +126,22 @@ func (h *Handler) TrackClientEvent(c *fiber.Ctx) error {
 
 	if err := h.svc.TrackClientEvent(c.Context(), &req, userID); err != nil {
 		// Unknown event name — return 400 so the client knows to fix its payload.
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"ok": true})
+}
+
+// TrackCanonicalEvent handles POST /api/v1/events.
+func (h *Handler) TrackCanonicalEvent(c *fiber.Ctx) error {
+	userID, _ := c.Locals("userID").(string)
+
+	var req CanonicalEventRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	if err := h.svc.TrackCanonicalEvent(c.Context(), &req, userID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
