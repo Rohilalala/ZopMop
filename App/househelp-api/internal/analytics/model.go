@@ -61,10 +61,10 @@ type EventLocation struct {
 type CanonicalEventRequest struct {
 	EventName    string                 `json:"event_name"`
 	EventID      string                 `json:"event_id"`
-	EventVersion string                 `json:"event_version"`
+	EventVersion int                    `json:"event_version"`
 	UserID       string                 `json:"user_id"`
 	HelperID     *string                `json:"helper_id"`
-	Timestamp    string                 `json:"timestamp"`
+	Timestamp    time.Time              `json:"timestamp"`
 	Location     EventLocation          `json:"location"`
 	Device       string                 `json:"device"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`

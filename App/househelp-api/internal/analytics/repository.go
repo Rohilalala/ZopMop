@@ -25,7 +25,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // TrackEvent inserts a single event row. Called from goroutines — never returns
 // an error to the caller; failures are logged and silently dropped so analytics
 // can never affect the main request path.
-func (r *Repository) TrackEvent(ctx context.Context, eventName, userID, bookingID string, props map[string]string) {
+func (r *Repository) TrackEvent(ctx context.Context, eventName, userID, bookingID string, props map[string]interface{}) {
 	var propsJSON []byte
 	if props == nil {
 		propsJSON = []byte("{}")

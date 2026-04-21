@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
 
 var allowedDevices = map[string]struct{}{
@@ -20,9 +19,7 @@ func ValidateCanonicalEvent(req *CanonicalEventRequest) error {
 	}
 	req.EventName = strings.TrimSpace(req.EventName)
 	req.EventID = strings.TrimSpace(req.EventID)
-	req.EventVersion = strings.TrimSpace(req.EventVersion)
 	req.UserID = strings.TrimSpace(req.UserID)
-	req.Timestamp = strings.TrimSpace(req.Timestamp)
 	req.Location.Area = strings.TrimSpace(req.Location.Area)
 
 	if req.EventName == "" {
@@ -31,17 +28,14 @@ func ValidateCanonicalEvent(req *CanonicalEventRequest) error {
 	if req.EventID == "" {
 		return errors.New("event_id is required")
 	}
-	if req.EventVersion == "" {
+	if req.EventVersion < 1 {
 		return errors.New("event_version is required")
 	}
 	if req.UserID == "" {
 		return errors.New("user_id is required")
 	}
-	if req.Timestamp == "" {
+	if req.Timestamp.IsZero() {
 		return errors.New("timestamp is required")
-	}
-	if _, err := time.Parse(time.RFC3339, req.Timestamp); err != nil {
-		return errors.New("timestamp must be an ISO-8601 value")
 	}
 	if req.Location.Lat == nil {
 		return errors.New("location.lat is required")

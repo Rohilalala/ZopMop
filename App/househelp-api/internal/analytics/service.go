@@ -2,8 +2,8 @@ package analytics
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,27 +14,42 @@ import (
 // All Track calls are fire-and-forget (run in goroutines) so they never
 // add latency to the main request path.
 type Service struct {
-	repo *Repository
+	repo     *Repository
+	writer   eventWriter
+	dispatch func(func())
 }
 
 // NewService creates a new analytics service.
 func NewService(db *pgxpool.Pool) *Service {
-	return &Service{repo: NewRepository(db)}
+	repo := NewRepository(db)
+	return &Service{
+		repo:   repo,
+		writer: repo,
+		dispatch: func(trackFn func()) {
+			go trackFn()
+		},
+	}
 }
 
 // ── Event tracking ────────────────────────────────────────────────────────────
+
+type eventWriter interface {
+	TrackEvent(ctx context.Context, eventName, userID, bookingID string, props map[string]interface{})
+}
 
 // Track records an analytics event asynchronously.
 // userID and bookingID may be empty strings (stored as NULL).
 // props may be nil.
 func (s *Service) Track(ctx context.Context, eventName, userID, bookingID string, props map[string]string) {
+	_ = ctx
 	if !s.canTrack() {
 		return
 	}
-	go func() {
+	trackProperties := toInterfaceMap(props)
+	s.dispatchTracking(func() {
 		trackCtx := context.Background()
-		s.repo.TrackEvent(trackCtx, eventName, userID, bookingID, props)
-	}()
+		s.writer.TrackEvent(trackCtx, eventName, userID, bookingID, trackProperties)
+	})
 }
 
 // TrackClientEvent validates and records an event submitted by the mobile app.
@@ -55,9 +70,10 @@ func (s *Service) TrackClientEvent(ctx context.Context, req *ClientEventRequest,
 	if !s.canTrack() {
 		return nil
 	}
-	go func() {
-		s.repo.TrackEvent(context.Background(), eventName, userID, req.BookingID, cleanProperties)
-	}()
+	trackProperties := toInterfaceMap(cleanProperties)
+	s.dispatchTracking(func() {
+		s.writer.TrackEvent(context.Background(), eventName, userID, req.BookingID, trackProperties)
+	})
 	return nil
 }
 
@@ -79,17 +95,19 @@ func (s *Service) TrackCanonicalEvent(ctx context.Context, req *CanonicalEventRe
 
 	cleanMetadata := StripSensitiveKeys(req.Metadata)
 	cleanProperties := StripSensitiveKeys(req.Properties)
+	locationLat := roundCoordinate(*req.Location.Lat)
+	locationLng := roundCoordinate(*req.Location.Lng)
 
-	trackProperties := map[string]string{
+	trackProperties := map[string]interface{}{
 		"event_id":      req.EventID,
 		"event_version": req.EventVersion,
-		"timestamp":     req.Timestamp,
+		"timestamp":     req.Timestamp.UTC(),
 		"device":        req.Device,
-		"location_lat":  fmt.Sprintf("%f", *req.Location.Lat),
-		"location_lng":  fmt.Sprintf("%f", *req.Location.Lng),
+		"location_lat":  locationLat,
+		"location_lng":  locationLng,
 		"location_area": req.Location.Area,
-		"metadata":      marshalJSONObject(cleanMetadata),
-		"properties":    marshalJSONObject(cleanProperties),
+		"metadata":      cleanMetadata,
+		"properties":    cleanProperties,
 	}
 	if req.HelperID != nil && strings.TrimSpace(*req.HelperID) != "" {
 		trackProperties["helper_id"] = strings.TrimSpace(*req.HelperID)
@@ -98,32 +116,44 @@ func (s *Service) TrackCanonicalEvent(ctx context.Context, req *CanonicalEventRe
 	bookingID := ""
 	if rawBookingID, ok := cleanProperties["booking_id"]; ok {
 		if id, ok := rawBookingID.(string); ok {
-			bookingID = id
+			bookingID = strings.TrimSpace(id)
 		}
 	}
 
 	if !s.canTrack() {
 		return nil
 	}
-	go func() {
-		s.repo.TrackEvent(context.Background(), req.EventName, req.UserID, bookingID, trackProperties)
-	}()
+	s.dispatchTracking(func() {
+		s.writer.TrackEvent(context.Background(), req.EventName, req.UserID, bookingID, trackProperties)
+	})
 	return nil
 }
 
 func (s *Service) canTrack() bool {
-	return s != nil && s.repo != nil && s.repo.db != nil
+	return s != nil && s.writer != nil
 }
 
-func marshalJSONObject(payload map[string]interface{}) string {
-	if len(payload) == 0 {
-		return "{}"
+func (s *Service) dispatchTracking(trackFn func()) {
+	if s.dispatch == nil {
+		go trackFn()
+		return
 	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "{}"
+	s.dispatch(trackFn)
+}
+
+func toInterfaceMap(props map[string]string) map[string]interface{} {
+	if len(props) == 0 {
+		return map[string]interface{}{}
 	}
-	return string(b)
+	trackProperties := make(map[string]interface{}, len(props))
+	for key, value := range props {
+		trackProperties[key] = value
+	}
+	return trackProperties
+}
+
+func roundCoordinate(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }
 
 // ── Reporting ─────────────────────────────────────────────────────────────────
