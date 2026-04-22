@@ -21,6 +21,7 @@ import { otpStore } from '../../utils/otpStore';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
+import LottieView from 'lottie-react-native';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'OTPVerification'>;
@@ -44,6 +45,14 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   const [resending, setResending] = useState(false);
 
   const inputRefs = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
+  const lookAwayRef = useRef<LottieView>(null);
+  const lookAwayTriggered = useRef(false);
+
+  function triggerLookAway() {
+    if (lookAwayTriggered.current) return;
+    lookAwayTriggered.current = true;
+    lookAwayRef.current?.play();
+  }
 
   // Countdown timer
   useEffect(() => {
@@ -104,10 +113,10 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         return;
       }
 
-      // Skip name screen for returning users who already have a name.
+      // Skip name entry for returning users; still show welcome greeting.
       const hasName = backendUser?.name && backendUser.name.trim().length > 0;
       if (hasName) {
-        navigation.replace('RoleSelection', { phone });
+        navigation.replace('Welcome', { phone, name: backendUser?.name });
       } else {
         navigation.replace('NameEntry', { phone });
       }
@@ -196,8 +205,18 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {/* Lookaway mascot lottie — plays once on first OTP focus, sticks at end frame */}
+        <View style={stylesLottie.wrap} pointerEvents="none">
+          <LottieView
+            ref={lookAwayRef}
+            source={require('../../../assets/animation/lookaway.lottie')}
+            autoPlay={false}
+            loop={false}
+            resizeMode="cover"
+            style={stylesLottie.lottie}
+          />
+        </View>
         <View style={styles.container}>
-
 
           {/* Header */}
           <View style={styles.header}>
@@ -229,6 +248,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
                   selectTextOnFocus
                   caretHidden
                   autoFocus={i === 0}
+                  onFocus={triggerLookAway}
                 />
               ))}
           </View>
@@ -287,6 +307,11 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
 
 const BOX_SIZE = 52;
 
+const stylesLottie = StyleSheet.create({
+  wrap: { ...StyleSheet.absoluteFillObject },
+  lottie: { flex: 1, width: '100%', height: '100%' },
+});
+
 function createStyles(c: typeof lightColors) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: c.background },
@@ -299,7 +324,7 @@ function createStyles(c: typeof lightColors) {
       width: 9, height: 9, borderLeftWidth: 2, borderBottomWidth: 2,
       borderColor: c.text, transform: [{ rotate: '45deg' }], marginLeft: 3, marginBottom: 1,
     },
-    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
+    header: { marginBottom: Spacing['3xl'], gap: Spacing.md, marginTop: 180 },
     title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5 },
     subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, lineHeight: FontSize.base * 1.6 },
     phoneHighlight: { fontFamily: FontFamily.semibold, color: c.text },

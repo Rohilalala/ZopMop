@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,13 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
+  Animated,
+  Easing,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
@@ -25,16 +27,8 @@ type Props = {
   route: RouteProp<AuthStackParamList, 'NameEntry'>;
 };
 
-/** Maximum name length accepted by the app — matches backend validation. */
 const NAME_MAX_LENGTH = 50;
 
-/**
- * Sanitizes a display name:
- * - Strips leading/trailing whitespace.
- * - Collapses multiple internal spaces to a single space.
- * - Removes characters outside printable Unicode letters, spaces, hyphens, and apostrophes.
- *   This provides defense-in-depth even if the backend validates independently.
- */
 function sanitizeName(raw: string): string {
   return raw
     .trim()
@@ -50,9 +44,51 @@ export default function NameEntryScreen({ navigation, route }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const inputRef = useRef<TextInput>(null);
+  const lottieRef = useRef<LottieView>(null);
+  const fade = useRef(new Animated.Value(0)).current;
+  const btnLift = useRef(new Animated.Value(0)).current;
 
   const sanitized = sanitizeName(name);
   const isValid = sanitized.length >= 2 && sanitized.length <= NAME_MAX_LENGTH;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(fade, {
+        toValue: 1,
+        duration: 500,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [fade]);
+
+  useEffect(() => {
+    const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEv, (e) => {
+      const kbH = e.endCoordinates.height;
+      Animated.timing(btnLift, {
+        toValue: -kbH + 32,
+        duration: Platform.OS === 'ios' ? e.duration ?? 250 : 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    const hideSub = Keyboard.addListener(hideEv, (e) => {
+      Animated.timing(btnLift, {
+        toValue: 0,
+        duration: Platform.OS === 'ios' ? e?.duration ?? 250 : 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [btnLift]);
 
   async function handleContinue() {
     if (!isValid) return;
@@ -62,42 +98,40 @@ export default function NameEntryScreen({ navigation, route }: Props) {
     try {
       const pending = pendingAuthStore.get();
       if (pending?.token) {
-        // Send the sanitized name — never the raw input.
         const updatedUser = await updateMe(pending.token, sanitized);
         pendingAuthStore.set(pending.token, updatedUser);
       }
-      navigation.replace('RoleSelection', { phone });
+      navigation.replace('Welcome', { phone, name: sanitized });
     } catch {
-      // Best-effort — continue to next screen even if name save fails.
-      navigation.replace('RoleSelection', { phone });
+      navigation.replace('Welcome', { phone, name: sanitized });
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoMarkText}>Z</Text>
-            </View>
-            <Text style={styles.title}>What's your name?</Text>
-            <Text style={styles.subtitle}>
-              We'll use this to personalise your experience.
-            </Text>
-          </View>
+    <View style={styles.root}>
+      {/* Lottie background — mascot only */}
+      <View style={styles.lottieWrap} pointerEvents="none">
+        <LottieView
+          ref={lottieRef}
+          source={require('../../../assets/animation/enter-name.lottie')}
+          autoPlay
+          loop={false}
+          resizeMode="cover"
+          style={styles.lottie}
+        />
+      </View>
 
-          {/* Input card */}
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <View style={styles.topSpacer} />
+
+        <Animated.View style={[styles.content, { opacity: fade }]}>
+          <Text style={styles.title}>What's your name?</Text>
+          <Text style={styles.subtitle}>
+            We'll use this to personalise your experience.
+          </Text>
+
           <TouchableOpacity
             style={[styles.inputCard, error ? styles.inputCardError : null]}
             onPress={() => inputRef.current?.focus()}
@@ -115,16 +149,20 @@ export default function NameEntryScreen({ navigation, route }: Props) {
               returnKeyType="done"
               onSubmitEditing={handleContinue}
               autoCapitalize="words"
-              autoFocus
             />
           </TouchableOpacity>
 
-          {/* Error */}
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        </ScrollView>
+        </Animated.View>
 
-        {/* CTA */}
-        <View style={styles.bottom}>
+        <View style={styles.bottomSpacer} />
+
+        <Animated.View
+          style={[
+            styles.bottom,
+            { opacity: fade, transform: [{ translateY: btnLift }] },
+          ]}
+        >
           <TouchableOpacity
             style={[
               styles.continueButton,
@@ -140,31 +178,79 @@ export default function NameEntryScreen({ navigation, route }: Props) {
               <Text style={styles.continueButtonText}>Continue</Text>
             )}
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </SafeAreaView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 function createStyles(c: typeof lightColors) {
   return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flexGrow: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['4xl'] },
-    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-    logoMark: { width: 44, height: 44, borderRadius: Radius.lg, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
-    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#FFFFFF' },
-    title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5, lineHeight: FontSize['3xl'] * 1.2 },
-    subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, lineHeight: FontSize.base * 1.6 },
+    root: { flex: 1, backgroundColor: c.background },
+    lottieWrap: { ...StyleSheet.absoluteFillObject },
+    lottie: { flex: 1, width: '100%', height: '100%' },
+    safe: { flex: 1 },
+    topSpacer: { flex: 1.2 },
+    content: { paddingHorizontal: 24 },
+    title: {
+      fontFamily: FontFamily.bold,
+      fontSize: 28,
+      lineHeight: 34,
+      letterSpacing: -0.5,
+      color: c.text,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontFamily: FontFamily.regular,
+      fontSize: 15,
+      lineHeight: 24,
+      color: c.textSecondary,
+      marginTop: 8,
+      textAlign: 'center',
+    },
     inputCard: {
-      flexDirection: 'row', alignItems: 'center', backgroundColor: c.white,
-      borderRadius: Radius.xl, borderWidth: 1.5, borderColor: c.border, height: 60, paddingHorizontal: Spacing.base, ...Shadow.sm,
+      marginTop: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      height: 60,
+      borderRadius: Radius.xl,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      backgroundColor: c.white,
+      paddingHorizontal: Spacing.base,
+      ...Shadow.sm,
     },
     inputCardError: { borderColor: c.danger },
-    nameInput: { flex: 1, fontFamily: FontFamily.semibold, fontSize: FontSize.xl, color: c.text, paddingVertical: 0 },
-    errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, marginTop: Spacing.sm, marginLeft: Spacing.xs },
-    bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'] },
-    continueButton: { height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    nameInput: {
+      flex: 1,
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.xl,
+      color: c.text,
+      paddingVertical: 0,
+    },
+    errorText: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.danger,
+      marginTop: Spacing.sm,
+      textAlign: 'center',
+    },
+    bottomSpacer: { flex: 1 },
+    bottom: { paddingHorizontal: 24, paddingBottom: 16 },
+    continueButton: {
+      height: 54,
+      backgroundColor: c.primary,
+      borderRadius: Radius.xl,
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...Shadow.md,
+    },
     continueButtonDisabled: { opacity: 0.45 },
-    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+    continueButtonText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
   });
 }

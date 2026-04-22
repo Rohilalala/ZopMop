@@ -1,6 +1,8 @@
 import type { ApiService } from '../api/services';
 
 export type AuthStackParamList = {
+  ZopIntro: undefined;
+  HiZop: undefined;
   Location: undefined;
   NotServiceable: { cityName: string };
   PhoneEntry: undefined;
@@ -12,6 +14,10 @@ export type AuthStackParamList = {
   // to disk via React Navigation state persistence.
   NameEntry: {
     phone: string;
+  };
+  Welcome: {
+    phone: string;
+    name?: string;
   };
   RoleSelection: {
     phone: string;

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,19 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   InputAccessoryView,
+  Animated,
+  Easing,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth, signInWithPhoneNumber } from '@react-native-firebase/auth';
+import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { FontFamily, FontSize } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { otpStore } from '../../utils/otpStore';
 
@@ -32,7 +34,52 @@ export default function PhoneEntryScreen({ navigation }: Props) {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [kbOpen, setKbOpen] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  const lottieRef = useRef<LottieView>(null);
+  const fade = useRef(new Animated.Value(0)).current;
+  const btnLift = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(fade, {
+        toValue: 1,
+        duration: 500,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [fade]);
+
+  useEffect(() => {
+    const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEv, (e) => {
+      setKbOpen(true);
+      const kbH = e.endCoordinates.height;
+      Animated.timing(btnLift, {
+        toValue: -kbH + 32,
+        duration: Platform.OS === 'ios' ? e.duration ?? 250 : 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    const hideSub = Keyboard.addListener(hideEv, (e) => {
+      setKbOpen(false);
+      Animated.timing(btnLift, {
+        toValue: 0,
+        duration: Platform.OS === 'ios' ? e?.duration ?? 250 : 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [btnLift]);
 
   const isValid = phone.replace(/\s/g, '').length === 10;
 
@@ -45,14 +92,10 @@ export default function PhoneEntryScreen({ navigation }: Props) {
 
     try {
       const firebaseAuth = getAuth();
-      // In dev builds, disable reCAPTCHA/app verification so Firebase sends the OTP
-      // directly without opening a webpage. Real OTPs are still sent and must be entered.
-      // This flag only skips the app attestation step — not the actual OTP check.
       if (__DEV__) {
         firebaseAuth.settings.appVerificationDisabledForTesting = true;
       }
-      // @ts-ignore — react-native-firebase's modular signInWithPhoneNumber does not
-      // require an ApplicationVerifier on native; the web SDK type definition is wrong here.
+      // @ts-ignore
       const confirmation = await signInWithPhoneNumber(firebaseAuth, fullPhone);
       otpStore.set(confirmation);
       navigation.navigate('OTPVerification', { phone: fullPhone });
@@ -61,15 +104,14 @@ export default function PhoneEntryScreen({ navigation }: Props) {
         err?.code === 'auth/invalid-phone-number'
           ? 'Invalid phone number. Please check and try again.'
           : err?.code === 'auth/too-many-requests'
-          ? 'Too many attempts. Please try again later.'
-          : `Failed to send verification code. (${err?.code ?? err?.message ?? 'unknown'})`;
+            ? 'Too many attempts. Please try again later.'
+            : `Failed to send verification code. (${err?.code ?? err?.message ?? 'unknown'})`;
       setError(msg);
     } finally {
       setLoading(false);
     }
   }
 
-  // Format as: 98765 43210
   function handleChange(text: string) {
     const digits = text.replace(/\D/g, '').slice(0, 10);
     const formatted =
@@ -79,43 +121,42 @@ export default function PhoneEntryScreen({ navigation }: Props) {
   }
 
   return (
-    <>
-    {Platform.OS === 'ios' && <InputAccessoryView nativeID="phone-input" />}
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoMarkText}>Z</Text>
-            </View>
-            <Text style={styles.title}>Enter your phone number</Text>
-            <Text style={styles.subtitle}>
-              We'll send a verification code to confirm it's you.
-            </Text>
-          </View>
+    <View style={styles.root}>
+      {/* Lottie background — plays once, holds on final frame */}
+      <View style={styles.lottie} pointerEvents="none">
+        <LottieView
+          ref={lottieRef}
+          source={require('../../../assets/animation/phone.lottie')}
+          autoPlay
+          loop={false}
+          resizeMode="cover"
+          style={styles.lottieInner}
+        />
+      </View>
 
-          {/* Input card */}
+      {Platform.OS === 'ios' && <InputAccessoryView nativeID="phone-input" />}
+
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {/* Top spacer — lottie mascot occupies this area */}
+        <View style={styles.topSpacer} />
+
+        {/* Content — title, subtitle, input, terms */}
+        <Animated.View style={[styles.content, { opacity: fade }]}>
+          <Text style={styles.title}>Enter your phone number</Text>
+          <Text style={styles.subtitle}>
+            We'll send a verification code to confirm it's you.
+          </Text>
+
           <TouchableOpacity
             style={[styles.inputCard, error ? styles.inputCardError : null]}
             onPress={() => inputRef.current?.focus()}
             activeOpacity={1}
           >
-            {/* Country code */}
             <View style={styles.countryCode}>
               <Text style={styles.flag}>🇮🇳</Text>
               <Text style={styles.countryCodeText}>{COUNTRY_CODE}</Text>
               <View style={styles.dividerVertical} />
             </View>
-
-            {/* Phone input */}
             <TextInput
               ref={inputRef}
               style={styles.phoneInput}
@@ -124,27 +165,33 @@ export default function PhoneEntryScreen({ navigation }: Props) {
               keyboardType="number-pad"
               placeholder="98765 43210"
               placeholderTextColor={c.textMuted}
-              maxLength={11} // 10 digits + 1 space
+              maxLength={11}
               returnKeyType="done"
               onSubmitEditing={handleSendOTP}
               inputAccessoryViewID="phone-input"
-              autoFocus
             />
           </TouchableOpacity>
 
-          {/* Error */}
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-          {/* Terms note */}
-          <Text style={styles.terms}>
+          {/* Terms — hidden via opacity while keyboard is up, keeps layout fixed */}
+          <Text style={[styles.terms, { opacity: kbOpen ? 0 : 1 }]}>
             By continuing, you agree to our{' '}
             <Text style={styles.termsLink}>Terms of Service</Text> and{' '}
             <Text style={styles.termsLink}>Privacy Policy</Text>.
           </Text>
-        </ScrollView>
+        </Animated.View>
 
-        {/* CTA */}
-        <View style={styles.bottom}>
+        {/* Spacer flex pushes button to bottom, keyboard avoiding lifts with focus */}
+        <View style={styles.bottomSpacer} />
+
+        {/* CTA button — lifts above keyboard (only button moves, form stays put) */}
+        <Animated.View
+          style={[
+            styles.bottom,
+            { opacity: fade, transform: [{ translateY: btnLift }] },
+          ]}
+        >
           <TouchableOpacity
             style={[
               styles.continueButton,
@@ -160,42 +207,107 @@ export default function PhoneEntryScreen({ navigation }: Props) {
               <Text style={styles.continueButtonText}>Send OTP</Text>
             )}
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </SafeAreaView>
-    </KeyboardAvoidingView>
-    </>
+    </View>
   );
 }
 
 function createStyles(c: typeof lightColors) {
   return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flexGrow: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['4xl'] },
-    header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-    logoMark: {
-      width: 44, height: 44, borderRadius: Radius.lg,
-      backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm,
+    root: { flex: 1, backgroundColor: c.background },
+    lottie: {
+      ...StyleSheet.absoluteFillObject,
     },
-    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#FFFFFF' },
-    title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5, lineHeight: FontSize['3xl'] * 1.2 },
-    subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, lineHeight: FontSize.base * 1.6 },
+    lottieInner: {
+      flex: 1,
+      width: '100%',
+      height: '100%',
+    },
+    kav: { flex: 1 },
+    safe: { flex: 1 },
+    topSpacer: {
+      // Pushes content down past the mascot area of the lottie
+      flex: 1.10,
+    },
+    content: {
+      paddingHorizontal: 24,
+    },
+    title: {
+      fontFamily: FontFamily.bold,
+      fontSize: 28,
+      lineHeight: 34,
+      letterSpacing: -0.5,
+      color: c.text,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontFamily: FontFamily.regular,
+      fontSize: 15,
+      lineHeight: 24,
+      color: c.textSecondary,
+      marginTop: 8,
+      textAlign: 'center',
+    },
     inputCard: {
-      flexDirection: 'row', alignItems: 'center', backgroundColor: c.white,
-      borderRadius: Radius.xl, borderWidth: 1.5, borderColor: c.border,
-      height: 60, paddingHorizontal: Spacing.base, gap: Spacing.sm, ...Shadow.sm,
+      marginTop: 24,
+      flexDirection: 'row',
+      alignItems: 'center',
+      height: 60,
+      borderRadius: 16,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      backgroundColor: c.white,
+      paddingHorizontal: 16,
+      gap: 8,
     },
     inputCardError: { borderColor: c.danger },
-    countryCode: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    countryCode: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     flag: { fontSize: 20 },
     countryCodeText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: c.text },
-    dividerVertical: { width: 1, height: 24, backgroundColor: c.border, marginLeft: Spacing.xs },
-    phoneInput: { flex: 1, fontFamily: FontFamily.semibold, fontSize: FontSize.xl, color: c.text, letterSpacing: 1, paddingVertical: 0 },
-    errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, marginTop: Spacing.sm, marginLeft: Spacing.xs },
-    terms: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, marginTop: Spacing.xl, lineHeight: FontSize.sm * 1.6 },
+    dividerVertical: { width: 1, height: 24, backgroundColor: c.border, marginLeft: 4 },
+    phoneInput: {
+      flex: 1,
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.xl,
+      color: c.text,
+      letterSpacing: 1,
+      paddingVertical: 0,
+    },
+    errorText: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.danger,
+      marginTop: 8,
+      textAlign: 'center',
+    },
+    terms: {
+      fontFamily: FontFamily.regular,
+      fontSize: 13,
+      color: c.textMuted,
+      marginTop: 20,
+      lineHeight: 21,
+      textAlign: 'center',
+    },
     termsLink: { color: c.primary, fontFamily: FontFamily.medium },
-    bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'] },
-    continueButton: { height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    bottomSpacer: { flex: 1 },
+    bottom: {
+      paddingHorizontal: 24,
+      paddingBottom: 16,
+    },
+    continueButton: {
+      height: 54,
+      backgroundColor: c.primary,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     continueButtonDisabled: { opacity: 0.45 },
-    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+    continueButtonText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
   });
 }
