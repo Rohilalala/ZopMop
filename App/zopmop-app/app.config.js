@@ -15,7 +15,6 @@ module.exports = ({ config }) => ({
     ...config.ios,
     config: {
       ...config.ios?.config,
-      // Uses the non-public env var so the Maps SDK key is NOT in the JS bundle.
       googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
     },
   },
@@ -23,10 +22,19 @@ module.exports = ({ config }) => ({
     ...config.android,
     config: {
       ...config.android?.config,
-      // Uses the non-public env var so the Maps SDK key is NOT in the JS bundle.
       googleMaps: {
         apiKey: process.env.GOOGLE_MAPS_API_KEY,
       },
     },
   },
+  plugins: [
+    ...(config.plugins ?? []),
+    [
+      'react-native-maps',
+      {
+        iosGoogleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+        androidGoogleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+      },
+    ],
+  ],
 });

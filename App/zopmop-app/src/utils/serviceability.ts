@@ -29,11 +29,10 @@ export const SERVICEABLE_CITIES: ServiceableCity[] = [
     name: 'vellore',
     displayName: 'Vellore, Tamil Nadu',
     bounds: {
-      // Bounding box around 12.9692 N, 79.1559 E
-      minLat: 12.85,
-      maxLat: 13.10,
-      minLng: 79.00,
-      maxLng: 79.30,
+      minLat: 12.50,
+      maxLat: 13.25,
+      minLng: 78.70,
+      maxLng: 79.50,
     },
   },
   // Add more cities here as you expand

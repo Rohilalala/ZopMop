@@ -35,7 +35,7 @@ func (r *Repository) ListMoppingDropoffCandidates(ctx context.Context, now time.
 			WHERE ae.event_name = 'service.viewed'
 			  AND ae.user_id IS NOT NULL
 			  AND LOWER(COALESCE(ae.properties->>'service_slug', '')) = 'mopping'
-			  AND ae.created_at <= $1 - $2::interval
+			  AND ae.created_at <= $1::timestamptz - $2::interval
 			ORDER BY ae.user_id, ae.created_at DESC
 		)
 		SELECT lv.user_id, lv.window_start, lv.service_name
@@ -83,7 +83,7 @@ func (r *Repository) ListCartAbandonmentCandidates(ctx context.Context, now time
 			FROM cart c
 			JOIN cart_items ci ON ci.cart_id = c.id
 			JOIN service_categories sc ON sc.id = ci.service_id
-			WHERE c.updated_at <= $1 - $2::interval
+			WHERE c.updated_at <= $1::timestamptz - $2::interval
 			GROUP BY c.user_id, c.updated_at
 		)
 		SELECT cs.user_id, cs.window_start, cs.cart_count, cs.service_name
