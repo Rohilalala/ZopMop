@@ -1,5 +1,7 @@
+import './global.css';
 import React, { useState, useCallback } from 'react';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import {
@@ -21,7 +23,8 @@ import { RoomiesProvider } from './src/context/RoomiesContext';
 SplashScreenNative.preventAutoHideAsync();
 
 function Navigation() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return null;
   return (
     <NavigationContainer>
       {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
@@ -67,18 +70,20 @@ export default function App() {
   if (!fontsLoaded) return null;
 
   return (
-    <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <RoomiesProvider>
-          <ThemedRoot
-            splashDone={splashDone}
-            setSplashDone={setSplashDone}
-            onLayout={onLayoutRootView}
-          />
-          </RoomiesProvider>
-        </AuthProvider>
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <RoomiesProvider>
+              <ThemedRoot
+                splashDone={splashDone}
+                setSplashDone={setSplashDone}
+                onLayout={onLayoutRootView}
+              />
+            </RoomiesProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/content"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	helpermod "github.com/adityarohilla/househelp-api/internal/helper"
+	"github.com/adityarohilla/househelp-api/internal/insights"
 	"github.com/adityarohilla/househelp-api/internal/location"
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
@@ -270,9 +271,17 @@ func main() {
 	zonesGroup := api.Group("/zones", publicLimiter)
 	zonesHandler.RegisterPublicRoutes(zonesGroup)
 
+	// Insights — public stats for the home pill (nearby pros, avg rating, ETA).
+	insightsRepo := insights.NewRepository(dbPool)
+	insightsService := insights.NewService(insightsRepo, rdb)
+	insightsHandler := insights.NewHandler(insightsService)
+	insightsGroup := api.Group("/insights", publicLimiter, dbBoundLimiter)
+	insightsHandler.RegisterPublicRoutes(insightsGroup)
+
 	// Profile routes (requires JWT).
 	meGroup := api.Group("/me", authMiddleware, authLimiter, dbBoundLimiter)
 	authHandler.RegisterMeRoutes(meGroup)
+	insightsHandler.RegisterMeRoutes(meGroup)
 
 	// Helper routes (requires JWT + pro role).
 	helpersGroup := api.Group("/helpers", authMiddleware, authLimiter, dbBoundLimiter)

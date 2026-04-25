@@ -1,5 +1,6 @@
-// Metro config — Expo defaults + svg-as-component via react-native-svg-transformer.
+// Metro config — Expo defaults + svg-as-component via react-native-svg-transformer + NativeWind.
 const { getDefaultConfig } = require('expo/metro-config');
+const { withNativeWind } = require('nativewind/metro');
 
 const config = getDefaultConfig(__dirname);
 
@@ -15,4 +16,4 @@ config.resolver = {
   sourceExts: [...resolver.sourceExts, 'svg'],
 };
 
-module.exports = config;
+module.exports = withNativeWind(config, { input: './global.css' });

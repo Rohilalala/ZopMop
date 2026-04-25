@@ -1,95 +1,138 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
-  TouchableOpacity,
-  StyleSheet,
   Dimensions,
   ActivityIndicator,
   Alert,
-  Animated,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as Location from 'expo-location';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
+
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors, Colors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
-import LocationSelectorModal from '../../components/LocationSelectorModal';
-import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
+import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
 import { listServices, type ApiService } from '../../api/services';
 import { checkServiceability } from '../../api/zones';
 import { listAddresses } from '../../api/addresses';
-import { useCart } from '../../context/CartContext';
-import { useAuth } from '../../context/AuthContext';
-import { useRoomies } from '../../context/RoomiesContext';
-import * as Location from 'expo-location';
+import { getNearbyStats, getMyUsuals, type NearbyStats } from '../../api/insights';
+import LocationSelectorModal from '../../components/LocationSelectorModal';
+import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import NotServiceableScreen from './NotServiceableScreen';
 
+import { ScreenContainer, PressFx } from '../../components/ui';
+import { HomeHeader } from '../../components/home/HomeHeader';
+import { HeroCarousel } from '../../components/home/HeroCarousel';
+import { GreetingHeroCard } from '../../components/home/GreetingHeroCard';
+import { PromoCard } from '../../components/home/PromoCard';
+import { LivePill } from '../../components/home/LivePill';
+import { UsualsRow } from '../../components/home/UsualsRow';
+import { HomeCartBar } from '../../components/home/HomeCartBar';
+import { HomeFooter } from '../../components/home/HomeFooter';
+import { HeroMascotOverlay } from '../../components/home/HeroMascotOverlay';
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const H_PAD = 16;
-const GRID_GAP = 10;
-const SERVICE_CARD_WIDTH = (SCREEN_WIDTH - H_PAD * 2 - GRID_GAP * 2) / 3;
 
-// ── Static fallback (shown while API loads or when DB has no seed data) ───────
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontSemi: TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontReg: TextStyle = { fontFamily: 'PlusJakartaSans_400Regular' };
 
-// Only the top-6 most ordered services are shown on the home screen.
-// The full catalog is available on AllServicesScreen.
-const STATIC_SERVICES: ApiService[] = [
-  { id: 'a1000000-0000-0000-0000-000000000001', emoji: '🧹', name: 'Sweeping &\nMopping', bg_color: '#EEF2FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 15300, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 1 },
-  { id: 'a1000000-0000-0000-0000-000000000002', emoji: '🚿', name: 'Bathroom\nCleaning',  bg_color: '#F0FDFA', base_price_cents: 2500, mrp_cents: 15000, rating: 4.9, review_count: 17800, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 2 },
-  { id: 'a1000000-0000-0000-0000-000000000003', emoji: '🍽️', name: 'Utensils',            bg_color: '#FFF7ED', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 13500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 3 },
-  { id: 'a1000000-0000-0000-0000-000000000004', emoji: '🧽', name: 'Dusting &\nWiping',  bg_color: '#F0FDF4', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  6500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 4 },
-  { id: 'a1000000-0000-0000-0000-000000000005', emoji: '🔪', name: 'Kitchen\nPrep',       bg_color: '#EFF6FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  3700, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 5 },
-  { id: 'a1000000-0000-0000-0000-000000000006', emoji: '👕', name: 'Laundry',             bg_color: '#FDF4FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count:  4500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 6 },
-];
-
-// Default coords: Gurugram (matches service_zones seed — always serviceable on first launch)
 const DEFAULT_LAT = 28.4357;
 const DEFAULT_LON = 77.0763;
 
+const STATIC_SERVICES: ApiService[] = [
+  { id: 'a1000000-0000-0000-0000-000000000001', emoji: '🧹', name: 'Sweeping & Mopping', bg_color: '#EEF2FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 15300, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 1 },
+  { id: 'a1000000-0000-0000-0000-000000000002', emoji: '🚿', name: 'Bathroom Cleaning', bg_color: '#F0FDFA', base_price_cents: 2500, mrp_cents: 15000, rating: 4.9, review_count: 17800, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 2 },
+  { id: 'a1000000-0000-0000-0000-000000000003', emoji: '🍽️', name: 'Utensils', bg_color: '#FFF7ED', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 13500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 3 },
+  { id: 'a1000000-0000-0000-0000-000000000004', emoji: '🧽', name: 'Dusting & Wiping', bg_color: '#F0FDF4', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 6500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 4 },
+  { id: 'a1000000-0000-0000-0000-000000000005', emoji: '🔪', name: 'Kitchen Prep', bg_color: '#EFF6FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 3700, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 5 },
+  { id: 'a1000000-0000-0000-0000-000000000006', emoji: '👕', name: 'Laundry', bg_color: '#FDF4FF', base_price_cents: 2500, mrp_cents: 12500, rating: 4.9, review_count: 4500, min_duration_minutes: 30, max_duration_minutes: 90, duration_step_minutes: 15, is_active: true, display_order: 6 },
+];
+
+// Hero carousel slot height
+const HERO_H = 280;
+
+// ── Screen ───────────────────────────────────────────────────────────────────
+
 export default function HomeScreen() {
-  const { token } = useAuth();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const { token, user } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationName, setLocationName] = useState('Detecting location…');
-  const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>(undefined);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>();
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
-  const [serviceable, setServiceable] = useState<boolean>(true);
+  const [usuals, setUsuals] = useState<ApiService[]>([]);
+  const [nearbyStats, setNearbyStats] = useState<NearbyStats | null>(null);
+  const [serviceable, setServiceable] = useState(true);
   const [loading, setLoading] = useState(true);
 
-  // Silently refresh services whenever the screen comes into focus.
+  // Parallax scrollY
+  const scrollY = useSharedValue(0);
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+  });
+
+  // Carousel page progress (0 = greeting slide; >0 → mascot slides out left)
+  const carouselProgress = useSharedValue(0);
+
+  // Hero translates upward at 1.5x scroll speed (parallax — top hides faster).
+  const heroParallax = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY: interpolate(scrollY.value, [0, 400], [0, -200], Extrapolation.CLAMP),
+      },
+    ],
+    opacity: interpolate(scrollY.value, [0, 220, 320], [1, 0.6, 0], Extrapolation.CLAMP),
+  }));
+
   useFocusEffect(
     useCallback(() => {
       listServices()
-        .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
+        .then((data) => {
+          if (data.length > 0) setServices(data);
+        })
         .catch(() => {});
-    }, [])
+    }, []),
   );
 
+  // Resolve location → check serviceable → fetch nearby stats + usuals
   useEffect(() => {
     listServices()
-      .then(data => { if (data.length > 0) setServices(data.slice(0, 6)); })
+      .then((data) => {
+        if (data.length > 0) setServices(data);
+      })
       .catch(() => {});
 
-    // Smart default: GPS → nearest saved address → Home-tagged address → fallback coords
     (async () => {
       let lat = DEFAULT_LAT;
       let lon = DEFAULT_LON;
       let name = 'Sector 51, Gurugram';
 
-      // Try GPS first
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
           lat = pos.coords.latitude;
           lon = pos.coords.longitude;
 
-          // Try to match nearest saved address (within ~1 km)
           if (token && token !== '__guest__') {
             try {
               const saved = await listAddresses(token);
@@ -97,33 +140,37 @@ export default function HomeScreen() {
               let minDist = Infinity;
               for (const addr of saved) {
                 const d = Math.hypot(addr.lat - lat, addr.lon - lon);
-                if (d < minDist) { minDist = d; nearest = addr; }
+                if (d < minDist) {
+                  minDist = d;
+                  nearest = addr;
+                }
               }
               if (nearest && minDist < 0.009) {
                 name = nearest.full_address.split(',').slice(0, 2).join(',').trim();
                 setSelectedAddressId(nearest.id);
               } else if (saved.length > 0) {
-                // Not near any saved address — use Home-tagged if exists, else first
-                const home = saved.find(a => a.tag === 'Home') ?? saved[0];
+                const home = saved.find((a) => a.tag === 'Home') ?? saved[0];
                 name = home.full_address.split(',').slice(0, 2).join(',').trim();
                 setSelectedAddressId(home.id);
               } else {
-                // No saved addresses — reverse-geocode current position using the
-                // on-device geocoder. No API key needed or compiled into the bundle.
                 try {
-                  const [place] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lon });
+                  const [place] = await Location.reverseGeocodeAsync({
+                    latitude: lat,
+                    longitude: lon,
+                  });
                   if (place) {
-                    const parts = [place.name, place.district ?? place.subregion ?? place.city].filter(Boolean);
+                    const parts = [
+                      place.name,
+                      place.district ?? place.subregion ?? place.city,
+                    ].filter(Boolean);
                     if (parts.length > 0) name = parts.join(', ');
                   }
-                } catch { /* geocoder unavailable — keep default name */ }
+                } catch {}
               }
-            } catch {
-              // saved addresses unavailable — keep GPS coords, no name
-            }
+            } catch {}
           }
         }
-      } catch { /* GPS denied — use fallback */ }
+      } catch {}
 
       setLocationName(name);
       try {
@@ -131,22 +178,56 @@ export default function HomeScreen() {
         setServiceable(svcResult.serviceable);
       } catch {}
       setLoading(false);
+
+      // Live stats — fail-soft (returns sensible default if endpoint missing).
+      getNearbyStats(lat, lon).then(setNearbyStats);
+
+      // Usuals — depends on services being loaded for ID resolution.
+      if (token && token !== '__guest__') {
+        getMyUsuals(token).then((ids) => {
+          // Resolved later in derived `usualsResolved`.
+          const seen = new Set(ids);
+          if (ids.length > 0) {
+            setUsuals(
+              ids.map((id) => services.find((s) => s.id === id)).filter(Boolean) as ApiService[],
+            );
+          }
+        });
+      }
     })();
   }, [token]);
 
-  async function handleLocationSelect(name: string, lat: number, lon: number, addressId?: string) {
+  // Re-resolve usuals once services load if backend returned IDs first.
+  const usualsResolved = useMemo(() => {
+    if (usuals.length > 0) {
+      return usuals
+        .map((u) => services.find((s) => s.id === u.id) ?? u)
+        .filter(Boolean) as ApiService[];
+    }
+    // Fallback: top 3 popular services so the section never looks empty for new users.
+    return services.slice(0, 3);
+  }, [usuals, services]);
+
+  async function handleLocationSelect(
+    name: string,
+    lat: number,
+    lon: number,
+    addressId?: string,
+  ) {
     setLocationName(name.split(',').slice(0, 2).join(',').trim());
     setSelectedAddressId(addressId);
     const result = await checkServiceability(lat, lon).catch(() => ({ serviceable: true }));
     setServiceable(result.serviceable);
+    getNearbyStats(lat, lon).then(setNearbyStats);
   }
 
-  // LocationSelectorModal must be rendered in BOTH paths so it can open from NotServiceableScreen
   const locationModal = (
     <LocationSelectorModal
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
-      onLocationSelect={(name, lat, lon, addressId) => handleLocationSelect(name, lat, lon, addressId)}
+      onLocationSelect={(name, lat, lon, addressId) =>
+        handleLocationSelect(name, lat, lon, addressId)
+      }
     />
   );
 
@@ -164,160 +245,148 @@ export default function HomeScreen() {
     );
   }
 
+  // Carousel slides: greeting first, then promos.
+  const slides = [
+    {
+      key: 'greeting',
+      render: () => <GreetingHeroCard name={user?.name?.split(' ')[0]} active />,
+    },
+    {
+      key: 'promo-instant',
+      render: () => (
+        <PromoCard
+          promo={{
+            key: 'promo-instant',
+            eyebrow: 'Now serving',
+            title: 'Help in\n12 minutes.',
+            body: 'Instant booking for cleaning, cooking & more.',
+            cta: 'Book instant',
+            bg: '#EEF2FF',
+            accent: '#4F46E5',
+            emoji: '⚡',
+            onPress: () => navigation.navigate('AllServices', { instant: true }),
+          }}
+        />
+      ),
+    },
+    {
+      key: 'promo-roomies',
+      render: () => (
+        <PromoCard
+          promo={{
+            key: 'promo-roomies',
+            eyebrow: 'Split bills',
+            title: 'Share with\nyour roomies.',
+            body: 'Add up to 4 housemates. One household, fairer bills.',
+            cta: 'Set up Roomies',
+            bg: '#F0FDFA',
+            accent: '#0D9488',
+            emoji: '🏠',
+            onPress: () => navigation.navigate('RoomiesWelcome' as any),
+          }}
+        />
+      ),
+    },
+    {
+      key: 'promo-earn',
+      render: () => (
+        <PromoCard
+          promo={{
+            key: 'promo-earn',
+            eyebrow: 'Refer & earn',
+            title: 'Earn ₹100\nfor every friend.',
+            body: 'Share ZopMop. Both get credits on first booking.',
+            cta: 'Invite now',
+            bg: '#FEF3C7',
+            accent: '#B45309',
+            emoji: '🪙',
+            onPress: () => navigation.navigate('Offers'),
+          }}
+        />
+      ),
+    },
+  ];
+
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.content}
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FAFAFA' }} edges={['top']}>
+      <HomeHeader
+        locationName={locationName}
+        onLocationPress={() => setLocationModalVisible(true)}
+        selectedAddressId={selectedAddressId}
+      />
+
+      <Animated.ScrollView
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 140 }}
         showsVerticalScrollIndicator={false}
         bounces
       >
-        <Header locationName={locationName} onLocationPress={() => setLocationModalVisible(true)} selectedAddressId={selectedAddressId} />
-        <HeroCard />
-        <BookingCards />
-        <ServicesGrid services={services} />
-        <TrustStrip />
-        <View style={{ height: 80 }} />
-      </ScrollView>
+        {/* Hero block w/ parallax — moves upward at 1.5x scroll speed */}
+        <Animated.View
+          style={[heroParallax, { height: HERO_H + 30 }]}
+          // Allow mascot to overflow the page bounds.
+        >
+          <HeroCarousel slides={slides} height={HERO_H} progress={carouselProgress} />
+          {/* Mascot lives at parent layer so it isn't clipped by PagerView */}
+          <HeroMascotOverlay progress={carouselProgress} />
+        </Animated.View>
 
-      <CartBar selectedAddressId={selectedAddressId} />
+        <LivePill stats={nearbyStats} loading={!nearbyStats} />
+
+        <UsualsRow
+          services={usualsResolved}
+          onPress={(svc) => navigation.navigate('ServiceAbout', { service: svc })}
+        />
+
+        <PopularServices services={services} />
+
+        <HomeFooter />
+      </Animated.ScrollView>
+
+      <HomeCartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
       {locationModal}
     </SafeAreaView>
   );
 }
 
-// ── Header ────────────────────────────────────────────────────────────────────
+// ── Popular Services (horizontal scroll) ─────────────────────────────────────
 
-function Header({ locationName, onLocationPress, selectedAddressId }: { locationName: string; onLocationPress: () => void; selectedAddressId?: string }) {
+function PopularServices({ services }: { services: ApiService[] }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  const { myGroup } = useRoomies();
-
-  const isRoomiesAddress = !!myGroup && !!selectedAddressId && selectedAddressId === myGroup.group.address_id;
-
   return (
-    <View style={s.header}>
-      <TouchableOpacity style={s.locationBtn} activeOpacity={0.7} onPress={onLocationPress}>
-        <Text style={s.locationLabel}>Your location</Text>
-        <View style={s.locationRow}>
-          <Text style={s.locationName} numberOfLines={1}>{locationName}</Text>
-          <Text style={s.chevron}>⌄</Text>
-        </View>
-      </TouchableOpacity>
-
-      <View style={s.headerRight}>
-        {isRoomiesAddress && (
-          <TouchableOpacity
-            style={s.manageHouseholdBtn}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('ManageHousehold', { groupId: myGroup.group.id })}
-          >
-            <Text style={s.manageHouseholdText}>Manage Household</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity style={s.earnBtn} activeOpacity={0.8} onPress={() => navigation.navigate('Offers')}>
-          <Text style={s.earnIcon}>🪙</Text>
-          <Text style={s.earnText}>Earn ₹100</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={s.avatarBtn}
-          activeOpacity={0.8}
-          onPress={() => navigation.navigate('Profile')}
-        >
-          <Text style={s.avatarIcon}>👤</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-// ── Hero Card ─────────────────────────────────────────────────────────────────
-
-function HeroCard() {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <View style={s.heroCard}>
-      <View style={[s.heroCircle, s.heroCircle1]} />
-      <View style={[s.heroCircle, s.heroCircle2]} />
-      <View style={s.heroPill}>
-        <View style={s.heroPillDot} />
-        <Text style={s.heroPillText}>Available Now</Text>
-      </View>
-      <Text style={s.heroTitle}>Expert help,{'\n'}at your doorstep</Text>
-      <Text style={s.heroSub}>Trusted professionals, on demand</Text>
-      <TouchableOpacity
-        style={s.heroCTA}
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('AllServices')}
+    <View style={{ marginTop: 32 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          paddingHorizontal: 20,
+          marginBottom: 14,
+        }}
       >
-        <Text style={s.heroCTAText}>Book a Service  →</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-// ── Booking Cards ─────────────────────────────────────────────────────────────
-
-function BookingCards() {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
-  return (
-    <View style={s.section}>
-      <Text style={s.sectionTitle}>How would you like to book?</Text>
-      <View style={s.bookingRow}>
-        <TouchableOpacity
-          style={s.bookingCard}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('AllServices', { instant: false })}
-        >
-          <View style={[s.bookingIconBox, { backgroundColor: c.primaryBg }]}>
-            <Text style={s.bookingEmoji}>📅</Text>
-          </View>
-          <Text style={s.bookingCardTitle}>Schedule</Text>
-          <Text style={s.bookingCardSub}>Pick your time</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[s.bookingCard, s.bookingCardInstant]}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('AllServices', { instant: true })}
-        >
-          <View style={s.timePill}><Text style={s.timePillText}>~30 min</Text></View>
-          <View style={[s.bookingIconBox, { backgroundColor: '#F0FDFA' }]}>
-            <Text style={s.bookingEmoji}>⚡</Text>
-          </View>
-          <Text style={s.bookingCardTitle}>Instant</Text>
-          <Text style={s.bookingCardSub}>Get help now</Text>
-        </TouchableOpacity>
+        <Text style={[fontExtra, { fontSize: 26, color: '#0F172A', letterSpacing: -0.4 }]}>
+          Popular services
+        </Text>
+        <PressFx onPress={() => navigation.navigate('AllServices')}>
+          <Text style={[fontSemi, { fontSize: 14, color: '#4F46E5' }]}>See all  →</Text>
+        </PressFx>
       </View>
-    </View>
-  );
-}
-
-// ── Services Grid ─────────────────────────────────────────────────────────────
-
-function ServicesGrid({ services }: { services: ApiService[] }) {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <View style={s.section}>
-      <View style={s.sectionHeader}>
-        <Text style={s.sectionTitle}>Popular Services</Text>
-        <TouchableOpacity activeOpacity={0.7} onPress={() => navigation.navigate('AllServices')}>
-          <Text style={s.seeAll}>See all</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={s.grid}>
-        {services.map(service => (
-          <ServiceCard key={service.id} service={service} />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}
+      >
+        {services.map((svc, i) => (
+          <Animated.View
+            key={svc.id}
+            entering={FadeInDown.duration(320).delay(i * 50)}
+          >
+            <ServiceCard service={svc} />
+          </Animated.View>
         ))}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -325,12 +394,8 @@ function ServicesGrid({ services }: { services: ApiService[] }) {
 function ServiceCard({ service }: { service: ApiService }) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const [busy, setBusy] = useState(false);
-
-  // Check if this service is already in cart
-  const cartItem = items.find(i => i.service_id === service.id);
+  const cartItem = items.find((i) => i.service_id === service.id);
   const inCart = !!cartItem;
 
   async function handleAdd() {
@@ -345,13 +410,13 @@ function ServiceCard({ service }: { service: ApiService }) {
     }
   }
 
-  async function handleIncrement() {
+  async function handleInc() {
     if (busy || !cartItem) return;
-    const newDuration = cartItem.duration_minutes + service.duration_step_minutes;
-    if (newDuration > service.max_duration_minutes) return;
+    const next = cartItem.duration_minutes + service.duration_step_minutes;
+    if (next > service.max_duration_minutes) return;
     setBusy(true);
     try {
-      await addItem(service.id, newDuration);
+      await addItem(service.id, next);
     } catch (err: any) {
       Alert.alert('Error', err?.message ?? 'Please try again.');
     } finally {
@@ -359,15 +424,17 @@ function ServiceCard({ service }: { service: ApiService }) {
     }
   }
 
-  async function handleDecrement() {
+  async function handleDec() {
     if (busy || !cartItem) return;
     setBusy(true);
     try {
       if (cartItem.duration_minutes <= service.min_duration_minutes) {
-        // Remove from cart entirely
         await removeItem(cartItem.id);
       } else {
-        await addItem(service.id, cartItem.duration_minutes - service.duration_step_minutes);
+        await addItem(
+          service.id,
+          cartItem.duration_minutes - service.duration_step_minutes,
+        );
       }
     } catch (err: any) {
       Alert.alert('Error', err?.message ?? 'Please try again.');
@@ -377,405 +444,187 @@ function ServiceCard({ service }: { service: ApiService }) {
   }
 
   return (
-    <TouchableOpacity
-      style={[s.serviceCard, { width: SERVICE_CARD_WIDTH }]}
-      activeOpacity={inCart ? 1 : 0.85}
-      onPress={() => { if (!inCart) navigation.navigate('ServiceAbout', { service }); }}
+    <PressFx
+      onPress={() => {
+        if (!inCart) navigation.navigate('ServiceAbout', { service });
+      }}
+      style={{
+        width: 158,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+      }}
     >
-      <View style={[s.serviceImgBox, { backgroundColor: service.bg_color || '#EEF2FF' }]}>
-        <View style={s.ratingBadge}>
-          <Text style={s.ratingText}>⭐ {service.rating}</Text>
+      <View
+        style={{
+          width: '100%',
+          aspectRatio: 1,
+          backgroundColor: service.bg_color || '#EEF2FF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}
+      >
+        <View
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 3,
+            backgroundColor: 'rgba(255,255,255,0.95)',
+            paddingHorizontal: 7,
+            paddingVertical: 3,
+            borderRadius: 999,
+          }}
+        >
+          <Text style={{ color: '#F59E0B', fontSize: 11 }}>★</Text>
+          <Text style={[fontSemi, { fontSize: 11, color: '#0F172A' }]}>{service.rating}</Text>
         </View>
-        <Text style={s.serviceEmoji}>{service.emoji ?? '🧹'}</Text>
+        <Text style={{ fontSize: 56 }}>{service.emoji ?? '🧹'}</Text>
 
         {inCart ? (
-          // ── Inline stepper ──
-          <View style={s.stepper}>
-            <TouchableOpacity
-              style={s.stepBtn}
-              activeOpacity={0.7}
-              onPress={handleDecrement}
-              disabled={busy}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
-            >
-              {busy
-                ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.55 }] }} />
-                : <Text style={s.stepBtnText}>−</Text>
-              }
-            </TouchableOpacity>
-            <View style={s.stepCenter}>
-              <Text style={s.stepCount}>{cartItem.duration_minutes}</Text>
-              <Text style={s.stepLabel}>Min</Text>
+          <View
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: 'rgba(255,255,255,0.96)',
+              paddingHorizontal: 10,
+              paddingVertical: 7,
+              borderTopWidth: 1,
+              borderTopColor: 'rgba(79,70,229,0.18)',
+            }}
+          >
+            <PressFx onPress={handleDec} disabled={busy} scale={0.92}>
+              {busy ? (
+                <ActivityIndicator size="small" color="#4F46E5" />
+              ) : (
+                <Text style={[fontBold, { fontSize: 22, color: '#4F46E5' }]}>−</Text>
+              )}
+            </PressFx>
+            <View style={{ alignItems: 'center', flex: 1 }}>
+              <Text style={[fontBold, { fontSize: 14, color: '#0F172A' }]}>
+                {cartItem.duration_minutes}
+              </Text>
+              <Text style={[fontReg, { fontSize: 9, color: '#9CA3AF' }]}>Min</Text>
             </View>
-            <TouchableOpacity
-              style={s.stepBtn}
-              activeOpacity={0.7}
-              onPress={handleIncrement}
+            <PressFx
+              onPress={handleInc}
               disabled={busy || cartItem.duration_minutes >= service.max_duration_minutes}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+              scale={0.92}
             >
-              <Text style={[
-                s.stepBtnText,
-                cartItem.duration_minutes >= service.max_duration_minutes && s.stepBtnDisabled,
-              ]}>+</Text>
-            </TouchableOpacity>
+              <Text
+                style={[
+                  fontBold,
+                  {
+                    fontSize: 22,
+                    color:
+                      cartItem.duration_minutes >= service.max_duration_minutes
+                        ? '#E5E7EB'
+                        : '#4F46E5',
+                  },
+                ]}
+              >
+                +
+              </Text>
+            </PressFx>
           </View>
         ) : (
-          // ── Plain add button ──
-          <TouchableOpacity
-            style={s.addBtn}
-            activeOpacity={0.8}
+          <PressFx
             onPress={handleAdd}
             disabled={busy}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            scale={0.9}
+            style={{
+              position: 'absolute',
+              bottom: 10,
+              right: 10,
+              width: 38,
+              height: 38,
+              borderRadius: 12,
+              backgroundColor: '#FFFFFF',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.1,
+              shadowRadius: 4,
+              elevation: 3,
+            }}
           >
-            {busy
-              ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.7 }] }} />
-              : <Text style={s.addBtnText}>+</Text>
-            }
-          </TouchableOpacity>
+            {busy ? (
+              <ActivityIndicator size="small" color="#4F46E5" />
+            ) : (
+              <Text style={[fontBold, { fontSize: 22, color: '#4F46E5', lineHeight: 24 }]}>+</Text>
+            )}
+          </PressFx>
         )}
       </View>
 
-      <Text style={s.serviceName} numberOfLines={2}>{service.name}</Text>
-      <View style={s.priceRow}>
-        <Text style={s.servicePrice}>₹{(service.base_price_cents / 100).toFixed(0)}</Text>
-        {service.mrp_cents != null && (
-          <Text style={s.serviceMrp}>₹{(service.mrp_cents / 100).toFixed(0)}</Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-// ── Cart Bar ──────────────────────────────────────────────────────────────────
-
-function CartBar({ selectedAddressId }: { selectedAddressId?: string }) {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const { itemCount, subtotalCents } = useCart();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
-  if (itemCount === 0) return null;
-
-  return (
-    <View style={s.cartBar}>
-      <View style={s.cartBarLeft}>
-        <Text style={s.cartBarEmoji}>🛒</Text>
-        <View>
-          <Text style={s.cartBarCount}>
-            {itemCount} service{itemCount > 1 ? 's' : ''}
+      <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 14 }}>
+        <Text
+          style={[fontBold, { fontSize: 14, color: '#0F172A', lineHeight: 18 }]}
+          numberOfLines={2}
+        >
+          {service.name}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <Text style={[fontBold, { fontSize: 14, color: '#0F172A' }]}>
+            ₹{(service.base_price_cents / 100).toFixed(0)}
           </Text>
-          <Text style={s.cartBarSubtotal}>₹{(subtotalCents / 100).toFixed(0)} total</Text>
+          {service.mrp_cents != null && (
+            <Text
+              style={[
+                fontReg,
+                { fontSize: 11, color: '#9CA3AF', textDecorationLine: 'line-through' },
+              ]}
+            >
+              ₹{(service.mrp_cents / 100).toFixed(0)}
+            </Text>
+          )}
         </View>
       </View>
-      <TouchableOpacity
-        style={s.cartBarBtn}
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('Cart', { selectedAddressId })}
-      >
-        <Text style={s.cartBarBtnText}>Go to cart  →</Text>
-      </TouchableOpacity>
-    </View>
+    </PressFx>
   );
 }
 
-// ── Roomies Banner ────────────────────────────────────────────────────────────
-
-// ── Trust Strip ───────────────────────────────────────────────────────────────
-
-function TrustStrip() {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  const items = [
-    { icon: '✅', label: 'Verified\nPros' },
-    { icon: '🛡️', label: 'Background\nChecked' },
-    { icon: '⭐', label: '4.9 Rated\nService' },
-  ];
-  return (
-    <View style={s.section}>
-      <View style={s.trustCard}>
-        <Text style={s.trustTitle}>Reliable & Trustworthy</Text>
-        <View style={s.trustRow}>
-          {items.map((item, idx) => (
-            <React.Fragment key={item.label}>
-              <View style={s.trustItem}>
-                <Text style={s.trustIcon}>{item.icon}</Text>
-                <Text style={s.trustLabel}>{item.label}</Text>
-              </View>
-              {idx < items.length - 1 && <View style={s.trustDivider} />}
-            </React.Fragment>
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-// ── Skeleton Loading ──────────────────────────────────────────────────────────
-
-function SkeletonBlock({
-  pulse,
-  w,
-  h,
-  r = Radius.md,
-  style,
-  borderColor,
-}: {
-  pulse: Animated.Value;
-  w?: number | string;
-  h: number;
-  r?: number;
-  style?: any;
-  borderColor?: string;
-}) {
-  return (
-    <Animated.View
-      style={[
-        { height: h, borderRadius: r, backgroundColor: borderColor ?? '#E5E7EB', opacity: pulse },
-        w !== undefined ? { width: w } : { alignSelf: 'stretch' },
-        style,
-      ]}
-    />
-  );
-}
+// ── Loading Skeleton ─────────────────────────────────────────────────────────
 
 function HomeSkeleton() {
-  const pulse = useRef(new Animated.Value(0.5)).current;
-  const c = useColors();
-  const sk = useMemo(() => createSkeletonStyles(c), [c]);
-
-  useEffect(() => {
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.5, duration: 900, useNativeDriver: true }),
-      ])
-    );
-    anim.start();
-    return () => anim.stop();
-  }, []);
-
-  const p = pulse;
-  const bc = c.border;
-
   return (
-    <SafeAreaView style={sk.safe} edges={['top']}>
-      <ScrollView
-        style={sk.scroll}
-        contentContainerStyle={sk.content}
-        scrollEnabled={false}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-        <View style={sk.header}>
-          <View style={{ gap: 6 }}>
-            <SkeletonBlock pulse={p} w={60} h={10} r={Radius.sm} borderColor={bc} />
-            <SkeletonBlock pulse={p} w={150} h={18} borderColor={bc} />
+    <ScreenContainer edges={['top']}>
+      <View style={{ paddingHorizontal: 20, paddingTop: 16, gap: 16 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <View>
+            <View style={{ backgroundColor: '#E5E7EB', borderRadius: 4, height: 10, width: 80, marginBottom: 6 }} />
+            <View style={{ backgroundColor: '#E5E7EB', borderRadius: 4, height: 18, width: 160 }} />
           </View>
-          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <SkeletonBlock pulse={p} w={90} h={30} r={Radius.full} borderColor={bc} />
-            <SkeletonBlock pulse={p} w={36} h={36} r={Radius.full} borderColor={bc} />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ backgroundColor: '#E5E7EB', borderRadius: 999, height: 32, width: 100 }} />
+            <View style={{ backgroundColor: '#E5E7EB', borderRadius: 999, height: 38, width: 38 }} />
           </View>
         </View>
-
-        {/* Hero Card */}
-        <SkeletonBlock pulse={p} h={150} r={Radius['2xl']} style={sk.hero} borderColor={bc} />
-
-        {/* Booking cards section */}
-        <View style={sk.section}>
-          <SkeletonBlock pulse={p} w={170} h={20} style={{ marginBottom: 14 }} borderColor={bc} />
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} borderColor={bc} />
-            <SkeletonBlock pulse={p} h={110} r={Radius.xl} style={{ flex: 1 }} borderColor={bc} />
-          </View>
+        <View style={{ backgroundColor: '#E5E7EB', borderRadius: 24, height: 280, marginTop: 12 }} />
+        <View style={{ alignSelf: 'center', backgroundColor: '#E5E7EB', borderRadius: 999, height: 40, width: 280, marginTop: 12 }} />
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+          <View style={{ backgroundColor: '#E5E7EB', borderRadius: 22, height: 200, width: 168 }} />
+          <View style={{ backgroundColor: '#E5E7EB', borderRadius: 22, height: 200, width: 168 }} />
         </View>
-
-        {/* Services grid */}
-        <View style={sk.section}>
-          <View style={sk.sectionHeader}>
-            <SkeletonBlock pulse={p} w={130} h={20} borderColor={bc} />
-            <SkeletonBlock pulse={p} w={50} h={16} borderColor={bc} />
-          </View>
-          <View style={sk.grid}>
-            {[0, 1, 2, 3, 4, 5].map(i => (
-              <SkeletonBlock key={i} pulse={p} w={SERVICE_CARD_WIDTH} h={SERVICE_CARD_WIDTH * 1.5} r={Radius.xl} borderColor={bc} />
-            ))}
-          </View>
-        </View>
-
-        {/* Trust strip */}
-        <View style={sk.section}>
-          <SkeletonBlock pulse={p} h={100} r={Radius.xl} borderColor={bc} />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      </View>
+    </ScreenContainer>
   );
 }
-
-type C = typeof lightColors;
-
-function createSkeletonStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { paddingBottom: 40 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: H_PAD,
-      paddingTop: 12,
-      paddingBottom: 16,
-    },
-    hero: {
-      marginHorizontal: H_PAD,
-      width: SCREEN_WIDTH - H_PAD * 2,
-      marginBottom: 28,
-    },
-    section: { paddingHorizontal: H_PAD, marginBottom: 28 },
-    sectionHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 14,
-    },
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
-  });
-}
-
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { paddingBottom: Spacing.base },
-
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16,
-    },
-    locationBtn: { flex: 1 },
-    locationLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginBottom: 2 },
-    locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    locationName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, maxWidth: SCREEN_WIDTH * 0.42 },
-    chevron: { fontSize: 16, color: c.textSecondary, marginTop: -2 },
-    headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    manageHouseholdBtn: {
-      backgroundColor: c.primary, paddingHorizontal: 10, paddingVertical: 6,
-      borderRadius: Radius.full,
-    },
-    manageHouseholdText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: '#FFF' },
-    earnBtn: {
-      flexDirection: 'row', alignItems: 'center', gap: 4,
-      backgroundColor: c.primaryBg, paddingHorizontal: 10, paddingVertical: 6,
-      borderRadius: Radius.full, borderWidth: 1, borderColor: `${c.primary}22`,
-    },
-    earnIcon: { fontSize: 12 },
-    earnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: c.primary },
-    avatarBtn: {
-      width: 36, height: 36, borderRadius: Radius.full,
-      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
-      alignItems: 'center', justifyContent: 'center',
-    },
-    avatarIcon: { fontSize: 18 },
-
-    heroCard: {
-      marginHorizontal: H_PAD, backgroundColor: c.primary,
-      borderRadius: Radius['2xl'], padding: 24, paddingBottom: 28,
-      overflow: 'hidden', marginBottom: 28,
-    },
-    heroCircle: { position: 'absolute', borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
-    heroCircle1: { width: 150, height: 150, opacity: 0.07, top: -55, right: -35 },
-    heroCircle2: { width: 90, height: 90, opacity: 0.05, bottom: -25, right: 90 },
-    heroPill: {
-      flexDirection: 'row', alignItems: 'center', gap: 6,
-      backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'flex-start',
-      paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.full, marginBottom: 16,
-    },
-    heroPillDot: { width: 6, height: 6, borderRadius: Radius.full, backgroundColor: '#4ADE80' },
-    heroPillText: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: '#FFFFFF' },
-    heroTitle: { fontFamily: FontFamily.extrabold, fontSize: FontSize['3xl'], color: '#FFFFFF', lineHeight: FontSize['3xl'] * 1.2, marginBottom: 8, letterSpacing: -0.5 },
-    heroSub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: 'rgba(255,255,255,0.72)', marginBottom: 22 },
-    heroCTA: { backgroundColor: '#FFFFFF', alignSelf: 'flex-start', paddingHorizontal: 20, paddingVertical: 12, borderRadius: Radius.xl },
-    heroCTAText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary },
-
-    section: { paddingHorizontal: H_PAD, marginBottom: 28 },
-    sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-    sectionTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text, letterSpacing: -0.2, marginBottom: 14 },
-    seeAll: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, marginBottom: 14 },
-
-    bookingRow: { flexDirection: 'row', gap: 12 },
-    bookingCard: { flex: 1, backgroundColor: c.white, borderRadius: Radius.xl, padding: 16, borderWidth: 1.5, borderColor: c.border, ...Shadow.sm, overflow: 'hidden' },
-    bookingCardInstant: { borderColor: `${c.accent}44`, backgroundColor: c.background },
-    bookingIconBox: { width: 48, height: 48, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-    bookingEmoji: { fontSize: 22 },
-    bookingCardTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, marginBottom: 3 },
-    bookingCardSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
-    timePill: { position: 'absolute', top: 12, right: 12, backgroundColor: c.accent, paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
-    timePillText: { fontFamily: FontFamily.semibold, fontSize: 10, color: '#FFFFFF' },
-
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
-    serviceCard: { backgroundColor: c.white, borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: c.border, ...Shadow.sm },
-    serviceImgBox: { width: '100%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-    ratingBadge: { position: 'absolute', top: 6, left: 6, backgroundColor: 'rgba(255,255,255,0.88)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: Radius.sm },
-    ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: c.text },
-    serviceEmoji: { fontSize: 32 },
-
-    addBtn: {
-      position: 'absolute', bottom: 6, right: 6,
-      width: 26, height: 26, borderRadius: Radius.md,
-      backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
-      borderWidth: 1, borderColor: c.border, ...Shadow.sm,
-    },
-    addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: c.primary, lineHeight: 20, marginTop: -1 },
-
-    stepper: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: 'rgba(255,255,255,0.96)',
-      paddingHorizontal: 8, paddingVertical: 5,
-      borderTopWidth: 1, borderTopColor: `${c.primary}22`,
-    },
-    stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-    stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: c.primary, lineHeight: 22 },
-    stepBtnDisabled: { color: c.border },
-    stepCenter: { alignItems: 'center', flex: 1 },
-    stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: c.text, lineHeight: 16 },
-    stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: c.textMuted, lineHeight: 10 },
-
-    serviceName: { fontFamily: FontFamily.semibold, fontSize: 11, color: c.text, paddingHorizontal: 8, paddingTop: 8, lineHeight: 16 },
-    priceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingBottom: 10, paddingTop: 3 },
-    servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    serviceMrp: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, textDecorationLine: 'line-through' },
-
-    cartBar: {
-      position: 'absolute', bottom: 28, left: 24, right: 24,
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: c.white,
-      paddingHorizontal: 16, paddingVertical: 12,
-      borderRadius: Radius['2xl'],
-      borderWidth: 1, borderColor: c.border,
-      ...Shadow.lg,
-    },
-    cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    cartBarEmoji: { fontSize: 22 },
-    cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
-    cartBarBtn: {
-      backgroundColor: c.primary,
-      paddingHorizontal: 18, paddingVertical: 10,
-      borderRadius: Radius.xl,
-      ...Shadow.sm,
-    },
-    cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: '#FFFFFF' },
-
-    trustCard: { backgroundColor: c.white, borderRadius: Radius.xl, padding: 20, borderWidth: 1, borderColor: c.border, ...Shadow.sm },
-    trustTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, textAlign: 'center', marginBottom: 18 },
-    trustRow: { flexDirection: 'row', alignItems: 'center' },
-    trustItem: { flex: 1, alignItems: 'center', gap: 6 },
-    trustIcon: { fontSize: 24 },
-    trustLabel: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: c.textSecondary, textAlign: 'center', lineHeight: 16 },
-    trustDivider: { width: 1, height: 40, backgroundColor: c.border },
-  });
-}
-

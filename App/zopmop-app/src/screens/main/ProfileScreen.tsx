@@ -20,47 +20,46 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors, Colors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
+import { lightColors } from '../../theme/colors';
+import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme, useColors } from '../../context/ThemeContext';
 import { getMe, updateMe, deleteMe } from '../../api/users';
 
 type C = typeof lightColors;
+type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const H_PAD = 16;
-const QUICK_GAP = 10;
-const QUICK_CARD_WIDTH = (SCREEN_WIDTH - H_PAD * 2 - QUICK_GAP) / 2;
-const DIVIDER_INDENT = H_PAD + 36 + 12;
+const H_PAD = 20;
+const APP_VERSION = '1.0.0';
 
 // ── Static data ───────────────────────────────────────────────────────────────
 
-const QUICK_ACTIONS = [
-  { id: 'bookings', title: 'My Bookings',   subtitle: 'View and manage bookings',     icon: 'calendar-outline'      },
-  { id: 'wallet',   title: 'Wallet',         subtitle: 'Check balance & transactions', icon: 'wallet-outline'        },
-  { id: 'offers',   title: 'Offers',         subtitle: 'View available deals',         icon: 'pricetag-outline'      },
-  { id: 'support',  title: 'Help & Support', subtitle: 'Get assistance quickly',       icon: 'help-circle-outline'   },
+const ACTION_RAIL = [
+  { id: 'bookings', label: 'Bookings', icon: 'calendar-outline' },
+  { id: 'wallet',   label: 'Wallet',   icon: 'wallet-outline' },
+  { id: 'offers',   label: 'Offers',   icon: 'pricetag-outline' },
+  { id: 'support',  label: 'Help',     icon: 'help-buoy-outline' },
 ] as const;
 
 const ACCOUNT_ITEMS = [
-  { id: 'addresses', label: 'Saved Addresses',             icon: 'location-outline'      },
-  { id: 'roomies',   label: 'Roomies',                     icon: 'home-outline'          },
-  { id: 'experts',   label: 'Your Experts',                icon: 'people-outline'        },
-  { id: 'payments',  label: 'Payment Methods',             icon: 'card-outline'          },
-  { id: 'notifs',    label: 'Notifications & Preferences', icon: 'notifications-outline' },
+  { id: 'addresses', label: 'Saved Addresses', icon: 'location-outline' },
+  { id: 'roomies',   label: 'Roomies',         icon: 'home-outline' },
+  { id: 'experts',   label: 'Your Experts',    icon: 'people-outline' },
+  { id: 'payments',  label: 'Payment Methods', icon: 'card-outline' },
+  { id: 'notifs',    label: 'Notifications',   icon: 'notifications-outline' },
 ] as const;
 
 const LEGAL_ITEMS = [
-  { id: 'about',   label: 'About',              icon: 'information-circle-outline' },
-  { id: 'terms',   label: 'Terms & Conditions', icon: 'document-text-outline'      },
-  { id: 'privacy', label: 'Privacy Policy',     icon: 'shield-checkmark-outline'   },
+  { id: 'about',   label: 'About ZopMop',     icon: 'information-circle-outline' },
+  { id: 'terms',   label: 'Terms of Service', icon: 'document-text-outline' },
+  { id: 'privacy', label: 'Privacy Policy',   icon: 'shield-checkmark-outline' },
 ] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getInitials(name?: string | null): string {
-  if (!name) return '?';
+  if (!name) return 'ZM';
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
@@ -73,339 +72,25 @@ function formatPhone(raw?: string): string {
   return raw;
 }
 
-// ── Styles factory ────────────────────────────────────────────────────────────
-
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { paddingBottom: Spacing.base },
-
-    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: H_PAD, paddingTop: 12, paddingBottom: 16, gap: 4 },
-    backBtn: { padding: 4, marginLeft: -4 },
-    headerTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-    },
-
-    section: { paddingHorizontal: H_PAD, marginBottom: 20 },
-    sectionLabel: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.xs,
-      color: c.textSecondary,
-      letterSpacing: 0.6,
-      textTransform: 'uppercase',
-      marginBottom: 10,
-    },
-    sectionLabelMuted: { color: c.textMuted },
-
-    // User Card
-    userCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.white,
-      marginHorizontal: H_PAD,
-      marginBottom: 20,
-      borderRadius: Radius.xl,
-      padding: Spacing.base,
-      borderWidth: 1,
-      borderColor: c.border,
-      gap: 14,
-      ...Shadow.sm,
-    },
-    avatarWrap: { position: 'relative' },
-    avatar: {
-      width: 60,
-      height: 60,
-      borderRadius: Radius.full,
-      backgroundColor: c.primaryBg,
-      borderWidth: 2,
-      borderColor: `${c.primary}33`,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarInitials: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: c.primary,
-    },
-    avatarEditBtn: {
-      position: 'absolute',
-      bottom: 0,
-      right: 0,
-      width: 22,
-      height: 22,
-      borderRadius: Radius.full,
-      backgroundColor: c.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: c.background,
-    },
-    userInfo: { flex: 1 },
-    userName: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.md,
-      color: c.text,
-      marginBottom: 3,
-    },
-    userNamePlaceholder: {
-      color: c.textMuted,
-      fontFamily: FontFamily.regular,
-    },
-    userPhone: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-    },
-    editBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 2,
-      paddingHorizontal: 12,
-      paddingVertical: 7,
-      borderRadius: Radius.full,
-      borderWidth: 1,
-      borderColor: `${c.primary}33`,
-      backgroundColor: c.primaryBg,
-    },
-    editBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.xs,
-      color: c.primary,
-    },
-
-    // Quick Actions
-    quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: QUICK_GAP },
-    quickCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      padding: Spacing.base,
-      borderWidth: 1,
-      borderColor: c.border,
-      gap: 4,
-      ...Shadow.sm,
-    },
-    quickIconBox: {
-      width: 44,
-      height: 44,
-      borderRadius: Radius.lg,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 6,
-    },
-    quickTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
-    quickSubtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, lineHeight: 16 },
-
-    // Referral
-    referralCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.accent,
-      borderRadius: Radius.xl,
-      padding: Spacing.base,
-      gap: 12,
-      overflow: 'hidden',
-      ...Shadow.sm,
-    },
-    referralCircle: {
-      position: 'absolute',
-      width: 130,
-      height: 130,
-      borderRadius: Radius.full,
-      backgroundColor: c.white,
-      opacity: 0.07,
-      top: -45,
-      right: -30,
-    },
-    referralContent: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-    referralIconBox: {
-      width: 44,
-      height: 44,
-      borderRadius: Radius.lg,
-      backgroundColor: 'rgba(255,255,255,0.18)',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    referralEmoji: { fontSize: 22 },
-    referralText: { flex: 1 },
-    referralTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.white, marginBottom: 2 },
-    referralSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: 'rgba(255,255,255,0.76)' },
-
-    // List
-    listCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      borderWidth: 1,
-      borderColor: c.border,
-      overflow: 'hidden',
-      ...Shadow.sm,
-    },
-    listRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: Spacing.base,
-      paddingVertical: 14,
-      gap: 12,
-    },
-    listIconBox: {
-      width: 36,
-      height: 36,
-      borderRadius: Radius.md,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    listIconBoxMuted: { backgroundColor: c.surface },
-    listIconBoxDanger: { backgroundColor: c.dangerBg },
-    listLabel: { flex: 1, fontFamily: FontFamily.medium, fontSize: FontSize.base, color: c.text },
-    listLabelMuted: { color: c.textSecondary },
-    listLabelDanger: { color: c.danger },
-    divider: { height: 1, backgroundColor: c.border, marginLeft: DIVIDER_INDENT },
-
-    // Appearance row
-    appearanceRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: Spacing.base,
-      paddingVertical: 14,
-      gap: 12,
-    },
-    appearanceIconBox: {
-      width: 36,
-      height: 36,
-      borderRadius: Radius.md,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    appearanceLabel: { flex: 1, fontFamily: FontFamily.medium, fontSize: FontSize.base, color: c.text },
-
-    // Edit Modal
-    backdrop: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-    },
-    sheet: {
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      backgroundColor: c.white,
-      borderTopLeftRadius: 24,
-      borderTopRightRadius: 24,
-      paddingBottom: Platform.OS === 'ios' ? 36 : 24,
-      paddingHorizontal: H_PAD + 4,
-      paddingTop: 12,
-      ...Shadow.md,
-    },
-    sheetHandle: {
-      width: 36,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: c.border,
-      alignSelf: 'center',
-      marginBottom: 16,
-    },
-    sheetHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 24,
-    },
-    sheetTitle: {
-      flex: 1,
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: c.text,
-      letterSpacing: -0.3,
-    },
-    sheetClose: {
-      width: 32,
-      height: 32,
-      borderRadius: Radius.full,
-      backgroundColor: c.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-
-    formFields: { gap: 16, marginBottom: 24 },
-    fieldGroup: { gap: 6 },
-    fieldLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      marginLeft: 2,
-    },
-    fieldCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      borderWidth: 1.5,
-      borderColor: c.border,
-      height: 56,
-      paddingHorizontal: Spacing.base,
-      gap: 10,
-      ...Shadow.sm,
-    },
-    fieldCardError: { borderColor: c.danger },
-    fieldCardLocked: { backgroundColor: c.surface, borderColor: c.border },
-    fieldInput: {
-      flex: 1,
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.md,
-      color: c.text,
-      paddingVertical: 0,
-    },
-    fieldInputLocked: {
-      flex: 1,
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.md,
-      color: c.textMuted,
-    },
-    fieldError: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.danger,
-      marginLeft: 2,
-    },
-    fieldHint: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      marginLeft: 2,
-    },
-
-    saveBtn: {
-      height: 54,
-      backgroundColor: c.primary,
-      borderRadius: Radius.xl,
-      alignItems: 'center',
-      justifyContent: 'center',
-      ...Shadow.md,
-    },
-    saveBtnDisabled: { opacity: 0.4 },
-    saveBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.md,
-      color: '#FFFFFF',
-      letterSpacing: 0.2,
-    },
-  });
+function roleLabel(role?: string): string {
+  if (!role) return 'Member';
+  const r = role.toLowerCase();
+  if (r === 'pro' || r === 'helper') return 'Pro Partner';
+  if (r === 'admin') return 'Admin';
+  return 'Member';
 }
 
 // ── Root Component ────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const { token, user, signOut, updateUser } = useAuth();
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const navigation = useNavigation<Nav>();
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
+
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!token || token === '__guest__') return;
@@ -417,21 +102,17 @@ export default function ProfileScreen() {
   }, []);
 
   const handleLogout = () => {
-    Alert.alert('Log Out', 'Are you sure you want to log out?', [
+    Alert.alert('Log out of ZopMop?', 'You can sign back in anytime with your phone.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Log Out', style: 'destructive', onPress: signOut },
     ]);
   };
 
-  // Account deletion — required by App Store Guideline 5.1.1(v). Two-step
-  // confirm: a warning Alert explaining the destructive consequences, then a
-  // final Alert before we hit the backend. On success we sign the user out
-  // locally so the app returns to the phone-entry screen.
   const handleDeleteAccount = () => {
     if (!token || token === '__guest__') return;
     Alert.alert(
-      'Delete Account',
-      'This permanently removes your profile, bookings history, saved addresses, and pro data. This action cannot be undone.',
+      'Delete account',
+      'This permanently removes your profile, bookings, addresses and pro data. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -440,7 +121,7 @@ export default function ProfileScreen() {
           onPress: () => {
             Alert.alert(
               'Are you absolutely sure?',
-              'Tap Delete to permanently remove your ZopMop account.',
+              'Tap Delete to permanently remove your account.',
               [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -452,7 +133,7 @@ export default function ProfileScreen() {
                       signOut();
                     } catch (err) {
                       Alert.alert(
-                        'Delete Failed',
+                        'Delete failed',
                         err instanceof Error ? err.message : 'Please try again.',
                       );
                     }
@@ -466,34 +147,89 @@ export default function ProfileScreen() {
     );
   };
 
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [80, 140],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={c.text} />
+      <Animated.View
+        pointerEvents="none"
+        style={[s.stickyBar, { opacity: headerOpacity }]}
+      />
+      <View style={s.topBar}>
+        <TouchableOpacity
+          style={s.iconBtn}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+          hitSlop={10}
+        >
+          <Ionicons name="chevron-back" size={22} color={c.text} />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Profile</Text>
+        <Animated.Text
+          style={[s.topBarTitle, { opacity: headerOpacity }]}
+          numberOfLines={1}
+        >
+          {user?.name ?? 'Profile'}
+        </Animated.Text>
+        <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView
+      <Animated.ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
         bounces
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true },
+        )}
       >
-        <UserInfoCard
+        <HeroCard
           name={user?.name}
           phone={user?.phone}
+          role={user?.role}
           loading={fetchingProfile && !user?.phone}
-          onEditPress={() => setEditVisible(true)}
+          onEdit={() => setEditVisible(true)}
         />
-        <QuickActionsGrid />
-        <ReferralBanner />
-        <AccountSection onNavigate={navigation} />
-        <ListSection title="Info & Legal" items={LEGAL_ITEMS} muted />
-        <AccountActions onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} />
-        <View style={{ height: 32 }} />
-      </ScrollView>
+
+        <ActionRail navigation={navigation} />
+
+        <ReferralTicket
+          onPress={() =>
+            Alert.alert(
+              'Refer & earn ₹100',
+              'Share ZopMop with friends — you both earn ₹100 in wallet credit. Coming soon.',
+            )
+          }
+        />
+
+        <AppearanceRow />
+
+        <SectionHeader>Account</SectionHeader>
+        <GroupedList
+          items={ACCOUNT_ITEMS}
+          onPress={(id) => {
+            switch (id) {
+              case 'addresses': navigation.navigate('Addresses'); break;
+              case 'roomies':   navigation.navigate('RoomiesSetup'); break;
+              case 'experts':   Alert.alert('Your Experts', 'Expert history is coming soon.'); break;
+              case 'payments':  navigation.navigate('Payment'); break;
+              case 'notifs':    Alert.alert('Notifications', 'Notification settings are coming soon.'); break;
+            }
+          }}
+        />
+
+        <SectionHeader muted>Info & Legal</SectionHeader>
+        <GroupedList items={LEGAL_ITEMS} muted />
+
+        <DangerZone onLogout={handleLogout} onDelete={handleDeleteAccount} />
+
+        <Footer />
+      </Animated.ScrollView>
 
       <EditProfileModal
         visible={editVisible}
@@ -507,72 +243,16 @@ export default function ProfileScreen() {
   );
 }
 
-// ── Account Section (includes dark mode toggle) ───────────────────────────────
+// ── Hero Card ─────────────────────────────────────────────────────────────────
 
-function AccountSection({ onNavigate }: { onNavigate: NativeStackNavigationProp<MainStackParamList> }) {
-  const { isDark, toggleTheme } = useTheme();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
-  return (
-    <View style={s.section}>
-      <Text style={s.sectionLabel}>Account</Text>
-      <View style={s.listCard}>
-        {ACCOUNT_ITEMS.map((item, idx) => (
-          <React.Fragment key={item.id}>
-            <TouchableOpacity
-              style={s.listRow}
-              activeOpacity={0.7}
-              onPress={() => {
-                switch (item.id) {
-                  case 'addresses': onNavigate.navigate('Addresses'); break;
-                  case 'roomies': onNavigate.navigate('RoomiesSetup'); break;
-                  case 'experts': Alert.alert('Your Experts', 'Expert history is coming soon.'); break;
-                  case 'payments': onNavigate.navigate('Payment'); break;
-                  case 'notifs': Alert.alert('Notifications', 'Notification settings are coming soon.'); break;
-                }
-              }}
-            >
-              <View style={s.listIconBox}>
-                <Ionicons name={item.icon as any} size={18} color={c.primary} />
-              </View>
-              <Text style={s.listLabel}>{item.label}</Text>
-              <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-            </TouchableOpacity>
-            <View style={s.divider} />
-          </React.Fragment>
-        ))}
-
-        {/* Dark mode toggle */}
-        <View style={s.appearanceRow}>
-          <View style={s.appearanceIconBox}>
-            <Ionicons name={isDark ? 'moon' : 'sunny'} size={18} color={c.primary} />
-          </View>
-          <Text style={s.appearanceLabel}>Dark Mode</Text>
-          <Switch
-            value={isDark}
-            onValueChange={toggleTheme}
-            trackColor={{ false: c.border, true: c.primary }}
-            thumbColor={c.white}
-          />
-        </View>
-      </View>
-    </View>
-  );
-}
-
-// ── User Info Card ────────────────────────────────────────────────────────────
-
-function UserInfoCard({
-  name,
-  phone,
-  loading,
-  onEditPress,
+function HeroCard({
+  name, phone, role, loading, onEdit,
 }: {
   name?: string | null;
   phone?: string;
+  role?: string;
   loading?: boolean;
-  onEditPress: () => void;
+  onEdit: () => void;
 }) {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
@@ -581,33 +261,276 @@ function UserInfoCard({
   const displayPhone = formatPhone(phone);
 
   return (
-    <View style={s.userCard}>
-      <View style={s.avatarWrap}>
-        <View style={s.avatar}>
-          <Text style={s.avatarInitials}>{initials}</Text>
+    <View style={s.heroWrap}>
+      <View style={s.hero}>
+        <View style={s.heroStripe} pointerEvents="none" />
+
+        <View style={s.heroTopRow}>
+          <Text style={s.heroEyebrow} numberOfLines={1}>
+            ZOPMOP · {roleLabel(role).toUpperCase()}
+          </Text>
+          <TouchableOpacity
+            onPress={onEdit}
+            hitSlop={12}
+            activeOpacity={0.75}
+            style={s.heroEditBtn}
+          >
+            <Ionicons name="pencil" size={14} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={s.avatarEditBtn} activeOpacity={0.8} onPress={onEditPress}>
-          <Ionicons name="pencil" size={11} color="#FFFFFF" />
+
+        <View style={s.heroBody}>
+          <View style={s.heroMonogram}>
+            <Text style={s.heroMonogramText}>{initials}</Text>
+          </View>
+          <View style={s.heroTextWrap}>
+            {loading ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Text style={[s.heroName, !name && { opacity: 0.6 }]} numberOfLines={1}>
+                  {displayName}
+                </Text>
+                {!!displayPhone && (
+                  <Text style={s.heroPhone} numberOfLines={1}>
+                    {displayPhone}
+                  </Text>
+                )}
+              </>
+            )}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ── Action Rail (4-up circular) ──────────────────────────────────────────────
+
+function ActionRail({ navigation }: { navigation: Nav }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+
+  function go(id: string) {
+    switch (id) {
+      case 'bookings': navigation.navigate('Bookings'); break;
+      case 'wallet':   navigation.navigate('Wallet'); break;
+      case 'offers':   navigation.navigate('Offers'); break;
+      case 'support':  navigation.navigate('HelpSupport'); break;
+    }
+  }
+
+  return (
+    <View style={s.rail}>
+      {ACTION_RAIL.map((a) => (
+        <TouchableOpacity
+          key={a.id}
+          onPress={() => go(a.id)}
+          activeOpacity={0.75}
+          style={s.railItem}
+        >
+          <View style={s.railBubble}>
+            <Ionicons name={a.icon as any} size={22} color={c.primary} />
+          </View>
+          <Text style={s.railLabel} numberOfLines={1}>
+            {a.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+// ── Referral Ticket ───────────────────────────────────────────────────────────
+
+function ReferralTicket({ onPress }: { onPress: () => void }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={s.ticket}
+    >
+      <View style={s.ticketLeft}>
+        <Text style={s.ticketEyebrow}>INVITE A FRIEND</Text>
+        <Text style={s.ticketTitle}>Earn ₹100</Text>
+        <Text style={s.ticketSub}>per friend who joins</Text>
+      </View>
+
+      <View style={s.ticketRight}>
+        <View style={s.ticketCta}>
+          <Ionicons name="gift-outline" size={20} color="#FFFFFF" />
+        </View>
+        <Text style={s.ticketCtaLabel}>SHARE</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ── Appearance Row (own card so layout is bullet-proof) ──────────────────────
+
+function AppearanceRow() {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  const { isDark, toggleTheme } = useTheme();
+
+  return (
+    <>
+      <SectionHeader>Preferences</SectionHeader>
+      <View style={s.card}>
+        <View style={s.row}>
+          <View style={s.rowIcon}>
+            <Ionicons
+              name={isDark ? 'moon' : 'sunny-outline'}
+              size={18}
+              color={c.primary}
+            />
+          </View>
+          <View style={s.rowTextWrap}>
+            <Text style={s.rowLabel} numberOfLines={1}>Appearance</Text>
+            <Text style={s.rowMeta} numberOfLines={1}>{isDark ? 'Dark' : 'Light'}</Text>
+          </View>
+          <Switch
+            value={isDark}
+            onValueChange={toggleTheme}
+            trackColor={{ false: c.border, true: c.primary }}
+            thumbColor="#FFFFFF"
+            ios_backgroundColor={c.border}
+          />
+        </View>
+      </View>
+    </>
+  );
+}
+
+// ── Section Header ────────────────────────────────────────────────────────────
+
+function SectionHeader({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <Text style={[s.sectionLabel, muted && { color: c.textMuted }]}>
+      {children}
+    </Text>
+  );
+}
+
+// ── Grouped List ──────────────────────────────────────────────────────────────
+
+type ListItem = { id: string; label: string; icon: string };
+
+function GroupedList({
+  items, onPress, muted = false,
+}: {
+  items: readonly ListItem[];
+  onPress?: (id: string) => void;
+  muted?: boolean;
+}) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <View style={s.card}>
+      {items.map((item, i) => (
+        <React.Fragment key={item.id}>
+          <TouchableOpacity
+            style={s.row}
+            activeOpacity={0.7}
+            onPress={() => onPress?.(item.id)}
+          >
+            <View style={[s.rowIcon, muted && s.rowIconMuted]}>
+              <Ionicons
+                name={item.icon as any}
+                size={18}
+                color={muted ? c.textSecondary : c.primary}
+              />
+            </View>
+            <View style={s.rowTextWrap}>
+              <Text
+                style={[s.rowLabel, muted && { color: c.textSecondary }]}
+                numberOfLines={1}
+              >
+                {item.label}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
+          </TouchableOpacity>
+          {i < items.length - 1 && <View style={s.divider} />}
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
+// ── Danger Zone ───────────────────────────────────────────────────────────────
+
+function DangerZone({
+  onLogout, onDelete,
+}: {
+  onLogout: () => void;
+  onDelete: () => void;
+}) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <>
+      <Text style={[s.sectionLabel, { color: c.danger }]}>Danger Zone</Text>
+      <View style={[s.card, s.cardDanger]}>
+        <TouchableOpacity
+          style={s.row}
+          activeOpacity={0.7}
+          onPress={onLogout}
+        >
+          <View style={[s.rowIcon, s.rowIconDanger]}>
+            <Ionicons name="log-out-outline" size={18} color={c.danger} />
+          </View>
+          <View style={s.rowTextWrap}>
+            <Text style={[s.rowLabel, { color: c.danger }]} numberOfLines={1}>
+              Log Out
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={c.danger}
+            style={{ opacity: 0.5 }}
+          />
+        </TouchableOpacity>
+        <View style={[s.divider, { backgroundColor: c.dangerBg }]} />
+        <TouchableOpacity
+          style={s.row}
+          activeOpacity={0.7}
+          onPress={onDelete}
+        >
+          <View style={[s.rowIcon, s.rowIconDanger]}>
+            <Ionicons name="trash-outline" size={18} color={c.danger} />
+          </View>
+          <View style={s.rowTextWrap}>
+            <Text style={[s.rowLabel, { color: c.danger }]} numberOfLines={1}>
+              Delete Account
+            </Text>
+          </View>
+          <Ionicons
+            name="chevron-forward"
+            size={16}
+            color={c.danger}
+            style={{ opacity: 0.5 }}
+          />
         </TouchableOpacity>
       </View>
+    </>
+  );
+}
 
-      <View style={s.userInfo}>
-        {loading ? (
-          <ActivityIndicator size="small" color={c.primary} />
-        ) : (
-          <>
-            <Text style={[s.userName, !name && s.userNamePlaceholder]} numberOfLines={1}>
-              {displayName}
-            </Text>
-            <Text style={s.userPhone}>{displayPhone}</Text>
-          </>
-        )}
-      </View>
+// ── Footer ────────────────────────────────────────────────────────────────────
 
-      <TouchableOpacity style={s.editBtn} activeOpacity={0.8} onPress={onEditPress}>
-        <Text style={s.editBtnText}>Edit</Text>
-        <Ionicons name="chevron-forward" size={12} color={c.primary} />
-      </TouchableOpacity>
+function Footer() {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  return (
+    <View style={s.footer}>
+      <Text style={s.footerBrand}>ZOPMOP</Text>
+      <Text style={s.footerMeta}>v{APP_VERSION}  ·  Made in India</Text>
     </View>
   );
 }
@@ -615,12 +538,7 @@ function UserInfoCard({
 // ── Edit Profile Modal ────────────────────────────────────────────────────────
 
 function EditProfileModal({
-  visible,
-  currentName,
-  phone,
-  token,
-  onClose,
-  onSaved,
+  visible, currentName, phone, token, onClose, onSaved,
 }: {
   visible: boolean;
   currentName?: string | null;
@@ -634,7 +552,7 @@ function EditProfileModal({
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const slideAnim = useRef(new Animated.Value(300)).current;
+  const slideAnim = useRef(new Animated.Value(400)).current;
   const nameRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -644,12 +562,12 @@ function EditProfileModal({
       Animated.spring(slideAnim, {
         toValue: 0,
         useNativeDriver: true,
-        damping: 20,
-        stiffness: 200,
+        damping: 22,
+        stiffness: 220,
       }).start(() => nameRef.current?.focus());
     } else {
       Animated.timing(slideAnim, {
-        toValue: 300,
+        toValue: 400,
         duration: 220,
         useNativeDriver: true,
       }).start();
@@ -672,7 +590,7 @@ function EditProfileModal({
       const updated = await updateMe(token, trimmed);
       onSaved(updated);
     } catch {
-      setError('Failed to save. Please try again.');
+      setError('Could not save. Try again.');
     } finally {
       setSaving(false);
     }
@@ -698,15 +616,20 @@ function EditProfileModal({
           <View style={s.sheetHandle} />
 
           <View style={s.sheetHeader}>
-            <Text style={s.sheetTitle}>Edit Profile</Text>
-            <TouchableOpacity style={s.sheetClose} onPress={onClose} activeOpacity={0.7}>
+            <Text style={s.sheetTitle}>Edit profile</Text>
+            <TouchableOpacity
+              style={s.sheetClose}
+              onPress={onClose}
+              hitSlop={10}
+              activeOpacity={0.7}
+            >
               <Ionicons name="close" size={18} color={c.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <View style={s.formFields}>
             <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>Full Name</Text>
+              <Text style={s.fieldLabel}>Full name</Text>
               <TouchableOpacity
                 style={[s.fieldCard, error ? s.fieldCardError : null]}
                 activeOpacity={1}
@@ -726,7 +649,10 @@ function EditProfileModal({
                   onSubmitEditing={handleSave}
                 />
                 {name.length > 0 && (
-                  <TouchableOpacity onPress={() => setName('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setName('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
                     <Ionicons name="close-circle" size={18} color={c.textMuted} />
                   </TouchableOpacity>
                 )}
@@ -735,13 +661,13 @@ function EditProfileModal({
             </View>
 
             <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>Mobile Number</Text>
+              <Text style={s.fieldLabel}>Mobile</Text>
               <View style={[s.fieldCard, s.fieldCardLocked]}>
                 <Ionicons name="call-outline" size={18} color={c.textMuted} />
                 <Text style={s.fieldInputLocked}>{formatPhone(phone)}</Text>
                 <Ionicons name="lock-closed-outline" size={14} color={c.textMuted} />
               </View>
-              <Text style={s.fieldHint}>Phone number cannot be changed.</Text>
+              <Text style={s.fieldHint}>Phone number can't be changed.</Text>
             </View>
           </View>
 
@@ -753,7 +679,7 @@ function EditProfileModal({
           >
             {saving
               ? <ActivityIndicator color="#FFFFFF" size="small" />
-              : <Text style={s.saveBtnText}>Save Changes</Text>}
+              : <Text style={s.saveBtnText}>Save changes</Text>}
           </TouchableOpacity>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -761,133 +687,399 @@ function EditProfileModal({
   );
 }
 
-// ── Quick Actions Grid ────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 
-function QuickActionsGrid() {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+function createStyles(c: C) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.background },
+    scroll: { flex: 1 },
+    content: { paddingBottom: 48 },
 
-  function handleQuickAction(id: string) {
-    switch (id) {
-      case 'bookings': navigation.navigate('Bookings'); break;
-      case 'wallet':   navigation.navigate('Wallet'); break;
-      case 'offers':   navigation.navigate('Offers'); break;
-      case 'support':  navigation.navigate('HelpSupport'); break;
-    }
-  }
+    // Top bar
+    stickyBar: {
+      position: 'absolute',
+      top: 0, left: 0, right: 0,
+      height: 92,
+      backgroundColor: c.background,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.border,
+      zIndex: 1,
+    },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: H_PAD,
+      paddingTop: 8,
+      paddingBottom: 12,
+      zIndex: 2,
+    },
+    iconBtn: {
+      width: 36, height: 36,
+      borderRadius: 18,
+      backgroundColor: c.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    topBarTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.md,
+      color: c.text,
+      letterSpacing: -0.2,
+      maxWidth: SCREEN_WIDTH - 160,
+    },
 
-  return (
-    <View style={s.section}>
-      <View style={s.quickGrid}>
-        {QUICK_ACTIONS.map(item => (
-          <TouchableOpacity
-            key={item.id}
-            style={[s.quickCard, { width: QUICK_CARD_WIDTH }]}
-            activeOpacity={0.82}
-            onPress={() => handleQuickAction(item.id)}
-          >
-            <View style={s.quickIconBox}>
-              <Ionicons name={item.icon as any} size={22} color={c.primary} />
-            </View>
-            <Text style={s.quickTitle}>{item.title}</Text>
-            <Text style={s.quickSubtitle} numberOfLines={2}>{item.subtitle}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
-}
+    // Hero
+    heroWrap: {
+      paddingHorizontal: H_PAD,
+      marginTop: 8,
+      marginBottom: 24,
+    },
+    hero: {
+      backgroundColor: c.primary,
+      borderRadius: 28,
+      paddingHorizontal: 22,
+      paddingTop: 22,
+      paddingBottom: 26,
+      overflow: 'hidden',
+      ...Shadow.lg,
+    },
+    heroStripe: {
+      position: 'absolute',
+      bottom: 0, left: 0, right: 0,
+      height: 4,
+      backgroundColor: c.accentLight,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 24,
+    },
+    heroEyebrow: {
+      flex: 1,
+      fontFamily: FontFamily.bold,
+      fontSize: 10,
+      letterSpacing: 1.6,
+      color: 'rgba(255,255,255,0.7)',
+    },
+    heroEditBtn: {
+      width: 32, height: 32,
+      borderRadius: 16,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    heroBody: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    heroMonogram: {
+      width: 64, height: 64,
+      borderRadius: 32,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1.5,
+      borderColor: 'rgba(255,255,255,0.4)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 16,
+    },
+    heroMonogramText: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize.xl,
+      color: '#FFFFFF',
+      letterSpacing: 0.5,
+    },
+    heroTextWrap: { flex: 1 },
+    heroName: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['3xl'],
+      color: '#FFFFFF',
+      letterSpacing: -0.6,
+      lineHeight: FontSize['3xl'] + 4,
+    },
+    heroPhone: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: 'rgba(255,255,255,0.78)',
+      marginTop: 4,
+      letterSpacing: 0.2,
+    },
 
-// ── Referral Banner ───────────────────────────────────────────────────────────
+    // Action rail (4-up)
+    rail: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: H_PAD,
+      marginBottom: 28,
+    },
+    railItem: {
+      flex: 1,
+      alignItems: 'center',
+    },
+    railBubble: {
+      width: 56, height: 56,
+      borderRadius: 28,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: c.border,
+      marginBottom: 8,
+    },
+    railLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.text,
+      letterSpacing: -0.1,
+      textAlign: 'center',
+    },
 
-function ReferralBanner() {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <View style={s.section}>
-      <TouchableOpacity style={s.referralCard} activeOpacity={0.85} onPress={() => Alert.alert('Refer & Earn', 'Share ZopMop with friends and earn ₹100 per referral. Referral feature coming soon!')}>
-        <View style={s.referralCircle} />
-        <View style={s.referralContent}>
-          <View style={s.referralIconBox}>
-            <Text style={s.referralEmoji}>🎁</Text>
-          </View>
-          <View style={s.referralText}>
-            <Text style={s.referralTitle}>Refer & Earn</Text>
-            <Text style={s.referralSub}>Invite friends and get rewards</Text>
-          </View>
-        </View>
-        <Ionicons name="chevron-forward" size={18} color="#FFFFFF" style={{ opacity: 0.7 }} />
-      </TouchableOpacity>
-    </View>
-  );
-}
+    // Referral ticket
+    ticket: {
+      marginHorizontal: H_PAD,
+      marginBottom: 28,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.accent,
+      borderRadius: 22,
+      paddingVertical: 20,
+      paddingHorizontal: 22,
+      ...Shadow.md,
+    },
+    ticketLeft: {
+      flex: 1,
+    },
+    ticketEyebrow: {
+      fontFamily: FontFamily.bold,
+      fontSize: 10,
+      letterSpacing: 1.4,
+      color: 'rgba(255,255,255,0.78)',
+      marginBottom: 6,
+    },
+    ticketTitle: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize['2xl'],
+      color: '#FFFFFF',
+      letterSpacing: -0.5,
+    },
+    ticketSub: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: 'rgba(255,255,255,0.85)',
+      marginTop: 2,
+    },
+    ticketRight: {
+      alignItems: 'center',
+      marginLeft: 16,
+    },
+    ticketCta: {
+      width: 44, height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.3)',
+      marginBottom: 6,
+    },
+    ticketCtaLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: 10,
+      color: '#FFFFFF',
+      letterSpacing: 1.4,
+    },
 
-// ── List Section ──────────────────────────────────────────────────────────────
+    // Section header
+    sectionLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: 11,
+      letterSpacing: 1.4,
+      color: c.textSecondary,
+      textTransform: 'uppercase',
+      marginHorizontal: H_PAD,
+      marginBottom: 10,
+      marginTop: 4,
+    },
 
-type ListItem = { id: string; label: string; icon: string };
+    // Card / list
+    card: {
+      backgroundColor: c.white,
+      marginHorizontal: H_PAD,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: c.border,
+      overflow: 'hidden',
+      marginBottom: 24,
+    },
+    cardDanger: {
+      borderColor: c.dangerBg,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+    },
+    rowIcon: {
+      width: 36, height: 36,
+      borderRadius: 12,
+      backgroundColor: c.primaryBg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 14,
+    },
+    rowIconMuted: { backgroundColor: c.surface },
+    rowIconDanger: { backgroundColor: c.dangerBg },
+    rowTextWrap: { flex: 1 },
+    rowLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.text,
+      letterSpacing: -0.1,
+    },
+    rowMeta: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      marginTop: 2,
+    },
+    divider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: c.border,
+      marginLeft: 16 + 36 + 14,
+    },
 
-function ListSection({
-  title, items, muted = false, onItemPress = {},
-}: {
-  title: string;
-  items: readonly ListItem[];
-  muted?: boolean;
-  onItemPress?: Record<string, () => void>;
-}) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <View style={s.section}>
-      <Text style={[s.sectionLabel, muted && s.sectionLabelMuted]}>{title}</Text>
-      <View style={s.listCard}>
-        {items.map((item, idx) => (
-          <React.Fragment key={item.id}>
-            <TouchableOpacity style={s.listRow} activeOpacity={0.7} onPress={onItemPress[item.id]}>
-              <View style={[s.listIconBox, muted && s.listIconBoxMuted]}>
-                <Ionicons name={item.icon as any} size={18} color={muted ? c.textMuted : c.primary} />
-              </View>
-              <Text style={[s.listLabel, muted && s.listLabelMuted]}>{item.label}</Text>
-              <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-            </TouchableOpacity>
-            {idx < items.length - 1 && <View style={s.divider} />}
-          </React.Fragment>
-        ))}
-      </View>
-    </View>
-  );
-}
+    // Footer
+    footer: {
+      alignItems: 'center',
+      paddingTop: 16,
+      paddingBottom: 8,
+    },
+    footerBrand: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize.sm,
+      letterSpacing: 4,
+      color: c.textMuted,
+    },
+    footerMeta: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      marginTop: 6,
+      letterSpacing: 0.4,
+    },
 
-// ── Account Actions ───────────────────────────────────────────────────────────
-
-function AccountActions({
-  onLogout,
-  onDeleteAccount,
-}: {
-  onLogout: () => void;
-  onDeleteAccount: () => void;
-}) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <View style={s.section}>
-      <View style={s.listCard}>
-        <TouchableOpacity style={s.listRow} onPress={onLogout} activeOpacity={0.7}>
-          <View style={[s.listIconBox, s.listIconBoxDanger]}>
-            <Ionicons name="log-out-outline" size={18} color={c.danger} />
-          </View>
-          <Text style={[s.listLabel, s.listLabelDanger]}>Log Out</Text>
-          <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-        </TouchableOpacity>
-        <View style={s.divider} />
-        <TouchableOpacity style={s.listRow} onPress={onDeleteAccount} activeOpacity={0.7}>
-          <View style={[s.listIconBox, s.listIconBoxDanger]}>
-            <Ionicons name="trash-outline" size={18} color={c.danger} />
-          </View>
-          <Text style={[s.listLabel, s.listLabelDanger]}>Delete Account</Text>
-          <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+    // Edit modal
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    sheet: {
+      position: 'absolute',
+      bottom: 0, left: 0, right: 0,
+      backgroundColor: c.white,
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      ...Shadow.lg,
+    },
+    sheetHandle: {
+      width: 36, height: 4,
+      borderRadius: 2,
+      backgroundColor: c.border,
+      alignSelf: 'center',
+      marginBottom: 16,
+    },
+    sheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 24,
+    },
+    sheetTitle: {
+      flex: 1,
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize.xl,
+      color: c.text,
+      letterSpacing: -0.4,
+    },
+    sheetClose: {
+      width: 32, height: 32,
+      borderRadius: Radius.full,
+      backgroundColor: c.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    formFields: { marginBottom: 24 },
+    fieldGroup: { marginBottom: 16 },
+    fieldLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      marginLeft: 2,
+      marginBottom: 6,
+    },
+    fieldCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: c.white,
+      borderRadius: 16,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      height: 56,
+      paddingHorizontal: 16,
+    },
+    fieldCardError: { borderColor: c.danger },
+    fieldCardLocked: { backgroundColor: c.surface, borderColor: c.border },
+    fieldInput: {
+      flex: 1,
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: c.text,
+      paddingVertical: 0,
+      marginLeft: 10,
+    },
+    fieldInputLocked: {
+      flex: 1,
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.md,
+      color: c.textMuted,
+      marginLeft: 10,
+    },
+    fieldError: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.danger,
+      marginLeft: 2,
+      marginTop: 4,
+    },
+    fieldHint: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.xs,
+      color: c.textMuted,
+      marginLeft: 2,
+      marginTop: 4,
+    },
+    saveBtn: {
+      height: 54,
+      backgroundColor: c.primary,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...Shadow.md,
+    },
+    saveBtnDisabled: { opacity: 0.4 },
+    saveBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.md,
+      color: '#FFFFFF',
+      letterSpacing: 0.2,
+    },
+  });
 }
