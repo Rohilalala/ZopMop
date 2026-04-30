@@ -9,11 +9,11 @@ const (
 	BookingOutboxEventStatusChanged           BookingOutboxEventType = "booking.status_changed"
 	BookingOutboxEventHelperAssigned          BookingOutboxEventType = "booking.helper_assigned"
 	BookingOutboxEventCancelled               BookingOutboxEventType = "booking.cancelled"
-	BookingOutboxEventNotifyCustomerAccepted  BookingOutboxEventType = "booking.notify_customer_accepted"
-	BookingOutboxEventNotifyProCancelled      BookingOutboxEventType = "booking.notify_pro_cancelled"
-	BookingOutboxEventMatchCleanup            BookingOutboxEventType = "booking.match_cleanup"
-	BookingOutboxEventNotifyCustomerCompleted BookingOutboxEventType = "booking.notify_customer_completed"
-	BookingOutboxEventIncrementHelperJobs     BookingOutboxEventType = "booking.increment_helper_jobs"
+	BookingOutboxEventNotifyCustomerAccepted  BookingOutboxEventType = "booking.customer.accepted"
+	BookingOutboxEventNotifyProCancelled      BookingOutboxEventType = "booking.pro.cancelled"
+	BookingOutboxEventMatchCleanup            BookingOutboxEventType = "booking.match.cleanup"
+	BookingOutboxEventNotifyCustomerCompleted BookingOutboxEventType = "booking.customer.completed"
+	BookingOutboxEventIncrementHelperJobs     BookingOutboxEventType = "booking.helper.increment_jobs"
 )
 
 // BookingOutboxPayload contains event data persisted in booking_outbox.payload.
