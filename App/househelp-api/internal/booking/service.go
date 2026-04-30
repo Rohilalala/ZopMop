@@ -225,8 +225,7 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 			Msg("booking cancelled outside free cancellation window; fee should be charged")
 	}
 
-	cancelEvents := buildCancelBookingOutboxEvents(bookingID, booking.CustomerID, booking.HelperID)
-	if err := s.repo.CancelBookingWithOutbox(ctx, bookingID, "customer", cancelEvents); err != nil {
+	if err := s.repo.CancelBookingWithOutbox(ctx, bookingID, "customer"); err != nil {
 		return fmt.Errorf("failed to cancel booking: %w", err)
 	}
 

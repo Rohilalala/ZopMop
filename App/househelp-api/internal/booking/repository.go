@@ -13,8 +13,9 @@ import (
 // Repository handles all database operations for the booking module.
 // All queries are parameterized. Every query uses a 5s context timeout.
 type Repository struct {
-	db     *pgxpool.Pool
-	outbox *OutboxRepository
+	db      *pgxpool.Pool
+	outbox  *OutboxRepository
+	beginTx func(ctx context.Context) (pgx.Tx, error)
 }
 
 // NewRepository creates a new booking repository.
@@ -22,7 +23,17 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{
 		db:     db,
 		outbox: NewOutboxRepository(db),
+		beginTx: func(ctx context.Context) (pgx.Tx, error) {
+			return db.Begin(ctx)
+		},
 	}
+}
+
+func (r *Repository) beginTransaction(ctx context.Context) (pgx.Tx, error) {
+	if r.beginTx != nil {
+		return r.beginTx(ctx)
+	}
+	return r.db.Begin(ctx)
 }
 
 // CreateBooking inserts a new booking record.
@@ -114,13 +125,13 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	tx, err := r.db.Begin(queryCtx)
+	tx, err := r.beginTransaction(queryCtx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(queryCtx)
 
-	if err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, newStatus, cancelledBy); err != nil {
+	if _, err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, newStatus, cancelledBy); err != nil {
 		return err
 	}
 
@@ -131,13 +142,13 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 	return nil
 }
 
-func (r *Repository) updateBookingStatusInTx(ctx context.Context, tx pgx.Tx, bookingID string, newStatus BookingStatus, cancelledBy string) error {
+func (r *Repository) updateBookingStatusInTx(ctx context.Context, tx pgx.Tx, bookingID string, newStatus BookingStatus, cancelledBy string) (*Booking, error) {
 	b, err := r.getBookingByIDTx(ctx, tx, bookingID, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !isValidTransition(b.Status, newStatus) {
-		return fmt.Errorf("invalid status transition from %s to %s", b.Status, newStatus)
+		return nil, fmt.Errorf("invalid status transition from %s to %s", b.Status, newStatus)
 	}
 
 	var query string
@@ -152,13 +163,13 @@ func (r *Repository) updateBookingStatusInTx(ctx context.Context, tx pgx.Tx, boo
 
 	result, err := tx.Exec(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("failed to update booking status: %w", err)
+		return nil, fmt.Errorf("failed to update booking status: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found")
+		return nil, fmt.Errorf("booking not found")
 	}
 
-	return nil
+	return b, nil
 }
 
 // isValidTransition checks if a booking status transition is valid.
@@ -222,19 +233,21 @@ func (r *Repository) AcceptBookingWithOutbox(ctx context.Context, bookingID, hel
 	return nil
 }
 
-func (r *Repository) CancelBookingWithOutbox(ctx context.Context, bookingID, cancelledBy string, events []OutboxEvent) error {
+func (r *Repository) CancelBookingWithOutbox(ctx context.Context, bookingID, cancelledBy string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	tx, err := r.db.Begin(queryCtx)
+	tx, err := r.beginTransaction(queryCtx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(queryCtx)
 
-	if err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, StatusCancelled, cancelledBy); err != nil {
+	b, err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, StatusCancelled, cancelledBy)
+	if err != nil {
 		return err
 	}
+	events := buildCancelBookingOutboxEvents(bookingID, b.CustomerID, b.HelperID)
 	if err := r.enqueueOutboxEventsInTx(queryCtx, tx, events); err != nil {
 		return err
 	}
