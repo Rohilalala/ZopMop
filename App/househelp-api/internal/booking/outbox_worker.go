@@ -104,7 +104,7 @@ func (w *OutboxWorker) processBatch(ctx context.Context) (int, error) {
 }
 
 func (w *OutboxWorker) dispatch(ctx context.Context, evt OutboxPendingEvent) error {
-	switch evt.Type {
+	switch canonicalizeOutboxEventType(evt.Type) {
 	case BookingOutboxEventNotifyCustomerAccepted:
 		return w.notifications.NotifyCustomerBookingAccepted(
 			ctx, evt.Payload.CustomerID, evt.Payload.HelperName, evt.Payload.BookingID,
@@ -130,6 +130,23 @@ func (w *OutboxWorker) dispatch(ctx context.Context, evt OutboxPendingEvent) err
 		return nil
 	default:
 		return fmt.Errorf("unsupported outbox event type: %s", evt.Type)
+	}
+}
+
+func canonicalizeOutboxEventType(eventType BookingOutboxEventType) BookingOutboxEventType {
+	switch eventType {
+	case "booking_customer_accepted":
+		return BookingOutboxEventNotifyCustomerAccepted
+	case "booking_pro_cancelled":
+		return BookingOutboxEventNotifyProCancelled
+	case "booking_match_cleanup":
+		return BookingOutboxEventMatchCleanup
+	case "booking_customer_completed":
+		return BookingOutboxEventNotifyCustomerCompleted
+	case "booking_helper_increment_jobs":
+		return BookingOutboxEventIncrementHelperJobs
+	default:
+		return eventType
 	}
 }
 

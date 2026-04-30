@@ -1,6 +1,9 @@
 package booking
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestBuildAcceptBookingOutboxEvent(t *testing.T) {
 	evt := buildAcceptBookingOutboxEvent("booking-1", "customer-1", "helper-1", "Alex")
@@ -59,5 +62,33 @@ func TestBuildCompleteBookingOutboxEvents(t *testing.T) {
 	}
 	if events[1].Payload.HelperID == nil || *events[1].Payload.HelperID != "helper-1" {
 		t.Fatalf("expected helper id on increment helper jobs event")
+	}
+}
+
+func TestBookingOutboxPayloadMarshalUnmarshalRoundTrip(t *testing.T) {
+	helperID := "helper-1"
+	original := BookingOutboxPayload{
+		BookingID:  "booking-1",
+		CustomerID: "customer-1",
+		HelperID:   &helperID,
+		HelperName: "Alex",
+		FromStatus: StatusPending,
+		ToStatus:   StatusAccepted,
+		Reason:     "accepted",
+		Metadata: map[string]string{
+			"source": "worker",
+		},
+	}
+
+	raw, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	decoded, err := UnmarshalBookingOutboxPayload(raw)
+	if err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, original) {
+		t.Fatalf("payload mismatch after roundtrip: want %#v got %#v", original, decoded)
 	}
 }

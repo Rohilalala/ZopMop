@@ -112,6 +112,54 @@ func TestOutboxWorkerProcessBatch_DispatchFailureMarksRetry(t *testing.T) {
 	}
 }
 
+func TestOutboxWorkerProcessBatch_LegacyUnderscoreEventTypeProcessed(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeOutboxStore{
+		events: []OutboxPendingEvent{
+			{
+				ID:   "evt-legacy-1",
+				Type: BookingOutboxEventType("booking_customer_accepted"),
+				Payload: BookingOutboxPayload{
+					BookingID:  "booking-legacy-1",
+					CustomerID: "customer-legacy-1",
+					HelperName: "Legacy Helper",
+				},
+				AttemptCount: 1,
+			},
+		},
+	}
+	notifier := &fakeOutboxNotifier{}
+	worker := &OutboxWorker{
+		store:         store,
+		notifications: notifier,
+		matcher:       &fakeOutboxMatcher{},
+		db:            fakeOutboxDB{},
+		batchSize:     10,
+		baseBackoff:   time.Second,
+		maxBackoff:    10 * time.Second,
+		now:           time.Now,
+		sleep:         sleepWithContext,
+	}
+
+	processed, err := worker.processBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected 1 processed event, got %d", processed)
+	}
+	if len(store.retries) != 0 {
+		t.Fatalf("expected no retries for legacy event type, got %#v", store.retries)
+	}
+	if len(store.doneIDs) != 1 || store.doneIDs[0] != "evt-legacy-1" {
+		t.Fatalf("expected evt-legacy-1 marked done, got %#v", store.doneIDs)
+	}
+	if len(notifier.acceptedCalls) != 1 {
+		t.Fatalf("expected 1 accepted notification call, got %d", len(notifier.acceptedCalls))
+	}
+}
+
 type fakeOutboxStore struct {
 	events   []OutboxPendingEvent
 	doneIDs  []string

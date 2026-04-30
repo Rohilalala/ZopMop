@@ -24,12 +24,16 @@ type OutboxPendingEvent struct {
 
 // OutboxRepository persists booking side-effect events in booking_outbox.
 type OutboxRepository struct {
-	db *pgxpool.Pool
+	db            *pgxpool.Pool
+	leaseDuration time.Duration
 }
 
 // NewOutboxRepository creates a new outbox repository.
 func NewOutboxRepository(db *pgxpool.Pool) *OutboxRepository {
-	return &OutboxRepository{db: db}
+	return &OutboxRepository{
+		db:            db,
+		leaseDuration: 5 * time.Minute,
+	}
 }
 
 // Enqueue inserts a pending outbox event using the provided executor.
@@ -63,11 +67,16 @@ func (r *OutboxRepository) ClaimPending(ctx context.Context, limit int) ([]Outbo
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	leaseMs := r.processingLease().Milliseconds()
 	rows, err := r.db.Query(queryCtx, `
 WITH candidates AS (
 	SELECT id
 	FROM booking_outbox
-	WHERE status = 'pending' AND available_at <= NOW()
+	WHERE (
+		(status = 'pending' AND available_at <= NOW())
+		OR
+		(status = 'processing' AND available_at <= NOW())
+	)
 	ORDER BY created_at ASC
 	LIMIT $1
 	FOR UPDATE SKIP LOCKED
@@ -75,11 +84,12 @@ WITH candidates AS (
 UPDATE booking_outbox bo
 SET status = 'processing',
 	attempt_count = bo.attempt_count + 1,
+	available_at = NOW() + (($2::bigint * INTERVAL '1 millisecond')),
 	updated_at = NOW()
 FROM candidates c
 WHERE bo.id = c.id
 RETURNING bo.id::text, bo.event_type, bo.payload, bo.attempt_count
-`, limit)
+`, limit, leaseMs)
 	if err != nil {
 		return nil, fmt.Errorf("claim pending outbox events: %w", err)
 	}
@@ -104,6 +114,13 @@ RETURNING bo.id::text, bo.event_type, bo.payload, bo.attempt_count
 	}
 
 	return events, nil
+}
+
+func (r *OutboxRepository) processingLease() time.Duration {
+	if r.leaseDuration > 0 {
+		return r.leaseDuration
+	}
+	return 5 * time.Minute
 }
 
 func (r *OutboxRepository) MarkDone(ctx context.Context, eventID string) error {
