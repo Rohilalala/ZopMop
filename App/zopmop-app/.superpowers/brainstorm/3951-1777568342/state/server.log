@@ -1,0 +1,13 @@
+{"type":"server-started","port":49472,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:49472","screen_dir":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content","state_dir":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/state"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/01-home-screen.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/02-services-browse.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/03-service-detail.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/04-cart.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/05-checkout.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/06-payment-confirmation.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/07-active-booking.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/08-booking-history.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/09-booking-detail.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/00-index.html"}
+{"type":"screen-added","file":"/Users/adityarohilla/Documents/ZopMop/App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/index.html"}
+{"type":"server-stopped","reason":"idle timeout"}
