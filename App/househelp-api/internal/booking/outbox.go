@@ -22,6 +22,12 @@ type BookingOutboxPayload struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+// OutboxEvent is a booking side-effect event to be stored in booking_outbox.
+type OutboxEvent struct {
+	Type    BookingOutboxEventType
+	Payload BookingOutboxPayload
+}
+
 // Marshal encodes payload for storage in booking_outbox.payload.
 func (p BookingOutboxPayload) Marshal() ([]byte, error) {
 	return json.Marshal(p)
