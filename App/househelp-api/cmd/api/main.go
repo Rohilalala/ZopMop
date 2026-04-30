@@ -185,6 +185,20 @@ func main() {
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
 	bookingService.SetMapsClient(mapsClient)
 	bookingService.SetAnalytics(analyticsSvc)
+	bookingOutboxRepo := booking.NewOutboxRepository(dbPool)
+	bookingOutboxWorker := booking.NewOutboxWorker(bookingOutboxRepo, notificationService, matchEngine, dbPool)
+	bookingOutboxCtx, bookingOutboxCancel := context.WithCancel(context.Background())
+	bookingOutboxDone := make(chan struct{})
+	go func() {
+		defer close(bookingOutboxDone)
+		if runErr := bookingOutboxWorker.Run(bookingOutboxCtx); runErr != nil && !errors.Is(runErr, context.Canceled) {
+			log.Error().Err(runErr).Msg("[booking_outbox] worker stopped with error")
+		}
+	}()
+	defer func() {
+		bookingOutboxCancel()
+		<-bookingOutboxDone
+	}()
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
