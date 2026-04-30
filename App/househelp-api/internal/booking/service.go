@@ -25,10 +25,10 @@ type Service struct {
 	rdb          *redis.Client
 	configSvc    *config_manager.Service
 	notifSvc     *notification.Service
-	matchBatcher *matching.Batcher    // nil-safe; only used for instant bookings
-	matchEngine  *matching.Engine     // nil-safe; used for status queries
-	maps         *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
-	analytics    *analytics.Service   // nil-safe; fire-and-forget event tracking
+	matchBatcher *matching.Batcher  // nil-safe; only used for instant bookings
+	matchEngine  *matching.Engine   // nil-safe; used for status queries
+	maps         *googlemaps.Client // nil-safe; used for tracking ETA + polyline
+	analytics    *analytics.Service // nil-safe; fire-and-forget event tracking
 }
 
 // SetMapsClient attaches a Google Maps client for tracking and ETA.
@@ -225,7 +225,8 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 			Msg("booking cancelled outside free cancellation window; fee should be charged")
 	}
 
-	if err := s.repo.UpdateBookingStatus(ctx, bookingID, StatusCancelled, "customer"); err != nil {
+	cancelEvents := buildCancelBookingOutboxEvents(bookingID, booking.CustomerID, booking.HelperID)
+	if err := s.repo.CancelBookingWithOutbox(ctx, bookingID, "customer", cancelEvents); err != nil {
 		return fmt.Errorf("failed to cancel booking: %w", err)
 	}
 
@@ -233,20 +234,6 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 		"cancelled_by": "customer",
 		"status_was":   string(booking.Status),
 	})
-
-	// Clear Redis match keys so helpers immediately stop seeing this invite.
-	if s.matchEngine != nil {
-		go s.matchEngine.ClearMatchOnAccept(context.Background(), bookingID, "")
-	}
-
-	// Notify assigned helper (if any) that the job was cancelled.
-	if s.notifSvc != nil && booking.HelperID != nil {
-		go func() {
-			if notifErr := s.notifSvc.NotifyProBookingCancelled(context.Background(), *booking.HelperID, bookingID); notifErr != nil {
-				log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send cancellation notification to pro")
-			}
-		}()
-	}
 
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
 	return nil
@@ -287,20 +274,14 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		helperName = "a helper"
 	}
 
-	if err := s.repo.AcceptBooking(ctx, bookingID, helperID); err != nil {
+	acceptEvent := buildAcceptBookingOutboxEvent(bookingID, booking.CustomerID, helperID, helperName)
+	if err := s.repo.AcceptBookingWithOutbox(ctx, bookingID, helperID, &acceptEvent); err != nil {
 		return fmt.Errorf("failed to accept booking: %w", err)
 	}
 
 	s.analytics.Track(ctx, analytics.EventBookingAccepted, helperID, bookingID, map[string]string{
 		"customer_id": booking.CustomerID,
 	})
-
-	// Notify customer that their helper is on the way.
-	if s.notifSvc != nil {
-		if notifErr := s.notifSvc.NotifyCustomerBookingAccepted(ctx, booking.CustomerID, helperName, bookingID); notifErr != nil {
-			log.Error().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send booking accepted notification to customer")
-		}
-	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking accepted by helper")
 	return nil
@@ -662,49 +643,13 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) 
 }
 
 // CompleteBooking transitions a booking from in_progress → completed and
-// increments the helper's total_jobs counter.
+// enqueues follow-up side effects (helper jobs increment + customer notification).
 // Only the assigned helper may call this.
 func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
-	res, err := s.db.Exec(ctx,
-		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'`,
-		bookingID, helperID,
-	)
-	if err != nil {
+	if err := s.repo.CompleteBookingWithOutbox(ctx, bookingID, helperID); err != nil {
 		return fmt.Errorf("failed to complete booking: %w", err)
 	}
-	if res.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found or cannot be completed")
-	}
 	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
-
-	// Increment total_jobs and notify customer — both best-effort, non-blocking.
-	go func() {
-		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, dbErr := s.db.Exec(uCtx,
-			`UPDATE helpers SET total_jobs = total_jobs + 1 WHERE id = $1`,
-			helperID,
-		); dbErr != nil {
-			log.Warn().Err(dbErr).Str("helper_id", helperID).Msg("failed to increment total_jobs")
-		}
-	}()
-
-	if s.notifSvc != nil {
-		go func() {
-			// Fetch customer ID for this booking then notify them.
-			var customerID string
-			qCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			if err := s.db.QueryRow(qCtx,
-				`SELECT customer_id FROM bookings WHERE id = $1`, bookingID,
-			).Scan(&customerID); err == nil {
-				if notifErr := s.notifSvc.NotifyCustomerBookingCompleted(context.Background(), customerID, bookingID); notifErr != nil {
-					log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send completion notification to customer")
-				}
-			}
-		}()
-	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking completed")
 	return nil

@@ -13,12 +13,16 @@ import (
 // Repository handles all database operations for the booking module.
 // All queries are parameterized. Every query uses a 5s context timeout.
 type Repository struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	outbox *OutboxRepository
 }
 
 // NewRepository creates a new booking repository.
 func NewRepository(db *pgxpool.Pool) *Repository {
-	return &Repository{db: db}
+	return &Repository{
+		db:     db,
+		outbox: NewOutboxRepository(db),
+	}
 }
 
 // CreateBooking inserts a new booking record.
@@ -107,18 +111,34 @@ func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string
 // cancelledBy is only used when newStatus == StatusCancelled; pass "" otherwise.
 // It validates that the status transition is allowed.
 func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, newStatus BookingStatus, cancelledBy string) error {
-	// Fetch current booking to validate state transition.
-	b, err := r.getBookingByID(ctx, bookingID)
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.Begin(queryCtx)
 	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	if err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, newStatus, cancelledBy); err != nil {
 		return err
 	}
 
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit booking status update: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) updateBookingStatusInTx(ctx context.Context, tx pgx.Tx, bookingID string, newStatus BookingStatus, cancelledBy string) error {
+	b, err := r.getBookingByIDTx(ctx, tx, bookingID, true)
+	if err != nil {
+		return err
+	}
 	if !isValidTransition(b.Status, newStatus) {
 		return fmt.Errorf("invalid status transition from %s to %s", b.Status, newStatus)
 	}
-
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 
 	var query string
 	var args []any
@@ -130,7 +150,7 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 		args = []any{bookingID, newStatus}
 	}
 
-	result, err := r.db.Exec(queryCtx, query, args...)
+	result, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update booking status: %w", err)
 	}
@@ -165,10 +185,20 @@ func isValidTransition(from, to BookingStatus) bool {
 
 // AcceptBooking assigns a helper to a pending booking and sets status to accepted.
 func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID string) error {
+	return r.AcceptBookingWithOutbox(ctx, bookingID, helperID, nil)
+}
+
+func (r *Repository) AcceptBookingWithOutbox(ctx context.Context, bookingID, helperID string, evt *OutboxEvent) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	result, err := r.db.Exec(queryCtx,
+	tx, err := r.db.Begin(queryCtx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	result, err := tx.Exec(queryCtx,
 		`UPDATE bookings SET helper_id = $2, status = $3, updated_at = now(), accepted_at = NOW() WHERE id = $1 AND status = $4`,
 		bookingID, helperID, StatusAccepted, StatusPending,
 	)
@@ -177,6 +207,73 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("booking not found or not in pending status")
+	}
+
+	if evt != nil {
+		if err := r.outbox.Enqueue(queryCtx, tx, *evt); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit accept booking transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) CancelBookingWithOutbox(ctx context.Context, bookingID, cancelledBy string, events []OutboxEvent) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.Begin(queryCtx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	if err := r.updateBookingStatusInTx(queryCtx, tx, bookingID, StatusCancelled, cancelledBy); err != nil {
+		return err
+	}
+	if err := r.enqueueOutboxEventsInTx(queryCtx, tx, events); err != nil {
+		return err
+	}
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit cancel booking transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) CompleteBookingWithOutbox(ctx context.Context, bookingID, helperID string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.Begin(queryCtx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	var customerID string
+	err = tx.QueryRow(queryCtx,
+		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'
+		 RETURNING customer_id`,
+		bookingID, helperID,
+	).Scan(&customerID)
+	if err == pgx.ErrNoRows {
+		return fmt.Errorf("booking not found or cannot be completed")
+	}
+	if err != nil {
+		return fmt.Errorf("failed to complete booking: %w", err)
+	}
+	events := buildCompleteBookingOutboxEvents(bookingID, customerID, helperID)
+	if err := r.enqueueOutboxEventsInTx(queryCtx, tx, events); err != nil {
+		return err
+	}
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit complete booking transaction: %w", err)
 	}
 
 	return nil
@@ -205,6 +302,38 @@ func (r *Repository) getBookingByID(ctx context.Context, bookingID string) (*Boo
 		return nil, fmt.Errorf("failed to get booking: %w", err)
 	}
 	return b, nil
+}
+
+func (r *Repository) getBookingByIDTx(ctx context.Context, tx pgx.Tx, bookingID string, forUpdate bool) (*Booking, error) {
+	query := `SELECT id, customer_id, helper_id, service_category_id, status, address,
+		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		 FROM bookings WHERE id = $1`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
+
+	b := &Booking{}
+	err := tx.QueryRow(ctx, query, bookingID).Scan(
+		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
+		&b.Address, &b.Lat, &b.Lng, &b.PriceCents, &b.PromoCode,
+		&b.DiscountCents, &b.CreatedAt, &b.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("booking not found")
+		}
+		return nil, fmt.Errorf("failed to get booking: %w", err)
+	}
+	return b, nil
+}
+
+func (r *Repository) enqueueOutboxEventsInTx(ctx context.Context, tx pgx.Tx, events []OutboxEvent) error {
+	for _, evt := range events {
+		if err := r.outbox.Enqueue(ctx, tx, evt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetActiveBookingsCount returns the number of active bookings for a customer.
