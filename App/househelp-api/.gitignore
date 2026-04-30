@@ -26,6 +26,7 @@ vendor/
 
 # Temp
 tmp/
+.worktrees/
 
 # Coverage
 coverage.out
