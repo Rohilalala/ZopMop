@@ -28,6 +28,32 @@ export const getHelpers = async (params) => {
   return data;
 };
 
+export const getPendingHelpers = async (params) => {
+  const { data } = await client.get('/admin/helpers/pending', { params });
+  return data;
+};
+
+export const approveHelper = async (id) => {
+  const { data } = await client.patch(`/admin/helpers/${id}/approve`);
+  return data;
+};
+
+export const rejectHelper = async (id) => {
+  const { data } = await client.patch(`/admin/helpers/${id}/reject`);
+  return data;
+};
+
+// ── Refunds ───────────────────────────────────────────────────────────────────
+export const listRefunds = async (params) => {
+  const { data } = await client.get('/admin/refunds', { params });
+  return data;
+};
+
+export const settleRefund = async (id) => {
+  const { data } = await client.post(`/admin/refunds/${id}/settle`);
+  return data;
+};
+
 // ── Bookings ──────────────────────────────────────────────────────────────────
 export const getAdminBookings = async (params) => {
   const { data } = await client.get('/admin/bookings', { params });

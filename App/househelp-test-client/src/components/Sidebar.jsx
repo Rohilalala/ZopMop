@@ -4,6 +4,7 @@ import { AuthContext } from '../context/AuthContext';
 import {
   LayoutDashboard, BarChart2, CalendarCheck, Users, Wrench,
   Tag, Megaphone, Settings, FileText, Bell, ClipboardList, LogOut,
+  Layers, ShieldCheck, UserCheck, IndianRupee,
 } from 'lucide-react';
 
 const navigation = [
@@ -20,6 +21,8 @@ const navigation = [
       { label: 'Bookings',    route: '/bookings',   icon: CalendarCheck },
       { label: 'Customers',   route: '/customers',  icon: Users },
       { label: 'Workers',     route: '/workers',    icon: Wrench },
+      { label: 'Pending Pros', route: '/pending-pros', icon: UserCheck },
+      { label: 'Refunds',     route: '/refunds',    icon: IndianRupee },
     ],
   },
   {
@@ -36,6 +39,13 @@ const navigation = [
       { label: 'Content',       route: '/content',        icon: Megaphone },
       { label: 'Config',        route: '/config',         icon: Settings },
       { label: 'Audit Log',     route: '/audit-log',      icon: FileText },
+    ],
+  },
+  {
+    section: 'SERVER-DRIVEN UI',
+    links: [
+      { label: 'Pages',           route: '/sdui/pages',           icon: Layers },
+      { label: 'Allowed Actions', route: '/sdui/allowed-actions', icon: ShieldCheck },
     ],
   },
 ];
