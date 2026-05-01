@@ -212,15 +212,21 @@ func (s *Service) VerifyFirebaseToken(ctx context.Context, idToken string) (*Log
 		return nil, err
 	}
 
+	log.Info().Str("phone_from_firebase", phone).Msg("[auth] Firebase token phone extracted")
 	user, err := s.repo.GetUserByPhone(ctx, phone)
 	if err != nil {
+		log.Error().Err(err).Str("phone", phone).Msg("[auth] GetUserByPhone failed")
 		return nil, fmt.Errorf("failed to look up user: %w", err)
 	}
 	if user == nil {
+		log.Info().Str("phone", phone).Msg("[auth] User not found, creating new customer")
 		user, err = s.repo.CreateUser(ctx, phone, "customer")
 		if err != nil {
+			log.Error().Err(err).Str("phone", phone).Msg("[auth] CreateUser failed")
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
+	} else {
+		log.Info().Str("user_id", user.ID).Str("role", user.Role).Msg("[auth] User found")
 	}
 	if user.IsSuspended {
 		return nil, &ErrAccountSuspended{}

@@ -22,7 +22,7 @@ func (r *Repository) AvgRatingForHelpers(ctx context.Context, helperIDs []string
 		return 5.0, nil
 	}
 	row := r.db.QueryRow(ctx,
-		`SELECT COALESCE(AVG(rating), 5.0) FROM helpers WHERE id = ANY($1::uuid[])`,
+		`SELECT COALESCE(AVG(rating), 5.0) FROM helpers WHERE id = ANY($1::uuid[]) AND is_available = true`,
 		helperIDs,
 	)
 	var avg float64
@@ -30,6 +30,31 @@ func (r *Repository) AvgRatingForHelpers(ctx context.Context, helperIDs []string
 		return 0, fmt.Errorf("avg rating scan: %w", err)
 	}
 	return avg, nil
+}
+
+// FilterAvailableHelpers returns only the helper IDs from the input list that are currently available.
+func (r *Repository) FilterAvailableHelpers(ctx context.Context, helperIDs []string) ([]string, error) {
+	if len(helperIDs) == 0 {
+		return []string{}, nil
+	}
+	rows, err := r.db.Query(ctx,
+		`SELECT id::text FROM helpers WHERE id = ANY($1::uuid[]) AND is_available = true`,
+		helperIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("filter available helpers: %w", err)
+	}
+	defer rows.Close()
+
+	var available []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan available helper: %w", err)
+		}
+		available = append(available, id)
+	}
+	return available, rows.Err()
 }
 
 // MyUsualServiceIDs returns service category IDs for a user, ranked by:

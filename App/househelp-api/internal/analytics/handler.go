@@ -126,8 +126,13 @@ func (h *Handler) TrackClientEvent(c *fiber.Ctx) error {
 	}
 
 	if err := h.svc.TrackClientEvent(c.Context(), &req, userID); err != nil {
-		if errors.Is(err, ErrUnknownClientEvent) {
+		switch {
+		case errors.Is(err, ErrUnknownClientEvent):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown event name"})
+		case errors.Is(err, ErrSensitivePayload):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "sensitive keys are not allowed"})
+		case errors.Is(err, ErrInvalidRequest):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 		}
 		log.Error().Err(err).Msg("[analytics] TrackClientEvent error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to track event"})

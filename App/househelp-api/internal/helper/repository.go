@@ -135,6 +135,23 @@ func (r *Repository) SetAvailability(ctx context.Context, helperID string, avail
 	return err
 }
 
+// GetLastLocation returns the helper's most recent persisted lat/lng.
+// Returns (0, 0, false) when the helper has never sent a location.
+func (r *Repository) GetLastLocation(ctx context.Context, helperID string) (float64, float64, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var lat, lng *float64
+	err := r.db.QueryRow(ctx,
+		`SELECT current_lat, current_lng FROM helpers WHERE id = $1`,
+		helperID,
+	).Scan(&lat, &lng)
+	if err != nil || lat == nil || lng == nil {
+		return 0, 0, false
+	}
+	return *lat, *lng, true
+}
+
 // UpdateLocation stores the helper's lat/lng and hex cell in Postgres.
 func (r *Repository) UpdateLocation(ctx context.Context, helperID string, lat, lng float64, cellID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

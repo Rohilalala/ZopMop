@@ -59,6 +59,27 @@ func (s *Service) UpdateLocation(ctx context.Context, helperID string, lat, lng 
 }
 
 // SetAvailability toggles the helper's is_available flag.
+// When going offline, clears the Redis TTL marker so they're excluded from matching.
+// When going online, seeds Redis geo + active marker from the last known location
+// so the helper appears immediately in nearby searches without waiting for a
+// location ping from the app.
 func (s *Service) SetAvailability(ctx context.Context, helperID string, available bool) error {
-	return s.repo.SetAvailability(ctx, helperID, available)
+	if err := s.repo.SetAvailability(ctx, helperID, available); err != nil {
+		return err
+	}
+
+	if !available {
+		// Clear active marker when going offline to exclude from matching immediately.
+		markerKey := fmt.Sprintf("helper:active:%s", helperID)
+		s.rdb.Del(ctx, markerKey).Err()
+		return nil
+	}
+
+	// Going online — seed Redis from last known DB location so the pro is
+	// visible in nearby searches before their next location ping arrives.
+	lat, lng, ok := s.repo.GetLastLocation(ctx, helperID)
+	if !ok {
+		return nil
+	}
+	return s.locSvc.UpdateHelperLocation(ctx, helperID, lat, lng)
 }

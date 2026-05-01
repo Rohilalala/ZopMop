@@ -54,21 +54,35 @@ func (s *Service) NearbyStats(ctx context.Context, lat, lng float64) (*NearbySta
 		},
 	).Result()
 	if err != nil {
-		log.Warn().Err(err).Msg("[insights] GEOSEARCH failed — returning soft default")
-		return &NearbyStats{NearbyCount: 1, AvgRating: 5.0, AvgEtaMin: 5}, nil
+		log.Warn().Err(err).Msg("[insights] GEOSEARCH failed — returning zero count")
+		return &NearbyStats{NearbyCount: 0, AvgRating: 5.0, AvgEtaMin: 0}, nil
 	}
 
 	// Filter to only helpers with a fresh active marker (≤ 5 min stale).
 	var liveIDs []string
-	var distances []float64
+	distByID := make(map[string]float64)
 	for _, r := range geoResults {
 		markerKey := fmt.Sprintf("helper:active:%s", r.Name)
 		exists, _ := s.rdb.Exists(ctx, markerKey).Result()
 		if exists == 1 {
 			liveIDs = append(liveIDs, r.Name)
-			distances = append(distances, r.Dist)
+			distByID[r.Name] = r.Dist
 		}
 	}
+
+	// Further filter to only helpers with is_available=true in database.
+	availableIDs, err := s.repo.FilterAvailableHelpers(ctx, liveIDs)
+	if err != nil {
+		log.Warn().Err(err).Msg("[insights] FilterAvailableHelpers failed")
+		availableIDs = liveIDs // fallback: use Redis-filtered list
+	}
+
+	// Rebuild distances array for available helpers only.
+	var distances []float64
+	for _, id := range availableIDs {
+		distances = append(distances, distByID[id])
+	}
+	liveIDs = availableIDs
 
 	count := len(liveIDs)
 

@@ -77,6 +77,7 @@ export default function HomeScreen() {
   const [services, setServices] = useState<ApiService[]>(STATIC_SERVICES);
   const [usuals, setUsuals] = useState<ApiService[]>([]);
   const [nearbyStats, setNearbyStats] = useState<NearbyStats | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [serviceable, setServiceable] = useState(true);
   const [loading, setLoading] = useState(true);
 
@@ -180,6 +181,7 @@ export default function HomeScreen() {
       setLoading(false);
 
       // Live stats — fail-soft (returns sensible default if endpoint missing).
+      setCoords({ lat, lon });
       getNearbyStats(lat, lon).then(setNearbyStats);
 
       // Usuals — depends on services being loaded for ID resolution.
@@ -218,8 +220,19 @@ export default function HomeScreen() {
     setSelectedAddressId(addressId);
     const result = await checkServiceability(lat, lon).catch(() => ({ serviceable: true }));
     setServiceable(result.serviceable);
+    setCoords({ lat, lon });
     getNearbyStats(lat, lon).then(setNearbyStats);
   }
+
+  // Poll nearby stats every 5s so the home pill reflects pros going on/offline
+  // in near-real-time without requiring a screen refresh.
+  useEffect(() => {
+    if (!coords) return;
+    const id = setInterval(() => {
+      getNearbyStats(coords.lat, coords.lon).then(setNearbyStats);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [coords]);
 
   const locationModal = (
     <LocationSelectorModal

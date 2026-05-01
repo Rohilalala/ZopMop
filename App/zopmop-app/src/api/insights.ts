@@ -23,8 +23,9 @@ export async function getNearbyStats(lat: number, lon: number): Promise<NearbySt
       avg_eta_min: Number(data.avg_eta_min ?? 12),
     };
   } catch {
-    // Fallback so the pill always renders something useful.
-    return { nearby_count: 1, avg_rating: 5.0, avg_eta_min: 2 };
+    // Fallback: report zero so the UI shows the "all pros busy" state
+    // instead of fabricating a fake pro that doesn't exist.
+    return { nearby_count: 0, avg_rating: 5.0, avg_eta_min: 0 };
   }
 }
 

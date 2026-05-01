@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
+
+const trackEventTimeout = 5 * time.Second
 
 // Service provides analytics tracking and reporting.
 // All Track calls are fire-and-forget (run in goroutines) so they never
@@ -20,7 +24,11 @@ type Service struct {
 	dispatch func(func())
 }
 
-var ErrUnknownClientEvent = errors.New("unknown client event")
+var (
+	ErrUnknownClientEvent = errors.New("unknown client event")
+	ErrSensitivePayload   = errors.New("sensitive keys are not allowed")
+	ErrInvalidRequest     = errors.New("invalid request")
+)
 
 // NewService creates a new analytics service.
 func NewService(db *pgxpool.Pool) *Service {
@@ -29,9 +37,23 @@ func NewService(db *pgxpool.Pool) *Service {
 		repo:   repo,
 		writer: repo,
 		dispatch: func(trackFn func()) {
-			go trackFn()
+			go safeTrack(trackFn)
 		},
 	}
+}
+
+// safeTrack runs an async tracking fn with panic recovery so a single
+// malformed payload can't bring down the process.
+func safeTrack(trackFn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().
+				Interface("panic", r).
+				Bytes("stack", debug.Stack()).
+				Msg("[analytics] panic in async track")
+		}
+	}()
+	trackFn()
 }
 
 // ── Event tracking ────────────────────────────────────────────────────────────
@@ -50,7 +72,8 @@ func (s *Service) Track(ctx context.Context, eventName, userID, bookingID string
 	}
 	trackProperties := toInterfaceMap(props)
 	s.dispatchTracking(func() {
-		trackCtx := context.Background()
+		trackCtx, cancel := context.WithTimeout(context.Background(), trackEventTimeout)
+		defer cancel()
 		s.writer.TrackEvent(trackCtx, eventName, userID, bookingID, trackProperties)
 	})
 }
@@ -60,22 +83,25 @@ func (s *Service) Track(ctx context.Context, eventName, userID, bookingID string
 func (s *Service) TrackClientEvent(ctx context.Context, req *ClientEventRequest, userID string) error {
 	_ = ctx
 	if req == nil {
-		return fmt.Errorf("request body is required")
+		return ErrInvalidRequest
 	}
 	eventName := strings.TrimSpace(req.EventName)
 	if !AllowedClientEvents[eventName] {
-		return fmt.Errorf("unknown event: %s", eventName)
+		return ErrUnknownClientEvent
 	}
 	if ContainsSensitiveStringKeys(req.Properties) {
-		return fmt.Errorf("sensitive keys are not allowed")
+		return ErrSensitivePayload
 	}
 	cleanProperties := StripSensitiveStringKeys(req.Properties)
 	if !s.canTrack() {
 		return nil
 	}
 	trackProperties := toInterfaceMap(cleanProperties)
+	bookingID := req.BookingID
 	s.dispatchTracking(func() {
-		s.writer.TrackEvent(context.Background(), eventName, userID, req.BookingID, trackProperties)
+		trackCtx, cancel := context.WithTimeout(context.Background(), trackEventTimeout)
+		defer cancel()
+		s.writer.TrackEvent(trackCtx, eventName, userID, bookingID, trackProperties)
 	})
 	return nil
 }
@@ -126,8 +152,12 @@ func (s *Service) TrackCanonicalEvent(ctx context.Context, req *CanonicalEventRe
 	if !s.canTrack() {
 		return nil
 	}
+	eventName := req.EventName
+	userID := req.UserID
 	s.dispatchTracking(func() {
-		s.writer.TrackEvent(context.Background(), req.EventName, req.UserID, bookingID, trackProperties)
+		trackCtx, cancel := context.WithTimeout(context.Background(), trackEventTimeout)
+		defer cancel()
+		s.writer.TrackEvent(trackCtx, eventName, userID, bookingID, trackProperties)
 	})
 	return nil
 }
@@ -138,7 +168,7 @@ func (s *Service) canTrack() bool {
 
 func (s *Service) dispatchTracking(trackFn func()) {
 	if s.dispatch == nil {
-		go trackFn()
+		go safeTrack(trackFn)
 		return
 	}
 	s.dispatch(trackFn)

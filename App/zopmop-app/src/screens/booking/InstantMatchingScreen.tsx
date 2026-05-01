@@ -218,7 +218,7 @@ export default function InstantMatchingScreen({ route }: Props) {
                 }, 1200);
               }
             }, 400);
-          } else if (status.status === 'failed') {
+          } else if (status.status === 'failed' || (status.status === 'matched' && !status.helper)) {
             if (pollRef.current) clearInterval(pollRef.current);
             if (!cancelled) { progress.stopAnimation(); setScreenState('busy'); }
           }
