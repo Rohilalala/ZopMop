@@ -19,6 +19,7 @@ import MainNavigator from './src/navigation/MainNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider, useColors } from './src/context/ThemeContext';
 import { RoomiesProvider } from './src/context/RoomiesContext';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -26,9 +27,11 @@ function Navigation() {
   const { isAuthenticated, isLoading } = useAuth();
   if (isLoading) return null;
   return (
-    <NavigationContainer>
-      {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
-    </NavigationContainer>
+    <ErrorBoundary>
+      <NavigationContainer>
+        {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
+      </NavigationContainer>
+    </ErrorBoundary>
   );
 }
 

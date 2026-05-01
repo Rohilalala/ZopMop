@@ -117,6 +117,19 @@ func main() {
 		})
 	})
 
+	// --- Readiness probe (DB + Redis) ---
+	app.Get("/ready", publicLimiter, func(c *fiber.Ctx) error {
+		ctx, cancel := context.WithTimeout(c.Context(), 1*time.Second)
+		defer cancel()
+		if err := dbPool.Ping(ctx); err != nil {
+			return c.Status(503).JSON(fiber.Map{"status": "db_unreachable"})
+		}
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			return c.Status(503).JSON(fiber.Map{"status": "redis_unreachable"})
+		}
+		return c.JSON(fiber.Map{"status": "ready"})
+	})
+
 	// --- Initialize services ---
 
 	// Auth.
@@ -189,7 +202,7 @@ func main() {
 
 	// Location.
 	locationService := location.NewService(rdb)
-	locationHandler := location.NewHandler(locationService, jwtVerificationKeys)
+	locationHandler := location.NewHandler(locationService, jwtVerificationKeys, dbPool)
 
 	// Addresses.
 	addressRepo := addresses.NewRepository(dbPool)
@@ -240,7 +253,8 @@ func main() {
 
 	// Booking routes (requires JWT).
 	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
-	bookingHandler.RegisterRoutes(bookingGroup)
+	bookingIdem := mw.Idempotency(rdb, 10*time.Minute)
+	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem)
 
 	// Location routes (requires JWT).
 	locationGroup := api.Group("/location", authMiddleware, authLimiter, dbBoundLimiter)

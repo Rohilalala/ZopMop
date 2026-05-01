@@ -171,6 +171,20 @@ func (r *Repository) Delete(ctx context.Context, userID, addressID string) error
 	}
 	defer tx.Rollback(queryCtx)
 
+	// SECURITY: verify ownership FIRST. Previously the booking-nullify ran
+	// before the owner check, which let any authenticated user wipe
+	// address_id off another user's bookings by submitting a foreign UUID.
+	var owns bool
+	if err := tx.QueryRow(queryCtx,
+		`SELECT EXISTS(SELECT 1 FROM user_addresses WHERE id=$1 AND user_id=$2)`,
+		addressID, userID,
+	).Scan(&owns); err != nil {
+		return fmt.Errorf("failed to verify address ownership: %w", err)
+	}
+	if !owns {
+		return pgx.ErrNoRows
+	}
+
 	// Block deletion if a household group is attached to this address.
 	var groupCount int
 	if err := tx.QueryRow(queryCtx,

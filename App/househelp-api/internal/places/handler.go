@@ -26,6 +26,9 @@ func (h *Handler) Autocomplete(c *fiber.Ctx) error {
 	if q == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "q is required"})
 	}
+	if len(q) < 2 || len(q) > 100 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "q must be 2-100 characters"})
+	}
 	if h.maps == nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "maps service not configured"})
 	}

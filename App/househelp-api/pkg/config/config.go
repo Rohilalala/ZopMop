@@ -60,7 +60,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Port:               getEnvOrDefault("PORT", "8080"),
-		Env:                getEnvOrDefault("ENV", "development"),
+		Env:                getEnvOrDefault("ENV", "production"),
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		RedisURL:           os.Getenv("REDIS_URL"),
 		DBPoolMinConns:     int32(getEnvIntOrDefault("DB_POOL_MIN_CONNS", 20)),

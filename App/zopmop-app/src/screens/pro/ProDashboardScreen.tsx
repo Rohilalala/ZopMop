@@ -8,6 +8,7 @@ import {
   Animated,
   Alert,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -155,10 +156,19 @@ export default function ProDashboardScreen() {
           Alert.alert('Location needed', 'Enable location permission to go online.');
           return;
         }
+        // Guard: clear any pre-existing interval before assigning a new one
+        // (prevents stacking if state ever desyncs with the ref).
+        if (locationHeartbeatRef.current) {
+          clearInterval(locationHeartbeatRef.current);
+          locationHeartbeatRef.current = null;
+        }
         locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
         setIsOnline(true);
       } else {
-        if (locationHeartbeatRef.current) clearInterval(locationHeartbeatRef.current);
+        if (locationHeartbeatRef.current) {
+          clearInterval(locationHeartbeatRef.current);
+          locationHeartbeatRef.current = null;
+        }
         apiFetch(`${BASE_URL}/helpers/me/status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -170,6 +180,23 @@ export default function ProDashboardScreen() {
       setToggling(false);
     }
   }
+
+  // Pause the location heartbeat when the app is backgrounded; resume on foreground.
+  // This avoids burning battery + uploading stale GPS while the user is away.
+  useEffect(() => {
+    if (!isOnline) return;
+    const sub = AppState.addEventListener('change', (next) => {
+      if ((next === 'background' || next === 'inactive') && locationHeartbeatRef.current) {
+        clearInterval(locationHeartbeatRef.current);
+        locationHeartbeatRef.current = null;
+      } else if (next === 'active' && !locationHeartbeatRef.current && isOnline) {
+        // Push immediately so backend sees us as fresh, then resume cadence.
+        pushLocation();
+        locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
+      }
+    });
+    return () => sub.remove();
+  }, [isOnline]);
 
   function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [

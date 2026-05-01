@@ -115,7 +115,13 @@ func (r *Repository) UpdateUser(ctx context.Context, userID, name string) (*User
 	return r.UpdateProfile(ctx, userID, UpdateProfileRequest{Name: name})
 }
 
-// OnboardPro updates a user's role to 'pro' and inserts them into the helpers table.
+// OnboardPro inserts the caller into the helpers table with approval_status='pending'.
+// SECURITY: it does NOT change users.role — privilege escalation to 'pro' is gated
+// on admin approval (a separate flow flips approval_status to 'approved' and updates
+// users.role). Returning the unchanged User is intentional so the caller cannot
+// self-issue a pro JWT.
+// TODO: gate helper-only routes on approval_status='approved' once the admin
+// approval endpoint exists.
 func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*User, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -123,30 +129,29 @@ func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardP
 	}
 	defer tx.Rollback(ctx)
 
-	// Update user role
+	// Read current user row WITHOUT changing role.
 	user := &User{}
 	err = scanUser(tx.QueryRow(ctx,
-		`UPDATE users
-		 SET role = 'pro', updated_at = now()
-		 WHERE id = $1
-		 RETURNING `+userSelectFields,
+		`SELECT `+userSelectFields+` FROM users WHERE id = $1 AND deleted_at IS NULL`,
 		userID,
 	), user)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update user role: %w", err)
+		return nil, fmt.Errorf("failed to load user: %w", err)
 	}
 
-	// Insert into helpers table ensuring idempotency
+	// Insert into helpers table ensuring idempotency. Always reset approval to
+	// 'pending' on re-submission so admins re-review any updated profile.
 	_, err = tx.Exec(ctx,
-		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available, services, availability, address)
-		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false, $6, $7, $8)
+		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available, services, availability, address, approval_status)
+		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false, $6, $7, $8, 'pending')
 		 ON CONFLICT (id) DO UPDATE SET
-		   current_lat   = EXCLUDED.current_lat,
-		   current_lng   = EXCLUDED.current_lng,
-		   location      = EXCLUDED.location,
-		   services      = EXCLUDED.services,
-		   availability  = EXCLUDED.availability,
-		   address       = EXCLUDED.address`,
+		   current_lat     = EXCLUDED.current_lat,
+		   current_lng     = EXCLUDED.current_lng,
+		   location        = EXCLUDED.location,
+		   services        = EXCLUDED.services,
+		   availability    = EXCLUDED.availability,
+		   address         = EXCLUDED.address,
+		   approval_status = 'pending'`,
 		userID, req.Lat, req.Lng, req.Lng, req.Lat, req.Services, req.Availability, req.Address,
 	)
 	if err != nil {

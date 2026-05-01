@@ -3,6 +3,8 @@ package services
 import (
 	"strings"
 
+	"github.com/adityarohilla/househelp-api/internal/admin"
+	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -27,12 +29,14 @@ func (h *Handler) RegisterPublicRoutes(router fiber.Router) {
 }
 
 // RegisterAdminRoutes mounts admin service management routes.
-// Requires admin middleware to be applied by the caller.
+// Requires admin middleware to be applied by the caller. Mutating endpoints
+// are gated on the granular `manage_services` permission so only admins with
+// that scope can create, update, or delete service categories.
 func (h *Handler) RegisterAdminRoutes(router fiber.Router) {
 	router.Get("/", h.ListAll)
-	router.Post("/", h.Create)
-	router.Patch("/:id", h.Update)
-	router.Delete("/:id", h.Delete)
+	router.Post("/", middleware.RequirePermission(admin.PermManageServices), h.Create)
+	router.Patch("/:id", middleware.RequirePermission(admin.PermManageServices), h.Update)
+	router.Delete("/:id", middleware.RequirePermission(admin.PermManageServices), h.Delete)
 }
 
 // List handles GET /services — returns all active services.
@@ -98,13 +102,15 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	// Reject explicitly empty or whitespace-only names.
+	// Reject explicitly whitespace-only names — validator's min=1 only catches empty strings.
 	if req.Name != "" && strings.TrimSpace(req.Name) == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name cannot be blank"})
 	}
-	// Reject zero or negative prices if price is being updated.
-	if req.BasePriceCents != nil && *req.BasePriceCents <= 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "base_price_cents must be positive"})
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
 	}
 	svc, err := h.svc.Update(c.Context(), serviceID, req)
 	if err != nil {
@@ -123,11 +129,11 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	if req.Name == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name is required"})
-	}
-	if req.BasePriceCents <= 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "base_price_cents must be positive"})
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
 	}
 	svc, err := h.svc.Create(c.Context(), req)
 	if err != nil {

@@ -70,6 +70,12 @@ export type MainStackParamList = {
   RoomiesJoin: undefined;
   RoomiesWelcome: { groupName: string; addressLabel: string; addressAdded: boolean };
   ManageHousehold: { groupId: string };
+  BookingConfirmed: {
+    bookingId: string;
+    totalCents: number;
+    slot?: string;
+    addressLine?: string;
+  };
 };
 
 export type RootStackParamList = {

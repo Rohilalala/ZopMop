@@ -50,6 +50,20 @@ func (s *Service) invalidateNettingCache(ctx context.Context, groupID string) {
 	}
 }
 
+// IsMember reports whether userID belongs to groupID. Used by handlers that
+// expose group-scoped financial data (ledger, vault, chore booking) to ensure
+// only members can read or mutate that data.
+func (s *Service) IsMember(ctx context.Context, userID, groupID string) (bool, error) {
+	_, err := s.repo.GetMemberByUserAndGroup(ctx, userID, groupID)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ── Group Management ──────────────────────────────────────────────────────────
 
 // generateUniqueCode returns a cryptographically random 6-digit numeric string,
@@ -379,19 +393,30 @@ func (s *Service) DeleteGroup(ctx context.Context, groupID, requesterID string, 
 		}
 	}
 
-	// force=true (or no financials): log balances before zeroing (TODO: credit to main wallet).
+	// force=true (or no financials): queue a pending_refunds row per member with
+	// a non-zero prepaid_balance BEFORE the destructive delete zeroes it out.
+	// Wallet credit handled by pending_refunds settlement worker (TODO: build settlement worker).
 	if force {
 		membersWithBalance, err := s.repo.GetMembersWithBalance(ctx, groupID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get balances before delete: %w", err)
 		}
 		for _, m := range membersWithBalance {
-			// TODO: enqueue main-wallet credit for m.UserID, amount=m.PrepaidBalance
+			if m.PrepaidBalance <= 0 {
+				continue
+			}
+			if _, err := s.db.Exec(ctx,
+				`INSERT INTO pending_refunds (user_id, amount_cents, source, source_ref)
+				 VALUES ($1, $2, 'roomies_group_delete', $3)`,
+				m.UserID, m.PrepaidBalance, groupID,
+			); err != nil {
+				return nil, fmt.Errorf("queue refund: %w", err)
+			}
 			log.Info().
 				Str("group_id", groupID).
 				Str("user_id", m.UserID).
-				Int("balance_to_credit", m.PrepaidBalance).
-				Msg("roomies: TODO credit prepaid balance to main wallet on group delete")
+				Int("amount_cents", m.PrepaidBalance).
+				Msg("roomies: queued pending refund before group force-delete")
 		}
 	}
 
@@ -419,6 +444,15 @@ func (s *Service) DeleteGroup(ctx context.Context, groupID, requesterID string, 
 //   - Edge case 10 (solo booking via group context): zero-member path skips all split logic.
 //   - Edge case 11 (TotalAmount validation): validated before any math.
 func (s *Service) BookGroupChore(ctx context.Context, groupID string, req BookGroupChoreRequest, initiatorID string) (*BookGroupChoreResponse, error) {
+	// SECURITY: only members of the group may initiate a chore booking against
+	// it. Without this any authed user could write LedgerDebt rows binding
+	// strangers to debts.
+	if isMember, err := s.IsMember(ctx, initiatorID, groupID); err != nil {
+		return nil, fmt.Errorf("failed to verify group membership: %w", err)
+	} else if !isMember {
+		return nil, ErrNotGroupMember
+	}
+
 	// Edge case 11: validate total amount.
 	if req.TotalAmount <= 0 {
 		return nil, fmt.Errorf("total_amount must be greater than zero")

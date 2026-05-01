@@ -67,8 +67,8 @@ type ServiceDetails struct {
 // AdminUpdateServiceRequest is the payload for PATCH /admin/services/:id.
 // All fields are optional — only non-zero/non-nil values are applied.
 type AdminUpdateServiceRequest struct {
-	Name           string  `json:"name,omitempty"`
-	BasePriceCents *int    `json:"base_price_cents,omitempty"`
+	Name           string  `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
+	BasePriceCents *int    `json:"base_price_cents,omitempty" validate:"omitempty,gt=0"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 	DisplayOrder   *int    `json:"display_order,omitempty"`
 	Emoji          *string `json:"emoji,omitempty"`
@@ -78,10 +78,10 @@ type AdminUpdateServiceRequest struct {
 
 // AdminCreateServiceRequest is the payload for POST /admin/services.
 type AdminCreateServiceRequest struct {
-	Name                string `json:"name"`
+	Name                string `json:"name" validate:"required,min=1,max=200"`
 	Emoji               string `json:"emoji,omitempty"`
 	BgColor             string `json:"bg_color,omitempty"`
-	BasePriceCents      int    `json:"base_price_cents"`
+	BasePriceCents      int    `json:"base_price_cents" validate:"required,gt=0"`
 	DisplayOrder        int    `json:"display_order"`
 	Category            string `json:"category,omitempty"`
 	MinDurationMinutes  int    `json:"min_duration_minutes,omitempty"`

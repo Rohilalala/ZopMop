@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/middleware"
+	"github.com/adityarohilla/househelp-api/pkg/logger"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog/log"
@@ -131,7 +132,7 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 
 	otp, err := h.service.SendOTP(c.Context(), req.Phone)
 	if err != nil {
-		log.Error().Err(err).Str("phone", req.Phone).Msg("failed to send OTP")
+		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("failed to send OTP")
 		return mapSendOTPError(c, err)
 	}
 
@@ -180,7 +181,7 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 
 	loginResp, err := h.service.VerifyOTP(c.Context(), req.Phone, req.Code)
 	if err != nil {
-		log.Error().Err(err).Str("phone", req.Phone).Msg("OTP verification failed")
+		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("OTP verification failed")
 		return mapVerifyOTPError(c, err)
 	}
 
@@ -254,16 +255,15 @@ func (h *Handler) OnboardPro(c *fiber.Ctx) error {
 		})
 	}
 
-	loginResp, err := h.service.OnboardPro(c.Context(), userID, req)
+	resp, err := h.service.OnboardPro(c.Context(), userID, req)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to onboard pro")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to onboard pro"})
 	}
 
-	// Role changed (customer → pro), reissue the auth cookie so the session
-	// picks up the new role on the next request.
-	h.setAuthCookie(c, loginResp.Token, h.service.JWTExpiry())
-	return c.JSON(loginResp)
+	// SECURITY: role is NOT changed here — admin approval is required. Do not
+	// reissue the auth cookie/JWT; the existing customer session continues.
+	return c.JSON(resp)
 }
 
 // UpdateFCMToken handles PUT /me/fcm-token.

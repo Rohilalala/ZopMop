@@ -46,6 +46,7 @@
   "devDependencies": {
     "@types/mapbox__polyline": "^1.0.5",
     "@types/react": "~19.1.0",
+    "babel-plugin-transform-remove-console": "^6.9.4",
     "babel-preset-expo": "^55.0.18",
     "typescript": "~5.9.2"
   },

@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/pkg/logger"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -122,11 +123,11 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (string, error) {
 
 	failKey := fmt.Sprintf("otp:fail:%s", phone)
 	if err := s.rdb.Del(ctx, failKey).Err(); err != nil {
-		log.Warn().Err(err).Str("phone", phone).Msg("failed to reset OTP failure counter")
+		log.Warn().Err(err).Str("phone_mask", logger.MaskPhone(phone)).Msg("failed to reset OTP failure counter")
 	}
 
 	// Never log the OTP value itself — logs aggregate to shared systems.
-	log.Info().Str("phone", phone).Msg("OTP generated and stored")
+	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Msg("OTP generated and stored")
 
 	// Only expose the plaintext OTP to the caller in dev mode. In production
 	// the SMS gateway is the sole delivery channel.
@@ -169,7 +170,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*LoginResp
 			if lockErr := s.rdb.Set(ctx, lockKey, "locked", otpLockDuration).Err(); lockErr != nil {
 				log.Error().Err(lockErr).Msg("failed to set OTP lock")
 			}
-			log.Warn().Str("phone", phone).Msg("phone locked due to too many failed OTP attempts")
+			log.Warn().Str("phone_mask", logger.MaskPhone(phone)).Msg("phone locked due to too many failed OTP attempts")
 			return nil, &ErrOTPLocked{}
 		}
 		return nil, ErrInvalidOTP
@@ -212,17 +213,17 @@ func (s *Service) VerifyFirebaseToken(ctx context.Context, idToken string) (*Log
 		return nil, err
 	}
 
-	log.Info().Str("phone_from_firebase", phone).Msg("[auth] Firebase token phone extracted")
+	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Msg("[auth] Firebase token phone extracted")
 	user, err := s.repo.GetUserByPhone(ctx, phone)
 	if err != nil {
-		log.Error().Err(err).Str("phone", phone).Msg("[auth] GetUserByPhone failed")
+		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(phone)).Msg("[auth] GetUserByPhone failed")
 		return nil, fmt.Errorf("failed to look up user: %w", err)
 	}
 	if user == nil {
-		log.Info().Str("phone", phone).Msg("[auth] User not found, creating new customer")
+		log.Info().Str("phone_mask", logger.MaskPhone(phone)).Msg("[auth] User not found, creating new customer")
 		user, err = s.repo.CreateUser(ctx, phone, "customer")
 		if err != nil {
-			log.Error().Err(err).Str("phone", phone).Msg("[auth] CreateUser failed")
+			log.Error().Err(err).Str("phone_mask", logger.MaskPhone(phone)).Msg("[auth] CreateUser failed")
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 	} else {
@@ -257,19 +258,22 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, req UpdatePr
 	return s.repo.UpdateProfile(ctx, userID, req)
 }
 
-// OnboardPro updates user role to pro, inserts into helpers table, and issues a new JWT.
-func (s *Service) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*LoginResponse, error) {
+// OnboardPro records a helper application in 'pending' status. SECURITY: it
+// does NOT change users.role and does NOT issue a new JWT — privilege upgrade
+// to 'pro' happens only after admin approval flips approval_status='approved'.
+// Returns the user record (unchanged role) and a status flag so the client can
+// show a "pending approval" screen.
+func (s *Service) OnboardPro(ctx context.Context, userID string, req OnboardProRequest) (*OnboardProResponse, error) {
 	user, err := s.repo.OnboardPro(ctx, userID, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to onboard pro in DB: %w", err)
 	}
 
-	token, err := s.generateJWT(user)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate new token: %w", err)
-	}
-
-	return &LoginResponse{Token: token, User: *user}, nil
+	return &OnboardProResponse{
+		User:           *user,
+		ApprovalStatus: "pending",
+		Message:        "Application submitted. An admin will review and approve your profile.",
+	}, nil
 }
 
 // UpdateFCMToken updates the user's FCM push token

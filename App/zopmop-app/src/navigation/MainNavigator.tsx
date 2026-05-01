@@ -21,6 +21,7 @@ import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
 import RoomiesWelcomeScreen from '../screens/main/RoomiesWelcomeScreen';
 import ManageHouseholdScreen from '../screens/main/ManageHouseholdScreen';
+import BookingConfirmedScreen from '../screens/main/BookingConfirmedScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -135,6 +136,11 @@ export default function MainNavigator() {
           name="ManageHousehold"
           component={ManageHouseholdScreen}
           options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="BookingConfirmed"
+          component={BookingConfirmedScreen}
+          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
         />
       </Stack.Navigator>
     </CartProvider>

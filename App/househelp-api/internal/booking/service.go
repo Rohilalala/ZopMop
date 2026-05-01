@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -11,12 +12,17 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
+	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
+
+// ErrAddressNotOwned is returned when a caller attempts to create a booking
+// against an address_id that does not belong to them.
+var ErrAddressNotOwned = errors.New("address does not belong to caller")
 
 // Service handles booking business logic.
 type Service struct {
@@ -236,16 +242,19 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 
 	// Clear Redis match keys so helpers immediately stop seeing this invite.
 	if s.matchEngine != nil {
-		go s.matchEngine.ClearMatchOnAccept(context.Background(), bookingID, "")
+		mw.SafeGo("booking.cancel.clear_match", func() {
+			s.matchEngine.ClearMatchOnAccept(context.Background(), bookingID, "")
+		})
 	}
 
 	// Notify assigned helper (if any) that the job was cancelled.
 	if s.notifSvc != nil && booking.HelperID != nil {
-		go func() {
-			if notifErr := s.notifSvc.NotifyProBookingCancelled(context.Background(), *booking.HelperID, bookingID); notifErr != nil {
+		helperID := *booking.HelperID
+		mw.SafeGo("booking.cancel.notify_pro", func() {
+			if notifErr := s.notifSvc.NotifyProBookingCancelled(context.Background(), helperID, bookingID); notifErr != nil {
 				log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send cancellation notification to pro")
 			}
-		}()
+		})
 	}
 
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
@@ -382,6 +391,24 @@ func (s *Service) CreateScheduledBooking(
 ) (*ScheduledBooking, error) {
 	if len(cartItems) == 0 {
 		return nil, fmt.Errorf("cart is empty")
+	}
+
+	// SECURITY: ensure the address being booked actually belongs to the caller.
+	// Without this, any authed user can submit another user's address_id.
+	{
+		ownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		var ownsAddress bool
+		err := s.db.QueryRow(ownCtx,
+			`SELECT EXISTS(SELECT 1 FROM user_addresses WHERE id=$1 AND user_id=$2)`,
+			req.AddressID, customerID,
+		).Scan(&ownsAddress)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("address ownership check: %w", err)
+		}
+		if !ownsAddress {
+			return nil, ErrAddressNotOwned
+		}
 	}
 
 	// Calculate total price from items.
@@ -584,7 +611,9 @@ func (s *Service) GetHelperInvites(ctx context.Context, helperID string) ([]stri
 
 	// Remove stale invites from Redis so they never show up again.
 	if len(staleIDs) > 0 {
-		go s.matchEngine.RemoveHelperInvites(context.Background(), helperID, staleIDs)
+		mw.SafeGo("booking.invites.prune_stale", func() {
+			s.matchEngine.RemoveHelperInvites(context.Background(), helperID, staleIDs)
+		})
 	}
 
 	return validIDs, nil
@@ -679,7 +708,7 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
 
 	// Increment total_jobs and notify customer — both best-effort, non-blocking.
-	go func() {
+	mw.SafeGo("booking.complete.increment_jobs", func() {
 		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if _, dbErr := s.db.Exec(uCtx,
@@ -688,10 +717,10 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		); dbErr != nil {
 			log.Warn().Err(dbErr).Str("helper_id", helperID).Msg("failed to increment total_jobs")
 		}
-	}()
+	})
 
 	if s.notifSvc != nil {
-		go func() {
+		mw.SafeGo("booking.complete.notify_customer", func() {
 			// Fetch customer ID for this booking then notify them.
 			var customerID string
 			qCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -703,7 +732,7 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 					log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send completion notification to customer")
 				}
 			}
-		}()
+		})
 	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking completed")

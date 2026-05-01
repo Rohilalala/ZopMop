@@ -1,11 +1,17 @@
 package zones
 
 import (
+	"math"
 	"strconv"
 
+	"github.com/adityarohilla/househelp-api/internal/admin"
+	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog/log"
 )
+
+// roundCoord rounds a lat/lon to 2 decimals (~1.1 km) for safe logging.
+func roundCoord(x float64) float64 { return math.Round(x*100) / 100 }
 
 // Handler handles HTTP requests for the zones module.
 type Handler struct {
@@ -21,9 +27,11 @@ func (h *Handler) RegisterPublicRoutes(router fiber.Router) {
 	router.Get("/check", h.Check)
 }
 
-// RegisterAdminRoutes mounts admin-only zone routes.
+// RegisterAdminRoutes mounts admin-only zone routes. Listing service zones
+// reveals operational geography, so it is gated on the `manage_config`
+// permission rather than the generic admin role.
 func (h *Handler) RegisterAdminRoutes(router fiber.Router) {
-	router.Get("/", h.ListZones)
+	router.Get("/", middleware.RequirePermission(admin.PermManageConfig), h.ListZones)
 }
 
 // Check handles GET /zones/check?lat=X&lon=Y
@@ -48,7 +56,7 @@ func (h *Handler) Check(c *fiber.Ctx) error {
 
 	result, err := h.service.Check(c.Context(), lat, lon)
 	if err != nil {
-		log.Error().Err(err).Float64("lat", lat).Float64("lon", lon).Msg("zone check failed")
+		log.Error().Err(err).Float64("lat", roundCoord(lat)).Float64("lon", roundCoord(lon)).Msg("zone check failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "zone check failed"})
 	}
 	return c.JSON(result)

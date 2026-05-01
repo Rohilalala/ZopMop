@@ -114,9 +114,11 @@ func (c *Client) GetTravelMinutes(ctx context.Context, oLat, oLng, dLat, dLng fl
 		_ = c.rdb.Set(ctx, key, minutes, 5*time.Minute).Err()
 	}
 
+	// Round further (~1.1km) for log fields so logs don't carry precise PII
+	// even though the cache key uses 4-decimal precision.
 	log.Debug().
-		Float64("oLat", oLat).Float64("oLng", oLng).
-		Float64("dLat", dLat).Float64("dLng", dLng).
+		Float64("oLat", math.Round(oLat*100)/100).Float64("oLng", math.Round(oLng*100)/100).
+		Float64("dLat", math.Round(dLat*100)/100).Float64("dLng", math.Round(dLng*100)/100).
 		Int("minutes", minutes).
 		Msg("[gmaps] travel time")
 

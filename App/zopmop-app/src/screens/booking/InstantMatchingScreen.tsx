@@ -26,7 +26,7 @@ const { width: W } = Dimensions.get('window');
 import { BASE_URL } from '../../api/config';
 
 // How long the loading bar runs (ms)
-const MATCH_DURATION = 60000;
+const MATCH_DURATION = 30000;
 // Phase labels
 const PHASES = [
   { at: 0,    label: 'Finding available pros near you…' },
@@ -89,6 +89,9 @@ export default function InstantMatchingScreen({ route }: Props) {
     const a2 = bounce(dot2, 160);
     const a3 = bounce(dot3, 320);
     a1.start(); a2.start(); a3.start();
+    return () => {
+      a1.stop(); a2.stop(); a3.stop();
+    };
   }, []);
 
   // -- Phase label cycling
@@ -100,8 +103,15 @@ export default function InstantMatchingScreen({ route }: Props) {
   }, []);
 
   // -- Main effect: start booking + poll for match
+  // Track every setTimeout we create inside this effect so unmount can clear them all.
+  const pendingTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => {
     let cancelled = false;
+    const safeTimeout = (fn: () => void, ms: number) => {
+      const id = setTimeout(fn, ms);
+      pendingTimers.current.push(id);
+      return id;
+    };
 
     async function run() {
       // 1. Start progress bar animation
@@ -113,7 +123,7 @@ export default function InstantMatchingScreen({ route }: Props) {
       }).start();
 
       // Hard stop at exactly 30 s — kill polling, cancel the booking, show busy.
-      timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = safeTimeout(() => {
         if (cancelled || matchedRef.current) return;
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         progress.stopAnimation();
@@ -132,7 +142,7 @@ export default function InstantMatchingScreen({ route }: Props) {
       // 2. Create the instant booking using real GPS — location is required for matching.
       if (!token || token === '__guest__') {
         // Not authenticated — simulate as busy after delay
-        setTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
+        safeTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
         return;
       }
 
@@ -200,10 +210,10 @@ export default function InstantMatchingScreen({ route }: Props) {
             Animated.sequence([
               Animated.timing(flash, { toValue: 1, duration: 300, useNativeDriver: false }),
             ]).start();
-            setTimeout(() => {
+            safeTimeout(() => {
               if (!cancelled && !userCancelledRef.current) {
                 setScreenState('matched');
-                setTimeout(() => {
+                safeTimeout(() => {
                   if (!cancelled && !userCancelledRef.current) {
                     navigation.replace('ActiveBooking', {
                       bookingId: bookingId!,
@@ -231,6 +241,9 @@ export default function InstantMatchingScreen({ route }: Props) {
       cancelled = true;
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      // Clear every tracked setTimeout so no callback can fire after unmount.
+      pendingTimers.current.forEach(clearTimeout);
+      pendingTimers.current = [];
       // If the user left the screen before a match, cancel the booking so the
       // backend stops re-queueing it and pros stop seeing the invite.
       const bid = bookingIdRef.current;

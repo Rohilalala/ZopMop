@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
   Linking,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -61,10 +62,14 @@ export default function ProActiveScreen({ route }: Props) {
 
   const mapRef = useRef<MapView>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectAttempts = useRef(0);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsClosedByUnmount = useRef(false);
   // Interval that pushes raw GPS coords to Redis every 10 s (no Google Maps involved).
   const locationPushRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const appStateSubRef = useRef<{ remove: () => void } | null>(null);
   const cancelledAlertShownRef = useRef(false);
   const fittedRef = useRef(false);
 
@@ -97,6 +102,8 @@ export default function ProActiveScreen({ route }: Props) {
   }
 
   // ── WebSocket (real-time path, best-effort) ───────────────────────────────
+  // Reconnects with exponential backoff (1s → 30s cap) on close.
+  // Reset attempt counter on successful open. Skip reconnect when unmounting.
   function connectWs() {
     if (!token || token === '__guest__') return;
     try {
@@ -105,10 +112,21 @@ export default function ProActiveScreen({ route }: Props) {
       const ws = new WebSocket(getLocationWsUrl());
       wsRef.current = ws;
       ws.onopen = () => {
+        reconnectAttempts.current = 0;
         ws.send(JSON.stringify({ type: 'auth', token }));
       };
       ws.onerror = () => { /* silent — REST fallback handles it */ };
-      ws.onclose = () => { wsRef.current = null; };
+      ws.onclose = () => {
+        wsRef.current = null;
+        if (wsClosedByUnmount.current) return;
+        const delay = Math.min(30_000, 1_000 * 2 ** reconnectAttempts.current);
+        reconnectAttempts.current += 1;
+        if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = setTimeout(() => {
+          reconnectTimer.current = null;
+          if (!wsClosedByUnmount.current) connectWs();
+        }, delay);
+      };
     } catch { /* WS not available */ }
   }
 
@@ -183,16 +201,40 @@ export default function ProActiveScreen({ route }: Props) {
   }, [token, bookingId, customerLat, customerLng]);
 
   useEffect(() => {
+    wsClosedByUnmount.current = false;
+
+    const startHeartbeat = () => {
+      if (locationPushRef.current) return; // guard against stacking
+      pushCurrentLocation();
+      locationPushRef.current = setInterval(pushCurrentLocation, 10_000);
+    };
+    const stopHeartbeat = () => {
+      if (locationPushRef.current) {
+        clearInterval(locationPushRef.current);
+        locationPushRef.current = null;
+      }
+    };
+
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
 
       connectWs();
 
-      // Push location immediately, then every 10 s.
-      pushCurrentLocation();
-      locationPushRef.current = setInterval(pushCurrentLocation, 10000);
+      // Push location immediately, then every 10 s while foregrounded.
+      if (AppState.currentState === 'active') startHeartbeat();
     })();
+
+    // Pause GPS heartbeat when app is backgrounded; resume on foreground.
+    const sub = AppState.addEventListener('change', (next) => {
+      if ((next === 'background' || next === 'inactive')) {
+        stopHeartbeat();
+      } else if (next === 'active') {
+        // Only restart if we have permission & no pending interval.
+        startHeartbeat();
+      }
+    });
+    appStateSubRef.current = sub;
 
     fetchTracking();
     fetchStatus();
@@ -202,10 +244,14 @@ export default function ProActiveScreen({ route }: Props) {
     statusPollRef.current = setInterval(fetchStatus, 5000);
 
     return () => {
+      wsClosedByUnmount.current = true;
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
       wsRef.current?.close();
-      if (locationPushRef.current) clearInterval(locationPushRef.current);
+      stopHeartbeat();
       if (trackingPollRef.current) clearInterval(trackingPollRef.current);
       if (statusPollRef.current) clearInterval(statusPollRef.current);
+      appStateSubRef.current?.remove();
+      appStateSubRef.current = null;
     };
   }, []);
 

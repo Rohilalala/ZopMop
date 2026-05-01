@@ -45,7 +45,7 @@ export default function ServiceAboutScreen() {
   const [addons, setAddons] = useState<ServiceAddon[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAddons, setSelectedAddons] = useState<Set<string>>(new Set());
-  const [duration, setDuration] = useState<number | null>(null);
+  const [duration, setDuration] = useState<number | null>(service.min_duration_minutes);
   const [addedToCart, setAddedToCart] = useState(false);
 
   const { addItem } = useCart();
@@ -133,14 +133,8 @@ export default function ServiceAboutScreen() {
           <Text style={s.sectionTitle}>Duration</Text>
           <View style={s.durationCard}>
             <View style={s.durationLeft}>
-              <Text style={s.durationLabel}>
-                {duration == null ? 'Select duration' : `${duration} min`}
-              </Text>
-              <Text style={s.durationSub}>
-                {duration == null
-                  ? `Starting from ${service.min_duration_minutes} min`
-                  : `₹${(priceCents / 100).toFixed(0)}`}
-              </Text>
+              <Text style={s.durationLabel}>{`${duration} min`}</Text>
+              <Text style={s.durationSub}>{`₹${(priceCents / 100).toFixed(0)}`}</Text>
             </View>
             <View style={s.durationControls}>
               <TouchableOpacity
@@ -155,7 +149,7 @@ export default function ServiceAboutScreen() {
               >
                 <Text style={[s.durationBtnText, !canReduce && s.durationBtnTextDisabled]}>−</Text>
               </TouchableOpacity>
-              <Text style={s.durationValue}>{duration ?? '—'}</Text>
+              <Text style={s.durationValue}>{duration}</Text>
               <TouchableOpacity
                 style={[s.durationBtn, !canAddMore && s.durationBtnDisabled]}
                 disabled={!canAddMore}

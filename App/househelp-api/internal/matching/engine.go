@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
+	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
+
+// roundCoord rounds a lat/lng to 2 decimals (~1.1 km) for safe logging.
+func roundCoord(x float64) float64 { return math.Round(x*100) / 100 }
 
 // Redis key templates for match results.
 //
@@ -81,7 +86,7 @@ func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]Helpe
 	// Phase 2: expand radius if nothing found in the initial search.
 	if len(candidates) == 0 && cfg.MaxRadiusKm > cfg.RadiusKm {
 		log.Info().
-			Float64("lat", lat).Float64("lng", lng).
+			Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
 			Float64("initial_radius_km", cfg.RadiusKm).
 			Float64("expanded_radius_km", cfg.MaxRadiusKm).
 			Msg("[engine] no helpers in initial radius — expanding")
@@ -208,17 +213,17 @@ func (e *Engine) geoSearchCandidates(
 	).Result()
 	if err != nil {
 		log.Error().Err(err).
-			Float64("lat", lat).Float64("lng", lng).
+			Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
 			Msg("[engine] Redis GEOSEARCH failed — falling back to Postgres haversine")
 		return e.postgresGeoFallback(ctx, lat, lng, radiusKm, cfg)
 	}
 	log.Debug().
-		Float64("lat", lat).Float64("lng", lng).
+		Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
 		Float64("radius_km", radiusKm).
 		Int("geo_results", len(geoResults)).
 		Msg("[engine] GEOSEARCH result")
 	if len(geoResults) == 0 {
-		log.Warn().Float64("lat", lat).Float64("lng", lng).Float64("radius_km", radiusKm).
+		log.Warn().Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).Float64("radius_km", radiusKm).
 			Msg("[engine] no helpers in Redis geo index")
 		return nil, nil
 	}
@@ -295,7 +300,10 @@ func (e *Engine) geoSearchCandidates(
 	log.Debug().Int("candidates_after_filter", len(candidates)).Msg("[engine] scored candidates")
 
 	// Update per-cell supply counter for demand-ratio calculations.
-	go e.updateSupplyCounter(context.Background(), lat, lng, len(candidates))
+	candidatesCount := len(candidates)
+	mw.SafeGo("matching.update_supply_counter", func() {
+		e.updateSupplyCounter(context.Background(), lat, lng, candidatesCount)
+	})
 
 	return candidates, nil
 }
@@ -334,7 +342,7 @@ func (e *Engine) storeMatchResults(ctx context.Context, bookingID string, matche
 	}
 
 	// Increment match_attempts in Postgres (best-effort, non-blocking).
-	go func() {
+	mw.SafeGo("matching.increment_match_attempts", func() {
 		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, dbErr := e.db.Exec(uCtx,
@@ -348,7 +356,7 @@ func (e *Engine) storeMatchResults(ctx context.Context, bookingID string, matche
 			log.Warn().Err(dbErr).Str("booking_id", bookingID).
 				Msg("[engine] failed to update match_attempts")
 		}
-	}()
+	})
 
 	log.Info().
 		Str("booking_id", bookingID).
@@ -564,11 +572,14 @@ func (e *Engine) postgresGeoFallback(
 	}
 
 	log.Warn().
-		Float64("lat", lat).Float64("lng", lng).
+		Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
 		Int("candidates", len(candidates)).
 		Msg("[engine] Postgres geo fallback complete")
 
-	go e.updateSupplyCounter(context.Background(), lat, lng, len(candidates))
+	fallbackCount := len(candidates)
+	mw.SafeGo("matching.update_supply_counter_fallback", func() {
+		e.updateSupplyCounter(context.Background(), lat, lng, fallbackCount)
+	})
 	return candidates, nil
 }
 

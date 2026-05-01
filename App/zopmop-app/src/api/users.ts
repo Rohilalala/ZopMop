@@ -4,8 +4,13 @@ import { BASE_URL, authHeaders, validateShape } from './config';
 
 export async function getMe(token: string): Promise<AuthUser> {
   const res = await apiFetch(`${BASE_URL}/me`, { headers: authHeaders(token) });
+  if (res.status === 401 || res.status === 403) {
+    triggerSignOut(); // auth invalid — force re-login
+    throw new Error('Not authenticated');
+  }
   if (res.status === 404) {
-    triggerSignOut(); // user was deleted from the DB
+    // Don't sign out on 404: it could be a transient backend issue.
+    // Surface a clear error and let the caller decide how to recover.
     throw new Error('User not found');
   }
   if (!res.ok) throw new Error('Failed to fetch profile');

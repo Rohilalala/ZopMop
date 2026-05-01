@@ -53,6 +53,16 @@ type UpdateProfileRequest struct {
 	Name string `json:"name" validate:"omitempty,max=100"`
 }
 
+// OnboardProResponse is returned by POST /me/onboard-pro. The role on User is
+// intentionally unchanged — admin approval is required before the user becomes
+// a pro. Clients should render a "pending approval" screen when ApprovalStatus
+// is "pending".
+type OnboardProResponse struct {
+	User           User   `json:"user"`
+	ApprovalStatus string `json:"approval_status"`
+	Message        string `json:"message"`
+}
+
 // OnboardProRequest is the input for POST /me/onboard-pro.
 type OnboardProRequest struct {
 	Lat          float64  `json:"lat"          validate:"required,min=-90,max=90"`

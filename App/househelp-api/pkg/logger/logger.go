@@ -31,3 +31,13 @@ func Init(env string) {
 		Str("service", "househelp-api").
 		Logger()
 }
+
+// MaskPhone returns a redacted form of the given phone number suitable for
+// log fields. Anything 4 chars or shorter is fully masked; otherwise only
+// the trailing 4 digits are preserved (e.g. "+919876543210" → "***3210").
+func MaskPhone(phone string) string {
+	if len(phone) <= 4 {
+		return "***"
+	}
+	return "***" + phone[len(phone)-4:]
+}

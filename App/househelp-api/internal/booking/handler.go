@@ -1,6 +1,7 @@
 package booking
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -27,11 +28,18 @@ func validateBookingIDParam(bookingID string) bool {
 // RegisterRoutes mounts booking routes onto the given router group.
 // Helper-side endpoints (accept, start, complete, invites) are gated by
 // RequireRole("pro") to block customer JWTs from self-assigning as helpers.
-func (h *Handler) RegisterRoutes(router fiber.Router) {
+// idem (optional, may be nil) is an idempotency middleware applied only to
+// the booking-creation POST routes to make retries safe.
+func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler) {
 	proOnly := middleware.RequireRole("pro")
 
-	router.Post("/", h.CreateBooking)
-	router.Post("/scheduled", h.CreateScheduledBooking)
+	if idem != nil {
+		router.Post("/", idem, h.CreateBooking)
+		router.Post("/scheduled", idem, h.CreateScheduledBooking)
+	} else {
+		router.Post("/", h.CreateBooking)
+		router.Post("/scheduled", h.CreateScheduledBooking)
+	}
 	router.Get("/helper/invites", proOnly, h.GetHelperInvites)
 	router.Get("/", h.GetBookings)
 	router.Get("/:id/match-status", h.GetMatchStatus)
@@ -183,6 +191,9 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	booking, err := h.service.CreateScheduledBooking(c.Context(), userID, &req, items, scheduledTime)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to create scheduled booking")
+		if errors.Is(err, ErrAddressNotOwned) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
+		}
 		status := fiber.StatusInternalServerError
 		message := "failed to create scheduled booking"
 		if err.Error() == "cart is empty" {

@@ -60,6 +60,10 @@ func (h *Handler) DeclineInvite(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	if err := h.service.DeclineInvite(c.Context(), helperID, bookingID); err != nil {
+		log.Error().Err(err).
+			Str("helper_id", helperID).
+			Str("booking_id", bookingID).
+			Msg("decline invite failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to decline invite"})
 	}
 	return c.JSON(fiber.Map{"message": "invite declined"})

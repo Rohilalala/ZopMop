@@ -316,7 +316,7 @@ export default function CartScreen() {
 
     try {
       // Step 1: create the actual scheduled booking.
-      await createScheduledBooking(token, {
+      const created = await createScheduledBooking(token, {
         address_id: selectedAddress.id,
         time_slot_id: selectedSlotId,
         ...(promoCode ? { promo_code: promoCode } : {}),
@@ -334,26 +334,18 @@ export default function CartScreen() {
           console.info('[Cart] roomies cost split recorded');
         } catch (splitErr) {
           console.warn('[Cart] split recording failed — booking still confirmed', splitErr);
-          promoStore.clear();
-          await refreshCart();
-          Alert.alert(
-            'Booking Confirmed! 🎉',
-            'Service scheduled, but cost split recording failed. Check Roomies → Vault.',
-            [{ text: 'View Bookings', onPress: () => navigation.navigate('Bookings') }],
-          );
-          return;
         }
       }
 
       promoStore.clear();
       await refreshCart();
 
-      const successMsg = doSplit
-        ? `Booking confirmed!\n\nYour share: ₹${(myShareCents / 100).toFixed(0)} — roomies costs are tracked in the Vault.`
-        : 'Your service has been scheduled.';
-      Alert.alert('Booking Confirmed! 🎉', successMsg, [
-        { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
-      ]);
+      navigation.replace('BookingConfirmed', {
+        bookingId: created.id,
+        totalCents,
+        slot: selectedSlotLabel ?? undefined,
+        addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
+      });
     } catch (err: any) {
       const msg =
         err?.response?.data?.error ??
@@ -602,11 +594,7 @@ export default function CartScreen() {
         >
           {booking
             ? <ActivityIndicator color="#FFFFFF" />
-            : <Text style={s.payBtnText}>
-                {splitEnabled && splitCount > 1
-                  ? `Pay ₹${(myShareCents / 100).toFixed(0)}`
-                  : 'Pay Now'}
-              </Text>
+            : <Text style={s.payBtnText}>Confirm Booking</Text>
           }
         </TouchableOpacity>
       </View>

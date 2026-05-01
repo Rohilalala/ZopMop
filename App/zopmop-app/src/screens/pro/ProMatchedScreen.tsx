@@ -79,33 +79,37 @@ export default function ProMatchedScreen({ route }: Props) {
       useNativeDriver: false,
     }).start();
 
-    // 1-second label ticks
+    // 1-second label ticks — pure state update, no navigation side-effects here.
     countdownRef.current = setInterval(() => {
-      setSecondsLeft(prev => {
-        const next = prev - 1;
-        if (next <= 0) {
-          if (countdownRef.current) clearInterval(countdownRef.current);
-          expiredRef.current = true;
-          setExpired(true);
-          navigation.goBack();
-          return 0;
-        }
-        return next;
-      });
+      setSecondsLeft(prev => Math.max(0, prev - 1));
     }, 1000);
 
     return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
   }, []);
 
+  // Side-effect: when the countdown hits zero, mark expired and go back.
+  // Kept out of the setState updater so React Strict Mode / re-renders won't
+  // double-fire the navigation call.
+  useEffect(() => {
+    if (secondsLeft <= 0 && !expiredRef.current) {
+      expiredRef.current = true;
+      if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
+      setExpired(true);
+      navigation.goBack();
+    }
+  }, [secondsLeft, navigation]);
+
   // Pulse animation for the match icon
   const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1.08, duration: 700, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
       ]),
-    ).start();
+    );
+    loop.start();
+    return () => { loop.stop(); };
   }, []);
 
   function openMaps() {

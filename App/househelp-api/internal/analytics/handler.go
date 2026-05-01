@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -123,6 +124,15 @@ func (h *Handler) TrackClientEvent(c *fiber.Ctx) error {
 	}
 	if req.EventName == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "event_name is required"})
+	}
+	if len(req.Properties) > 50 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "too many properties (max 50)"})
+	}
+	if len(req.Properties) > 0 {
+		raw, _ := json.Marshal(req.Properties)
+		if len(raw) > 16*1024 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "properties payload too large (max 16KB)"})
+		}
 	}
 
 	if err := h.svc.TrackClientEvent(c.Context(), &req, userID); err != nil {

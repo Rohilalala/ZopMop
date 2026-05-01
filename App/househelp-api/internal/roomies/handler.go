@@ -272,9 +272,19 @@ func (h *Handler) VerifySettlement(c *fiber.Ctx) error {
 
 // GET /groups/:id/ledger
 func (h *Handler) GetLedger(c *fiber.Ctx) error {
+	userID, _ := c.Locals("userID").(string)
 	groupID := c.Params("id")
 	if !validator.IsUUID(groupID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid group id"})
+	}
+
+	// SECURITY: only group members may read the ledger.
+	isMember, err := h.service.IsMember(c.Context(), userID, groupID)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	if !isMember {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "not a group member"})
 	}
 
 	simplified, err := h.service.NetDebts(c.Context(), groupID)
@@ -286,9 +296,19 @@ func (h *Handler) GetLedger(c *fiber.Ctx) error {
 
 // GET /groups/:id/vault
 func (h *Handler) GetVault(c *fiber.Ctx) error {
+	userID, _ := c.Locals("userID").(string)
 	groupID := c.Params("id")
 	if !validator.IsUUID(groupID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid group id"})
+	}
+
+	// SECURITY: only group members may read the vault summary.
+	isMember, err := h.service.IsMember(c.Context(), userID, groupID)
+	if err != nil {
+		return mapServiceError(c, err)
+	}
+	if !isMember {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "not a group member"})
 	}
 
 	vault, err := h.service.GetVaultSummary(c.Context(), groupID)

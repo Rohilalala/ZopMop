@@ -177,6 +177,13 @@ func (h *Handler) AdminUpdateBanner(c *fiber.Ctx) error {
 		})
 	}
 
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
 	banner := &Banner{
 		ID:           bannerID,
 		Title:        req.Title,

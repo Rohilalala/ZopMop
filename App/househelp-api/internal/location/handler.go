@@ -8,6 +8,7 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
 
@@ -20,11 +21,13 @@ const wsAuthDeadline = 5 * time.Second
 type Handler struct {
 	service *Service
 	jwtKeys []middleware.JWTKey
+	db      *pgxpool.Pool
 }
 
-// NewHandler creates a new location handler.
-func NewHandler(service *Service, jwtKeys []middleware.JWTKey) *Handler {
-	return &Handler{service: service, jwtKeys: jwtKeys}
+// NewHandler creates a new location handler. db is required to authorize
+// GetHelperLocation against an active booking between caller and helper.
+func NewHandler(service *Service, jwtKeys []middleware.JWTKey, db *pgxpool.Pool) *Handler {
+	return &Handler{service: service, jwtKeys: jwtKeys, db: db}
 }
 
 // RegisterRoutes mounts location routes onto the given router group.
@@ -174,12 +177,50 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 }
 
 // GetHelperLocation handles GET /location/helper/:id.
+//
+// SECURITY: a helper's live coordinates are sensitive PII. Access is restricted to:
+//   - the helper themselves,
+//   - admins,
+//   - a customer who has an ACTIVE booking with this helper
+//     (status in 'accepted','in_progress','arrived').
+//
+// Any other caller receives 403 Forbidden.
 func (h *Handler) GetHelperLocation(c *fiber.Ctx) error {
 	helperID := c.Params("id")
 	if !validator.IsUUID(helperID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "invalid helper id",
 		})
+	}
+
+	callerID, _ := c.Locals("userID").(string)
+	callerRole, _ := c.Locals("role").(string)
+
+	allowed := callerRole == "admin" || callerID == helperID
+	if !allowed {
+		// Active booking check: caller must be the customer on a live booking
+		// with this helper.
+		ctx, cancel := context.WithTimeout(c.Context(), 3*time.Second)
+		defer cancel()
+		var exists bool
+		err := h.db.QueryRow(ctx,
+			`SELECT EXISTS(
+			   SELECT 1 FROM bookings
+			    WHERE customer_id = $1
+			      AND helper_id   = $2
+			      AND status IN ('accepted','in_progress','arrived')
+			 )`,
+			callerID, helperID,
+		).Scan(&exists)
+		if err != nil {
+			log.Error().Err(err).Str("helper_id", helperID).Str("caller_id", callerID).Msg("active booking check failed")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "authorization check failed"})
+		}
+		allowed = exists
+	}
+
+	if !allowed {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 	}
 
 	location, err := h.service.GetHelperLocation(c.Context(), helperID)
