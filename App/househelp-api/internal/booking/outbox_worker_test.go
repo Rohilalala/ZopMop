@@ -34,6 +34,7 @@ func TestOutboxWorkerProcessBatch_SuccessMarksDone(t *testing.T) {
 		batchSize:     10,
 		baseBackoff:   time.Second,
 		maxBackoff:    10 * time.Second,
+		maxAttempts:   8,
 		now:           time.Now,
 		sleep:         sleepWithContext,
 	}
@@ -85,6 +86,7 @@ func TestOutboxWorkerProcessBatch_DispatchFailureMarksRetry(t *testing.T) {
 		batchSize:     10,
 		baseBackoff:   2 * time.Second,
 		maxBackoff:    time.Minute,
+		maxAttempts:   8,
 		now:           func() time.Time { return now },
 		sleep:         sleepWithContext,
 	}
@@ -138,6 +140,7 @@ func TestOutboxWorkerProcessBatch_LegacyUnderscoreEventTypeProcessed(t *testing.
 		batchSize:     10,
 		baseBackoff:   time.Second,
 		maxBackoff:    10 * time.Second,
+		maxAttempts:   8,
 		now:           time.Now,
 		sleep:         sleepWithContext,
 	}
@@ -160,10 +163,63 @@ func TestOutboxWorkerProcessBatch_LegacyUnderscoreEventTypeProcessed(t *testing.
 	}
 }
 
+func TestOutboxWorkerProcessBatch_MaxAttemptsMarksFailed(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	store := &fakeOutboxStore{
+		events: []OutboxPendingEvent{
+			{
+				ID:   "evt-max-1",
+				Type: BookingOutboxEventNotifyCustomerAccepted,
+				Payload: BookingOutboxPayload{
+					BookingID:  "booking-max-1",
+					CustomerID: "customer-max-1",
+					HelperName: "Alex",
+				},
+				AttemptCount: 8,
+			},
+		},
+	}
+	notifier := &fakeOutboxNotifier{
+		acceptedErr: errors.New("notification provider down"),
+	}
+	worker := &OutboxWorker{
+		store:         store,
+		notifications: notifier,
+		matcher:       &fakeOutboxMatcher{},
+		db:            fakeOutboxDB{},
+		batchSize:     10,
+		baseBackoff:   2 * time.Second,
+		maxBackoff:    time.Minute,
+		maxAttempts:   8,
+		now:           func() time.Time { return now },
+		sleep:         sleepWithContext,
+	}
+
+	processed, err := worker.processBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected 1 processed event, got %d", processed)
+	}
+	if len(store.retries) != 0 {
+		t.Fatalf("expected no retries after max attempts, got %#v", store.retries)
+	}
+	if len(store.failed) != 1 {
+		t.Fatalf("expected 1 failed mark call, got %d", len(store.failed))
+	}
+	if store.failed[0].eventID != "evt-max-1" {
+		t.Fatalf("unexpected failed event id: %s", store.failed[0].eventID)
+	}
+}
+
 type fakeOutboxStore struct {
 	events   []OutboxPendingEvent
 	doneIDs  []string
 	retries  []fakeRetryCall
+	failed   []fakeFailedCall
 	claimed  bool
 	claimErr error
 }
@@ -172,6 +228,11 @@ type fakeRetryCall struct {
 	eventID         string
 	lastError       string
 	nextAvailableAt time.Time
+}
+
+type fakeFailedCall struct {
+	eventID   string
+	lastError string
 }
 
 func (f *fakeOutboxStore) ClaimPending(_ context.Context, _ int) ([]OutboxPendingEvent, error) {
@@ -195,6 +256,14 @@ func (f *fakeOutboxStore) MarkRetry(_ context.Context, eventID, lastError string
 		eventID:         eventID,
 		lastError:       lastError,
 		nextAvailableAt: nextAvailableAt,
+	})
+	return nil
+}
+
+func (f *fakeOutboxStore) MarkFailed(_ context.Context, eventID, lastError string) error {
+	f.failed = append(f.failed, fakeFailedCall{
+		eventID:   eventID,
+		lastError: lastError,
 	})
 	return nil
 }

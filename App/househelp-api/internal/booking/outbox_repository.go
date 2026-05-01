@@ -22,6 +22,13 @@ type OutboxPendingEvent struct {
 	AttemptCount int
 }
 
+type OutboxMetrics struct {
+	Pending         int64   `json:"pending"`
+	Processing      int64   `json:"processing"`
+	Failed          int64   `json:"failed"`
+	AvgAttemptCount float64 `json:"avg_attempt_count"`
+}
+
 // OutboxRepository persists booking side-effect events in booking_outbox.
 type OutboxRepository struct {
 	db            *pgxpool.Pool
@@ -156,6 +163,43 @@ WHERE id = $1
 		return fmt.Errorf("mark outbox event retry: %w", err)
 	}
 	return nil
+}
+
+func (r *OutboxRepository) MarkFailed(ctx context.Context, eventID, lastError string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := r.db.Exec(queryCtx, `
+UPDATE booking_outbox
+SET status = 'failed',
+	available_at = NOW(),
+	last_error = $2,
+	updated_at = NOW()
+WHERE id = $1
+`, eventID, lastError)
+	if err != nil {
+		return fmt.Errorf("mark outbox event failed: %w", err)
+	}
+	return nil
+}
+
+func (r *OutboxRepository) Metrics(ctx context.Context) (OutboxMetrics, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var metrics OutboxMetrics
+	err := r.db.QueryRow(queryCtx, `
+SELECT
+	COUNT(*) FILTER (WHERE status = 'pending')::bigint   AS pending,
+	COUNT(*) FILTER (WHERE status = 'processing')::bigint AS processing,
+	COUNT(*) FILTER (WHERE status = 'failed')::bigint    AS failed,
+	COALESCE(AVG(attempt_count)::double precision, 0)    AS avg_attempt_count
+FROM booking_outbox
+`).Scan(&metrics.Pending, &metrics.Processing, &metrics.Failed, &metrics.AvgAttemptCount)
+	if err != nil {
+		return OutboxMetrics{}, fmt.Errorf("load outbox metrics: %w", err)
+	}
+	return metrics, nil
 }
 
 var _ DBTX = (pgx.Tx)(nil)

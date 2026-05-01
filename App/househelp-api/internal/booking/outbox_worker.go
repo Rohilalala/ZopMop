@@ -12,6 +12,7 @@ type outboxStore interface {
 	ClaimPending(ctx context.Context, limit int) ([]OutboxPendingEvent, error)
 	MarkDone(ctx context.Context, eventID string) error
 	MarkRetry(ctx context.Context, eventID, lastError string, nextAvailableAt time.Time) error
+	MarkFailed(ctx context.Context, eventID, lastError string) error
 }
 
 type outboxNotificationService interface {
@@ -38,6 +39,7 @@ type OutboxWorker struct {
 	pollInterval time.Duration
 	baseBackoff  time.Duration
 	maxBackoff   time.Duration
+	maxAttempts  int
 	now          func() time.Time
 	sleep        func(context.Context, time.Duration) error
 }
@@ -52,6 +54,7 @@ func NewOutboxWorker(repo *OutboxRepository, notifSvc outboxNotificationService,
 		pollInterval:  time.Second,
 		baseBackoff:   2 * time.Second,
 		maxBackoff:    2 * time.Minute,
+		maxAttempts:   8,
 		now:           time.Now,
 		sleep:         sleepWithContext,
 	}
@@ -88,6 +91,12 @@ func (w *OutboxWorker) processBatch(ctx context.Context) (int, error) {
 
 	for _, evt := range events {
 		if err := w.dispatch(ctx, evt); err != nil {
+			if evt.AttemptCount >= w.maxAttempts {
+				if markErr := w.store.MarkFailed(ctx, evt.ID, err.Error()); markErr != nil {
+					return 0, fmt.Errorf("dispatch outbox event: %w (mark failed failed: %v)", err, markErr)
+				}
+				continue
+			}
 			backoff := w.retryBackoff(evt.AttemptCount)
 			nextAvailableAt := w.now().Add(backoff)
 			if markErr := w.store.MarkRetry(ctx, evt.ID, err.Error(), nextAvailableAt); markErr != nil {

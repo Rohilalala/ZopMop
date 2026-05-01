@@ -312,11 +312,22 @@ func main() {
 	analyticsHandler.RegisterAdminRoutes(adminGroup)
 	servicesHandler.RegisterAdminRoutes(adminGroup.Group("/services"))
 	adminGroup.Get("/runtime/metrics", mw.RequirePermission(admin.PermViewAnalytics), func(c *fiber.Ctx) error {
+		outboxMetrics, outboxErr := bookingOutboxRepo.Metrics(context.Background())
+		outboxPayload := fiber.Map{
+			"pending":           outboxMetrics.Pending,
+			"processing":        outboxMetrics.Processing,
+			"failed":            outboxMetrics.Failed,
+			"avg_attempt_count": outboxMetrics.AvgAttemptCount,
+		}
+		if outboxErr != nil {
+			outboxPayload["error"] = outboxErr.Error()
+		}
 		return c.JSON(fiber.Map{
 			"db_pool":          database.PoolStats(dbPool),
 			"rate_limiter":     mw.RateLimiterMetrics(),
 			"db_concurrency":   mw.DBConcurrencyMetrics(),
 			"analytics_rollup": rollupWorker.Metrics(),
+			"booking_outbox":   outboxPayload,
 		})
 	})
 
