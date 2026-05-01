@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/admin"
 	"github.com/adityarohilla/househelp-api/internal/analytics"
 	"github.com/adityarohilla/househelp-api/internal/auth"
+	"github.com/adityarohilla/househelp-api/internal/bff"
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
@@ -35,8 +39,54 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/rs/zerolog/log"
 )
+
+// loadSafeLayouts reads every safe-layout JSON file from disk and returns a map
+// keyed by filename without extension (e.g. "home.json" → "home"). The dir is
+// resolved relative to the binary's working directory and falls back to
+// scanning a few common locations so dev/prod layouts both work. Best-effort:
+// a missing or malformed file is logged and skipped — handlers degrade to a
+// minimal empty-page envelope.
+func loadSafeLayouts() map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	candidates := []string{
+		"static/safe_layouts",
+		"./static/safe_layouts",
+		"../static/safe_layouts",
+		"../../static/safe_layouts",
+	}
+	var dir string
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			dir = c
+			break
+		}
+	}
+	if dir == "" {
+		log.Warn().Msg("[sdui] safe_layouts directory not found")
+		return out
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Warn().Err(err).Msg("[sdui] read safe layouts dir")
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			log.Warn().Err(err).Str("file", e.Name()).Msg("[sdui] read safe layout failed")
+			continue
+		}
+		key := strings.TrimSuffix(e.Name(), ".json")
+		out[key] = json.RawMessage(raw)
+	}
+	return out
+}
 
 func main() {
 	// Load configuration.
@@ -320,8 +370,88 @@ func main() {
 		})
 	})
 
-	// Client-side analytics event ingestion (authenticated users, auth rate limiter).
-	analyticsHandler.RegisterClientRoutes(api.Group("", authMiddleware, authLimiter, dbBoundLimiter))
+	// --- SDUI (server-driven UI) ---
+	bffRepo := bff.NewRepository(dbPool)
+	bffWhitelist := bff.NewActionWhitelist(dbPool, rdb)
+	bffCircuit := bff.NewCircuit()
+	bffReg, bffBatches := bff.BuildRegistries(bff.SourceDeps{
+		DB:       dbPool,
+		Insights: insightsService,
+		Services: servicesCatalog,
+	})
+	bffCircuit.InitForRegistry(bffReg)
+
+	bffValidator, err := bff.NewValidator("schemas/sdui_page_config.json", bffReg, bffWhitelist)
+	if err != nil {
+		log.Fatal().Err(err).Msg("[sdui] failed to load page config schema")
+	}
+
+	bffHydrator := bff.NewHydrator(bffReg, bffBatches, bffCircuit, rdb, "v1")
+	bffResolver := bff.NewResolver(bffReg, func(string) (json.RawMessage, error) {
+		return nil, fmt.Errorf("includes not configured")
+	}, "", "")
+
+	safeLayouts := loadSafeLayouts()
+
+	bffHandler := bff.NewHandler(bffRepo, bffValidator, bffHydrator, bffResolver, rdb, safeLayouts)
+	bffHandler.LazyFetcher = func(
+		ctx context.Context,
+		pageID, sectionID, cursor string,
+		limit int,
+		rc bff.RequestContext,
+	) (any, string, bool, error) {
+		// MVP: only "popular" service grid is paginated; everything else returns empty.
+		if servicesCatalog == nil {
+			return map[string]any{"items": []any{}}, "", false, nil
+		}
+		all, err := servicesCatalog.List(ctx)
+		if err != nil {
+			return nil, "", false, err
+		}
+		offset := 0
+		if strings.HasPrefix(cursor, "off:") {
+			fmt.Sscanf(cursor[4:], "%d", &offset)
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		if offset >= len(all) {
+			return map[string]any{"services": []any{}}, "", false, nil
+		}
+		end := offset + limit
+		if end > len(all) {
+			end = len(all)
+		}
+		page := all[offset:end]
+		hasMore := end < len(all)
+		next := ""
+		if hasMore {
+			next = fmt.Sprintf("off:%d", end)
+		}
+		return map[string]any{"services": page}, next, hasMore, nil
+	}
+
+	bffAdminHandler := bff.NewAdminHandler(
+		bffRepo, bffValidator, rdb, bffWhitelist,
+		bffHydrator, bffResolver, safeLayouts,
+	)
+
+	// Public SDUI routes: mounted under /api/v1 to match the rest of the public
+	// surface. The handler does its own optional auth via c.Locals("userID").
+	bffHandler.RegisterRoutes(api.Group("/sdui", compress.New(), publicLimiter))
+
+	// Admin SDUI routes: nested under /api/v1/admin so they inherit JWT,
+	// admin-role, and the standard admin limiter. The SDUI-specific 60req/min
+	// rate limiter applies only to this sub-group, not the rest of /admin.
+	bffAdminHandler.RegisterRoutes(adminGroup.Group("", mw.SduiAdminAuth(rdb)))
+
+	// Client-side analytics event ingestion (authenticated users, auth rate
+	// limiter). Mounted with explicit path prefixes so the auth middleware
+	// does not leak to sibling routes registered under /api/v1.
+	analyticsClientGroup := api.Group("/events", authMiddleware, authLimiter, dbBoundLimiter)
+	analyticsClientGroup.Post("/", analyticsHandler.TrackCanonicalEvent)
+	analyticsLegacyGroup := api.Group("/analytics/events", authMiddleware, authLimiter, dbBoundLimiter)
+	analyticsLegacyGroup.Post("/", analyticsHandler.TrackClientEvent)
 
 	// --- Roomies add-on module ---
 	roomiesRepo := roomies.NewRepository(dbPool)

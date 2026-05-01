@@ -1,0 +1,38 @@
+{
+  "page_id": "home",
+  "version": "safe-1.0",
+  "min_client_version": "0.0.0",
+  "config_hash": "safe",
+  "snapshot_at": "1970-01-01T00:00:00Z",
+  "config_version": "safe-1.0",
+  "sections": [
+    {
+      "id": "hero",
+      "type": "hero_carousel",
+      "visible": true,
+      "layout": { "height": 280 },
+      "data": {
+        "greeting_name": "there",
+        "slides": [
+          {
+            "key": "safe-fallback",
+            "eyebrow": "Welcome",
+            "title": "We'll be right back",
+            "body": "Browse our services while we restore the home page.",
+            "cta": "Explore",
+            "bg": "#EEF2FF",
+            "accent": "#4F46E5",
+            "emoji": "🏠",
+            "action": { "trigger": "tap", "type": "navigate", "screen": "Services" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "footer",
+      "type": "footer",
+      "visible": true,
+      "data": {}
+    }
+  ]
+}
