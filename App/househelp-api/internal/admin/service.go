@@ -133,8 +133,9 @@ func (s *Service) GetAllHelpers(ctx context.Context, page, limit int, available 
 	}, nil
 }
 
-// GetBookingsList returns a paginated list of bookings with optional status filter.
-func (s *Service) GetBookingsList(ctx context.Context, page, limit int, status string) (*PaginatedResponse, error) {
+// GetBookingsList returns a paginated list of bookings with optional status +
+// search filters.
+func (s *Service) GetBookingsList(ctx context.Context, page, limit int, status, search string) (*PaginatedResponse, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -142,7 +143,7 @@ func (s *Service) GetBookingsList(ctx context.Context, page, limit int, status s
 		limit = 20
 	}
 
-	bookings, totalCount, err := s.repo.GetBookingsList(ctx, page, limit, status)
+	bookings, totalCount, err := s.repo.GetBookingsList(ctx, page, limit, status, search)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bookings: %w", err)
 	}
@@ -285,6 +286,107 @@ func (s *Service) Broadcast(ctx context.Context, title, body, target string) err
 		"type":   "broadcast",
 		"target": target,
 	})
+}
+
+// ListPendingHelpers returns a paginated list of helpers awaiting approval.
+func (s *Service) ListPendingHelpers(ctx context.Context, page, limit int) (*PaginatedResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	helpers, totalCount, err := s.repo.GetPendingHelpers(ctx, page, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending helpers: %w", err)
+	}
+
+	totalPages := (totalCount + limit - 1) / limit
+
+	return &PaginatedResponse{
+		Data:       helpers,
+		Page:       page,
+		Limit:      limit,
+		TotalCount: totalCount,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// ApproveHelper sets approval_status='approved' and writes an audit log entry.
+func (s *Service) ApproveHelper(ctx context.Context, helperID, adminID, ipAddress string) error {
+	return s.setHelperApproval(ctx, helperID, "approved", "approve_helper", adminID, ipAddress)
+}
+
+// RejectHelper sets approval_status='rejected' and writes an audit log entry.
+func (s *Service) RejectHelper(ctx context.Context, helperID, adminID, ipAddress string) error {
+	return s.setHelperApproval(ctx, helperID, "rejected", "reject_helper", adminID, ipAddress)
+}
+
+func (s *Service) setHelperApproval(ctx context.Context, helperID, status, action, adminID, ipAddress string) error {
+	if err := s.repo.SetHelperApproval(ctx, helperID, status); err != nil {
+		return err
+	}
+
+	newVal, err := json.Marshal(map[string]string{"approval_status": status})
+	if err != nil {
+		log.Error().Err(err).Msg("failed to marshal helper approval action for logging")
+		newVal = []byte(fmt.Sprintf(`{"approval_status":%q}`, status))
+	}
+	if err := s.repo.LogAdminAction(ctx, adminID, action, "helper", helperID, nil, newVal, ipAddress); err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to log helper approval action")
+	}
+	return nil
+}
+
+// ListPendingRefunds returns a paginated list of refunds (filtered by status).
+func (s *Service) ListPendingRefunds(ctx context.Context, status string, page, limit int) (*PaginatedResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	refunds, totalCount, err := s.repo.ListPendingRefunds(ctx, status, page, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending refunds: %w", err)
+	}
+
+	totalPages := (totalCount + limit - 1) / limit
+
+	return &PaginatedResponse{
+		Data:       refunds,
+		Page:       page,
+		Limit:      limit,
+		TotalCount: totalCount,
+		TotalPages: totalPages,
+	}, nil
+}
+
+// SettleRefund marks a refund as settled and audit-logs the admin action.
+func (s *Service) SettleRefund(ctx context.Context, id, adminID, ipAddress string) (*PendingRefund, error) {
+	pr, err := s.repo.SettlePendingRefund(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	newVal, mErr := json.Marshal(map[string]interface{}{
+		"status":       pr.Status,
+		"amount_cents": pr.AmountCents,
+		"source":       pr.Source,
+		"source_ref":   pr.SourceRef,
+		"user_id":      pr.UserID,
+	})
+	if mErr != nil {
+		log.Error().Err(mErr).Msg("failed to marshal settle refund action for logging")
+		newVal = []byte(`{"status":"settled"}`)
+	}
+	if logErr := s.repo.LogAdminAction(ctx, adminID, "settle_refund", "refund", pr.ID, nil, newVal, ipAddress); logErr != nil {
+		log.Error().Err(logErr).Str("refund_id", pr.ID).Msg("failed to log settle refund action")
+	}
+
+	return pr, nil
 }
 
 // CancelBooking force-cancels a booking (admin override, bypasses state machine)

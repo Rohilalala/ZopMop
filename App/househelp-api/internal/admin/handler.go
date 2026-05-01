@@ -34,6 +34,13 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 
 	// Helpers management.
 	router.Get("/helpers", middleware.RequirePermission(PermManageUsers), h.GetHelpers)
+	router.Get("/helpers/pending", middleware.RequirePermission(PermManageUsers), h.GetPendingHelpers)
+	router.Patch("/helpers/:id/approve", middleware.RequirePermission(PermManageUsers), h.ApproveHelper)
+	router.Patch("/helpers/:id/reject", middleware.RequirePermission(PermManageUsers), h.RejectHelper)
+
+	// Pending refunds queue.
+	router.Get("/refunds", middleware.RequirePermission(PermManageUsers), h.ListPendingRefunds)
+	router.Post("/refunds/:id/settle", middleware.RequirePermission(PermManageUsers), h.SettleRefund)
 
 	// Bookings management.
 	router.Get("/bookings", middleware.RequirePermission(PermViewAnalytics), h.GetBookings)
@@ -151,6 +158,94 @@ func (h *Handler) GetHelpers(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+// GetPendingHelpers handles GET /admin/helpers/pending.
+func (h *Handler) GetPendingHelpers(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+
+	result, err := h.service.ListPendingHelpers(c.Context(), page, limit)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to get pending helpers")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to load pending helpers",
+		})
+	}
+	return c.JSON(result)
+}
+
+// ApproveHelper handles PATCH /admin/helpers/:id/approve.
+func (h *Handler) ApproveHelper(c *fiber.Ctx) error {
+	helperID := c.Params("id")
+	if _, err := uuid.Parse(helperID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid helper id"})
+	}
+	adminID, _ := c.Locals("adminID").(string)
+
+	if err := h.service.ApproveHelper(c.Context(), helperID, adminID, c.IP()); err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to approve helper")
+		if err.Error() == "helper not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to approve helper"})
+	}
+	return c.JSON(fiber.Map{"message": "helper approved"})
+}
+
+// RejectHelper handles PATCH /admin/helpers/:id/reject.
+func (h *Handler) RejectHelper(c *fiber.Ctx) error {
+	helperID := c.Params("id")
+	if _, err := uuid.Parse(helperID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid helper id"})
+	}
+	adminID, _ := c.Locals("adminID").(string)
+
+	if err := h.service.RejectHelper(c.Context(), helperID, adminID, c.IP()); err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to reject helper")
+		if err.Error() == "helper not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to reject helper"})
+	}
+	return c.JSON(fiber.Map{"message": "helper rejected"})
+}
+
+// ListPendingRefunds handles GET /admin/refunds?status=pending|settled.
+func (h *Handler) ListPendingRefunds(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	status := c.Query("status")
+
+	if status != "" && status != "pending" && status != "settled" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid status filter"})
+	}
+
+	result, err := h.service.ListPendingRefunds(c.Context(), status, page, limit)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to list pending refunds")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load refunds"})
+	}
+	return c.JSON(result)
+}
+
+// SettleRefund handles POST /admin/refunds/:id/settle.
+func (h *Handler) SettleRefund(c *fiber.Ctx) error {
+	refundID := c.Params("id")
+	if _, err := uuid.Parse(refundID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid refund id"})
+	}
+	adminID, _ := c.Locals("adminID").(string)
+
+	pr, err := h.service.SettleRefund(c.Context(), refundID, adminID, c.IP())
+	if err != nil {
+		log.Error().Err(err).Str("refund_id", refundID).Msg("failed to settle refund")
+		if err.Error() == "refund not found or already settled" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to settle refund"})
+	}
+	return c.JSON(pr)
+}
+
 // CancelBooking handles PATCH /admin/bookings/:id/cancel.
 func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
@@ -187,8 +282,9 @@ func (h *Handler) GetBookings(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	status := c.Query("status")
+	search := c.Query("search")
 
-	result, err := h.service.GetBookingsList(c.Context(), page, limit, status)
+	result, err := h.service.GetBookingsList(c.Context(), page, limit, status, search)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get bookings list")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

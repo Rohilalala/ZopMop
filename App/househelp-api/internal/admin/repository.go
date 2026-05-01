@@ -313,28 +313,42 @@ func (r *Repository) GetAllHelpers(ctx context.Context, page, limit int, availab
 }
 
 // GetBookingsList returns a paginated list of bookings with optional filters.
-func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, status string) ([]BookingListItem, int, error) {
+// `search` matches a partial booking ID, customer phone, or helper phone.
+func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, status, search string) ([]BookingListItem, int, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	offset := (page - 1) * limit
 
+	// Escape LIKE wildcards in the search term to keep operator intent explicit.
+	searchVal := ""
+	if search != "" {
+		escaped := strings.NewReplacer("%", "\\%", "_", "\\_").Replace(search)
+		searchVal = "%" + escaped + "%"
+	}
+
 	var totalCount int
 	err := r.db.QueryRow(queryCtx, `
 		SELECT COUNT(*)
-		FROM bookings
-		WHERE ($1 = '' OR status = $1)
-	`, status).Scan(&totalCount)
+		FROM bookings b
+		LEFT JOIN users cu ON b.customer_id = cu.id
+		LEFT JOIN users hu ON b.helper_id = hu.id
+		WHERE ($1 = '' OR b.status = $1)
+		  AND ($2 = '' OR b.id::text ILIKE $2 ESCAPE '\' OR cu.phone ILIKE $2 ESCAPE '\' OR hu.phone ILIKE $2 ESCAPE '\')
+	`, status, searchVal).Scan(&totalCount)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count bookings: %w", err)
 	}
 
 	rows, err := r.db.Query(queryCtx, `
 		WITH page AS (
-			SELECT id
-			FROM bookings
-			WHERE ($1 = '' OR status = $1)
-			ORDER BY created_at DESC
+			SELECT b.id, b.created_at
+			FROM bookings b
+			LEFT JOIN users cu ON b.customer_id = cu.id
+			LEFT JOIN users hu ON b.helper_id = hu.id
+			WHERE ($1 = '' OR b.status = $1)
+			  AND ($4 = '' OR b.id::text ILIKE $4 ESCAPE '\' OR cu.phone ILIKE $4 ESCAPE '\' OR hu.phone ILIKE $4 ESCAPE '\')
+			ORDER BY b.created_at DESC
 			LIMIT $2 OFFSET $3
 		)
 		SELECT
@@ -346,7 +360,7 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 		LEFT JOIN users hu ON b.helper_id = hu.id
 		JOIN service_categories sc ON b.service_category_id = sc.id
 		ORDER BY b.created_at DESC
-	`, status, limit, offset)
+	`, status, limit, offset, searchVal)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query bookings: %w", err)
 	}
@@ -616,6 +630,72 @@ func (r *Repository) CancelBooking(ctx context.Context, bookingID string) error 
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("booking not found or already in terminal state")
+	}
+	return nil
+}
+
+// GetPendingHelpers returns helpers with approval_status='pending', joined to
+// users. Mirrors GetAllHelpers but filtered to pending and ordered oldest-first
+// so reviewers work the queue FIFO.
+func (r *Repository) GetPendingHelpers(ctx context.Context, page, limit int) ([]HelperListItem, int, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	offset := (page - 1) * limit
+
+	baseQuery := `FROM users u JOIN helpers h ON u.id = h.id
+	              WHERE u.role IN ('helper', 'pro') AND h.approval_status = 'pending'`
+
+	var totalCount int
+	if err := r.db.QueryRow(queryCtx, `SELECT COUNT(*) `+baseQuery).Scan(&totalCount); err != nil {
+		return nil, 0, fmt.Errorf("failed to count pending helpers: %w", err)
+	}
+
+	selectQuery := `SELECT u.id, u.phone, COALESCE(u.name, ''), h.is_available, h.rating, h.total_jobs,
+	                       COALESCE(h.current_lat, 0), COALESCE(h.current_lng, 0)
+	                ` + baseQuery + ` ORDER BY u.created_at ASC LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.Query(queryCtx, selectQuery, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query pending helpers: %w", err)
+	}
+	defer rows.Close()
+
+	var helpers []HelperListItem
+	for rows.Next() {
+		var h HelperListItem
+		if err := rows.Scan(&h.ID, &h.Phone, &h.Name, &h.IsAvailable, &h.Rating,
+			&h.TotalJobs, &h.CurrentLat, &h.CurrentLng); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan pending helper: %w", err)
+		}
+		helpers = append(helpers, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating pending helpers: %w", err)
+	}
+
+	return helpers, totalCount, nil
+}
+
+// SetHelperApproval sets approval_status to 'approved' or 'rejected'. Returns
+// "helper not found" if no row was updated. status must be validated by caller.
+func (r *Repository) SetHelperApproval(ctx context.Context, helperID, status string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if status != "approved" && status != "rejected" {
+		return fmt.Errorf("invalid approval status: %s", status)
+	}
+
+	result, err := r.db.Exec(queryCtx,
+		`UPDATE helpers SET approval_status = $2 WHERE id = $1`,
+		helperID, status,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set helper approval: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("helper not found")
 	}
 	return nil
 }
