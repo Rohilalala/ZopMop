@@ -52,9 +52,12 @@ export default function ConfigPage() {
     try { parsed = JSON.parse(bulkJson); } catch { toast('Invalid JSON', 'error'); return; }
     setBulking(true);
     try {
-      const payload = Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) }));
+      // Backend expects map[string]string, not an array of {key,value} pairs.
+      const payload = Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, String(value)])
+      );
       await bulkUpdateConfig(payload);
-      toast(`${payload.length} keys updated`);
+      toast(`${Object.keys(payload).length} keys updated`);
       setShowBulk(false);
       load();
     } catch (err) {

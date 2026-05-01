@@ -48,9 +48,11 @@ export default function WorkersPage() {
         toast('Failed to load workers', 'error');
       }
 
-      if (perfRes.status === 'fulfilled' && Array.isArray(perfRes.value)) {
+      // Backend wraps performance rows in `{ days, workers: [...] }`.
+      const perfList = perfRes.status === 'fulfilled' ? (perfRes.value?.workers ?? []) : [];
+      if (perfList.length > 0) {
         const map = {};
-        perfRes.value.forEach((w) => { map[w.helper_id] = w; });
+        perfList.forEach((w) => { map[w.helper_id] = w; });
         setPerfMap(map);
       }
     } finally {

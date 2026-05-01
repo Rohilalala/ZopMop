@@ -51,11 +51,16 @@ export default function PromotionsPage() {
     setCreating(true);
     try {
       const expiresAt = new Date(Date.now() + parseInt(form.expires_days) * 86400000).toISOString();
+      // Backend stores fixed-amount discounts and min-order in cents; the user
+      // types rupees in both inputs, so convert here. Percent stays raw 0-100.
+      const rawDiscount = parseInt(form.discount_value);
+      const discountValue = form.discount_type === 'fixed' ? rawDiscount * 100 : rawDiscount;
+      const minOrderRupees = parseInt(form.min_order_cents) || 0;
       const payload = {
         code: form.code.toUpperCase().trim(),
         discount_type: form.discount_type,
-        discount_value: parseInt(form.discount_value),
-        min_order_cents: parseInt(form.min_order_cents) || 0,
+        discount_value: discountValue,
+        min_order_cents: minOrderRupees * 100,
         expires_at: expiresAt,
       };
       if (parseInt(form.max_uses) > 0) payload.max_uses = parseInt(form.max_uses);
@@ -85,8 +90,11 @@ export default function PromotionsPage() {
     }
   };
 
-  const active = promotions.filter((p) => p.is_active);
-  const inactive = promotions.filter((p) => !p.is_active);
+  // Backend doesn't auto-disable on expiry, so filter expired promos out of
+  // "active" so ops aren't fooled into thinking they're still applicable.
+  const isExpired = (p) => p.expires_at && new Date(p.expires_at).getTime() < Date.now();
+  const active = promotions.filter((p) => p.is_active && !isExpired(p));
+  const inactive = promotions.filter((p) => !p.is_active || isExpired(p));
 
   return (
     <div className="space-y-6">
