@@ -9,6 +9,7 @@ import { Shell } from '@/components/shell/Shell';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FlagsPage } from '@/pages/FlagsPage';
 import { SessionsPage } from '@/pages/SessionsPage';
+import { UsersPage } from '@/pages/users/UsersPage';
 import { StubPage } from '@/pages/StubPage';
 import { Skeleton } from '@/components/ui';
 
@@ -32,7 +33,7 @@ export function App() {
           <Route path="/sessions"   element={<SessionsPage />} />
           <Route path="/orders"     element={<StubPage name="Orders" description="Order lifecycle, refunds, manual interventions." />} />
           <Route path="/refunds"    element={<StubPage name="Refunds" description="Pending refund queue with approve/reject + partial-amount inputs." />} />
-          <Route path="/users"      element={<StubPage name="Users" description="User database, drawer, suspend/ban, bulk operations." />} />
+          <Route path="/users"      element={<UsersPage />} />
           <Route path="/workers"    element={<StubPage name="Workers" description="Worker database, onboarding kanban, scorecards, documents." />} />
           <Route path="/map"        element={<StubPage name="Live Map" description="Real-time worker locations on a Mapbox map with status colours." />} />
           <Route path="/promos"     element={<StubPage name="Promos" description="Promotional campaign builder with conflict detection and analytics." />} />
