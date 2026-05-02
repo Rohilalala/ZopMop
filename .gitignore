@@ -34,7 +34,9 @@ App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/index.html
 
 # Local run logs and stray binaries
 **/.run/
-**/api
+/App/househelp-api/api
+/App/househelp-api/crm-api
+/App/househelp-api/bootstrap
 **/docker-compose.yml.save
 **/.expo/xcodebuild.log
 **/.expo/xcodebuild-error.log
