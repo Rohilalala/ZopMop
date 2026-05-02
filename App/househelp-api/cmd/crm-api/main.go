@@ -23,6 +23,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
 	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
+	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -148,6 +149,9 @@ func main() {
 	usersRepo := users.NewRepository(readPool, dbPool)
 	usersHandler := users.NewHandler(usersRepo, auditRecorder)
 
+	workersRepo := workers.NewRepository(readPool, dbPool)
+	workersHandler := workers.NewHandler(workersRepo, auditRecorder)
+
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
 
@@ -170,6 +174,7 @@ func main() {
 	alertsHandler.RegisterRoutes(authed)
 	dashHandler.RegisterRoutes(authed)
 	usersHandler.RegisterRoutes(authed)
+	workersHandler.RegisterRoutes(authed)
 
 	// Module stub handler — every other module of the CRM lands here until
 	// the dedicated package is wired in. Keeps the SPA's nav working even

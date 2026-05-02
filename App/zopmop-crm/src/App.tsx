@@ -10,6 +10,8 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { FlagsPage } from '@/pages/FlagsPage';
 import { SessionsPage } from '@/pages/SessionsPage';
 import { UsersPage } from '@/pages/users/UsersPage';
+import { WorkersPage } from '@/pages/workers/WorkersPage';
+import { LiveMapPage } from '@/pages/LiveMapPage';
 import { StubPage } from '@/pages/StubPage';
 import { Skeleton } from '@/components/ui';
 
@@ -34,8 +36,8 @@ export function App() {
           <Route path="/orders"     element={<StubPage name="Orders" description="Order lifecycle, refunds, manual interventions." />} />
           <Route path="/refunds"    element={<StubPage name="Refunds" description="Pending refund queue with approve/reject + partial-amount inputs." />} />
           <Route path="/users"      element={<UsersPage />} />
-          <Route path="/workers"    element={<StubPage name="Workers" description="Worker database, onboarding kanban, scorecards, documents." />} />
-          <Route path="/map"        element={<StubPage name="Live Map" description="Real-time worker locations on a Mapbox map with status colours." />} />
+          <Route path="/workers"    element={<WorkersPage />} />
+          <Route path="/map"        element={<LiveMapPage />} />
           <Route path="/promos"     element={<StubPage name="Promos" description="Promotional campaign builder with conflict detection and analytics." />} />
           <Route path="/banners"    element={<StubPage name="Banners" description="Visual home-screen editor with phone-frame live preview." />} />
           <Route path="/experiments" element={<StubPage name="A/B Tests" description="Experiment wizard with variants, metrics, and auto-pause on regressions." />} />
