@@ -38,3 +38,15 @@ App/zopmop-app/.superpowers/brainstorm/3951-1777568342/content/index.html
 **/docker-compose.yml.save
 **/.expo/xcodebuild.log
 **/.expo/xcodebuild-error.log
+
+# Claude scheduled-tasks lock (local runtime only)
+**/.claude/scheduled_tasks.lock
+
+# Old test-client kept locally as a safety net during the CRM v2 rebuild —
+# do not commit. Delete the directory once the new CRM is fully validated.
+App/househelp-test-client.bak/
+
+# CRM frontend build artefacts
+App/zopmop-crm/dist/
+App/zopmop-crm/node_modules/
+App/zopmop-crm/tsconfig.tsbuildinfo
