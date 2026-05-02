@@ -35,6 +35,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
+	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -181,7 +182,8 @@ func main() {
 	analyticsSvc := analytics.NewService(readPool)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 
-	growthSvc := growth.NewService(readPool, dbPool)
+	notifSvc := notification.NewService(ctx, dbPool)
+	growthSvc := growth.NewService(readPool, dbPool, notifSvc)
 	growthHandler := growth.NewHandler(growthSvc, auditRecorder)
 
 	zonesRepo := zones.NewRepository(readPool, dbPool)

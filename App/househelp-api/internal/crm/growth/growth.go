@@ -3,11 +3,10 @@
 // share enough infrastructure that splitting into five packages would be
 // more ceremony than value.
 //
-// Push send is NOT wired to FCM here — the CRM persists messages to
-// crm_push_messages with status='scheduled'/'sent'; a separate worker (or
-// the existing notification.Service) is expected to drain that table and
-// fire the actual pushes. Pivoting to direct FCM dispatch is a one-line
-// change: replace the dispatchStub call.
+// Push send is wired to the user-app's notification.Service, which talks to
+// FCM directly. When FIREBASE_CREDENTIALS_JSON is unset, notification.Service
+// internally degrades to a mock (logs only), so dev still works without
+// firebase creds.
 package growth
 
 import (
@@ -24,6 +23,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/notification"
 )
 
 // ── Push ───────────────────────────────────────────────────────────────
@@ -94,10 +94,13 @@ type Waitlist struct {
 
 type Service struct {
 	read, write *pgxpool.Pool
+	notif       *notification.Service
 }
 
-func NewService(read, write *pgxpool.Pool) *Service {
-	return &Service{read: read, write: write}
+// NewService constructs the growth Service. notif is optional — when nil,
+// SendPush still flips status='sent' but no FCM call is made.
+func NewService(read, write *pgxpool.Pool, notif *notification.Service) *Service {
+	return &Service{read: read, write: write, notif: notif}
 }
 
 // ── Push: list / create / cancel ───────────────────────────────────────
@@ -199,30 +202,160 @@ func (s *Service) GetPush(ctx context.Context, id string) (*PushMsg, error) {
 	return &m, nil
 }
 
-// SendPush dispatches a push immediately. Stub: marks the row sent without
-// actually invoking FCM. Replace dispatchStub with notification.Service.Send
-// when wiring in.
+// SendPush dispatches a push immediately. Loads the row, resolves target
+// users → FCM tokens, sends via notification.Service. On dispatch failure
+// the row is flipped to 'failed' so the admin sees the error in history.
 func (s *Service) SendPush(ctx context.Context, id string) error {
-	if err := s.dispatchStub(ctx, id); err != nil {
+	msg, err := s.GetPush(ctx, id)
+	if err != nil {
 		return err
 	}
+	if msg.Status != "draft" && msg.Status != "scheduled" {
+		return fmt.Errorf("push is %s, cannot resend", msg.Status)
+	}
+
+	tokens, err := s.collectTargetTokens(ctx, msg.TargetKind, id)
+	if err != nil {
+		return fmt.Errorf("collect tokens: %w", err)
+	}
+
+	data := map[string]string{"source": "crm.push", "push_id": id}
+	if msg.DeepLink != nil && *msg.DeepLink != "" {
+		data["deep_link"] = *msg.DeepLink
+	}
+	if msg.ImageURL != nil && *msg.ImageURL != "" {
+		data["image_url"] = *msg.ImageURL
+	}
+
+	dispatchErr := error(nil)
+	if s.notif != nil && len(tokens) > 0 {
+		dispatchErr = s.notif.SendToTokens(ctx, tokens, msg.Title, msg.Body, data)
+	} else if s.notif == nil {
+		log.Warn().Str("push_id", id).Msg("[crm.push] notification service nil — push marked sent without FCM call")
+	} else {
+		log.Warn().Str("push_id", id).Msg("[crm.push] no FCM tokens for target — push has no recipients")
+	}
+
+	finalStatus := "sent"
+	if dispatchErr != nil {
+		finalStatus = "failed"
+		log.Error().Err(dispatchErr).Str("push_id", id).Msg("[crm.push] FCM dispatch failed")
+	}
+
 	res, err := s.write.Exec(ctx, `
-		UPDATE crm_push_messages SET status='sent', sent_at=now()
+		UPDATE crm_push_messages SET status=$2, sent_at=now()
 		WHERE id = $1::uuid AND status IN ('draft','scheduled')
-	`, id)
+	`, id, finalStatus)
 	if err != nil {
 		return fmt.Errorf("mark sent: %w", err)
 	}
 	if res.RowsAffected() == 0 {
 		return errors.New("push already sent or not found")
 	}
+	if dispatchErr != nil {
+		return fmt.Errorf("dispatch failed: %w", dispatchErr)
+	}
+	log.Info().Str("push_id", id).Int("tokens", len(tokens)).Msg("[crm.push] dispatched")
 	return nil
 }
 
-func (s *Service) dispatchStub(ctx context.Context, id string) error {
-	log.Info().Str("push_id", id).Msg("[crm.push] STUB dispatch — no FCM wired")
-	_ = ctx
-	return nil
+// collectTargetTokens resolves the target_kind into a slice of FCM tokens.
+// "users" / "pros" / "both" pull every active user with that role + a non-
+// empty fcm_token; "specific" reads target_filter.user_ids and pulls those.
+func (s *Service) collectTargetTokens(ctx context.Context, kind, pushID string) ([]string, error) {
+	switch kind {
+	case "users":
+		return s.tokensByRole(ctx, "customer")
+	case "pros":
+		return s.tokensByRole(ctx, "pro")
+	case "both":
+		return s.tokensByRoles(ctx, []string{"customer", "pro"})
+	case "specific":
+		return s.specificTokens(ctx, pushID)
+	}
+	return nil, nil
+}
+
+func (s *Service) tokensByRole(ctx context.Context, role string) ([]string, error) {
+	rows, err := s.read.Query(ctx, `
+		SELECT fcm_token FROM users
+		WHERE role = $1 AND deleted_at IS NULL
+		  AND fcm_token IS NOT NULL AND fcm_token <> ''
+		  AND is_suspended = FALSE AND banned_at IS NULL
+	`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) tokensByRoles(ctx context.Context, roles []string) ([]string, error) {
+	rows, err := s.read.Query(ctx, `
+		SELECT fcm_token FROM users
+		WHERE role = ANY($1) AND deleted_at IS NULL
+		  AND fcm_token IS NOT NULL AND fcm_token <> ''
+		  AND is_suspended = FALSE AND banned_at IS NULL
+	`, roles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) specificTokens(ctx context.Context, pushID string) ([]string, error) {
+	var raw []byte
+	err := s.read.QueryRow(ctx,
+		`SELECT target_filter FROM crm_push_messages WHERE id = $1::uuid`, pushID,
+	).Scan(&raw)
+	if err != nil {
+		return nil, fmt.Errorf("load target_filter: %w", err)
+	}
+	var filter struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &filter); err != nil {
+			return nil, fmt.Errorf("decode target_filter: %w", err)
+		}
+	}
+	if len(filter.UserIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.read.Query(ctx, `
+		SELECT fcm_token FROM users
+		WHERE id = ANY($1::uuid[]) AND fcm_token IS NOT NULL AND fcm_token <> ''
+	`, filter.UserIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // ── Lost-user campaigns ────────────────────────────────────────────────
