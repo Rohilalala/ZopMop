@@ -22,8 +22,19 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
 	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/crm/analytics"
+	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
+	"github.com/adityarohilla/househelp-api/internal/crm/growth"
+	"github.com/adityarohilla/househelp-api/internal/crm/orders"
+	"github.com/adityarohilla/househelp-api/internal/crm/payouts"
+	"github.com/adityarohilla/househelp-api/internal/crm/platform"
+	"github.com/adityarohilla/househelp-api/internal/crm/promos"
+	"github.com/adityarohilla/househelp-api/internal/crm/refunds"
+	"github.com/adityarohilla/househelp-api/internal/crm/trustsafety"
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
+	"github.com/adityarohilla/househelp-api/internal/crm/zones"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -152,6 +163,39 @@ func main() {
 	workersRepo := workers.NewRepository(readPool, dbPool)
 	workersHandler := workers.NewHandler(workersRepo, auditRecorder)
 
+	ordersRepo := orders.NewRepository(readPool, dbPool)
+	ordersHandler := orders.NewHandler(ordersRepo, auditRecorder)
+
+	refundsRepo := refunds.NewRepository(readPool, dbPool)
+	refundsHandler := refunds.NewHandler(refundsRepo, auditRecorder)
+
+	promosRepo := promos.NewRepository(readPool, dbPool)
+	promosHandler := promos.NewHandler(promosRepo, auditRecorder)
+
+	bannersRepo := banners.NewRepository(readPool, dbPool)
+	bannersHandler := banners.NewHandler(bannersRepo, auditRecorder)
+
+	expRepo := experiments.NewRepository(readPool, dbPool)
+	expHandler := experiments.NewHandler(expRepo, auditRecorder)
+
+	analyticsSvc := analytics.NewService(readPool)
+	analyticsHandler := analytics.NewHandler(analyticsSvc)
+
+	growthSvc := growth.NewService(readPool, dbPool)
+	growthHandler := growth.NewHandler(growthSvc, auditRecorder)
+
+	zonesRepo := zones.NewRepository(readPool, dbPool)
+	zonesHandler := zones.NewHandler(zonesRepo, auditRecorder)
+
+	payoutsRepo := payouts.NewRepository(readPool, dbPool)
+	payoutsHandler := payouts.NewHandler(payoutsRepo, auditRecorder)
+
+	tsSvc := trustsafety.NewService(readPool, dbPool)
+	tsHandler := trustsafety.NewHandler(tsSvc, auditRecorder)
+
+	platformSvc := platform.NewService(readPool, dbPool)
+	platformHandler := platform.NewHandler(platformSvc, auditRecorder)
+
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
 
@@ -175,6 +219,17 @@ func main() {
 	dashHandler.RegisterRoutes(authed)
 	usersHandler.RegisterRoutes(authed)
 	workersHandler.RegisterRoutes(authed)
+	ordersHandler.RegisterRoutes(authed)
+	refundsHandler.RegisterRoutes(authed)
+	promosHandler.RegisterRoutes(authed)
+	bannersHandler.RegisterRoutes(authed)
+	expHandler.RegisterRoutes(authed)
+	analyticsHandler.RegisterRoutes(authed)
+	growthHandler.RegisterRoutes(authed)
+	zonesHandler.RegisterRoutes(authed)
+	payoutsHandler.RegisterRoutes(authed)
+	tsHandler.RegisterRoutes(authed)
+	platformHandler.RegisterRoutes(authed)
 
 	// Module stub handler — every other module of the CRM lands here until
 	// the dedicated package is wired in. Keeps the SPA's nav working even

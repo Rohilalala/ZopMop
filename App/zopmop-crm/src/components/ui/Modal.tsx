@@ -78,7 +78,7 @@ export function ConfirmModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onConfirm: () => void | Promise<void>;
+  onConfirm: () => void | Promise<unknown>;
   title: string;
   impact: React.ReactNode;
   confirmLabel?: string;
