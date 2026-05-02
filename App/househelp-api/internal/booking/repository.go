@@ -163,6 +163,51 @@ func isValidTransition(from, to BookingStatus) bool {
 	return false
 }
 
+// MarkArrived stamps arrived_at = NOW() iff the booking is currently accepted
+// and the requesting helper is the one assigned. Returns the new arrived_at
+// timestamp on success.
+func (r *Repository) MarkArrived(ctx context.Context, bookingID, helperID string) (time.Time, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var t time.Time
+	err := r.db.QueryRow(queryCtx,
+		`UPDATE bookings
+		    SET arrived_at = NOW(), updated_at = NOW()
+		  WHERE id = $1
+		    AND helper_id = $2
+		    AND status = $3
+		  RETURNING arrived_at`,
+		bookingID, helperID, StatusAccepted,
+	).Scan(&t)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return time.Time{}, fmt.Errorf("booking not in accepted state for this helper")
+		}
+		return time.Time{}, fmt.Errorf("failed to mark arrived: %w", err)
+	}
+	return t, nil
+}
+
+// IsBookingArrived returns true if arrived_at has been stamped.
+func (r *Repository) IsBookingArrived(ctx context.Context, bookingID string) (bool, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var arrivedAt *time.Time
+	err := r.db.QueryRow(queryCtx,
+		`SELECT arrived_at FROM bookings WHERE id = $1`,
+		bookingID,
+	).Scan(&arrivedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return false, fmt.Errorf("booking not found")
+		}
+		return false, fmt.Errorf("failed to read arrived_at: %w", err)
+	}
+	return arrivedAt != nil, nil
+}
+
 // AcceptBooking assigns a helper to a pending booking and sets status to accepted.
 func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -241,6 +286,84 @@ func (r *Repository) GetActiveBookingsCountForHelper(ctx context.Context, helper
 	}
 
 	return count, nil
+}
+
+// GetHelperActiveBookings returns bookings assigned to this helper that are
+// currently accepted or in_progress (instant or scheduled). Newest first.
+func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID string) ([]Booking, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT id, customer_id, helper_id, service_category_id, status, address,
+		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		 FROM bookings
+		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')
+		 ORDER BY updated_at DESC`,
+		helperID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query helper active bookings: %w", err)
+	}
+	defer rows.Close()
+
+	bookings := make([]Booking, 0)
+	for rows.Next() {
+		var b Booking
+		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
+			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.PriceCents,
+			&b.PromoCode, &b.DiscountCents, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan helper active booking: %w", err)
+		}
+		bookings = append(bookings, b)
+	}
+	return bookings, rows.Err()
+}
+
+// GetHelperBookingsToday returns all bookings the helper touched today —
+// active (accepted/in_progress) plus those completed/cancelled today. Used to
+// show "today's work" on the pro dashboard so a pro who restarts the app
+// mid-day still sees their progress.
+func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string) ([]Booking, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT id, customer_id, helper_id, service_category_id, status, address,
+		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		 FROM bookings
+		 WHERE helper_id = $1
+		   AND (
+		     status IN ('accepted', 'in_progress')
+		     OR (status IN ('completed', 'cancelled') AND updated_at::date = CURRENT_DATE)
+		   )
+		 ORDER BY
+		   CASE status
+		     WHEN 'in_progress' THEN 0
+		     WHEN 'accepted'    THEN 1
+		     WHEN 'completed'   THEN 2
+		     WHEN 'cancelled'   THEN 3
+		     ELSE 4
+		   END,
+		   updated_at DESC`,
+		helperID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query helper today bookings: %w", err)
+	}
+	defer rows.Close()
+
+	bookings := make([]Booking, 0)
+	for rows.Next() {
+		var b Booking
+		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
+			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.PriceCents,
+			&b.PromoCode, &b.DiscountCents, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan helper today booking: %w", err)
+		}
+		bookings = append(bookings, b)
+	}
+	return bookings, rows.Err()
 }
 
 // GetCustomerBookings returns bookings for a specific customer with pagination.

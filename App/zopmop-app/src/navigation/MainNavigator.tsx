@@ -12,7 +12,9 @@ import WalletScreen from '../screens/main/WalletScreen';
 import OffersScreen from '../screens/main/OffersScreen';
 import HelpSupportScreen from '../screens/main/HelpSupportScreen';
 import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
-import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
+// Legacy ActiveBookingScreen replaced by TrackLiveScreen — both routes now
+// render the new design.
+// import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
 import ProActiveScreen from '../screens/pro/ProActiveScreen';
@@ -22,6 +24,9 @@ import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
 import RoomiesWelcomeScreen from '../screens/main/RoomiesWelcomeScreen';
 import ManageHouseholdScreen from '../screens/main/ManageHouseholdScreen';
 import BookingConfirmedScreen from '../screens/main/BookingConfirmedScreen';
+import TrackLiveScreen from '../screens/main/TrackLiveScreen';
+import ChatScreen from '../screens/main/ChatScreen';
+import TipScreen from '../screens/main/TipScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -94,7 +99,7 @@ export default function MainNavigator() {
         />
         <Stack.Screen
           name="ActiveBooking"
-          component={ActiveBookingScreen}
+          component={TrackLiveScreen}
           options={{ animation: 'fade', gestureEnabled: false }}
         />
         <Stack.Screen
@@ -141,6 +146,21 @@ export default function MainNavigator() {
           name="BookingConfirmed"
           component={BookingConfirmedScreen}
           options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="TrackLive"
+          component={TrackLiveScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="Chat"
+          component={ChatScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="Tip"
+          component={TipScreen}
+          options={{ animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
     </CartProvider>

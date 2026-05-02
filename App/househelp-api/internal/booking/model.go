@@ -85,8 +85,12 @@ type CreateInstantBookingRequest struct {
 
 // MatchStatusResponse is returned by GET /bookings/:id/match-status.
 type MatchStatusResponse struct {
-	Status string         `json:"status"` // "searching" | "matched" | "failed"
-	Helper *MatchedHelper `json:"helper,omitempty"`
+	Status        string         `json:"status"` // "searching" | "matched" | "failed"
+	Helper        *MatchedHelper `json:"helper,omitempty"`
+	BookingStatus string         `json:"booking_status,omitempty"` // "pending" | "accepted" | "in_progress" | "completed" | "cancelled"
+	// Arrived is true once the assigned pro tapped "I've Arrived" at the
+	// customer's location. Drives the "Pro's at your door" state.
+	Arrived bool `json:"arrived,omitempty"`
 }
 
 // MatchedHelper contains the assigned helper's details once a booking is accepted.

@@ -1,9 +1,25 @@
-import React from 'react';
-import { View, Text, ActivityIndicator, type TextStyle } from 'react-native';
-import Animated, { FadeIn } from 'react-native-reanimated';
+// LivePill — supply-state strip rendered between hero and presets.
+//
+// Three states (priority order):
+//   1. Night mode (hour ≥ 20 or hour < 6): show a daily-rotating quirky
+//      "pros are resting" message regardless of nearby_count. Instant booking
+//      is closed at night, so the live stats would be misleading.
+//   2. Daytime + nearby_count === 0: "All our pros are busy right now".
+//   3. Daytime + nearby_count > 0: live stats row (count · avg rating · ETA).
 
-const fontSemi: TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
-const fontReg: TextStyle = { fontFamily: 'PlusJakartaSans_400Regular' };
+import React, { useEffect } from 'react';
+import { View, Text, ActivityIndicator, type TextStyle } from 'react-native';
+import Animated, {
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
+
+const fontMed: TextStyle  = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 
 export type NearbyStats = {
   nearby_count: number;
@@ -16,15 +32,14 @@ type Props = {
   loading?: boolean;
 };
 
-// Daily-rotating quirky messages for after 8pm when no pros are online.
-// Picked deterministically from the date so it stays consistent within a day
-// but shuffles tomorrow.
+// ── Time-aware copy ──────────────────────────────────────────────────────────
+
 const NIGHT_MESSAGES = [
   'All our pros are taking it easy',
   'The pros are rebooting',
   'The pros are dream-scaping their next big move',
   'Pros are recharging — back at sunrise',
-  "Pros clocked out — see you in the morning",
+  'Pros clocked out — see you in the morning',
   "Pros are off-duty, dreaming up tomorrow's hustle",
   'Pros are tucked in — try us bright & early',
   'Even pros need beauty sleep',
@@ -32,143 +47,143 @@ const NIGHT_MESSAGES = [
   'The mops are resting. The pros too.',
 ];
 
-function quirkyOfflineMessage(): string {
-  const now = new Date();
-  const hr = now.getHours();
-  if (hr < 20) return 'All our pros are busy right now';
-  // Rotate by day-of-year so message stays stable for the whole evening
-  // and changes the next day.
-  const start = new Date(now.getFullYear(), 0, 0);
-  const diff = now.getTime() - start.getTime();
-  const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
+const NIGHT_START_HOUR = 20; // 8 pm
+const NIGHT_END_HOUR   = 6;  // 6 am
+
+function isNightTime(d = new Date()): boolean {
+  const hr = d.getHours();
+  return hr >= NIGHT_START_HOUR || hr < NIGHT_END_HOUR;
+}
+
+/** Stable for the whole night — rotates each calendar day. */
+function nightMessage(d = new Date()): string {
+  const start = new Date(d.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((d.getTime() - start.getTime()) / 86_400_000);
   return NIGHT_MESSAGES[dayOfYear % NIGHT_MESSAGES.length];
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+const SHELL = {
+  marginHorizontal: 20,
+  marginTop: 14,
+  paddingHorizontal: 14,
+  paddingVertical: 10,
+  borderRadius: 12,
+  backgroundColor: 'rgba(255,255,255,0.05)',
+  borderWidth: 0.5,
+  borderColor: 'rgba(255,255,255,0.08)',
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 12,
+} as const;
+
+function PulseDot({ color }: { color: string }) {
+  const op = useSharedValue(1);
+  useEffect(() => {
+    op.value = withRepeat(
+      withTiming(0.3, { duration: 800, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, []);
+  const style = useAnimatedStyle(() => ({ opacity: op.value }));
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          width: 7,
+          height: 7,
+          borderRadius: 4,
+          backgroundColor: color,
+          shadowColor: color,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.8,
+          shadowRadius: 4,
+        },
+      ]}
+    />
+  );
 }
 
 export function LivePill({ stats, loading }: Props) {
   if (loading || !stats) {
     return (
-      <View
-        style={{
-          alignSelf: 'center',
-          marginTop: 20,
-          paddingHorizontal: 18,
-          paddingVertical: 12,
-          borderRadius: 999,
-          backgroundColor: '#FFFFFF',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.06,
-          shadowRadius: 12,
-          elevation: 2,
-        }}
-      >
-        <ActivityIndicator size="small" color="#4F46E5" />
-        <Text style={[fontReg, { fontSize: 12, color: '#9CA3AF' }]}>Checking nearby pros…</Text>
+      <View style={SHELL}>
+        <ActivityIndicator size="small" color="#F5A300" />
+        <Text style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.55)' }]}>
+          Checking nearby pros…
+        </Text>
       </View>
     );
   }
 
-  // No pros online → single quirky message instead of misleading 3-stat row.
-  if (stats.nearby_count === 0) {
-    const msg = quirkyOfflineMessage();
+  // Night mode wins regardless of supply count — instant booking is closed.
+  if (isNightTime()) {
     return (
-      <Animated.View
-        entering={FadeIn.duration(420)}
-        style={{
-          alignSelf: 'center',
-          marginTop: 20,
-          paddingHorizontal: 18,
-          paddingVertical: 12,
-          borderRadius: 999,
-          backgroundColor: '#FFFFFF',
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          maxWidth: '90%',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.06,
-          shadowRadius: 12,
-          elevation: 2,
-        }}
-      >
+      <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
         <View
-          style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#9CA3AF' }}
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 4,
+            backgroundColor: 'rgba(255,255,255,0.4)',
+          }}
         />
         <Text
-          style={[fontSemi, { fontSize: 13, color: '#475569' }]}
+          style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.7)' }]}
           numberOfLines={1}
         >
-          {msg}
+          {nightMessage()}
         </Text>
       </Animated.View>
     );
   }
 
-  const items: { icon: React.ReactNode; label: string }[] = [
-    {
-      icon: (
+  // Daytime, no supply.
+  if (stats.nearby_count === 0) {
+    return (
+      <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
         <View
           style={{
-            width: 8,
-            height: 8,
+            width: 7,
+            height: 7,
             borderRadius: 4,
-            backgroundColor: '#10B981',
+            backgroundColor: 'rgba(255,255,255,0.4)',
           }}
         />
-      ),
-      label: `${stats.nearby_count} pro${stats.nearby_count === 1 ? '' : 's'} nearby`,
-    },
-    {
-      icon: <Text style={{ color: '#F59E0B', fontSize: 13 }}>★</Text>,
-      label: `${stats.avg_rating.toFixed(1)} avg`,
-    },
-    {
-      icon: null,
-      label: `~${Math.max(1, Math.round(stats.avg_eta_min))} min arrival`,
-    },
-  ];
+        <Text
+          style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.7)' }]}
+          numberOfLines={1}
+        >
+          All our pros are busy right now
+        </Text>
+      </Animated.View>
+    );
+  }
 
+  // Daytime + supply available.
   return (
-    <Animated.View
-      entering={FadeIn.duration(420)}
-      style={{
-        alignSelf: 'center',
-        marginTop: 20,
-        paddingHorizontal: 18,
-        paddingVertical: 12,
-        borderRadius: 999,
-        backgroundColor: '#FFFFFF',
-        flexDirection: 'row',
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        elevation: 2,
-      }}
-    >
-      {items.map((it, i) => (
-        <React.Fragment key={i}>
-          {i > 0 && (
-            <View
-              style={{
-                width: 1,
-                height: 16,
-                backgroundColor: '#E5E7EB',
-                marginHorizontal: 12,
-              }}
-            />
-          )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {it.icon}
-            <Text style={[fontSemi, { fontSize: 13, color: '#0F172A' }]}>{it.label}</Text>
-          </View>
-        </React.Fragment>
-      ))}
+    <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <PulseDot color="#22C55E" />
+        <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+          <Text style={fontBold}>{stats.nearby_count} pros</Text> nearby
+        </Text>
+      </View>
+      <Text style={{ color: 'rgba(255,255,255,0.3)' }}>·</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <Text style={{ color: '#F5A300', fontSize: 12 }}>★</Text>
+        <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+          <Text style={fontBold}>{stats.avg_rating.toFixed(1)}</Text> avg
+        </Text>
+      </View>
+      <Text style={{ color: 'rgba(255,255,255,0.3)' }}>·</Text>
+      <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+        ~<Text style={fontBold}>{Math.max(1, Math.round(stats.avg_eta_min))} min</Text> arrival
+      </Text>
     </Animated.View>
   );
 }

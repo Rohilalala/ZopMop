@@ -1,3 +1,5 @@
+import { reportBackendDown } from '../hooks/useBackendHealth';
+
 // Global signOut callback registered by AuthProvider on mount.
 let _signOut: (() => void) | null = null;
 
@@ -53,8 +55,18 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
     if (res.status === 401) {
       _signOut?.();
     }
+    // 5xx → backend reachable but unhealthy. Surface as "down" so user sees
+    // the dead-Zop screen instead of getting stuck on opaque request failures.
+    if (res.status >= 500) {
+      reportBackendDown();
+    }
     return res;
   } catch (err: any) {
+    // Anything that prevented us from getting a response — DNS failure,
+    // connection refused (server not running), socket reset, request timeout
+    // — means we couldn't reach the backend. Flip the global health flag so
+    // the BackendDownScreen renders immediately.
+    reportBackendDown();
     if (err?.name === 'AbortError') {
       throw new Error('Request timed out. Please check your connection and try again.');
     }

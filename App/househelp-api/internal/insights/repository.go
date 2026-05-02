@@ -17,12 +17,24 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 // AvgRatingForHelpers returns the avg rating for the given helper IDs.
 // Returns 5.0 when the set is empty (best-default for fresh markets).
+//
+// Excludes helpers currently on a job (booking status accepted/in_progress)
+// even if their is_available flag is still true — the live pill must reflect
+// only pros who can take a new instant booking right now.
 func (r *Repository) AvgRatingForHelpers(ctx context.Context, helperIDs []string) (float64, error) {
 	if len(helperIDs) == 0 {
 		return 5.0, nil
 	}
 	row := r.db.QueryRow(ctx,
-		`SELECT COALESCE(AVG(rating), 5.0) FROM helpers WHERE id = ANY($1::uuid[]) AND is_available = true`,
+		`SELECT COALESCE(AVG(h.rating), 5.0)
+		 FROM helpers h
+		 WHERE h.id = ANY($1::uuid[])
+		   AND h.is_available = true
+		   AND NOT EXISTS (
+		     SELECT 1 FROM bookings b
+		     WHERE b.helper_id = h.id
+		       AND b.status IN ('accepted', 'in_progress')
+		   )`,
 		helperIDs,
 	)
 	var avg float64
@@ -32,13 +44,25 @@ func (r *Repository) AvgRatingForHelpers(ctx context.Context, helperIDs []string
 	return avg, nil
 }
 
-// FilterAvailableHelpers returns only the helper IDs from the input list that are currently available.
+// FilterAvailableHelpers returns only the helper IDs from the input list that
+// are currently available — i.e. is_available = true AND not currently on an
+// active booking (accepted or in_progress, instant or scheduled). The latter
+// filter is defensive: it shields the live pill from cases where the
+// is_available flag is stale or wasn't flipped on accept.
 func (r *Repository) FilterAvailableHelpers(ctx context.Context, helperIDs []string) ([]string, error) {
 	if len(helperIDs) == 0 {
 		return []string{}, nil
 	}
 	rows, err := r.db.Query(ctx,
-		`SELECT id::text FROM helpers WHERE id = ANY($1::uuid[]) AND is_available = true`,
+		`SELECT h.id::text
+		 FROM helpers h
+		 WHERE h.id = ANY($1::uuid[])
+		   AND h.is_available = true
+		   AND NOT EXISTS (
+		     SELECT 1 FROM bookings b
+		     WHERE b.helper_id = h.id
+		       AND b.status IN ('accepted', 'in_progress')
+		   )`,
 		helperIDs,
 	)
 	if err != nil {

@@ -61,12 +61,14 @@ export default function InstantMatchingScreen({ route }: Props) {
   const flash = useRef(new Animated.Value(0)).current;
 
   const bookingIdRef = useRef<string | null>(null);
+  const priceCentsRef = useRef<number>(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchedRef = useRef(false);
   const userCancelledRef = useRef(false);
   const matchedHelperRef = useRef<{
     name: string;
+    phone: string;
     rating: number;
     lat: number;
     lng: number;
@@ -184,6 +186,7 @@ export default function InstantMatchingScreen({ route }: Props) {
         );
         bookingId = booking.id;
         bookingIdRef.current = bookingId;
+        priceCentsRef.current = booking.price_cents ?? 0;
       } catch {
         // Can't create booking — show busy after progress completes
         return;
@@ -198,6 +201,7 @@ export default function InstantMatchingScreen({ route }: Props) {
             matchedRef.current = true;
             matchedHelperRef.current = {
               name: status.helper.name || 'Your Pro',
+              phone: status.helper.phone || '',
               rating: status.helper.rating,
               lat: status.helper.lat ?? 0,
               lng: status.helper.lng ?? 0,
@@ -206,28 +210,18 @@ export default function InstantMatchingScreen({ route }: Props) {
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
             if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
             progress.stopAnimation();
-            // Flash the bar green
-            Animated.sequence([
-              Animated.timing(flash, { toValue: 1, duration: 300, useNativeDriver: false }),
-            ]).start();
-            safeTimeout(() => {
-              if (!cancelled && !userCancelledRef.current) {
-                setScreenState('matched');
-                safeTimeout(() => {
-                  if (!cancelled && !userCancelledRef.current) {
-                    navigation.replace('ActiveBooking', {
-                      bookingId: bookingId!,
-                      serviceName,
-                      helperName: status.helper!.name || 'Your Pro',
-                      helperRating: status.helper!.rating,
-                      helperLat: status.helper!.lat,
-                      helperLng: status.helper!.lng,
-                      etaMinutes: status.helper!.eta_minutes,
-                    });
-                  }
-                }, 1200);
-              }
-            }, 400);
+            if (!cancelled && !userCancelledRef.current) {
+              navigation.replace('BookingConfirmed', {
+                bookingId: bookingId!,
+                totalCents: priceCentsRef.current,
+                serviceId,
+                serviceName,
+                helperName: status.helper.name || 'Your Pro',
+                helperPhone: status.helper.phone,
+                helperRating: status.helper.rating,
+                instant: true,
+              });
+            }
           } else if (status.status === 'failed' || (status.status === 'matched' && !status.helper)) {
             if (pollRef.current) clearInterval(pollRef.current);
             if (!cancelled) { progress.stopAnimation(); setScreenState('busy'); }
@@ -269,14 +263,15 @@ export default function InstantMatchingScreen({ route }: Props) {
             text: 'No, Continue Booking',
             style: 'cancel',
             onPress: () => {
-              navigation.replace('ActiveBooking', {
+              navigation.replace('BookingConfirmed', {
                 bookingId,
+                totalCents: priceCentsRef.current,
+                serviceId,
                 serviceName,
                 helperName: helper.name,
+                helperPhone: helper.phone,
                 helperRating: helper.rating,
-                helperLat: helper.lat,
-                helperLng: helper.lng,
-                etaMinutes: helper.eta_minutes,
+                instant: true,
               });
             },
           },

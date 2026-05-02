@@ -70,11 +70,46 @@ export type MainStackParamList = {
   RoomiesJoin: undefined;
   RoomiesWelcome: { groupName: string; addressLabel: string; addressAdded: boolean };
   ManageHousehold: { groupId: string };
+  TrackLive: {
+    bookingId: string;
+    serviceName?: string;
+    helperName?: string;
+    helperPhone?: string;
+    helperRating?: number;
+    helperJobs?: number;
+    etaMinutes?: number;
+    distanceKm?: number;
+    /** 4-digit OTP customer shares with pro to start the job. */
+    otp?: string;
+    /** ISO timestamp when booking was confirmed (for the timeline). */
+    confirmedAt?: string;
+  };
   BookingConfirmed: {
     bookingId: string;
     totalCents: number;
     slot?: string;
     addressLine?: string;
+    /** Optional context for the rich confirmation screen. */
+    serviceId?: string;
+    serviceName?: string;
+    durationMinutes?: number;
+    helperName?: string;
+    helperPhone?: string;
+    helperRating?: number;
+    paymentLabel?: string;     // e.g. "Paid · GPay" or "Paid · HDFC •••• 4521"
+    discountCents?: number;
+    promoCode?: string;
+    /** If true, render the instant-booking variant; else scheduled. */
+    instant?: boolean;
+  };
+  Chat: {
+    bookingId: string;
+    helperName?: string;
+  };
+  Tip: {
+    bookingId: string;
+    helperName?: string;
+    initialAmountRupees?: number;
   };
 };
 

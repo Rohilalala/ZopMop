@@ -24,6 +24,7 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import {
   getBookingTracking,
+  arrivedBooking,
   startBooking,
   completeBooking,
   getLocationWsUrl,
@@ -78,6 +79,10 @@ export default function ProActiveScreen({ route }: Props) {
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [bookingStatus, setBookingStatus] = useState<BookingStatus>('accepted');
+  // Tracks whether the pro has tapped "I've Arrived". Drives the secondary
+  // "Start Service" CTA on this screen and the "Pro's at your door" state on
+  // the customer's BookingConfirmed screen.
+  const [hasArrived, setHasArrived] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -256,14 +261,30 @@ export default function ProActiveScreen({ route }: Props) {
   }, []);
 
   // ── Actions ───────────────────────────────────────────────────────────────
+  // Pro tapped "I've Arrived". Stamps arrived_at on the booking but leaves
+  // status as accepted — the customer's screen flips to "Pro's at your door"
+  // while the actual service starts only when handleStart is tapped next.
   async function handleArrive() {
+    if (!token) return;
+    setActionLoading(true);
+    try {
+      await arrivedBooking(token, bookingId);
+      setHasArrived(true);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'Could not mark arrival. Try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleStart() {
     if (!token) return;
     setActionLoading(true);
     try {
       await startBooking(token, bookingId);
       setBookingStatus('in_progress');
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Could not mark arrival. Try again.');
+      Alert.alert('Error', err?.message ?? 'Could not start service. Try again.');
     } finally {
       setActionLoading(false);
     }
@@ -384,7 +405,7 @@ export default function ProActiveScreen({ route }: Props) {
           <Text style={s.navBtnText}>🗺️  Open Navigation</Text>
         </TouchableOpacity>
 
-        {bookingStatus === 'accepted' && (
+        {bookingStatus === 'accepted' && !hasArrived && (
           <TouchableOpacity
             style={[s.actionBtn, s.arriveBtn, actionLoading && s.btnDisabled]}
             activeOpacity={0.88}
@@ -394,6 +415,20 @@ export default function ProActiveScreen({ route }: Props) {
             {actionLoading
               ? <ActivityIndicator color="#FFFFFF" />
               : <Text style={s.actionBtnText}>✅  I've Arrived</Text>
+            }
+          </TouchableOpacity>
+        )}
+
+        {bookingStatus === 'accepted' && hasArrived && (
+          <TouchableOpacity
+            style={[s.actionBtn, s.arriveBtn, actionLoading && s.btnDisabled]}
+            activeOpacity={0.88}
+            onPress={handleStart}
+            disabled={actionLoading}
+          >
+            {actionLoading
+              ? <ActivityIndicator color="#FFFFFF" />
+              : <Text style={s.actionBtnText}>▶️  Start Service</Text>
             }
           </TouchableOpacity>
         )}

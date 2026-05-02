@@ -25,7 +25,21 @@ export function UsualsRowSection({ data, onAction }: Props) {
     [onAction],
   );
 
+  const handleSeeAll = useCallback(() => {
+    onAction({
+      trigger: 'tap',
+      type:    'navigate',
+      screen:  'AllServices',
+    });
+  }, [onAction]);
+
   if (!data.services || data.services.length === 0) return null;
 
-  return <UsualsRow services={data.services} onPress={handlePress} />;
+  return (
+    <UsualsRow
+      services={data.services}
+      onPress={handlePress}
+      onSeeAll={handleSeeAll}
+    />
+  );
 }

@@ -552,13 +552,23 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 		}
 
 		helper.ETAMinutes = 30 // default ETA; production would compute from routing
-		return &MatchStatusResponse{Status: "matched", Helper: &helper}, nil
+
+		arrived, arrErr := s.repo.IsBookingArrived(ctx, bookingID)
+		if arrErr != nil {
+			log.Warn().Err(arrErr).Str("booking_id", bookingID).Msg("IsBookingArrived failed (run migration 038?)")
+		}
+		return &MatchStatusResponse{
+			Status:        "matched",
+			Helper:        &helper,
+			BookingStatus: string(booking.Status),
+			Arrived:       arrived,
+		}, nil
 	}
 
 	// If the booking is cancelled, report failed immediately — check this before
 	// Redis so a cancelled-but-still-in-Redis booking doesn't falsely show "searching".
 	if booking.Status == StatusCancelled {
-		return &MatchStatusResponse{Status: "failed"}, nil
+		return &MatchStatusResponse{Status: "failed", BookingStatus: string(booking.Status)}, nil
 	}
 
 	// Booking not yet accepted. Check if it's still in the match window via Redis.
@@ -673,6 +683,19 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 
 // StartBooking transitions a booking from accepted → in_progress.
 // Only the assigned helper may call this (marks "I've arrived").
+// MarkArrived stamps arrived_at on the booking when the assigned pro taps
+// "I've Arrived". Distinct from StartBooking (which transitions to
+// in_progress). Status remains "accepted" until the job actually starts.
+func (s *Service) MarkArrived(ctx context.Context, bookingID, helperID string) error {
+	at, err := s.repo.MarkArrived(ctx, bookingID, helperID)
+	if err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("MarkArrived failed")
+		return err
+	}
+	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Time("arrived_at", at).Msg("pro arrived at customer")
+	return nil
+}
+
 func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
 	res, err := s.db.Exec(ctx,
 		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW()

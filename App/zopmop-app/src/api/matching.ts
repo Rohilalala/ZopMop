@@ -16,6 +16,10 @@ export interface MatchedHelper {
 export interface MatchStatusResponse {
   status: 'searching' | 'matched' | 'failed';
   helper?: MatchedHelper;
+  /** Underlying booking lifecycle status when known (pending/accepted/in_progress/completed/cancelled). */
+  booking_status?: 'pending' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
+  /** True once the assigned pro tapped "I've Arrived" at the customer's door. */
+  arrived?: boolean;
 }
 
 export interface InstantBookingPayload {
@@ -184,7 +188,23 @@ export async function getBookingTracking(
 }
 
 /**
- * POST /bookings/:id/start — helper marks arrival (accepted → in_progress).
+ * POST /bookings/:id/arrived — helper marks they've reached the customer's door.
+ * Status stays "accepted"; sets arrived_at and surfaces "Pro's at your door"
+ * on the customer's BookingConfirmed screen.
+ */
+export async function arrivedBooking(token: string, bookingId: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/arrived`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to mark arrived');
+  }
+}
+
+/**
+ * POST /bookings/:id/start — helper starts the actual service (accepted → in_progress).
  */
 export async function startBooking(token: string, bookingId: string): Promise<void> {
   const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/start`, {

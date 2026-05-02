@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
-import { View, Text, type TextStyle } from 'react-native';
+import React, { useCallback, useEffect } from 'react';
+import { Alert, View, Text, type TextStyle } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
@@ -13,9 +14,9 @@ import { useCart } from '../../context/CartContext';
 import { PressFx } from '../ui/PressFx';
 import { Motion } from '../../constants/tokens';
 
-const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
-const fontReg: TextStyle = { fontFamily: 'PlusJakartaSans_400Regular' };
-const fontSemi: TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 
 type Props = {
   selectedAddressId?: string;
@@ -23,7 +24,7 @@ type Props = {
 
 export function HomeCartBar({ selectedAddressId }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const { itemCount, subtotalCents } = useCart();
+  const { items, itemCount, subtotalCents, removeItem } = useCart();
   const visible = itemCount > 0;
   const ty = useSharedValue(visible ? 0 : 120);
 
@@ -44,6 +45,9 @@ export function HomeCartBar({ selectedAddressId }: Props) {
 
   if (!visible) return null;
 
+  const firstName = items[0]?.service_name ?? `${itemCount} service${itemCount > 1 ? 's' : ''}`;
+  const totalRupees = `₹${(subtotalCents / 100).toFixed(0)}`;
+
   return (
     <Animated.View
       pointerEvents="box-none"
@@ -51,63 +55,79 @@ export function HomeCartBar({ selectedAddressId }: Props) {
         animStyle,
         {
           position: 'absolute',
-          bottom: 24,
+          bottom: 88,
           left: 16,
           right: 16,
+          zIndex: 45,
         },
       ]}
     >
-      <View
+      <PressFx
+        onPress={() => navigation.navigate('Cart', { selectedAddressId })}
+        onLongPress={() => {
+          Alert.alert(
+            'Clear cart?',
+            `Remove all ${itemCount} item${itemCount > 1 ? 's' : ''} from cart.`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Clear',
+                style: 'destructive',
+                onPress: async () => {
+                  for (const it of items) {
+                    try { await removeItem(it.id); } catch {}
+                  }
+                },
+              },
+            ],
+          );
+        }}
         style={{
+          height: 62,
+          borderRadius: 18,
+          paddingHorizontal: 16,
           flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          backgroundColor: '#0F172A',
-          borderRadius: 999,
-          paddingLeft: 8,
-          paddingRight: 8,
-          paddingVertical: 8,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.18,
-          shadowRadius: 18,
-          elevation: 10,
+          gap: 12,
+          backgroundColor: '#F5A300',
+          shadowColor: '#F5A300',
+          shadowOffset: { width: 0, height: 14 },
+          shadowOpacity: 0.4,
+          shadowRadius: 30,
+          elevation: 12,
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 20,
-              backgroundColor: '#4F46E5',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Text style={[fontBold, { color: '#FFFFFF', fontSize: 15 }]}>{itemCount}</Text>
-          </View>
-          <View>
-            <Text style={[fontBold, { color: '#FFFFFF', fontSize: 14 }]}>
-              {itemCount} service{itemCount > 1 ? 's' : ''} added
-            </Text>
-            <Text style={[fontReg, { color: '#94A3B8', fontSize: 12, marginTop: 1 }]}>
-              ₹{(subtotalCents / 100).toFixed(0)} subtotal
-            </Text>
-          </View>
-        </View>
-        <PressFx
-          onPress={() => navigation.navigate('Cart', { selectedAddressId })}
+        <View
           style={{
-            backgroundColor: '#4F46E5',
-            paddingHorizontal: 18,
-            paddingVertical: 12,
-            borderRadius: 999,
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            backgroundColor: '#0D0D0F',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          <Text style={[fontSemi, { color: '#FFFFFF', fontSize: 14 }]}>View cart  →</Text>
-        </PressFx>
-      </View>
+          <Text style={[fontExtra, { color: '#F5A300', fontSize: 14 }]}>{itemCount}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[fontExtra, { color: '#0D0D0F', fontSize: 14, letterSpacing: -0.14 }]}
+            numberOfLines={1}
+          >
+            {totalRupees} · {items.length} item{items.length > 1 ? 's' : ''}
+          </Text>
+          <Text
+            style={[fontMed, { color: 'rgba(13,13,15,0.7)', fontSize: 11 }]}
+            numberOfLines={1}
+          >
+            {firstName}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 13 }]}>Review</Text>
+          <Feather name="chevron-right" size={16} color="#0D0D0F" />
+        </View>
+      </PressFx>
     </Animated.View>
   );
 }

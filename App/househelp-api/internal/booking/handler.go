@@ -41,12 +41,17 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler) {
 		router.Post("/scheduled", h.CreateScheduledBooking)
 	}
 	router.Get("/helper/invites", proOnly, h.GetHelperInvites)
+	router.Get("/helper/active", proOnly, h.GetHelperActive)
+	router.Get("/helper/today", proOnly, h.GetHelperToday)
 	router.Get("/", h.GetBookings)
 	router.Get("/:id/match-status", h.GetMatchStatus)
 	router.Get("/:id/tracking", h.GetTracking)
+	router.Get("/:id/messages", h.ListMessages)
+	router.Post("/:id/messages", h.SendMessage)
 	router.Get("/:id", h.GetBooking)
 	router.Post("/:id/cancel", h.CancelBooking)
 	router.Post("/:id/accept", proOnly, h.AcceptBooking)
+	router.Post("/:id/arrived", proOnly, h.MarkArrived)
 	router.Post("/:id/start", proOnly, h.StartBooking)
 	router.Post("/:id/complete", proOnly, h.CompleteBooking)
 }
@@ -316,6 +321,39 @@ func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"booking_ids": bookingIDs})
 }
 
+// GetHelperActive handles GET /bookings/helper/active.
+// Returns this helper's currently-active bookings (status accepted or
+// in_progress). Used by the pro dashboard to recover the "current job" view
+// after an app restart so the pro never loses sight of an in-flight booking.
+func (h *Handler) GetHelperActive(c *fiber.Ctx) error {
+	helperID, _ := c.Locals("userID").(string)
+	bookings, err := h.service.repo.GetHelperActiveBookings(c.Context(), helperID)
+	if err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper active bookings")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load active bookings"})
+	}
+	if bookings == nil {
+		bookings = []Booking{}
+	}
+	return c.JSON(fiber.Map{"bookings": bookings})
+}
+
+// GetHelperToday handles GET /bookings/helper/today.
+// Returns this helper's bookings for today — active (accepted/in_progress)
+// plus those completed or cancelled today.
+func (h *Handler) GetHelperToday(c *fiber.Ctx) error {
+	helperID, _ := c.Locals("userID").(string)
+	bookings, err := h.service.repo.GetHelperBookingsToday(c.Context(), helperID)
+	if err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper today bookings")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load today's bookings"})
+	}
+	if bookings == nil {
+		bookings = []Booking{}
+	}
+	return c.JSON(fiber.Map{"bookings": bookings})
+}
+
 // GetTracking handles GET /bookings/:id/tracking.
 // Returns the helper's live location, walking ETA and encoded route polyline.
 // Both the customer and the assigned helper may call this.
@@ -347,6 +385,30 @@ func (h *Handler) GetTracking(c *fiber.Ctx) error {
 
 // StartBooking handles POST /bookings/:id/start.
 // Called by the helper when they arrive — transitions accepted → in_progress.
+// MarkArrived handles POST /bookings/:id/arrived.
+// Called by the assigned helper to flag they've reached the customer's door.
+// Does NOT transition status — the job is still "accepted" until /start.
+func (h *Handler) MarkArrived(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	helperID, _ := c.Locals("userID").(string)
+
+	if err := h.service.MarkArrived(c.Context(), bookingID, helperID); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to mark arrived")
+		status := fiber.StatusInternalServerError
+		message := "failed to mark arrived"
+		if err.Error() == "booking not in accepted state for this helper" {
+			status = fiber.StatusBadRequest
+			message = err.Error()
+		}
+		return c.Status(status).JSON(fiber.Map{"error": message})
+	}
+
+	return c.JSON(fiber.Map{"message": "arrival recorded"})
+}
+
 func (h *Handler) StartBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
 	if !validateBookingIDParam(bookingID) {

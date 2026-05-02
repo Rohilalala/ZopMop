@@ -1,33 +1,72 @@
-import React, { useCallback, useState, useMemo } from 'react';
+// AllServicesScreen — design-system port of `preview/services-screen.html`.
+//
+// Composition:
+//   • Bloom backdrop + dark page
+//   • Sticky header (back, title + sub, search) + horizontal filter chips
+//   • Sections grouped by service.category, OR a flat grid when a non-"all"
+//     chip is active
+//   • Service cards reuse GlassCard + ServiceThumb + serviceIcon (same vocabulary
+//     as Home).
+//   • Cart dock (HomeCartBar) + BottomTabBar (active="services").
+//
+// `instant: true` route param re-renders cards as direct InstantMatching CTAs
+// (no add-to-cart, no stepper) — preserves the existing instant flow.
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Dimensions,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  Image,
+  RefreshControl,
+  ScrollView,
   StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSpring,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
+import { ZopSleeping } from '../../components/home/ZopSleeping';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors, useTheme } from '../../context/ThemeContext';
-import { useCart } from '../../context/CartContext';
-import { listServices, type ApiService } from '../../api/services';
+import { Feather } from '@expo/vector-icons';
+
 import type { MainStackParamList } from '../../types/navigation';
+import { listServices, type ApiService } from '../../api/services';
+import { getNearbyStats } from '../../api/insights';
+import { useCart } from '../../context/CartContext';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const H_PAD = 16;
-const CARD_GAP = 12;
-const CARD_WIDTH = (SCREEN_WIDTH - H_PAD * 2 - CARD_GAP) / 2;
+import { Bloom } from '../../components/home/Bloom';
+import { BottomTabBar } from '../../components/home/BottomTabBar';
+import { ZopRefresh } from '../../components/home/ZopRefresh';
+import { GlassCard } from '../../components/home/GlassCard';
+import { HomeCartBar } from '../../components/home/HomeCartBar';
+import { ServiceThumb } from '../../components/home/ServiceThumb';
+import { serviceIcon } from '../../components/home/serviceIcon';
+import { PressFx } from '../../components/ui/PressFx';
 
-// ── Category grouping ─────────────────────────────────────────────────────────
+const { width: SCREEN_W } = Dimensions.get('window');
+const H_PAD     = 20;
+const COL_GAP   = 14;
+const NUM_COLS  = 2;
+const CARD_W    = (SCREEN_W - H_PAD * 2 - COL_GAP) / NUM_COLS;
+
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+// ── Category grouping ───────────────────────────────────────────────────────
 
 const CATEGORY_TITLES: Record<string, string> = {
   home_cleaning: 'Home Cleaning',
@@ -39,7 +78,6 @@ const CATEGORY_TITLES: Record<string, string> = {
   other:         'Other Services',
 };
 
-// Category display order
 const CATEGORY_ORDER = ['home_cleaning', 'kitchen', 'laundry', 'outdoor', 'vehicle', 'pet', 'other'];
 
 interface Group { id: string; title: string; services: ApiService[] }
@@ -52,389 +90,895 @@ function groupServices(services: ApiService[]): Group[] {
     if (!map.has(catId)) map.set(catId, { id: catId, title, services: [] });
     map.get(catId)!.services.push(svc);
   }
-  // Return in defined order, then any unknown categories alphabetically
-  const result: Group[] = [];
-  for (const id of CATEGORY_ORDER) {
-    if (map.has(id)) result.push(map.get(id)!);
-  }
-  for (const [id, group] of map) {
-    if (!CATEGORY_ORDER.includes(id)) result.push(group);
-  }
-  return result.filter(g => g.services.length > 0);
+  const out: Group[] = [];
+  for (const id of CATEGORY_ORDER) if (map.has(id)) out.push(map.get(id)!);
+  for (const [id, group] of map) if (!CATEGORY_ORDER.includes(id)) out.push(group);
+  return out.filter((g) => g.services.length > 0);
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+function isInstantSvc(s: ApiService): boolean {
+  return s.min_duration_minutes <= 30;
+}
+
+// Night window — instant booking is closed between 20:00 and 06:00 since the
+// pro fleet is off-duty. Matches the LivePill night gate.
+const NIGHT_START_HOUR = 20;
+const NIGHT_END_HOUR   = 6;
+function isNightTime(d = new Date()): boolean {
+  const hr = d.getHours();
+  return hr >= NIGHT_START_HOUR || hr < NIGHT_END_HOUR;
+}
+
+// ── Screen ──────────────────────────────────────────────────────────────────
+
+type Filter = 'all' | string;
+type Mode   = 'schedule' | 'instant';
 
 export default function AllServicesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
-  const instant = route.params?.instant ?? false;
-  const c = useColors();
-  const { isDark } = useTheme();
-  const s = useMemo(() => createStyles(c), [c]);
+  const insets = useSafeAreaInsets();
 
   const [services, setServices] = useState<ApiService[]>([]);
-  const [loading, setLoading] = useState(true);
-  const { itemCount, subtotalCents } = useCart();
+  const [loading, setLoading]   = useState(true);
+  const [filter, setFilter]     = useState<Filter>('all');
+  const [mode, setMode]         = useState<Mode>(route.params?.instant ? 'instant' : 'schedule');
+  const [nearbyCount, setNearbyCount] = useState<number | null>(null);
+  // Two-phase refresh state:
+  //   holdScreen — drives RefreshControl (keeps the scroll pulled down).
+  //   zopActive  — drives ZopRefresh (true = spinning, false = play smile).
+  // Holding the screen down for the smile burst means the user stays in the
+  // refresh state until the entire animation has finished.
+  const [holdScreen, setHoldScreen] = useState(false);
+  const [zopActive,  setZopActive]  = useState(false);
+  const instantMode = mode === 'instant';
+
+  // Default coords: Sector 51, Gurugram — same fallback the home screen uses
+  // before location resolves. AllServices doesn't get coords passed in, so
+  // until a location context exists, this is the best we can do without
+  // taking a permission detour.
+  const lat = 28.4357;
+  const lon = 77.0763;
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [list, stats] = await Promise.all([
+        listServices().catch(() => [] as ApiService[]),
+        getNearbyStats(lat, lon).catch(() => null),
+      ]);
+      if (list.length > 0) setServices(list);
+      if (stats) setNearbyCount(stats.nearby_count);
+    } finally {
+      setLoading(false);
+    }
+  }, [lat, lon]);
 
   useFocusEffect(
     useCallback(() => {
-      listServices()
-        .then(data => { if (data.length > 0) setServices(data); })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    }, [])
+      fetchAll();
+    }, [fetchAll]),
   );
 
-  const groups = groupServices(services);
+  const onRefresh = useCallback(async () => {
+    setHoldScreen(true);
+    setZopActive(true);
+    try {
+      // Min 1100ms spin + network.
+      await Promise.all([fetchAll(), new Promise((r) => setTimeout(r, 1100))]);
+    } finally {
+      // End spin → ZopRefresh plays smile burst (~1300ms total). Keep screen
+      // held for that duration, then release so the scroll springs up.
+      setZopActive(false);
+      setTimeout(() => setHoldScreen(false), 1300);
+    }
+  }, [fetchAll]);
+
+  // Mode + filter pipeline. Instant mode pre-filters to quick-turn services
+  // (≤ 30 min). Then category chip narrows further.
+  const modeFiltered = useMemo(() => {
+    return instantMode ? services.filter(isInstantSvc) : services;
+  }, [services, instantMode]);
+
+  const visible = useMemo(() => {
+    if (filter === 'all') return modeFiltered;
+    return modeFiltered.filter((s) => (s.category || 'other') === filter);
+  }, [modeFiltered, filter]);
+
+  const groups = useMemo(() => {
+    if (filter === 'all') return groupServices(visible);
+    return [{ id: filter, title: '', services: visible }];
+  }, [visible, filter]);
+
+  // Category chips — All + every represented category in the mode-filtered set.
+  const chips = useMemo(() => {
+    const list: { key: Filter; label: string; count: number }[] = [
+      { key: 'all', label: 'All', count: modeFiltered.length },
+    ];
+    for (const id of CATEGORY_ORDER) {
+      const count = modeFiltered.filter((s) => (s.category || 'other') === id).length;
+      if (count > 0) list.push({ key: id, label: CATEGORY_TITLES[id] ?? id, count });
+    }
+    const seen = new Set(['all', ...CATEGORY_ORDER]);
+    for (const s of modeFiltered) {
+      const id = s.category || 'other';
+      if (!seen.has(id)) {
+        const count = modeFiltered.filter((x) => (x.category || 'other') === id).length;
+        list.push({ key: id, label: id, count });
+        seen.add(id);
+      }
+    }
+    return list;
+  }, [modeFiltered]);
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+    <View style={styles.safe}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
 
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Explore Services</Text>
-      </View>
+      <ScrollView
+        // Background colour bleeds into the iOS overscroll gap so the area
+        // above the content stays dark instead of flashing white.
+        style={{ flex: 1, backgroundColor: '#0A0A0A' }}
+        contentContainerStyle={{ paddingBottom: 200, backgroundColor: '#0A0A0A' }}
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[0]}
+        refreshControl={
+          <RefreshControl
+            refreshing={holdScreen}
+            onRefresh={onRefresh}
+            tintColor="transparent"
+            colors={['transparent']}
+            progressBackgroundColor="transparent"
+          />
+        }
+      >
+        {/* Sticky header — extends to the screen top (insets.top padding inside
+            so the bg fills the status-bar area too). */}
+        <View style={[styles.head, { paddingTop: insets.top + 10 }]}>
+          <View style={styles.headRow}>
+            <PressFx
+              onPress={() => navigation.goBack()}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            </PressFx>
 
-      {loading ? (
-        <View style={s.loadingWrap}>
-          <ActivityIndicator size="large" color={c.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>Explore Services</Text>
+              <Text style={styles.subtitle}>
+                {services.length} services
+                {/* Show "N pros nearby" only in Instant mode during the day.
+                    Schedule mode + night-mode-instant suppress the count. */}
+                {instantMode && !isNightTime() && nearbyCount != null
+                  ? ` · ${nearbyCount} pros nearby`
+                  : ''}
+              </Text>
+            </View>
+
+            <PressFx
+              onPress={() => {/* search not built yet */}}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Search"
+            >
+              <Feather name="search" size={16} color="#FFFFFF" />
+            </PressFx>
+          </View>
+
+          {/* Mode toggle: Schedule | Instant */}
+          <ModeToggle mode={mode} onChange={setMode} />
+
+          {/* Category chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: H_PAD, gap: 8 }}
+            style={{ marginHorizontal: -H_PAD, marginTop: 12 }}
+          >
+            {chips.map((c) => (
+              <Chip
+                key={c.key}
+                label={c.label}
+                count={c.count}
+                active={filter === c.key}
+                onPress={() => setFilter(c.key)}
+              />
+            ))}
+          </ScrollView>
         </View>
-      ) : (
-        <ScrollView
-          style={s.scroll}
-          contentContainerStyle={[s.scrollContent, itemCount > 0 && { paddingBottom: 110 }]}
-          showsVerticalScrollIndicator={false}
-        >
-          {groups.map(group => (
-            <View key={group.id} style={s.section}>
-              <Text style={s.sectionTitle}>{group.title}</Text>
-              <View style={s.grid}>
-                {group.services.map(svc => (
-                  <ServiceCard key={svc.id} service={svc} instant={instant} />
+
+        {/* Body */}
+        {loading ? (
+          <View style={styles.loadWrap}>
+            <ActivityIndicator color="#F5A300" />
+          </View>
+        ) : instantMode && isNightTime() ? (
+          <NightClosed />
+        ) : (
+          groups.map((group, gi) => (
+            <View key={group.id} style={styles.section}>
+              {group.title ? (
+                <View style={styles.secHead}>
+                  <Text style={styles.secTitle}>{group.title}</Text>
+                  <Text style={styles.secMeta}>
+                    {group.services.length} service{group.services.length === 1 ? '' : 's'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ height: 12 }} />
+              )}
+
+              <View style={styles.grid}>
+                {group.services.map((svc) => (
+                  <ServiceCard key={`${gi}-${svc.id}`} service={svc} instantMode={instantMode} />
                 ))}
               </View>
             </View>
-          ))}
+          ))
+        )}
 
-          {groups.length === 0 && (
-            <View style={s.emptyWrap}>
-              <Text style={s.emptyEmoji}>🔍</Text>
-              <Text style={s.emptyText}>No services available right now</Text>
-              <Text style={s.emptySubtext}>Check back soon</Text>
-            </View>
-          )}
-        </ScrollView>
-      )}
-
-      {/* Cart bar */}
-      {!instant && itemCount > 0 && (
-        <View style={s.cartBar}>
-          <View style={s.cartBarLeft}>
-            <Text style={s.cartBarEmoji}>🛒</Text>
-            <View>
-              <Text style={s.cartBarCount}>{itemCount} service{itemCount > 1 ? 's' : ''}</Text>
-              <Text style={s.cartBarSubtotal}>₹{(subtotalCents / 100).toFixed(0)} total</Text>
-            </View>
+        {!loading && groups.every((g) => g.services.length === 0) && (
+          <View style={styles.emptyWrap}>
+            <Feather name="search" size={32} color="rgba(255,255,255,0.4)" />
+            <Text style={styles.emptyTitle}>No services available</Text>
+            <Text style={styles.emptySub}>Try a different filter</Text>
           </View>
-          <TouchableOpacity
-            style={s.cartBarBtn}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('Cart')}
-          >
-            <Text style={s.cartBarBtnText}>Go to cart  →</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </SafeAreaView>
+        )}
+      </ScrollView>
+
+      {!instantMode && <HomeCartBar />}
+      <BottomTabBar active="services" />
+      <ZopRefresh refreshing={zopActive} />
+    </View>
   );
 }
 
-// ── Service Card ──────────────────────────────────────────────────────────────
+// ── Mode toggle ─────────────────────────────────────────────────────────────
 
-function ServiceCard({ service, instant }: { service: ApiService, instant: boolean }) {
+function ModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: Mode;
+  onChange: (next: Mode) => void;
+}) {
+  const [w, setW] = useState(0);
+  const offset = useSharedValue(mode === 'schedule' ? 0 : 1);
+
+  useEffect(() => {
+    // Snappy spring — matches BookingsScreen tab glider exactly.
+    offset.value = withSpring(mode === 'schedule' ? 0 : 1, {
+      damping: 26,
+      stiffness: 320,
+      mass: 0.7,
+      overshootClamping: false,
+    });
+  }, [mode]);
+
+  const gliderWidth = Math.max((w - 8) / 2, 0);
+  const gliderStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: 4 + offset.value * gliderWidth }],
+  }));
+
+  return (
+    <View style={styles.modeWrap} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
+      <Animated.View
+        style={[
+          styles.modeGlider,
+          { width: gliderWidth },
+          gliderStyle,
+        ]}
+      />
+      <ModeBtn
+        active={mode === 'schedule'}
+        onPress={() => onChange('schedule')}
+        icon="calendar"
+        label="Schedule"
+      />
+      <ModeBtn
+        active={mode === 'instant'}
+        onPress={() => onChange('instant')}
+        icon="zap"
+        label="Instant"
+      />
+    </View>
+  );
+}
+
+function ModeBtn({
+  active,
+  onPress,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onPress: () => void;
+  icon: 'calendar' | 'zap';
+  label: string;
+}) {
+  return (
+    <PressFx onPress={onPress} style={styles.modeBtn}>
+      <Feather
+        name={icon}
+        size={14}
+        color={active ? '#0D0D0F' : 'rgba(255,255,255,0.7)'}
+      />
+      <Text style={[styles.modeLabel, active && styles.modeLabelActive]}>{label}</Text>
+    </PressFx>
+  );
+}
+
+// ── Night closed empty state ────────────────────────────────────────────────
+// Instant booking is shut between 20:00 and 06:00. Show a floating Zop and a
+// "come back tomorrow" message instead of the service grid.
+
+function NightClosed() {
+  const float = useSharedValue(0);
+  useEffect(() => {
+    float.value = withRepeat(
+      withTiming(1, { duration: 3200, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, []);
+  const zopStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -float.value * 10 }],
+  }));
+
+  return (
+    <View style={styles.nightWrap}>
+      <Animated.View style={[zopStyle, { marginBottom: 28 }]}>
+        <ZopSleeping size={200} />
+      </Animated.View>
+      <Text style={styles.nightTitle}>Pros are clocked out</Text>
+      <Text style={styles.nightSub}>
+        Instant booking is closed for the night.{'\n'}Come back tomorrow at 6 am.
+      </Text>
+      <Text style={styles.nightHint}>
+        Tap <Text style={{ color: '#F5A300' }}>Schedule</Text> above to book ahead.
+      </Text>
+    </View>
+  );
+}
+
+// ── Chip ────────────────────────────────────────────────────────────────────
+
+function Chip({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <PressFx onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+      <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{label}</Text>
+      <View style={[styles.chipCount, active && styles.chipCountActive]}>
+        <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
+          {count}
+        </Text>
+      </View>
+    </PressFx>
+  );
+}
+
+// ── Service card ────────────────────────────────────────────────────────────
+
+function ServiceCard({
+  service,
+  instantMode,
+}: {
+  service: ApiService;
+  instantMode: boolean;
+}) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const [busy, setBusy] = useState(false);
 
-  const cartItem = items.find(i => i.service_id === service.id);
-  const inCart = !!cartItem;
+  const cartItem = items.find((i) => i.service_id === service.id);
+  const inCart   = !!cartItem;
 
-  // Render for instant mode
-  if (instant) {
-    return (
-      <TouchableOpacity
-        style={[s.card, { width: CARD_WIDTH }]}
-        activeOpacity={0.85}
-        onPress={() => navigation.navigate('InstantMatching', { serviceId: service.id, serviceName: service.name })}
-      >
-        <View style={[s.cardImgBox, { backgroundColor: service.bg_color || '#EEF2FF' }]}>
-          <View style={s.ratingBadge}>
-            <Text style={s.ratingText}>⭐ {service.rating}</Text>
-          </View>
-          <Text style={s.cardEmoji}>{service.emoji ?? '🧹'}</Text>
-        </View>
+  const price  = `₹${(service.base_price_cents / 100).toFixed(0)}`;
+  const mrp    = service.mrp_cents ? `₹${(service.mrp_cents / 100).toFixed(0)}` : null;
+  const rating = service.rating?.toFixed(1) ?? null;
+  const reviews =
+    service.review_count > 1000
+      ? `${(service.review_count / 1000).toFixed(1)}k`
+      : `${service.review_count}`;
+  const showReviews = service.review_count >= 1000;
 
-        <Text style={s.cardName} numberOfLines={2}>{service.name.replace(/\n/g, ' ')}</Text>
-        <View style={s.priceRow}>
-          <Text style={s.cardPrice}>₹{(service.base_price_cents / 100).toFixed(0)}</Text>
-          {service.mrp_cents != null && (
-            <Text style={s.cardMrp}>₹{(service.mrp_cents / 100).toFixed(0)}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  }
+  const handleCardPress = () => {
+    if (instantMode) {
+      navigation.navigate('InstantMatching', {
+        serviceId: service.id,
+        serviceName: service.name,
+      });
+      return;
+    }
+    if (!inCart) navigation.navigate('ServiceAbout', { service });
+  };
 
   async function handleAdd() {
     if (busy) return;
     setBusy(true);
     try {
       await addItem(service.id, service.min_duration_minutes);
-    } catch (err: any) {
-      Alert.alert('Could not add to cart', err?.message ?? 'Please try again.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Please try again.';
+      Alert.alert('Could not add to cart', msg);
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleIncrement() {
-    if (busy || !cartItem) return;
-    const next = cartItem.duration_minutes + service.duration_step_minutes;
-    if (next > service.max_duration_minutes) return;
-    setBusy(true);
-    try {
-      await addItem(service.id, next);
-    } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleDecrement() {
+  async function handleStep(delta: number) {
     if (busy || !cartItem) return;
     setBusy(true);
     try {
-      if (cartItem.duration_minutes <= service.min_duration_minutes) {
+      const next = cartItem.duration_minutes + delta * service.duration_step_minutes;
+      if (next < service.min_duration_minutes) {
         await removeItem(cartItem.id);
-      } else {
-        await addItem(service.id, cartItem.duration_minutes - service.duration_step_minutes);
+      } else if (next <= service.max_duration_minutes) {
+        await addItem(service.id, next);
       }
-    } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Please try again.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Please try again.';
+      Alert.alert('Error', msg);
     } finally {
       setBusy(false);
     }
   }
+
+  const iconSrc = serviceIcon({ id: service.id, name: service.name });
 
   return (
-    <TouchableOpacity
-      style={[s.card, { width: CARD_WIDTH }]}
-      activeOpacity={inCart ? 1 : 0.85}
-      onPress={() => { if (!inCart) navigation.navigate('ServiceAbout', { service }); }}
+    <PressFx
+      onPress={handleCardPress}
+      style={{ width: CARD_W }}
     >
-      {/* Emoji area */}
-      <View style={[s.cardImgBox, { backgroundColor: service.bg_color || '#EEF2FF' }]}>
-        <View style={s.ratingBadge}>
-          <Text style={s.ratingText}>⭐ {service.rating}</Text>
-        </View>
-        <Text style={s.cardEmoji}>{service.emoji ?? '🧹'}</Text>
-
-        {inCart ? (
-          <View style={s.stepper}>
-            <TouchableOpacity
-              style={s.stepBtn}
-              activeOpacity={0.7}
-              onPress={handleDecrement}
-              disabled={busy}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
-            >
-              {busy
-                ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.55 }] }} />
-                : <Text style={s.stepBtnText}>−</Text>
+      <GlassCard
+        radius={18}
+        style={{
+          padding: 10,
+          ...(inCart
+            ? {
+                shadowColor: '#F5A300',
+                shadowOpacity: 0.18,
+                shadowRadius: 18,
+                shadowOffset: { width: 0, height: 8 },
+                borderColor: '#F5A300',
+                borderWidth: 1.5,
               }
-            </TouchableOpacity>
-            <View style={s.stepCenter}>
-              <Text style={s.stepCount}>{cartItem.duration_minutes}</Text>
-              <Text style={s.stepLabel}>Min</Text>
-            </View>
-            <TouchableOpacity
-              style={s.stepBtn}
-              activeOpacity={0.7}
-              onPress={handleIncrement}
-              disabled={busy || cartItem.duration_minutes >= service.max_duration_minutes}
-              hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
-            >
-              <Text style={[
-                s.stepBtnText,
-                cartItem.duration_minutes >= service.max_duration_minutes && s.stepBtnDisabled,
-              ]}>+</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={s.addBtn}
-            activeOpacity={0.8}
-            onPress={handleAdd}
-            disabled={busy}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            {busy
-              ? <ActivityIndicator size="small" color={c.primary} style={{ transform: [{ scale: 0.7 }] }} />
-              : <Text style={s.addBtnText}>+</Text>
-            }
-          </TouchableOpacity>
-        )}
-      </View>
+            : null),
+        }}
+      >
+        <View style={{ height: 102, position: 'relative' }}>
+          <ServiceThumb height={102} radius={12} />
 
-      {/* Info */}
-      <Text style={s.cardName} numberOfLines={2}>{service.name.replace(/\n/g, ' ')}</Text>
-      <View style={s.priceRow}>
-        <Text style={s.cardPrice}>₹{(service.base_price_cents / 100).toFixed(0)}</Text>
-        {service.mrp_cents != null && (
-          <Text style={s.cardMrp}>₹{(service.mrp_cents / 100).toFixed(0)}</Text>
-        )}
-      </View>
-    </TouchableOpacity>
+          {/* glyph */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {iconSrc ? (
+              <Image
+                source={iconSrc}
+                resizeMode="contain"
+                style={{
+                  width: '78%',
+                  height: '78%',
+                  shadowColor: '#0D0D0F',
+                  shadowOffset: { width: 0, height: 12 },
+                  shadowOpacity: 0.32,
+                  shadowRadius: 18,
+                }}
+              />
+            ) : (
+              <Feather name="package" size={40} color="rgba(255,255,255,0.7)" />
+            )}
+          </View>
+
+          {/* rating chip */}
+          {rating && (
+            <View style={styles.ratingChip}>
+              <Text style={{ color: '#F5A300', fontSize: 10 }}>★</Text>
+              <Text style={[fontBold, { color: '#0D0D0F', fontSize: 10 }]}>
+                {rating}
+                {showReviews ? ` · ${reviews}` : ''}
+              </Text>
+            </View>
+          )}
+
+          {/* add fab OR stepper */}
+          {!instantMode && (
+            inCart ? (
+              <View style={styles.stepper}>
+                <PressFx
+                  onPress={() => handleStep(-1)}
+                  style={styles.stepBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
+                  disabled={busy}
+                >
+                  {busy
+                    ? <ActivityIndicator size="small" color="#F5A300" />
+                    : <Feather name="minus" size={16} color="#F5A300" />
+                  }
+                </PressFx>
+                <View style={styles.stepMid}>
+                  <Text style={[fontBold, { color: '#0D0D0F', fontSize: 12 }]}>
+                    {cartItem.duration_minutes}
+                  </Text>
+                  <Text
+                    style={[
+                      fontSemi,
+                      {
+                        color: '#7A7A7E',
+                        fontSize: 8.5,
+                        letterSpacing: 0.5,
+                        marginTop: 1,
+                      },
+                    ]}
+                  >
+                    MIN
+                  </Text>
+                </View>
+                <PressFx
+                  onPress={() => handleStep(1)}
+                  style={styles.stepBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                  disabled={busy || cartItem.duration_minutes >= service.max_duration_minutes}
+                >
+                  <Feather
+                    name="plus"
+                    size={16}
+                    color={
+                      cartItem.duration_minutes >= service.max_duration_minutes
+                        ? 'rgba(245,163,0,0.35)'
+                        : '#F5A300'
+                    }
+                  />
+                </PressFx>
+              </View>
+            ) : (
+              <PressFx
+                onPress={handleAdd}
+                disabled={busy}
+                style={styles.addFab}
+              >
+                {busy
+                  ? <ActivityIndicator size="small" color="#F5A300" />
+                  : <Feather name="plus" size={16} color="#F5A300" />
+                }
+              </PressFx>
+            )
+          )}
+        </View>
+
+        {/* meta */}
+        <Text
+          style={[fontBold, styles.cardName]}
+          numberOfLines={2}
+        >
+          {service.name.replace(/\n/g, ' ')}
+        </Text>
+        <View style={styles.priceRow}>
+          <Text style={[fontExtra, { color: '#FFFFFF', fontSize: 14 }]}>{price}</Text>
+          {mrp && (
+            <Text
+              style={[
+                fontMed,
+                {
+                  color: 'rgba(255,255,255,0.35)',
+                  fontSize: 11,
+                  textDecorationLine: 'line-through',
+                },
+              ]}
+            >
+              {mrp}
+            </Text>
+          )}
+          <Text
+            style={[
+              fontSemi,
+              {
+                fontSize: 10.5,
+                color: 'rgba(255,255,255,0.45)',
+                marginLeft: 'auto',
+              },
+            ]}
+          >
+            {service.min_duration_minutes}m
+          </Text>
+        </View>
+      </GlassCard>
+    </PressFx>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ──────────────────────────────────────────────────────────────────
 
-function createStyles(c: typeof lightColors) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    scrollContent: { paddingBottom: Spacing.xl },
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#0A0A0A' },
 
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: H_PAD,
-      paddingTop: 12,
-      paddingBottom: 16,
-      gap: 4,
-    },
-    backBtn: { padding: 4, marginLeft: -4 },
-    headerTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-    },
+  head: {
+    backgroundColor: 'rgba(10,10,10,0.92)',
+    paddingTop: 10,
+    paddingBottom: 14,
+    paddingHorizontal: H_PAD,
+    borderBottomWidth: 0.5,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+    zIndex: 30,
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 14,
+  },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  title: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 24,
+    color: '#FFFFFF',
+    letterSpacing: -0.6,
+    lineHeight: 26,
+  },
+  subtitle: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 2,
+  },
 
-    loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  chip: {
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  chipActive: {
+    backgroundColor: '#0D0D0F',
+    borderColor: '#0D0D0F',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  chipLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.7)',
+  },
+  chipLabelActive: { color: '#F5A300' },
+  chipCount: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 99,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  chipCountActive: { backgroundColor: 'rgba(245,163,0,0.2)' },
+  chipCountText: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  chipCountTextActive: { color: '#F5A300' },
 
-    section: { paddingHorizontal: H_PAD, marginBottom: 32 },
-    sectionTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: c.text,
-      letterSpacing: -0.2,
-      marginBottom: 14,
-    },
+  // Mode toggle (Schedule | Instant) — segmented control with sliding glider.
+  modeWrap: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 4,
+    position: 'relative',
+  },
+  modeGlider: {
+    position: 'absolute',
+    top: 4,
+    left: 0,
+    bottom: 4,
+    borderRadius: 9,
+    backgroundColor: '#F5A300',
+    shadowColor: '#F5A300',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  modeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 9,
+    zIndex: 1,
+  },
+  modeLabel: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+    letterSpacing: -0.13,
+  },
+  modeLabelActive: { color: '#0D0D0F' },
 
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: CARD_GAP },
+  loadWrap: { padding: 60, alignItems: 'center' },
 
-    card: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: c.border,
-      ...Shadow.sm,
-    },
-    cardImgBox: {
-      width: '100%',
-      aspectRatio: 1.2,
-      alignItems: 'center',
-      justifyContent: 'center',
-      position: 'relative',
-    },
-    ratingBadge: {
-      position: 'absolute', top: 6, left: 6,
-      backgroundColor: 'rgba(255,255,255,0.88)',
-      paddingHorizontal: 5, paddingVertical: 2,
-      borderRadius: Radius.sm,
-    },
-    ratingText: { fontFamily: FontFamily.semibold, fontSize: 9, color: c.text },
-    cardEmoji: { fontSize: 36 },
+  section: { paddingHorizontal: H_PAD, paddingTop: 22 },
+  secHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  secTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 15,
+    color: '#FFFFFF',
+    letterSpacing: -0.15,
+  },
+  secMeta: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.4)',
+  },
 
-    addBtn: {
-      position: 'absolute', bottom: 6, right: 6,
-      width: 26, height: 26, borderRadius: Radius.md,
-      backgroundColor: c.white,
-      alignItems: 'center', justifyContent: 'center',
-      borderWidth: 1, borderColor: c.border,
-      ...Shadow.sm,
-    },
-    addBtnText: { fontFamily: FontFamily.bold, fontSize: 16, color: c.primary, lineHeight: 20, marginTop: -1 },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: COL_GAP,
+  },
 
-    stepper: {
-      position: 'absolute', bottom: 0, left: 0, right: 0,
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: 'rgba(255,255,255,0.96)',
-      paddingHorizontal: 8, paddingVertical: 5,
-      borderTopWidth: 1, borderTopColor: `${c.primary}22`,
-    },
-    stepBtn: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-    stepBtnText: { fontFamily: FontFamily.bold, fontSize: 18, color: c.primary, lineHeight: 22 },
-    stepBtnDisabled: { color: c.border },
-    stepCenter: { alignItems: 'center', flex: 1 },
-    stepCount: { fontFamily: FontFamily.bold, fontSize: 13, color: c.text, lineHeight: 16 },
-    stepLabel: { fontFamily: FontFamily.regular, fontSize: 8, color: c.textMuted, lineHeight: 10 },
+  ratingChip: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 99,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    zIndex: 3,
+  },
+  addFab: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#0D0D0F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    zIndex: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 12,
+  },
+  stepper: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    right: 6,
+    height: 34,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    zIndex: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 12,
+    borderWidth: 0.5,
+    borderColor: 'rgba(245,163,0,0.3)',
+  },
+  stepBtn: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepMid: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-    cardName: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.text,
-      paddingHorizontal: 10,
-      paddingTop: 8,
-      lineHeight: 18,
-    },
-    priceRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 5,
-      paddingHorizontal: 10, paddingBottom: 10, paddingTop: 3,
-    },
-    cardPrice: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    cardMrp: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      textDecorationLine: 'line-through',
-    },
+  cardName: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+    lineHeight: 16,
+    marginTop: 10,
+    minHeight: 32,
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    marginTop: 4,
+  },
 
-    emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 8 },
-    emptyEmoji: { fontSize: 40 },
-    emptyText: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
-    emptySubtext: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+  // Night-closed empty state for instant mode after 8pm.
+  nightWrap: {
+    paddingTop: 60,
+    paddingBottom: 60,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+  },
+  nightTitle: {
+    fontFamily: 'PlusJakartaSans_800ExtraBold',
+    fontSize: 24,
+    color: '#FFFFFF',
+    letterSpacing: -0.6,
+    textAlign: 'center',
+  },
+  nightSub: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.6)',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginTop: 10,
+  },
+  nightHint: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.5)',
+    textAlign: 'center',
+    marginTop: 24,
+  },
 
-    cartBar: {
-      position: 'absolute', bottom: 28, left: 24, right: 24,
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: c.white,
-      paddingHorizontal: 16, paddingVertical: 12,
-      borderRadius: Radius['2xl'],
-      borderWidth: 1, borderColor: c.border,
-      ...Shadow.lg,
-    },
-    cartBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    cartBarEmoji: { fontSize: 22 },
-    cartBarCount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    cartBarSubtotal: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
-    cartBarBtn: {
-      backgroundColor: c.primary,
-      paddingHorizontal: 18, paddingVertical: 10,
-      borderRadius: Radius.xl,
-      ...Shadow.sm,
-    },
-    cartBarBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: '#FFFFFF' },
-  });
-}
+  emptyWrap: {
+    paddingTop: 80,
+    alignItems: 'center',
+    gap: 10,
+  },
+  emptyTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 15,
+    color: '#FFFFFF',
+  },
+  emptySub: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.5)',
+  },
+});

@@ -20,6 +20,7 @@ import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getHelperInvitesWithDetails } from '../../api/matching';
+import { getHelperActive, getHelperToday, type HelperBooking } from '../../api/pro';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 
@@ -29,32 +30,62 @@ export default function ProDashboardScreen() {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
 
-  // On mount: if there's an active booking, go straight to ProActive.
+  // Today's bookings panel state — current (accepted/in_progress) + past today.
+  const [todayBookings, setTodayBookings] = useState<HelperBooking[]>([]);
+  const [todayLoading, setTodayLoading] = useState(true);
+
+  const refreshToday = useCallback(async () => {
+    if (!token || token === '__guest__') return;
+    try {
+      const list = await getHelperToday(token);
+      setTodayBookings(list);
+    } catch {
+      // keep last-known list on transient failures
+    } finally {
+      setTodayLoading(false);
+    }
+  }, [token]);
+
+  // On mount: recover an active booking via the helper-side endpoint (the
+  // legacy /bookings?status=upcoming returned customer bookings, so the pro
+  // saw nothing). Still bail to ProActive on any active match for continuity.
   useEffect(() => {
     if (!token || token === '__guest__') return;
+    let cancelled = false;
     (async () => {
       try {
-        const res = await apiFetch(`${BASE_URL}/bookings?status=upcoming`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const bookings: any[] = data.bookings ?? [];
-        const active = bookings.find(
-          b => b.status === 'accepted' || b.status === 'in_progress',
-        );
-        if (active) {
+        const active = await getHelperActive(token);
+        if (cancelled) return;
+        if (active.length > 0) {
+          const a = active[0];
           navigation.replace('ProActive', {
-            bookingId: active.id,
+            bookingId: a.id,
             serviceName: undefined,
-            customerAddress: active.address ?? 'Customer Location',
-            customerLat: active.lat ?? 0,
-            customerLng: active.lng ?? 0,
+            customerAddress: a.address ?? 'Customer Location',
+            customerLat: a.lat ?? 0,
+            customerLng: a.lng ?? 0,
           });
+          return;
         }
-      } catch { /* silently ignore */ }
+        await refreshToday();
+      } catch {
+        // network blip — render an empty dashboard rather than crash
+        if (!cancelled) setTodayLoading(false);
+      }
     })();
-  }, [token]);
+    return () => { cancelled = true; };
+  }, [token, refreshToday]);
+
+  // Keep today's panel fresh — refresh on focus + every 30 s while mounted.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    const id = setInterval(refreshToday, 30_000);
+    const sub = navigation.addListener('focus', refreshToday);
+    return () => {
+      clearInterval(id);
+      sub();
+    };
+  }, [token, navigation, refreshToday]);
 
   const [isOnline, setIsOnline] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -270,6 +301,21 @@ export default function ProDashboardScreen() {
           )}
         </View>
 
+        {/* Today's bookings — current + past today, recoverable across restarts */}
+        <TodayPanel
+          loading={todayLoading}
+          bookings={todayBookings}
+          onTapActive={(b) =>
+            navigation.navigate('ProActive', {
+              bookingId: b.id,
+              serviceName: undefined,
+              customerAddress: b.address,
+              customerLat: b.lat,
+              customerLng: b.lng,
+            })
+          }
+        />
+
         {/* How it works */}
         <View style={s.howCard}>
           <Text style={s.howTitle}>How ZopMop works</Text>
@@ -298,6 +344,96 @@ function StatCard({ icon, label, value }: { icon: string; label: string; value: 
       <Text style={s.statIcon}>{icon}</Text>
       <Text style={s.statValue}>{value}</Text>
       <Text style={s.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function TodayPanel({
+  loading,
+  bookings,
+  onTapActive,
+}: {
+  loading: boolean;
+  bookings: HelperBooking[];
+  onTapActive: (b: HelperBooking) => void;
+}) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+
+  const active = bookings.filter(
+    b => b.status === 'accepted' || b.status === 'in_progress',
+  );
+  const past = bookings.filter(
+    b => b.status === 'completed' || b.status === 'cancelled',
+  );
+
+  const earnedCents = past
+    .filter(b => b.status === 'completed')
+    .reduce((sum, b) => sum + (b.price_cents - b.discount_cents), 0);
+  const earnedRupees = `₹${Math.round(earnedCents / 100)}`;
+
+  return (
+    <View style={s.todayCard}>
+      <View style={s.todayHeader}>
+        <Text style={s.todayTitle}>Today</Text>
+        <Text style={s.todayMeta}>
+          {past.filter(b => b.status === 'completed').length} done · {earnedRupees} earned
+        </Text>
+      </View>
+
+      {loading && (
+        <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={c.text} />
+        </View>
+      )}
+
+      {!loading && bookings.length === 0 && (
+        <Text style={s.todayEmpty}>
+          No jobs yet today. Go online to start receiving invites.
+        </Text>
+      )}
+
+      {active.map(b => (
+        <TouchableOpacity
+          key={b.id}
+          style={s.todayRowActive}
+          onPress={() => onTapActive(b)}
+          activeOpacity={0.85}
+        >
+          <View style={s.todayDotActive} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.todayRowTitle} numberOfLines={1}>
+              {b.status === 'in_progress' ? 'In progress' : 'On the way'}
+            </Text>
+            <Text style={s.todayRowSub} numberOfLines={1}>
+              {b.address || 'Customer location'}
+            </Text>
+          </View>
+          <Text style={s.todayRowCta}>Open ›</Text>
+        </TouchableOpacity>
+      ))}
+
+      {past.map(b => (
+        <View key={b.id} style={s.todayRow}>
+          <View
+            style={[
+              s.todayDot,
+              b.status === 'completed' ? s.todayDotDone : s.todayDotCancelled,
+            ]}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.todayRowTitle} numberOfLines={1}>
+              {b.status === 'completed' ? 'Completed' : 'Cancelled'}
+            </Text>
+            <Text style={s.todayRowSub} numberOfLines={1}>
+              {b.address || 'Customer location'}
+            </Text>
+          </View>
+          <Text style={s.todayRowAmount}>
+            ₹{Math.round((b.price_cents - b.discount_cents) / 100)}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -366,6 +502,31 @@ function createStyles(c: typeof lightColors) {
     scanningRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     scanningDot: { width: 8, height: 8, borderRadius: Radius.full, backgroundColor: c.success },
     scanningText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.success },
+
+    todayCard: {
+      backgroundColor: c.white, borderRadius: Radius.xl,
+      padding: 16, borderWidth: 1, borderColor: c.border, gap: 8, ...Shadow.sm,
+    },
+    todayHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 4 },
+    todayTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
+    todayMeta: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: c.textMuted },
+    todayEmpty: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, paddingVertical: 8 },
+    todayRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+    todayRowActive: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      paddingVertical: 12, paddingHorizontal: 12,
+      borderRadius: Radius.md,
+      backgroundColor: c.primaryBg,
+      borderWidth: 1, borderColor: c.primary,
+    },
+    todayDot: { width: 8, height: 8, borderRadius: 4 },
+    todayDotActive: { width: 8, height: 8, borderRadius: 4, backgroundColor: c.primary },
+    todayDotDone: { backgroundColor: c.success },
+    todayDotCancelled: { backgroundColor: c.textMuted },
+    todayRowTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
+    todayRowSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
+    todayRowCta: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.primary },
+    todayRowAmount: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
 
     howCard: {
       backgroundColor: c.white, borderRadius: Radius.xl,

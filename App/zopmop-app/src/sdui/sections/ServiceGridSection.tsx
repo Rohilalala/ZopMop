@@ -1,12 +1,11 @@
-// SDUI adapter for a 2-column service grid. There is no existing 2-col grid
-// component in src/components/home — UsualsRow is horizontal-only — so this
-// builds a minimal one that mirrors the UsualsRow card visual style.
-// TODO(sdui): adapter — replace with a shared ServiceCard component once the
-// design system has one.
+// SDUI adapter for the home "Popular services" grid. Dark glass cards on the
+// dark home backdrop — first card is "featured" (full width, taller thumb).
+// Each card has the icon-stage (radial-spotlit) thumb, rating chip, add button,
+// name, and price + strikethrough MRP.
 
 import React, { useCallback } from 'react';
 import {
-  FlatList,
+  Image,
   Text,
   View,
   StyleSheet,
@@ -14,7 +13,13 @@ import {
   type TextStyle,
 } from 'react-native';
 
+import { Feather } from '@expo/vector-icons';
+
 import { PressFx } from '../../components/ui/PressFx';
+import { GlassCard } from '../../components/home/GlassCard';
+import { ServiceThumb } from '../../components/home/ServiceThumb';
+import { serviceIcon } from '../../components/home/serviceIcon';
+import { useCart } from '../../context/CartContext';
 import type { ApiService } from '../../api/services';
 import type { SduiAction, ServiceGridData } from '../types';
 
@@ -25,15 +30,18 @@ interface Props {
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const H_PAD     = 20;
-const COL_GAP   = 12;
+const COL_GAP   = 10;
 const NUM_COLS  = 2;
-const CARD_W    = (SCREEN_W - H_PAD * 2 - COL_GAP * (NUM_COLS - 1)) / NUM_COLS;
+const CARD_W    = (SCREEN_W - H_PAD * 2 - COL_GAP) / NUM_COLS;
 
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 
 export function ServiceGridSection({ data, onAction }: Props) {
+  const { addItem } = useCart();
+
   const handlePress = useCallback(
     (svc: ApiService) => {
       onAction({
@@ -46,64 +54,260 @@ export function ServiceGridSection({ data, onAction }: Props) {
     [onAction],
   );
 
-  if (!data.services || data.services.length === 0) return null;
+  const handleAdd = useCallback(
+    async (svc: ApiService) => {
+      try {
+        await addItem(svc.id, svc.min_duration_minutes);
+      } catch {
+        onAction({
+          trigger: 'tap',
+          type:    'toast',
+          message: 'Could not add service. Try again.',
+          variant: 'error',
+        });
+      }
+    },
+    [addItem, onAction],
+  );
+
+  const handleSeeAll = useCallback(() => {
+    onAction({
+      trigger: 'tap',
+      type:    'navigate',
+      screen:  'AllServices',
+    });
+  }, [onAction]);
+
+  const services = data.services ?? [];
+  if (services.length === 0) return null;
+
+  const [featured, ...rest] = services;
+
+  // Pair the remaining services into rows of 2 for a 2-col layout.
+  const rows: ApiService[][] = [];
+  for (let i = 0; i < rest.length; i += NUM_COLS) {
+    rows.push(rest.slice(i, i + NUM_COLS));
+  }
 
   return (
     <View style={styles.wrap}>
-      <Text style={[fontExtra, styles.title]}>{data.title}</Text>
-      <FlatList
-        data={data.services}
-        keyExtractor={(s) => s.id}
-        numColumns={NUM_COLS}
-        scrollEnabled={false}
-        contentContainerStyle={styles.list}
-        columnWrapperStyle={{ gap: COL_GAP }}
-        ItemSeparatorComponent={() => <View style={{ height: COL_GAP }} />}
-        renderItem={({ item }) => (
-          <ServiceCard service={item} onPress={() => handlePress(item)} />
-        )}
-      />
+      <View style={styles.head}>
+        <Text style={[fontBold, styles.title]}>{data.title || 'Popular services'}</Text>
+        <PressFx onPress={handleSeeAll}>
+          <Text style={[fontSemi, styles.link]}>See all →</Text>
+        </PressFx>
+      </View>
+
+      {featured && (
+        <View style={{ marginBottom: COL_GAP }}>
+          <ServiceCard
+            service={featured}
+            featured
+            onPress={() => handlePress(featured)}
+            onAdd={() => handleAdd(featured)}
+          />
+        </View>
+      )}
+
+      {rows.map((row, ri) => (
+        <View
+          key={ri}
+          style={{ flexDirection: 'row', gap: COL_GAP, marginBottom: COL_GAP }}
+        >
+          {row.map((svc) => (
+            <ServiceCard
+              key={svc.id}
+              service={svc}
+              onPress={() => handlePress(svc)}
+              onAdd={() => handleAdd(svc)}
+            />
+          ))}
+        </View>
+      ))}
     </View>
   );
 }
 
 function ServiceCard({
   service,
+  featured,
   onPress,
+  onAdd,
 }: {
   service: ApiService;
+  featured?: boolean;
   onPress: () => void;
+  onAdd: () => void;
 }) {
+  const price  = `₹${(service.base_price_cents / 100).toFixed(0)}`;
+  const mrp    = service.mrp_cents ? `₹${(service.mrp_cents / 100).toFixed(0)}` : null;
+  const rating = service.rating?.toFixed(1) ?? null;
+  const reviewLabel =
+    service.review_count > 1000
+      ? `${(service.review_count / 1000).toFixed(1)}k`
+      : `${service.review_count}`;
+  const thumbH = featured ? 120 : 96;
+
   return (
     <PressFx
       onPress={onPress}
       style={{
-        width:           CARD_W,
-        height:          168,
-        borderRadius:    20,
-        backgroundColor: service.bg_color || '#EEF2FF',
-        padding:         14,
-        justifyContent:  'space-between',
+        flex: featured ? undefined : 1,
+        width: featured ? '100%' : undefined,
       }}
     >
-      <Text style={{ fontSize: 32 }}>{service.emoji ?? '🧹'}</Text>
-      <View>
-        <Text
-          style={[fontBold, { fontSize: 14, color: '#0F172A', lineHeight: 18 }]}
-          numberOfLines={2}
-        >
-          {service.name}
-        </Text>
-        <Text style={[fontMed, { fontSize: 12, color: '#475569', marginTop: 4 }]}>
-          ₹{(service.base_price_cents / 100).toFixed(0)}
-        </Text>
+      <GlassCard radius={18} style={{ padding: 12 }}>
+        {/* Thumb / icon stage */}
+        <View style={{ height: thumbH, position: 'relative' }}>
+          <ServiceThumb height={thumbH} radius={12} featured={featured} />
+
+          {/* mascot/glyph — 3D PNG render when available, else emoji fallback */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {(() => {
+              const src = serviceIcon({ id: service.id, name: service.name });
+              if (src) {
+                return (
+                  <Image
+                    source={src}
+                    resizeMode="contain"
+                    style={{
+                      width:  featured ? '62%' : '78%',
+                      height: featured ? '84%' : '78%',
+                      shadowColor: '#0D0D0F',
+                      shadowOffset: { width: 0, height: 12 },
+                      shadowOpacity: 0.32,
+                      shadowRadius: 18,
+                    }}
+                  />
+                );
+              }
+              // No PNG render — neutral vector glyph (no emoji per project rule).
+              return (
+                <Feather
+                  name="package"
+                  size={featured ? 56 : 40}
+                  color="rgba(255,255,255,0.7)"
+                />
+              );
+            })()}
+          </View>
+
+          {/* rating chip */}
+          {rating && (
+            <View
+              style={{
+                position: 'absolute',
+                top: 8,
+                left: 8,
+                paddingHorizontal: 7,
+                paddingVertical: 2,
+                borderRadius: 99,
+                backgroundColor: 'rgba(255,255,255,0.95)',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 3,
+              }}
+            >
+              <Text style={{ color: '#F5A300', fontSize: 10 }}>★</Text>
+              <Text style={[fontBold, { color: '#0D0D0F', fontSize: 10 }]}>
+                {rating}
+                {featured && service.review_count > 0 ? ` · ${reviewLabel}` : ''}
+              </Text>
+            </View>
+          )}
+
+          {/* add button — Feather glyph renders centered (Text "+" had a
+              line-height offset that pushed it visually low). Child Pressable
+              captures the tap so the outer card press does not fire. */}
+          <PressFx
+            onPress={onAdd}
+            style={{
+              position: 'absolute',
+              right: 8,
+              bottom: 8,
+              width: 28,
+              height: 28,
+              borderRadius: 14,
+              backgroundColor: '#0D0D0F',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.1)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Feather name="plus" size={16} color="#F5A300" />
+          </PressFx>
+        </View>
+
+      {/* meta */}
+      <Text
+        style={[
+          fontBold,
+          { fontSize: 13, color: '#FFFFFF', letterSpacing: -0.13, marginTop: 10 },
+        ]}
+        numberOfLines={1}
+      >
+        {service.name}
+      </Text>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'baseline',
+          marginTop: 4,
+          gap: 6,
+        }}
+      >
+        <Text style={[fontExtra, { color: '#FFFFFF', fontSize: 14 }]}>{price}</Text>
+        {mrp && (
+          <Text
+            style={[
+              fontMed,
+              {
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: 11,
+                textDecorationLine: 'line-through',
+              },
+            ]}
+          >
+            {mrp}
+          </Text>
+        )}
+        {featured && service.min_duration_minutes ? (
+          <Text
+            style={[
+              fontMed,
+              {
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.5)',
+                marginLeft: 'auto',
+              },
+            ]}
+          >
+            {service.min_duration_minutes} min
+          </Text>
+        ) : null}
       </View>
+      </GlassCard>
     </PressFx>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap:  { marginTop: 28, paddingHorizontal: H_PAD },
-  title: { fontSize: 22, color: '#0F172A', letterSpacing: -0.4, marginBottom: 14 },
-  list:  { paddingBottom: 4 },
+  wrap:  { marginTop: 24, paddingHorizontal: H_PAD },
+  head:  {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+  },
+  title: { fontSize: 18, color: '#FFFFFF', letterSpacing: -0.18 },
+  link:  { fontSize: 12, color: '#F5A300' },
 });

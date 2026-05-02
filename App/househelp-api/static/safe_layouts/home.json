@@ -1,31 +1,189 @@
 {
   "page_id": "home",
-  "version": "safe-1.0",
+  "version": "static-1.0",
   "min_client_version": "0.0.0",
-  "config_hash": "safe",
-  "snapshot_at": "1970-01-01T00:00:00Z",
-  "config_version": "safe-1.0",
+  "config_hash": "static-home-v1",
+  "snapshot_at": "2026-05-02T00:00:00Z",
+  "config_version": "static-1.0",
   "sections": [
     {
-      "id": "hero",
-      "type": "hero_carousel",
+      "id": "live",
+      "type": "live_pill",
       "visible": true,
-      "layout": { "height": 280 },
       "data": {
-        "greeting_name": "there",
-        "slides": [
+        "nearby_count": 0,
+        "avg_eta_min": 0,
+        "avg_rating": 0
+      }
+    },
+    {
+      "id": "usuals",
+      "type": "usuals_row",
+      "visible": true,
+      "data": {
+        "services": [
           {
-            "key": "safe-fallback",
-            "eyebrow": "Welcome",
-            "title": "We'll be right back",
-            "body": "Browse our services while we restore the home page.",
-            "cta": "Explore",
-            "bg": "#EEF2FF",
-            "accent": "#4F46E5",
-            "emoji": "🏠",
-            "action": { "trigger": "tap", "type": "navigate", "screen": "Services" }
+            "id": "a1000000-0000-0000-0000-000000000001",
+            "name": "Book instantly",
+            "emoji": "⚡",
+            "bg_color": "#EEF2FF",
+            "base_price_cents": 24900,
+            "mrp_cents": 49900,
+            "rating": 4.9,
+            "review_count": 15300,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 60,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 1
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000002",
+            "name": "Deep clean",
+            "emoji": "✨",
+            "bg_color": "#F0FDFA",
+            "base_price_cents": 59900,
+            "mrp_cents": 99900,
+            "rating": 4.9,
+            "review_count": 17800,
+            "min_duration_minutes": 90,
+            "max_duration_minutes": 150,
+            "duration_step_minutes": 30,
+            "is_active": true,
+            "display_order": 2
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000003",
+            "name": "Dishes",
+            "emoji": "🍽️",
+            "bg_color": "#FFF7ED",
+            "base_price_cents": 19900,
+            "mrp_cents": 39900,
+            "rating": 4.8,
+            "review_count": 13500,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 60,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 3
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000006",
+            "name": "Laundry",
+            "emoji": "👕",
+            "bg_color": "#FDF4FF",
+            "base_price_cents": 34900,
+            "mrp_cents": 49900,
+            "rating": 4.9,
+            "review_count": 4500,
+            "min_duration_minutes": 60,
+            "max_duration_minutes": 120,
+            "duration_step_minutes": 30,
+            "is_active": true,
+            "display_order": 4
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000004",
+            "name": "Bathroom",
+            "emoji": "🚿",
+            "bg_color": "#F0FDF4",
+            "base_price_cents": 29900,
+            "mrp_cents": 59900,
+            "rating": 4.9,
+            "review_count": 17800,
+            "min_duration_minutes": 45,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 5
           }
         ]
+      }
+    },
+    {
+      "id": "popular",
+      "type": "service_grid",
+      "visible": true,
+      "data": {
+        "title": "Popular services",
+        "services": [
+          {
+            "id": "a1000000-0000-0000-0000-000000000002",
+            "name": "Bathroom cleaning",
+            "emoji": "🚿",
+            "bg_color": "#F0FDFA",
+            "base_price_cents": 29900,
+            "mrp_cents": 59900,
+            "rating": 4.9,
+            "review_count": 17800,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 1
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000001",
+            "name": "Sweeping & Mopping",
+            "emoji": "🧹",
+            "bg_color": "#EEF2FF",
+            "base_price_cents": 24900,
+            "mrp_cents": 49900,
+            "rating": 4.9,
+            "review_count": 15300,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 2
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000003",
+            "name": "Utensils",
+            "emoji": "🍽️",
+            "bg_color": "#FFF7ED",
+            "base_price_cents": 19900,
+            "mrp_cents": 39900,
+            "rating": 4.8,
+            "review_count": 13500,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 3
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000004",
+            "name": "Dusting & Wiping",
+            "emoji": "🧽",
+            "bg_color": "#F0FDF4",
+            "base_price_cents": 24900,
+            "mrp_cents": 39900,
+            "rating": 4.9,
+            "review_count": 6500,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 4
+          },
+          {
+            "id": "a1000000-0000-0000-0000-000000000005",
+            "name": "Kitchen Prep",
+            "emoji": "🔪",
+            "bg_color": "#EFF6FF",
+            "base_price_cents": 24900,
+            "mrp_cents": 39900,
+            "rating": 4.9,
+            "review_count": 3700,
+            "min_duration_minutes": 30,
+            "max_duration_minutes": 90,
+            "duration_step_minutes": 15,
+            "is_active": true,
+            "display_order": 5
+          }
+        ],
+        "has_more": false
       }
     },
     {
