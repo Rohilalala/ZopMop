@@ -5,6 +5,10 @@
 -- ONLY the crm_* tables defined here plus shared business tables (users,
 -- bookings, etc) via its own connection pool.
 
+-- citext is needed for case-insensitive email columns. Must be created
+-- BEFORE any table that uses CITEXT.
+CREATE EXTENSION IF NOT EXISTS citext;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- crm_admins: people who can log into the CRM. Independent of users.
 -- Auth = email + password (argon2id) + mandatory TOTP. No SSO, no oauth.
@@ -27,8 +31,6 @@ CREATE TABLE IF NOT EXISTS crm_admins (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE INDEX IF NOT EXISTS idx_crm_admins_active ON crm_admins (is_active) WHERE is_active;
 
