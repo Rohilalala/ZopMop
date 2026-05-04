@@ -1,5 +1,6 @@
 import React from 'react';
-import { ActivityIndicator, Text, View, type TextStyle } from 'react-native';
+import { Text, View, type TextStyle } from 'react-native';
+import { LoadingBars } from './LoadingBars';
 import { PressFx } from './PressFx';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
@@ -75,7 +76,7 @@ export function Button({
       accessibilityState={{ disabled: isDisabled, busy: loading }}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' || variant === 'danger' ? '#fff' : '#4F46E5'} />
+        <LoadingBars color={variant === 'primary' || variant === 'danger' ? '#fff' : '#4F46E5'} />
       ) : (
         <View className="flex-row items-center justify-center gap-2">
           {leading}

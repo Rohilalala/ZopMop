@@ -47,7 +47,7 @@ func (h *Handler) GetByDate(c *fiber.Ctx) error {
 		})
 	}
 
-	periods, err := h.service.GetByDate(c.Context(), date)
+	periods, err := h.service.GetByDate(c.UserContext(), date)
 	if err != nil {
 		log.Error().Err(err).Str("date", date).Msg("failed to get time slots")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

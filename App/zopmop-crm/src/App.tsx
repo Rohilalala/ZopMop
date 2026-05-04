@@ -11,6 +11,7 @@ import { FlagsPage } from '@/pages/FlagsPage';
 import { SessionsPage } from '@/pages/SessionsPage';
 import { UsersPage } from '@/pages/users/UsersPage';
 import { WorkersPage } from '@/pages/workers/WorkersPage';
+import { LeavesPage } from '@/pages/LeavesPage';
 import { LiveMapPage } from '@/pages/LiveMapPage';
 import { OrdersPage } from '@/pages/OrdersPage';
 import { RefundsPage } from '@/pages/RefundsPage';
@@ -22,6 +23,7 @@ import { PushPage } from '@/pages/PushPage';
 import { PayoutsPage } from '@/pages/PayoutsPage';
 import { DisputesPage } from '@/pages/DisputesPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { LocalitiesPage } from '@/pages/LocalitiesPage';
 import { Skeleton } from '@/components/ui';
 
 // Top-level router. The auth store hydrates once on boot via
@@ -46,6 +48,7 @@ export function App() {
           <Route path="/refunds"     element={<RefundsPage />} />
           <Route path="/users"       element={<UsersPage />} />
           <Route path="/workers"     element={<WorkersPage />} />
+          <Route path="/leaves"      element={<LeavesPage />} />
           <Route path="/map"         element={<LiveMapPage />} />
           <Route path="/promos"      element={<PromosPage />} />
           <Route path="/banners"     element={<BannersPage />} />
@@ -55,6 +58,7 @@ export function App() {
           <Route path="/payouts"     element={<PayoutsPage />} />
           <Route path="/disputes"    element={<DisputesPage />} />
           <Route path="/settings"    element={<SettingsPage />} />
+          <Route path="/localities"  element={<LocalitiesPage />} />
           <Route path="*"            element={<Navigate to="/" replace />} />
         </Route>
       ) : (

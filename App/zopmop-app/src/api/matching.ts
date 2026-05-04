@@ -11,6 +11,8 @@ export interface MatchedHelper {
   eta_minutes: number;
   lat?: number;
   lng?: number;
+  photo_url?: string;
+  total_jobs?: number;
 }
 
 export interface MatchStatusResponse {
@@ -249,6 +251,21 @@ export function getLocationWsUrl(): string {
   }
   const base = BASE_URL.replace(/^http/, 'ws');
   return `${base}/location/ws`;
+}
+
+/**
+ * Returns the WebSocket URL for customer-side tracking push.
+ * Server pushes a TrackingResponse JSON every ~5s on this socket; replaces
+ * the previous setInterval poll on /bookings/:id/tracking. Same auth model
+ * as getLocationWsUrl: no token in the URL — the client sends
+ * {"type":"auth","token":"<JWT>"} as the first WebSocket message.
+ */
+export function getBookingTrackingWsUrl(bookingId: string): string {
+  if (!__DEV__ && BASE_URL.startsWith('http://')) {
+    throw new Error('[Security] WebSocket URL would use unencrypted ws:// in production. Set EXPO_PUBLIC_API_URL to an https:// URL.');
+  }
+  const base = BASE_URL.replace(/^http/, 'ws');
+  return `${base}/bookings/${bookingId}/track/ws`;
 }
 
 /**

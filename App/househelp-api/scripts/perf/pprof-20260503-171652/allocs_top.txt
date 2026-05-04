@@ -1,0 +1,27 @@
+File: api
+Type: alloc_objects
+Time: 2026-05-03 17:17:08 IST
+Showing nodes accounting for 16660612, 29.03% of 57387553 total
+Dropped 131 nodes (cum <= 286937)
+Showing top 20 nodes out of 130
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%   30043781 52.35%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0%     0%   27011384 47.07%  main.main.RequestLogger.func11
+         0     0%     0%   27011384 47.07%  main.main.Timeout.func10.1
+         0     0%     0%   26369405 45.95%  net/http.(*conn).serve
+         0     0%     0%   22651817 39.47%  net/http.(*ServeMux).ServeHTTP
+         0     0%     0%   22651817 39.47%  net/http.HandlerFunc.ServeHTTP
+         0     0%     0%   22651817 39.47%  net/http.serverHandler.ServeHTTP
+   1690412  2.95%  2.95%   22651816 39.47%  net/http/pprof.Index
+  12638090 22.02% 24.97%   19063606 33.22%  net/http/pprof.indexTmplExecute
+         0     0% 24.97%   18833212 32.82%  github.com/rs/zerolog.(*Event).Msg
+         0     0% 24.97%   18833212 32.82%  github.com/rs/zerolog.(*Event).msg
+         0     0% 24.97%   18149383 31.63%  github.com/rs/zerolog.(*Event).write
+    286730   0.5% 25.47%   18149383 31.63%  github.com/rs/zerolog.ConsoleWriter.Write
+         0     0% 25.47%   18149383 31.63%  github.com/rs/zerolog.LevelWriterAdapter.WriteLevel
+         0     0% 25.47%   11726469 20.43%  github.com/gofiber/fiber/v2.(*App).next
+         0     0% 25.47%    8115156 14.14%  github.com/gofiber/fiber/v2/middleware/compress.New.func3
+   1258936  2.19% 27.66%    8115156 14.14%  main.main.RateLimiter.NamedRateLimiter.func20
+         0     0% 27.66%    7487207 13.05%  encoding/json.(*Decoder).Decode
+    786444  1.37% 29.03%    6895232 12.02%  encoding/json.(*decodeState).object
+         0     0% 29.03%    6895232 12.02%  encoding/json.(*decodeState).unmarshal

@@ -16,19 +16,35 @@ const (
 // Booking represents a service booking.
 // Price is always stored as integer cents to avoid floating point errors.
 type Booking struct {
-	ID                string        `json:"id"`
-	CustomerID        string        `json:"customer_id"`
-	HelperID          *string       `json:"helper_id,omitempty"`
-	ServiceCategoryID string        `json:"service_category_id"`
-	Status            BookingStatus `json:"status"`
-	Address           string        `json:"address"`
-	Lat               float64       `json:"lat"`
-	Lng               float64       `json:"lng"`
-	PriceCents        int           `json:"price_cents"`
-	PromoCode         *string       `json:"promo_code,omitempty"`
-	DiscountCents     int           `json:"discount_cents"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	ID                     string        `json:"id"`
+	CustomerID             string        `json:"customer_id"`
+	HelperID               *string       `json:"helper_id,omitempty"`
+	ServiceCategoryID      string        `json:"service_category_id"`
+	Status                 BookingStatus `json:"status"`
+	Address                string        `json:"address"`
+	Lat                    float64       `json:"lat"`
+	Lng                    float64       `json:"lng"`
+	PriceCents             int           `json:"price_cents"`
+	PromoCode              *string       `json:"promo_code,omitempty"`
+	DiscountCents          int           `json:"discount_cents"`
+	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
+	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
+	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
+	CancellationFeeCents   int           `json:"cancellation_fee_cents"`
+	// CanCancelFree and FreeCancelUntil are computed at read time on the
+	// booking detail endpoint. nil for terminal-state bookings (no longer
+	// cancellable).
+	CanCancelFree   *bool      `json:"can_cancel_free,omitempty"`
+	FreeCancelUntil *time.Time `json:"free_cancel_until,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// CancelBookingResponse is returned by DELETE /bookings/:id.
+type CancelBookingResponse struct {
+	Message                string `json:"message"`
+	CancellationFeeApplied bool   `json:"cancellation_fee_applied"`
+	CancellationFeeCents   int    `json:"cancellation_fee_cents"`
 }
 
 // CreateBookingRequest is the input for creating a new booking.
@@ -59,6 +75,8 @@ type ScheduledBooking struct {
 	ID                   string               `json:"id"`
 	CustomerID           string               `json:"customer_id"`
 	AddressID            *string              `json:"address_id,omitempty"`
+	AddressTag           *string              `json:"address_tag,omitempty"`   // "Home"/"Work"/"Other"
+	AddressTitle         *string              `json:"address_title,omitempty"` // free-text label
 	TimeSlotID           *string              `json:"time_slot_id,omitempty"`
 	ScheduledTime        *string              `json:"scheduled_time,omitempty"` // RFC3339
 	TotalDurationMinutes int                  `json:"total_duration_minutes"`
@@ -102,6 +120,8 @@ type MatchedHelper struct {
 	ETAMinutes int     `json:"eta_minutes"`
 	Lat        float64 `json:"lat,omitempty"`
 	Lng        float64 `json:"lng,omitempty"`
+	PhotoURL   string  `json:"photo_url,omitempty"`
+	TotalJobs  int     `json:"total_jobs"`
 }
 
 // TrackingResponse is returned by GET /bookings/:id/tracking.

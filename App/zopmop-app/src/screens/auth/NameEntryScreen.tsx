@@ -5,12 +5,13 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ActivityIndicator,
+  
   Platform,
   Animated,
   Easing,
   Keyboard,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -173,7 +174,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
+              <LoadingBars color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Continue</Text>
             )}

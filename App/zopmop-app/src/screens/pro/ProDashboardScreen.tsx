@@ -7,22 +7,35 @@ import {
   ScrollView,
   Animated,
   Alert,
-  ActivityIndicator,
+  
   AppState,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
+import { SkeletonBox } from '../../components/SkeletonBox';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
+import { isConnected as getIsConnected, addConnectivityListener } from '../../utils/netInfo';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getHelperInvitesWithDetails } from '../../api/matching';
 import { getHelperActive, getHelperToday, type HelperBooking } from '../../api/pro';
+import { getBalance, getAffectedTomorrow, type LeaveBalance, type AffectedBooking } from '../../api/leave';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
+import { haptics } from '../../utils/haptics';
+import { showError } from '../../utils/toast';
+import { enqueueLocationPing, flushLocationPingQueue } from '../../utils/locationPingQueue';
+
+// Location heartbeat cadence. Faster while a booking is active so the customer
+// map stays smooth; slower while idle to spare battery + backend load.
+const BOOKING_ACTIVE_HEARTBEAT_MS = 30 * 1000;
+const IDLE_HEARTBEAT_MS = 2 * 60 * 1000;
 
 export default function ProDashboardScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
@@ -33,6 +46,26 @@ export default function ProDashboardScreen() {
   // Today's bookings panel state — current (accepted/in_progress) + past today.
   const [todayBookings, setTodayBookings] = useState<HelperBooking[]>([]);
   const [todayLoading, setTodayLoading] = useState(true);
+
+  // Tomorrow + leave-balance state for the leave-declaration UI. Refetched on
+  // focus so the pro sees fresh values after coming back from declare/profile.
+  const [tomorrowBookings, setTomorrowBookings] = useState<AffectedBooking[]>([]);
+  const [leaveBalance, setLeaveBalance] = useState<LeaveBalance | null>(null);
+  const [tomorrowLoading, setTomorrowLoading] = useState(true);
+
+  const refreshLeaveContext = useCallback(async () => {
+    if (!token || token === '__guest__') return;
+    try {
+      const [bal, aff] = await Promise.all([
+        getBalance(token).catch(() => null),
+        getAffectedTomorrow(token).catch(() => [] as AffectedBooking[]),
+      ]);
+      setLeaveBalance(bal);
+      setTomorrowBookings(aff);
+    } finally {
+      setTomorrowLoading(false);
+    }
+  }, [token]);
 
   const refreshToday = useCallback(async () => {
     if (!token || token === '__guest__') return;
@@ -87,6 +120,16 @@ export default function ProDashboardScreen() {
     };
   }, [token, navigation, refreshToday]);
 
+  // Tomorrow + balance refresh on focus. No interval — far less time-sensitive
+  // than today's panel, and we want a fresh read after the pro returns from
+  // the declare flow (balance changes, affected list goes empty).
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    refreshLeaveContext();
+    const sub = navigation.addListener('focus', refreshLeaveContext);
+    return () => { sub(); };
+  }, [token, navigation, refreshLeaveContext]);
+
   const [isOnline, setIsOnline] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [checkingInvites, setCheckingInvites] = useState(false);
@@ -95,6 +138,26 @@ export default function ProDashboardScreen() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const navigatingToBookingRef = useRef(false);
+
+  // True when the pro has an accepted/in_progress booking — drives the faster
+  // 30s heartbeat cadence below. Tracked via ref so the AppState listener and
+  // the toggle handler can read the latest value without re-binding.
+  const hasActiveBooking = useMemo(
+    () => todayBookings.some(
+      (b) => b.status === 'accepted' || b.status === 'in_progress',
+    ),
+    [todayBookings],
+  );
+  const hasActiveBookingRef = useRef(hasActiveBooking);
+  useEffect(() => {
+    hasActiveBookingRef.current = hasActiveBooking;
+  }, [hasActiveBooking]);
+
+  function heartbeatIntervalMs(): number {
+    return hasActiveBookingRef.current
+      ? BOOKING_ACTIVE_HEARTBEAT_MS
+      : IDLE_HEARTBEAT_MS;
+  }
 
   // Pulse ring for GO ONLINE button
   const ringScale = useRef(new Animated.Value(1)).current;
@@ -166,10 +229,20 @@ export default function ProDashboardScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return false;
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const timestamp = Date.now();
+
+      const online = await getIsConnected();
+      if (!online) {
+        await enqueueLocationPing({ lat, lng, timestamp });
+        return true;
+      }
+
       await apiFetch(`${BASE_URL}/helpers/me/location`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        body: JSON.stringify({ lat, lng, timestamp }),
       });
       return true;
     } catch {
@@ -179,21 +252,23 @@ export default function ProDashboardScreen() {
 
   async function handleToggle() {
     if (toggling) return;
+    haptics.medium();
     setToggling(true);
     try {
       if (!isOnline) {
         const ok = await pushLocation();
         if (!ok) {
-          Alert.alert('Location needed', 'Enable location permission to go online.');
+          showError('Enable location permission to go online.', { title: 'Location needed' });
           return;
         }
+        haptics.success();
         // Guard: clear any pre-existing interval before assigning a new one
         // (prevents stacking if state ever desyncs with the ref).
         if (locationHeartbeatRef.current) {
           clearInterval(locationHeartbeatRef.current);
           locationHeartbeatRef.current = null;
         }
-        locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
+        locationHeartbeatRef.current = setInterval(pushLocation, heartbeatIntervalMs());
         setIsOnline(true);
       } else {
         if (locationHeartbeatRef.current) {
@@ -205,12 +280,26 @@ export default function ProDashboardScreen() {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({ is_available: false }),
         }).catch(() => {});
+        haptics.light();
         setIsOnline(false);
       }
     } finally {
       setToggling(false);
     }
   }
+
+  // Drain queued offline pings whenever connectivity returns.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    let wasOffline = false;
+    const unsub = addConnectivityListener((online) => {
+      if (online && wasOffline) {
+        flushLocationPingQueue(token).catch(() => {});
+      }
+      wasOffline = !online;
+    });
+    return () => unsub();
+  }, [token]);
 
   // Pause the location heartbeat when the app is backgrounded; resume on foreground.
   // This avoids burning battery + uploading stale GPS while the user is away.
@@ -223,11 +312,20 @@ export default function ProDashboardScreen() {
       } else if (next === 'active' && !locationHeartbeatRef.current && isOnline) {
         // Push immediately so backend sees us as fresh, then resume cadence.
         pushLocation();
-        locationHeartbeatRef.current = setInterval(pushLocation, 2 * 60 * 1000);
+        locationHeartbeatRef.current = setInterval(pushLocation, heartbeatIntervalMs());
       }
     });
     return () => sub.remove();
   }, [isOnline]);
+
+  // Swap heartbeat cadence when a booking becomes active / clears, but only
+  // while the heartbeat is actually running (online + foregrounded).
+  useEffect(() => {
+    if (!isOnline) return;
+    if (!locationHeartbeatRef.current) return;
+    clearInterval(locationHeartbeatRef.current);
+    locationHeartbeatRef.current = setInterval(pushLocation, heartbeatIntervalMs());
+  }, [hasActiveBooking, isOnline]);
 
   function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -248,7 +346,22 @@ export default function ProDashboardScreen() {
             <Text style={s.greeting}>Hey, {firstName} 👋</Text>
             <Text style={s.subGreeting}>Ready to earn today?</Text>
           </View>
-          {checkingInvites && <ActivityIndicator size="small" color={c.primary} />}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            {checkingInvites && <LoadingBars size="small" color={c.primary} />}
+            <TouchableOpacity
+              onPress={() => navigation.navigate('ProProfile')}
+              activeOpacity={0.7}
+              hitSlop={10}
+              accessibilityLabel="Profile"
+              style={{
+                width: 36, height: 36, borderRadius: 18,
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+              }}
+            >
+              <Feather name="user" size={16} color={c.text} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Stats row */}
@@ -275,7 +388,7 @@ export default function ProDashboardScreen() {
               )}
               <View style={[s.goOnlineBtn, isOnline && s.goOnlineBtnActive]}>
                 {toggling
-                  ? <ActivityIndicator color={isOnline ? '#FFFFFF' : c.primary} size="large" />
+                  ? <LoadingBars color={isOnline ? '#FFFFFF' : c.primary} size="large" />
                   : <Text style={s.goOnlineEmoji}>{isOnline ? '🟢' : '⚫'}</Text>
                 }
                 <Text style={[s.goOnlineLabel, isOnline && { color: '#FFFFFF' }]}>
@@ -314,6 +427,14 @@ export default function ProDashboardScreen() {
               customerLng: b.lng,
             })
           }
+        />
+
+        {/* Tomorrow's scheduled bookings + Declare Leave entry. Read-only. */}
+        <TomorrowPanel
+          loading={tomorrowLoading}
+          bookings={tomorrowBookings}
+          balance={leaveBalance}
+          onDeclareLeave={() => navigation.navigate('ProDeclareLeave')}
         />
 
         {/* How it works */}
@@ -382,8 +503,16 @@ function TodayPanel({
       </View>
 
       {loading && (
-        <View style={{ paddingVertical: 12, alignItems: 'center' }}>
-          <ActivityIndicator size="small" color={c.text} />
+        <View style={{ paddingVertical: 8, gap: 14 }}>
+          {[0, 1].map((i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <SkeletonBox width={10 as any} height={10} borderRadius={5} />
+              <View style={{ flex: 1, gap: 6 }}>
+                <SkeletonBox width="60%" height={12} borderRadius={5} />
+                <SkeletonBox width="38%" height={10} borderRadius={5} />
+              </View>
+            </View>
+          ))}
         </View>
       )}
 
@@ -434,6 +563,123 @@ function TodayPanel({
           </Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+// isBefore9pmIST returns true when current local time, projected to IST, is
+// strictly before 21:00. Drives the show/hide on the Declare Leave button —
+// per spec, after 9pm the button vanishes entirely (no disabled state).
+function isBefore9pmIST(now: Date = new Date()): boolean {
+  const hourStr = now.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    hour12: false,
+  });
+  const hour = parseInt(hourStr, 10);
+  return Number.isFinite(hour) && hour < 21;
+}
+
+function fmtSlotIST(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function TomorrowPanel({
+  loading,
+  bookings,
+  balance,
+  onDeclareLeave,
+}: {
+  loading: boolean;
+  bookings: AffectedBooking[];
+  balance: LeaveBalance | null;
+  onDeclareLeave: () => void;
+}) {
+  const c = useColors();
+  const s = useMemo(() => createStyles(c), [c]);
+  const showDeclare = isBefore9pmIST();
+
+  return (
+    <View style={s.todayCard}>
+      <View style={s.todayHeader}>
+        <Text style={s.todayTitle}>Tomorrow</Text>
+        <Text style={s.todayMeta}>
+          {bookings.length} scheduled
+        </Text>
+      </View>
+
+      {loading && (
+        <View style={{ paddingVertical: 8, gap: 14 }}>
+          {[0, 1].map((i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <SkeletonBox width={10 as any} height={10} borderRadius={5} />
+              <View style={{ flex: 1, gap: 6 }}>
+                <SkeletonBox width="60%" height={12} borderRadius={5} />
+                <SkeletonBox width="38%" height={10} borderRadius={5} />
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {!loading && bookings.length === 0 && (
+        <Text style={s.todayEmpty}>No scheduled bookings for tomorrow.</Text>
+      )}
+
+      {bookings.map((b) => (
+        <View key={b.ID} style={s.todayRow}>
+          <View style={[s.todayDot, s.todayDotDone]} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.todayRowTitle} numberOfLines={1}>
+              {b.ServiceName || 'Scheduled service'} · {fmtSlotIST(b.ScheduledTime)}
+            </Text>
+            <Text style={s.todayRowSub} numberOfLines={1}>
+              {b.CustomerName || 'Customer'}
+            </Text>
+          </View>
+        </View>
+      ))}
+
+      {/* Balance line + Declare Leave button. Hidden entirely after 21:00 IST. */}
+      {showDeclare && (
+        <View style={{ marginTop: 12, gap: 10 }}>
+          {balance && (
+            <Text style={[s.todayRowSub, { textAlign: 'center' }]}>
+              {balance.balance > 0
+                ? `You have ${balance.balance} leave day${balance.balance === 1 ? '' : 's'} remaining this month`
+                : 'No leave days remaining. Contact your manager.'}
+            </Text>
+          )}
+          <TouchableOpacity
+            onPress={onDeclareLeave}
+            disabled={!balance || balance.balance <= 0}
+            activeOpacity={0.85}
+            style={{
+              alignSelf: 'stretch',
+              paddingVertical: 12,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(245,163,0,0.45)',
+              backgroundColor: !balance || balance.balance <= 0 ? 'rgba(255,255,255,0.04)' : 'rgba(245,163,0,0.10)',
+              alignItems: 'center',
+              opacity: !balance || balance.balance <= 0 ? 0.55 : 1,
+            }}
+          >
+            <Text style={{ color: c.primary, fontFamily: FontFamily.bold, fontSize: 13, letterSpacing: 0.2 }}>
+              Declare Leave for Tomorrow
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }

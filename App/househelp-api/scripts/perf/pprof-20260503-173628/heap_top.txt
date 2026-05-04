@@ -1,0 +1,26 @@
+File: api
+Type: inuse_space
+Time: 2026-05-03 17:36:58 IST
+Showing nodes accounting for 2.50MB, 17.61% of 14.22MB total
+Showing top 20 nodes out of 120
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     5.01MB 35.23%  github.com/valyala/fasthttp.(*Server).serveConn
+         0     0%     0%     5.01MB 35.23%  github.com/valyala/fasthttp.(*workerPool).getCh.func1
+         0     0%     0%     5.01MB 35.23%  github.com/valyala/fasthttp.(*workerPool).workerFunc
+         0     0%     0%     4.05MB 28.48%  runtime.main
+         0     0%     0%     3.05MB 21.45%  runtime.doInit (inline)
+         0     0%     0%     3.05MB 21.45%  runtime.doInit1
+    2.50MB 17.61% 17.61%     2.50MB 17.61%  runtime.mallocgc
+         0     0% 17.61%     2.50MB 17.61%  runtime.newobject
+         0     0% 17.61%     2.50MB 17.59%  github.com/gofiber/fiber/v2.(*App).handler
+         0     0% 17.61%        2MB 14.09%  runtime.allocm
+         0     0% 17.61%        2MB 14.09%  runtime.mstart
+         0     0% 17.61%        2MB 14.09%  runtime.mstart0
+         0     0% 17.61%        2MB 14.09%  runtime.mstart1
+         0     0% 17.61%        2MB 14.09%  runtime.newm
+         0     0% 17.61%        2MB 14.09%  runtime.resetspinning
+         0     0% 17.61%        2MB 14.09%  runtime.schedule
+         0     0% 17.61%        2MB 14.09%  runtime.startm
+         0     0% 17.61%        2MB 14.09%  runtime.wakep
+         0     0% 17.61%        2MB 14.07%  sync.(*Pool).Get
+         0     0% 17.61%        2MB 14.07%  github.com/gofiber/fiber/v2.(*App).next

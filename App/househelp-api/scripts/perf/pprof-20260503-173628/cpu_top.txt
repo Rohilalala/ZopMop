@@ -1,0 +1,28 @@
+File: api
+Type: cpu
+Time: 2026-05-03 17:36:28 IST
+Duration: 30.17s, Total samples = 17.34s (57.47%)
+Showing nodes accounting for 8.89s, 51.27% of 17.34s total
+Dropped 242 nodes (cum <= 0.09s)
+Showing top 20 nodes out of 123
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      8.89s 51.27%  syscall.syscall
+         0     0%     0%      8.89s 51.27%  syscall.syscalln
+     8.87s 51.15% 51.15%      8.87s 51.15%  syscall.rawsyscalln
+         0     0% 51.15%      7.34s 42.33%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 51.15%      7.33s 42.27%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0% 51.15%      7.17s 41.35%  main.main.RequestLogger.func11
+         0     0% 51.15%      7.17s 41.35%  main.main.Timeout.func10.1
+         0     0% 51.15%      6.77s 39.04%  runtime.mcall
+         0     0% 51.15%      6.76s 38.99%  runtime.park_m
+         0     0% 51.15%      6.75s 38.93%  runtime.schedule
+     0.01s 0.058% 51.21%      6.55s 37.77%  runtime.findRunnable
+         0     0% 51.21%      5.60s 32.30%  github.com/gofiber/fiber/v2.(*App).next
+         0     0% 51.21%      5.43s 31.31%  github.com/gofiber/fiber/v2/middleware/compress.New.func3
+         0     0% 51.21%      5.43s 31.31%  main.main.RateLimiter.NamedRateLimiter.func20
+         0     0% 51.21%      5.28s 30.45%  github.com/redis/go-redis/v9.(*Client).Process
+     0.01s 0.058% 51.27%      5.28s 30.45%  github.com/redis/go-redis/v9.(*hooksMixin).processHook (inline)
+         0     0% 51.27%      5.27s 30.39%  github.com/redis/go-redis/v9.(*baseClient)._process
+         0     0% 51.27%      5.27s 30.39%  github.com/redis/go-redis/v9.(*baseClient).process
+         0     0% 51.27%      5.27s 30.39%  github.com/redis/go-redis/v9.(*baseClient).withConn
+         0     0% 51.27%      4.54s 26.18%  internal/poll.(*FD).Write

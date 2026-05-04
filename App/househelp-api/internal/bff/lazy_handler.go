@@ -38,7 +38,7 @@ func (h *Handler) GetSection(c *fiber.Ctx) error {
 		})
 	}
 
-	ctx := c.Context()
+	ctx := c.UserContext()
 	data, nextCursor, hasMore, err := h.LazyFetcher(ctx, pageID, sectionID, cursor, limit, rc)
 	if err != nil {
 		LogLazySectionFailed(pageID, sectionID, err)

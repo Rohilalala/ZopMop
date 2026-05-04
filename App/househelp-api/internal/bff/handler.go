@@ -85,7 +85,7 @@ func (h *Handler) GetPage(c *fiber.Ctx) error {
 	}
 	rc.Env = env
 
-	ctx := c.Context()
+	ctx := c.UserContext()
 
 	// 1. Page kill switch.
 	if h.rdb != nil {

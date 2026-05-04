@@ -20,26 +20,29 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-const userSelectFields = `id, phone, name, role, is_suspended, created_at, updated_at`
+const userSelectFields = `id, phone, name, role, is_suspended, has_accepted_privacy_policy, created_at, updated_at`
 
 func scanUser(row pgx.Row, user *User) error {
 	return row.Scan(
 		&user.ID, &user.Phone, &user.Name,
-		&user.Role, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt,
+		&user.Role, &user.IsSuspended, &user.HasAcceptedPrivacyPolicy,
+		&user.CreatedAt, &user.UpdatedAt,
 	)
 }
 
-// CreateUser inserts a new user and returns the created user.
-func (r *Repository) CreateUser(ctx context.Context, phone, role string) (*User, error) {
+// CreateUser inserts a new user and returns the created user. When
+// hasAcceptedPrivacyPolicy is true the privacy_policy_accepted_at timestamp
+// is stamped in the same insert.
+func (r *Repository) CreateUser(ctx context.Context, phone, role string, hasAcceptedPrivacyPolicy bool) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	user := &User{}
 	err := scanUser(r.db.QueryRow(queryCtx,
-		`INSERT INTO users (phone, role)
-		 VALUES ($1, $2)
+		`INSERT INTO users (phone, role, has_accepted_privacy_policy, privacy_policy_accepted_at)
+		 VALUES ($1, $2, $3, CASE WHEN $3 THEN now() ELSE NULL END)
 		 RETURNING `+userSelectFields,
-		phone, role,
+		phone, role, hasAcceptedPrivacyPolicy,
 	), user)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
@@ -47,6 +50,26 @@ func (r *Repository) CreateUser(ctx context.Context, phone, role string) (*User,
 
 	log.Info().Str("user_id", user.ID).Str("role", role).Msg("user created")
 	return user, nil
+}
+
+// MarkPrivacyAccepted flips has_accepted_privacy_policy on an existing user.
+// Idempotent: re-acceptance does not overwrite an earlier privacy_policy_accepted_at.
+func (r *Repository) MarkPrivacyAccepted(ctx context.Context, userID string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := r.db.Exec(queryCtx,
+		`UPDATE users
+		    SET has_accepted_privacy_policy = TRUE,
+		        privacy_policy_accepted_at  = COALESCE(privacy_policy_accepted_at, now()),
+		        updated_at                  = now()
+		  WHERE id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to mark privacy accepted: %w", err)
+	}
+	return nil
 }
 
 // GetUserByPhone retrieves a user by phone number. Returns nil, nil if not found.
@@ -189,6 +212,23 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 	}
 	defer tx.Rollback(queryCtx)
 
+	// Block deletion while the user (as helper) holds any in-flight booking.
+	// Customers can still hold pending bookings — we only guard helper_id
+	// here because customer cancellation has its own flow.
+	var hasActive bool
+	if err := tx.QueryRow(queryCtx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bookings
+			WHERE helper_id = $1
+			  AND status IN ('pending', 'accepted', 'in_progress')
+		)
+	`, userID).Scan(&hasActive); err != nil {
+		return fmt.Errorf("failed to check active bookings: %w", err)
+	}
+	if hasActive {
+		return ErrActiveBooking
+	}
+
 	// Anonymise phone to free it for re-registration while keeping UNIQUE.
 	res, err := tx.Exec(queryCtx,
 		`UPDATE users
@@ -224,12 +264,23 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 	return nil
 }
 
-// UpdateFCMToken updates the FCM token for a user.
+// UpdateFCMToken updates the legacy users.fcm_token column AND mirrors the
+// write into device_tokens via a synthesized device_id ("legacy:<userID>").
+// The mirror keeps push delivery working through the new TokenResolver path
+// even when the client is an older app build that still calls PUT /me/fcm-token.
 func (r *Repository) UpdateFCMToken(ctx context.Context, userID, token string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	res, err := r.db.Exec(queryCtx,
+	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	// Legacy column write — kept so any code still SELECTing fcm_token from
+	// users keeps working until that column is fully retired.
+	res, err := tx.Exec(queryCtx,
 		`UPDATE users SET fcm_token = $1, updated_at = now() WHERE id = $2`,
 		token, userID,
 	)
@@ -238,6 +289,84 @@ func (r *Repository) UpdateFCMToken(ctx context.Context, userID, token string) e
 	}
 	if res.RowsAffected() == 0 {
 		return fmt.Errorf("user not found or token unchanged")
+	}
+
+	// Look up role so the new device_tokens row lands on the correct column
+	// (user_id for customers, worker_id for pros). Falls back to user_id when
+	// the role is anything else; broadcasts default to user-side targeting.
+	var role string
+	if err := tx.QueryRow(queryCtx, `SELECT role FROM users WHERE id = $1`, userID).Scan(&role); err != nil {
+		return fmt.Errorf("failed to load user role: %w", err)
+	}
+
+	if err := upsertDeviceTokenTx(queryCtx, tx, userID, role, token, "android", "legacy:"+userID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit tx: %w", err)
+	}
+	return nil
+}
+
+// RegisterDevice upserts a (device_id, platform) row in device_tokens. The
+// caller's role decides whether the row sits under user_id or worker_id
+// — never both, per the table CHECK constraint.
+func (r *Repository) RegisterDevice(ctx context.Context, accountID, role, fcmToken, platform, deviceID string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	if err := upsertDeviceTokenTx(queryCtx, tx, accountID, role, fcmToken, platform, deviceID); err != nil {
+		return err
+	}
+
+	// Mirror back into the legacy users.fcm_token so any code still reading
+	// that column keeps working during the transition. Best-effort — a
+	// missing user row is unlikely (we just authenticated them) but should
+	// not fail the registration.
+	if _, err := tx.Exec(queryCtx,
+		`UPDATE users SET fcm_token = $1, updated_at = now() WHERE id = $2`,
+		fcmToken, accountID,
+	); err != nil {
+		return fmt.Errorf("failed to mirror legacy fcm_token: %w", err)
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit tx: %w", err)
+	}
+	return nil
+}
+
+// upsertDeviceTokenTx performs the device_tokens upsert inside the supplied
+// pgx.Tx. ON CONFLICT (device_id, platform) DO UPDATE handles the
+// "device changed hands" case — both owner columns are rewritten so the
+// previous owner is detached cleanly.
+func upsertDeviceTokenTx(ctx context.Context, tx pgx.Tx, accountID, role, fcmToken, platform, deviceID string) error {
+	var userID, workerID any
+	if role == "pro" {
+		workerID = accountID
+		userID = nil
+	} else {
+		userID = accountID
+		workerID = nil
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO device_tokens (user_id, worker_id, fcm_token, platform, device_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (device_id, platform) DO UPDATE SET
+			user_id    = EXCLUDED.user_id,
+			worker_id  = EXCLUDED.worker_id,
+			fcm_token  = EXCLUDED.fcm_token,
+			updated_at = now()
+	`, userID, workerID, fcmToken, platform, deviceID)
+	if err != nil {
+		return fmt.Errorf("failed to upsert device token: %w", err)
 	}
 	return nil
 }

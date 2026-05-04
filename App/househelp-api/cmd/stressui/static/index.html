@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Zopmop Stress Test Dashboard</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #131b2e;
+    --panel-2: #1a2440;
+    --border: #1e2b4a;
+    --text: #e6ecff;
+    --muted: #8a98be;
+    --accent: #4f8cff;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --err: #ef4444;
+    --info: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  header {
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(180deg, #0e1730, var(--bg));
+  }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 0.4px; }
+  header .meta { font-size: 12px; color: var(--muted); }
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 18px;
+    padding: 20px 24px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  section.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  section.panel h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button.action {
+    appearance: none;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: 0.12s;
+  }
+  button.action:hover { background: #223160; }
+  button.action.primary { background: var(--accent); border-color: var(--accent); }
+  button.action.danger { background: #5b1f1f; border-color: #6c2828; }
+  button.action.danger:hover { background: #762a2a; }
+  button.action[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+  #log {
+    background: #060a17;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    height: 480px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-line { display: block; }
+  .log-line.system { color: var(--info); }
+  .log-line.stderr { color: var(--warn); }
+  .log-line.stdout { color: var(--text); }
+
+  .status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .status-pill.running { background: #1a3260; color: #9ec3ff; }
+  .status-pill.done { background: #163b29; color: #6cf09a; }
+  .status-pill.error { background: #4a1c1c; color: #ff8e8e; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    border-bottom: 1px solid var(--border);
+    padding: 7px 8px;
+    text-align: left;
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .check.ok td:first-child::before { content: "✓ "; color: var(--ok); font-weight: bold; }
+  .check.fail td:first-child::before { content: "✗ "; color: var(--err); font-weight: bold; }
+  .summary-line { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .kpi {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .kpi .label { font-size: 11px; color: var(--muted); }
+  .kpi .value { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .kpi .value.ok { color: var(--ok); }
+  .kpi .value.warn { color: var(--warn); }
+  .kpi .value.err { color: var(--err); }
+
+  details > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0; }
+  pre.json {
+    background: #060a17;
+    color: #cfd8ff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    max-height: 320px;
+    overflow: auto;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zopmop Stress Test Dashboard</h1>
+  <div class="meta">
+    <span id="env-meta">env loading…</span>
+  </div>
+</header>
+<main>
+  <section class="panel" style="display: flex; flex-direction: column; gap: 14px;">
+    <div>
+      <h2>Run actions</h2>
+      <div class="row">
+        <button class="action primary" data-action="seed">1. Seed</button>
+        <button class="action primary" data-action="k6">2. Run k6</button>
+        <button class="action primary" data-action="verify">3. Verify</button>
+        <button class="action" data-action="cleanup_dry_run">Cleanup dry-run</button>
+        <button class="action danger" data-action="cleanup">Cleanup (--confirm)</button>
+        <button class="action" id="btn-all">Run all (seed → k6 → verify)</button>
+      </div>
+    </div>
+    <div>
+      <h2>Current job</h2>
+      <div id="current-job" class="summary-line">no job started yet.</div>
+      <div class="row" style="margin-top: 8px;">
+        <button class="action" id="btn-stop" disabled>Stop running job</button>
+        <button class="action" id="btn-refresh">Refresh reports</button>
+      </div>
+    </div>
+    <div>
+      <h2>Recent jobs</h2>
+      <table id="jobs-table">
+        <thead><tr><th>Action</th><th>Status</th><th>Exit</th><th>Started</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 18px;">
+    <section class="panel">
+      <h2>Live log</h2>
+      <div id="log"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Latest verify report</h2>
+      <div id="verify-summary" class="summary-line">no report yet.</div>
+      <table id="verify-table">
+        <thead><tr><th>Check</th><th>OK</th><th>Got</th><th>Want</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <details><summary>raw JSON</summary><pre class="json" id="verify-raw"></pre></details>
+    </section>
+
+    <section class="panel">
+      <h2>Latest k6 summary</h2>
+      <div id="k6-summary-meta" class="summary-line">no summary yet.</div>
+      <div class="kpi-grid" id="k6-kpis"></div>
+      <details><summary>thresholds</summary>
+        <table id="k6-thresholds">
+          <thead><tr><th>Metric</th><th>Threshold</th><th>OK</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </details>
+      <details><summary>raw JSON</summary><pre class="json" id="k6-raw"></pre></details>
+    </section>
+  </section>
+</main>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const logEl = $('#log');
+const currentJobEl = $('#current-job');
+const stopBtn = $('#btn-stop');
+
+let activeJobID = null;
+let activeES = null;
+
+function setHealth() {
+  fetch('/api/health').then(r => r.json()).then(d => {
+    $('#env-meta').textContent = `dashboard alive · ${new Date(d.ts).toLocaleTimeString()}`;
+  }).catch(() => { $('#env-meta').textContent = 'dashboard offline'; });
+}
+setHealth();
+setInterval(setHealth, 15000);
+
+function appendLog(entry) {
+  const span = document.createElement('span');
+  span.className = `log-line ${entry.stream || 'stdout'}`;
+  const ts = new Date(entry.ts).toLocaleTimeString();
+  span.textContent = `[${ts}] ${entry.line}\n`;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearLog() { logEl.innerHTML = ''; }
+
+function describeJob(j) {
+  if (!j) return 'no job started yet.';
+  const exit = j.exit_code !== undefined ? `exit ${j.exit_code}` : '';
+  return `<span class="status-pill ${j.status}">${j.status}</span> <strong>${j.action}</strong> · id ${j.id} · ${exit}`;
+}
+
+function updateButtons(running) {
+  $$('button.action[data-action]').forEach(b => b.disabled = !!running);
+  $('#btn-all').disabled = !!running;
+  stopBtn.disabled = !running;
+}
+
+async function startAction(action, extra = {}) {
+  clearLog();
+  updateButtons(true);
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...extra }),
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      appendLog({ stream: 'system', line: `error: ${text}`, ts: new Date().toISOString() });
+      updateButtons(false);
+      return null;
+    }
+    const job = await r.json();
+    activeJobID = job.id;
+    currentJobEl.innerHTML = describeJob(job);
+    subscribe(job.id);
+    refreshJobs();
+    return job;
+  } catch (e) {
+    appendLog({ stream: 'system', line: `request failed: ${e}`, ts: new Date().toISOString() });
+    updateButtons(false);
+    return null;
+  }
+}
+
+function subscribe(id) {
+  if (activeES) activeES.close();
+  const es = new EventSource(`/api/jobs/${id}/stream`);
+  activeES = es;
+  es.addEventListener('log', (ev) => appendLog(JSON.parse(ev.data)));
+  es.addEventListener('end', (ev) => {
+    const job = JSON.parse(ev.data);
+    currentJobEl.innerHTML = describeJob(job);
+    es.close();
+    activeES = null;
+    activeJobID = null;
+    updateButtons(false);
+    refreshJobs();
+    refreshReports();
+  });
+  es.onerror = () => {
+    appendLog({ stream: 'system', line: 'log stream closed', ts: new Date().toISOString() });
+    es.close();
+    activeES = null;
+    updateButtons(false);
+  };
+}
+
+async function refreshJobs() {
+  const r = await fetch('/api/jobs');
+  const jobs = await r.json();
+  const tbody = $('#jobs-table tbody');
+  tbody.innerHTML = '';
+  for (const j of jobs.slice(0, 8)) {
+    const tr = document.createElement('tr');
+    const exit = j.exit_code !== undefined ? j.exit_code : '';
+    tr.innerHTML = `<td>${j.action}</td>
+      <td><span class="status-pill ${j.status}">${j.status}</span></td>
+      <td class="num">${exit}</td>
+      <td>${new Date(j.started_at).toLocaleTimeString()}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshReports() {
+  await Promise.all([refreshVerify(), refreshK6()]);
+}
+
+async function refreshVerify() {
+  const r = await fetch('/api/report');
+  const d = await r.json();
+  const sumEl = $('#verify-summary');
+  const tbody = $('#verify-table tbody');
+  const raw = $('#verify-raw');
+  tbody.innerHTML = '';
+  if (!d.available) {
+    sumEl.textContent = 'no report yet.';
+    raw.textContent = '';
+    return;
+  }
+  const rep = d.report;
+  const s = rep.summary || {};
+  const failClass = s.failed > 0 ? 'err' : 'ok';
+  sumEl.innerHTML = `<strong>${d.path}</strong> · <span class="value ${failClass}">${s.passed}/${s.total} pass</span> · ${new Date(rep.started_at).toLocaleString()}`;
+  for (const c of (rep.checks || [])) {
+    const tr = document.createElement('tr');
+    tr.className = `check ${c.ok ? 'ok' : 'fail'}`;
+    const got = typeof c.got === 'object' ? JSON.stringify(c.got) : String(c.got);
+    const want = c.want === undefined ? '' : (typeof c.want === 'object' ? JSON.stringify(c.want) : String(c.want));
+    tr.innerHTML = `<td>${c.name}</td><td>${c.ok ? '✓' : '✗'}</td><td class="num">${got}</td><td class="num">${want}</td>`;
+    tbody.appendChild(tr);
+  }
+  raw.textContent = JSON.stringify(rep, null, 2);
+}
+
+async function refreshK6() {
+  const r = await fetch('/api/summary');
+  const d = await r.json();
+  const meta = $('#k6-summary-meta');
+  const kpiEl = $('#k6-kpis');
+  const thrTbody = $('#k6-thresholds tbody');
+  const raw = $('#k6-raw');
+  kpiEl.innerHTML = '';
+  thrTbody.innerHTML = '';
+  if (!d.available) {
+    meta.textContent = 'no summary yet.';
+    raw.textContent = '';
+    return;
+  }
+  meta.innerHTML = `<strong>${d.path}</strong>`;
+  const s = d.summary || {};
+  raw.textContent = JSON.stringify(s, null, 2);
+
+  const metrics = s.metrics || {};
+  const kpis = [
+    ['http_reqs (count)',   pick(metrics, ['http_reqs', 'count'])],
+    ['rps',                 pick(metrics, ['http_reqs', 'rate'], 1)],
+    ['http_req_failed %',   pct(pick(metrics, ['http_req_failed', 'value'], 0))],
+    ['p95 http_req_duration ms', pick(metrics, ['http_req_duration', 'p(95)'], 1)],
+    ['errors_5xx',          pick(metrics, ['errors_5xx', 'count'])],
+    ['booking_create_2xx %', pct(pick(metrics, ['booking_create_2xx', 'value'], 0))],
+    ['dedup 409',           pick(metrics, ['dedup_conflicts_409', 'count'])],
+    ['idem retries',        pick(metrics, ['idempotent_retries', 'count'])],
+  ];
+  for (const [label, value] of kpis) {
+    const div = document.createElement('div');
+    div.className = 'kpi';
+    div.innerHTML = `<div class="label">${label}</div><div class="value">${value === undefined || value === null || Number.isNaN(value) ? '—' : value}</div>`;
+    kpiEl.appendChild(div);
+  }
+
+  // Thresholds — k6 nests them per metric.
+  for (const [metricName, m] of Object.entries(metrics)) {
+    if (!m || !m.thresholds) continue;
+    for (const [thr, info] of Object.entries(m.thresholds)) {
+      const ok = info.ok !== undefined ? info.ok : !info.fails;
+      const tr = document.createElement('tr');
+      tr.className = `check ${ok ? 'ok' : 'fail'}`;
+      tr.innerHTML = `<td>${metricName}</td><td>${thr}</td><td>${ok ? '✓' : '✗'}</td>`;
+      thrTbody.appendChild(tr);
+    }
+  }
+}
+
+function pick(metrics, path, decimals) {
+  let cur = metrics;
+  for (const p of path) {
+    if (cur == null) return undefined;
+    cur = cur[p];
+  }
+  if (typeof cur === 'number' && decimals !== undefined) return cur.toFixed(decimals);
+  return cur;
+}
+function pct(v) {
+  if (v === undefined || v === null) return undefined;
+  return (Number(v) * 100).toFixed(2) + '%';
+}
+
+// ── wire buttons ─────────────────────────────────────────────────────────
+$$('button.action[data-action]').forEach((b) => {
+  b.addEventListener('click', async () => {
+    const action = b.dataset.action;
+    if (action === 'cleanup') {
+      if (!confirm('This will permanently delete every stress_ user/helper/booking and Redis state. Continue?')) return;
+      await startAction('cleanup', { confirm: true });
+    } else {
+      await startAction(action);
+    }
+  });
+});
+
+$('#btn-stop').addEventListener('click', async () => {
+  if (!activeJobID) return;
+  await fetch(`/api/jobs/${activeJobID}/stop`, { method: 'POST' });
+});
+$('#btn-refresh').addEventListener('click', refreshReports);
+
+// Sequential "run all" — chains seed → k6 → verify, stops on error.
+$('#btn-all').addEventListener('click', async () => {
+  for (const action of ['seed', 'k6', 'verify']) {
+    const job = await startAction(action);
+    if (!job) return;
+    const exit = await waitForExit(job.id);
+    if (exit !== 0 && action !== 'k6') {
+      // k6 may exit non-zero on threshold breach; verify still useful.
+      appendLog({ stream: 'system', line: `${action} failed (exit ${exit}) — stopping chain`, ts: new Date().toISOString() });
+      return;
+    }
+  }
+});
+
+async function waitForExit(id) {
+  return new Promise((resolve) => {
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${id}`);
+        const j = await r.json();
+        if (j.status === 'done' || j.status === 'error') { resolve(j.exit_code); return; }
+      } catch (e) {}
+      setTimeout(tick, 1000);
+    };
+    tick();
+  });
+}
+
+refreshJobs();
+refreshReports();
+</script>
+</body>
+</html>

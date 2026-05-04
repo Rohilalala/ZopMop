@@ -49,6 +49,19 @@ func (s *Service) UpdateHelperLocation(ctx context.Context, helperID string, lat
 	return nil
 }
 
+// RemoveHelperLocation removes the helper from the geo set and clears the
+// active marker. Called when a helper goes offline so the matching engine
+// stops considering them, even if a stale GEO entry was present.
+func (s *Service) RemoveHelperLocation(ctx context.Context, helperID string) error {
+	pipe := s.rdb.Pipeline()
+	pipe.ZRem(ctx, helpersLocationKey, helperID)
+	pipe.Del(ctx, fmt.Sprintf("helper:active:%s", helperID))
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("failed to remove helper location: %w", err)
+	}
+	return nil
+}
+
 // GetHelperLocation retrieves a helper's current location from Redis.
 func (s *Service) GetHelperLocation(ctx context.Context, helperID string) (*LocationResponse, error) {
 	positions, err := s.rdb.GeoPos(ctx, helpersLocationKey, helperID).Result()

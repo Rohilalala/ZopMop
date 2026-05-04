@@ -1,0 +1,26 @@
+File: api
+Type: inuse_space
+Time: 2026-05-03 17:17:08 IST
+Showing nodes accounting for 25.55MB, 75.76% of 33.72MB total
+Showing top 20 nodes out of 96
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%    27.55MB 81.69%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0%     0%    25.55MB 75.76%  github.com/gofiber/fiber/v2.(*App).next
+         0     0%     0%    25.05MB 74.28%  github.com/gofiber/fiber/v2.(*App).handler
+   14.05MB 41.66% 41.66%    25.05MB 74.28%  github.com/gofiber/fiber/v2/internal/memory.(*Storage).Set
+         0     0% 41.66%    25.05MB 74.28%  github.com/gofiber/fiber/v2/middleware/cors.New.func1
+         0     0% 41.66%    25.05MB 74.28%  github.com/gofiber/fiber/v2/middleware/csrf.(*storageManager).setRaw
+         0     0% 41.66%    25.05MB 74.28%  github.com/gofiber/fiber/v2/middleware/csrf.New.func1
+         0     0% 41.66%    25.05MB 74.28%  github.com/gofiber/fiber/v2/middleware/csrf.createOrExtendTokenInStorage
+         0     0% 41.66%    25.05MB 74.28%  github.com/gofiber/helmet/v2.New.func1
+         0     0% 41.66%    25.05MB 74.28%  github.com/valyala/fasthttp.(*Server).serveConn
+         0     0% 41.66%    25.05MB 74.28%  github.com/valyala/fasthttp.(*workerPool).getCh.func1
+         0     0% 41.66%    25.05MB 74.28%  github.com/valyala/fasthttp.(*workerPool).workerFunc
+         0     0% 41.66%    25.05MB 74.28%  main.main.RequestID.New.func19
+    9.50MB 28.17% 69.83%     9.50MB 28.17%  github.com/gofiber/fiber/v2/utils.CopyString (inline)
+         0     0% 69.83%     2.51MB  7.45%  runtime.main
+         0     0% 69.83%     2.50MB  7.41%  main.main.RequestLogger.func11
+         0     0% 69.83%     2.50MB  7.41%  main.main.Timeout.func10.1
+         0     0% 69.83%     2.01MB  5.97%  runtime.doInit (inline)
+         0     0% 69.83%     2.01MB  5.97%  runtime.doInit1
+       2MB  5.93% 75.76%        2MB  5.93%  fmt.Sprintf

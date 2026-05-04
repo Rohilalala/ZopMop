@@ -18,18 +18,14 @@ import Animated, {
   Easing,
   type SharedValue,
 } from 'react-native-reanimated';
-import { Feather } from '@expo/vector-icons';
-import { PressFx } from '../ui/PressFx';
 import { GlassCard } from './GlassCard';
 import { ZopFlyer } from './ZopFlyer';
 
-const fontMed: TextStyle  = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 type Props = {
   name?: string;
-  onSearchPress?: () => void;
   /** Egg translate X in px. */
   eggTranslateX?: SharedValue<number>;
   /** Egg translate Y in px. Added to the idle bob. */
@@ -56,9 +52,22 @@ function greetingFor(name?: string) {
   return `Good night${tail}`;
 }
 
+// Two-line hero headline that flexes with the time of day. Each variant is
+// two short, declarative statements split across the lines — matches the
+// confident cadence of "Home, handled." without leaning on the same phrase.
+// Service hours wrap by 8pm, so late/early slots route to "book for tomorrow"
+// framing instead of implying we're actively dispatching pros.
+function headlineFor(): string {
+  const hr = new Date().getHours();
+  if (hr < 5)  return `Off hours.\nCatch us tomorrow.`;
+  if (hr < 12) return `Day starts.\nChores don't.`;
+  if (hr < 17) return `Home,\nhandled.`;
+  if (hr < 20) return `Day done.\nHouse too.`;
+  return `That's a wrap.\nBook ahead.`;
+}
+
 export function HomeHero({
   name,
-  onSearchPress,
   eggTranslateX,
   eggTranslateY,
   eggScale,
@@ -68,6 +77,7 @@ export function HomeHero({
   showFace = true,
 }: Props) {
   const kicker = useMemo(() => greetingFor(name), [name]);
+  const headline = useMemo(() => headlineFor(), []);
 
   // Idle bob — always running.
   const float = useSharedValue(0);
@@ -159,33 +169,8 @@ export function HomeHero({
             },
           ]}
         >
-          Home,{'\n'}handled.
+          {headline}
         </Text>
-
-        {/* search bar */}
-        <PressFx
-          onPress={onSearchPress}
-          style={{
-            marginTop: 18,
-            height: 52,
-            borderRadius: 16,
-            paddingHorizontal: 14,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            backgroundColor: 'rgba(0,0,0,0.28)',
-            borderWidth: 0.5,
-            borderColor: 'rgba(255,255,255,0.08)',
-          }}
-        >
-          <Feather name="search" size={16} color="rgba(255,255,255,0.6)" />
-          <Text
-            style={[fontMed, { fontSize: 14, color: 'rgba(255,255,255,0.55)', flex: 1 }]}
-            numberOfLines={1}
-          >
-            Search cleaning, laundry, repairs…
-          </Text>
-        </PressFx>
       </GlassCard>
     </View>
   );

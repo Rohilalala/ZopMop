@@ -46,7 +46,7 @@ func (h *Handler) Nearby(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid coordinates"})
 	}
 
-	stats, err := h.service.NearbyStats(c.Context(), lat, lon)
+	stats, err := h.service.NearbyStats(c.UserContext(), lat, lon)
 	if err != nil {
 		log.Error().Err(err).
 			Float64("lat", roundCoord(lat)).
@@ -70,7 +70,7 @@ func (h *Handler) MyUsuals(c *fiber.Ctx) error {
 		limit = l
 	}
 
-	ids, err := h.service.MyUsuals(c.Context(), userID, limit)
+	ids, err := h.service.MyUsuals(c.UserContext(), userID, limit)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("my usuals failed; returning empty")
 		return c.JSON(fiber.Map{"service_ids": []string{}})

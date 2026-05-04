@@ -8,6 +8,10 @@ export type AuthStackParamList = {
   PhoneEntry: undefined;
   OTPVerification: {
     phone: string;
+    /** From POST /auth/send-otp. When true, OTPVerificationScreen renders the
+     *  Terms / Privacy Policy checkbox and disables the verify button until
+     *  it's ticked. Returning users skip the checkbox entirely. */
+    isNewUser?: boolean;
   };
   // Security: backendToken and backendUser have been removed from nav params.
   // They are stored in pendingAuthStore (in-memory only) to prevent serialization
@@ -28,6 +32,11 @@ export type AuthStackParamList = {
 };
 
 export type MainStackParamList = {
+  // The four bottom-bar destinations live inside a nested bottom-tabs
+  // navigator (`TabsNavigator`). React Navigation resolves these by name
+  // across nesting levels, so existing `navigation.navigate('Home')` etc.
+  // still work — they jump the active tab inside `Tabs`.
+  Tabs: { screen?: 'Home' | 'AllServices' | 'Bookings' | 'Profile' } | undefined;
   Home: undefined;
   Bookings: undefined;
   Profile: undefined;
@@ -37,8 +46,11 @@ export type MainStackParamList = {
   Cart: { selectedAddressId?: string } | undefined;
   Wallet: undefined;
   Payment: undefined;
+  PaymentMethods: undefined;
   Offers: undefined;
   HelpSupport: undefined;
+  YourExperts: undefined;
+  BookingRate: { bookingId: string; helperId?: string; helperName?: string };
   InstantMatching: { serviceId: string; serviceName: string };
   ActiveBooking: {
     bookingId: string;
@@ -50,6 +62,9 @@ export type MainStackParamList = {
     etaMinutes: number;
   };
   ProDashboard: undefined;
+  ProProfile: undefined;
+  ProDeclareLeave: undefined;
+  ProLeaveHistory: undefined;
   ProMatched: {
     bookingId: string;
     serviceName?: string;
@@ -64,6 +79,14 @@ export type MainStackParamList = {
     customerAddress: string;
     customerLat: number;
     customerLng: number;
+  };
+  ProScheduledInvite: {
+    bookingId: string;
+    scheduledTime: string; // RFC3339
+    durationMinutes: number;
+    customerArea: string;
+    services?: { name: string; durationMinutes: number }[];
+    notes?: string;
   };
   RoomiesSetup: undefined;
   RoomiesCodeShare: { groupId: string; code: string; groupName: string };

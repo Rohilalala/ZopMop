@@ -68,9 +68,30 @@ api.interceptors.response.use(
       }
     }
 
+    // RBAC denial — surface a precise message and skip the generic toast.
+    const data = error.response?.data as
+      | { error?: string; required_role?: string; your_role?: string; message?: string }
+      | undefined;
+    if (status === 403 && data?.error === 'insufficient_permissions') {
+      const required = data.required_role ?? 'higher role';
+      const yours = data.your_role ?? 'unknown';
+      showToast({
+        kind: 'error',
+        message: `Insufficient permissions. Requires ${required}; you are ${yours}.`,
+      });
+      return Promise.reject(error);
+    }
+
+    // Gateway/upstream errors (5xx with a `message` payload) — let callers
+    // render a domain-specific toast (e.g. "Gateway refund failed: …"), so
+    // skip the generic one. Detected by the `gateway_error` discriminator.
+    if (status && status >= 500 && data?.error === 'gateway_error') {
+      return Promise.reject(error);
+    }
+
     // Surface non-401 errors as toasts. 401s are silent (handled above).
     if (status && status !== 401) {
-      const msg = (error.response?.data as { error?: string } | undefined)?.error;
+      const msg = data?.message ?? data?.error;
       showToast({ kind: 'error', message: msg ?? `Request failed (${status})` });
     }
 

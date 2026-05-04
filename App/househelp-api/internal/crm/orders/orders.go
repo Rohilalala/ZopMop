@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +17,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
 var ErrNotFound = errors.New("order not found")
@@ -62,15 +68,48 @@ type CancelRequest struct {
 	Reason string `json:"reason" validate:"required,min=2,max=500"`
 }
 
+// ReassignRequest is the body of POST /orders/:id/reassign.
+type ReassignRequest struct {
+	NewWorkerID string `json:"new_worker_id" validate:"required"`
+	Reason      string `json:"reason" validate:"required,min=2,max=500"`
+}
+
+// ReassignResult is the post-mutation snapshot returned by Repository.Reassign,
+// used by the handler to fan out audit / notifications / webhook.
+type ReassignResult struct {
+	OldHelperID         string
+	NewHelperID         string
+	CustomerID          string
+	ServiceCategoryName string
+	NewHelperName       string
+}
+
+// AvailableWorker is one row in the GET /orders/:id/available-workers payload.
+type AvailableWorker struct {
+	WorkerID      string   `json:"worker_id"`
+	Name          string   `json:"name"`
+	Rating        float64  `json:"rating"`
+	DistanceKm    float64  `json:"distance_km"`
+	Categories    []string `json:"categories"`
+	CurrentStatus string   `json:"current_status"` // always "online_idle" — they're filtered to that.
+}
+
 // ── Repository ─────────────────────────────────────────────────────────
 
 // Repository wraps DB access for the orders module.
-type Repository struct{ read, write *pgxpool.Pool }
+type Repository struct {
+	read, write *pgxpool.Pool
+	rdb         *redis.Client
+}
 
 // NewRepository constructs a Repository.
 func NewRepository(read, write *pgxpool.Pool) *Repository {
 	return &Repository{read: read, write: write}
 }
+
+// SetRedis wires the Redis client used for GEOSEARCH on helpers:locations.
+// Optional — endpoints that need it return a 503 if unset.
+func (r *Repository) SetRedis(rdb *redis.Client) { r.rdb = rdb }
 
 // List returns a page of orders matching the filter.
 func (r *Repository) List(ctx context.Context, search, status, category, customerID, workerID string, fromTS, toTS *time.Time, minCents, maxCents *int, sortBy, sortDir string, limit, offset int) ([]ListItem, int, error) {
@@ -258,12 +297,241 @@ func (r *Repository) MarkComplete(ctx context.Context, id string) error {
 	return nil
 }
 
+// AvailableWorkersNear returns approved + available + idle helpers within
+// radiusKm of the order's lat/lng who offer the order's category. Distance
+// comes from Redis GEOSEARCH on helpers:locations; Postgres enriches name /
+// rating / categories and applies the eligibility filter.
+func (r *Repository) AvailableWorkersNear(ctx context.Context, orderID string, radiusKm float64) ([]AvailableWorker, error) {
+	if r.rdb == nil {
+		return nil, errors.New("redis not configured")
+	}
+	// 1. Load order context.
+	var (
+		currentHelperID *string
+		categoryID      string
+		lat, lng        float64
+		status          string
+	)
+	err := r.read.QueryRow(ctx, `
+		SELECT helper_id::text, service_category_id::text, lat::float8, lng::float8, status
+		FROM bookings WHERE id = $1::uuid
+	`, orderID).Scan(&currentHelperID, &categoryID, &lat, &lng, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load order for available-workers: %w", err)
+	}
+	if status == "completed" || status == "cancelled" {
+		return nil, fmt.Errorf("order is %s — cannot list reassign candidates", status)
+	}
+
+	// 2. Redis GEOSEARCH for nearby helpers (mirror internal/matching/engine.go).
+	geoResults, err := r.rdb.GeoSearchLocation(ctx, "helpers:locations",
+		&redis.GeoSearchLocationQuery{
+			GeoSearchQuery: redis.GeoSearchQuery{
+				Longitude:  lng,
+				Latitude:   lat,
+				Radius:     radiusKm,
+				RadiusUnit: "km",
+				Sort:       "ASC",
+				Count:      100,
+			},
+			WithDist: true,
+		},
+	).Result()
+	if err != nil {
+		return nil, fmt.Errorf("geo search: %w", err)
+	}
+	if len(geoResults) == 0 {
+		return []AvailableWorker{}, nil
+	}
+
+	helperIDs := make([]string, 0, len(geoResults))
+	distByID := make(map[string]float64, len(geoResults))
+	for _, g := range geoResults {
+		helperIDs = append(helperIDs, g.Name)
+		distByID[g.Name] = g.Dist
+	}
+
+	// 3. Postgres enrich + filter. We resolve the category NAME so the services
+	// TEXT[] ANY-match works (services stores category names, not IDs).
+	var categoryName string
+	if err := r.read.QueryRow(ctx, `SELECT name FROM service_categories WHERE id = $1::uuid`, categoryID).Scan(&categoryName); err != nil {
+		return nil, fmt.Errorf("load category name: %w", err)
+	}
+
+	currentID := ""
+	if currentHelperID != nil {
+		currentID = *currentHelperID
+	}
+
+	rows, err := r.read.Query(ctx, `
+		SELECT h.id::text, COALESCE(u.name, '—'), COALESCE(h.rating, 5.0), h.services
+		FROM helpers h
+		JOIN users u ON u.id = h.id
+		WHERE h.id = ANY($1::uuid[])
+		  AND h.is_available = true
+		  AND h.approval_status = 'approved'
+		  AND $2 = ANY(h.services)
+		  AND ($3 = '' OR h.id != $3::uuid)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM bookings b
+		    WHERE b.helper_id = h.id AND b.status IN ('accepted','in_progress')
+		  )
+	`, helperIDs, categoryName, currentID)
+	if err != nil {
+		return nil, fmt.Errorf("enrich available workers: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]AvailableWorker, 0, len(geoResults))
+	for rows.Next() {
+		var (
+			id, name string
+			rating   float64
+			services []string
+		)
+		if err := rows.Scan(&id, &name, &rating, &services); err != nil {
+			return nil, fmt.Errorf("scan available worker: %w", err)
+		}
+		out = append(out, AvailableWorker{
+			WorkerID:      id,
+			Name:          name,
+			Rating:        rating,
+			DistanceKm:    distByID[id],
+			Categories:    services,
+			CurrentStatus: "online_idle",
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].DistanceKm < out[j].DistanceKm })
+	return out, nil
+}
+
+// Reassign moves an in-flight booking from its current helper to newWorkerID.
+// Validates eligibility inside a single tx with FOR UPDATE on the booking row.
+// Returns the before/after IDs needed by the handler for audit + notifications.
+func (r *Repository) Reassign(ctx context.Context, orderID, newWorkerID, reason, adminEmail string) (*ReassignResult, error) {
+	tx, err := r.write.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Lock + load booking.
+	var (
+		currentHelperID *string
+		customerID      string
+		categoryID      string
+		status          string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT helper_id::text, customer_id::text, service_category_id::text, status
+		FROM bookings WHERE id = $1::uuid FOR UPDATE
+	`, orderID).Scan(&currentHelperID, &customerID, &categoryID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load booking: %w", err)
+	}
+
+	// 2. Status guard — only mid-flight bookings can be reassigned.
+	if status != "accepted" && status != "in_progress" {
+		return nil, fmt.Errorf("order is %s — only accepted/in_progress orders can be reassigned", status)
+	}
+	oldHelperID := ""
+	if currentHelperID != nil {
+		oldHelperID = *currentHelperID
+	}
+	if oldHelperID == newWorkerID {
+		return nil, errors.New("worker is already assigned to this order")
+	}
+
+	// 3. Resolve the category NAME (helpers.services stores names, not IDs).
+	var categoryName string
+	if err := tx.QueryRow(ctx, `SELECT name FROM service_categories WHERE id = $1::uuid`, categoryID).Scan(&categoryName); err != nil {
+		return nil, fmt.Errorf("load category name: %w", err)
+	}
+
+	// 4. Validate the new worker.
+	var (
+		isAvailable    bool
+		approvalStatus string
+		services       []string
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT is_available, approval_status, services FROM helpers WHERE id = $1::uuid
+	`, newWorkerID).Scan(&isAvailable, &approvalStatus, &services)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errors.New("new worker not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load new worker: %w", err)
+	}
+	if approvalStatus != "approved" {
+		return nil, errors.New("new worker is not approved")
+	}
+	if !isAvailable {
+		return nil, errors.New("new worker is not available")
+	}
+	if !slices.Contains(services, categoryName) {
+		return nil, errors.New("new worker does not offer this category")
+	}
+
+	// 5. Idle check — refuse if the new worker is already on another active job.
+	var busy bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bookings WHERE helper_id = $1::uuid AND status IN ('accepted','in_progress')
+		)
+	`, newWorkerID).Scan(&busy); err != nil {
+		return nil, fmt.Errorf("check new worker idle: %w", err)
+	}
+	if busy {
+		return nil, errors.New("new worker is busy with another active booking")
+	}
+
+	// 6. Apply.
+	if _, err := tx.Exec(ctx, `
+		UPDATE bookings SET helper_id = $2::uuid, updated_at = now() WHERE id = $1::uuid
+	`, orderID, newWorkerID); err != nil {
+		return nil, fmt.Errorf("update booking helper: %w", err)
+	}
+
+	// 7. Resolve new helper's display name for the customer notification.
+	var newHelperName string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(name, '') FROM users WHERE id = $1::uuid`, newWorkerID).Scan(&newHelperName); err != nil {
+		newHelperName = ""
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+	_ = reason     // captured by audit log on the handler side
+	_ = adminEmail // captured by audit log on the handler side
+
+	return &ReassignResult{
+		OldHelperID:         oldHelperID,
+		NewHelperID:         newWorkerID,
+		CustomerID:          customerID,
+		ServiceCategoryName: categoryName,
+		NewHelperName:       newHelperName,
+	}, nil
+}
+
 // ── Handler ────────────────────────────────────────────────────────────
 
 // Handler is the HTTP layer.
 type Handler struct {
-	repo     *Repository
-	recorder *audit.Recorder
+	repo       *Repository
+	recorder   *audit.Recorder
+	notif      *notification.Service
+	dispatcher *webhooks.Dispatcher
 }
 
 // NewHandler constructs a Handler.
@@ -271,13 +539,29 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 	return &Handler{repo: repo, recorder: recorder}
 }
 
+// SetRedis forwards the Redis client to the underlying Repository so geo
+// lookups (available-workers) can run. Optional.
+func (h *Handler) SetRedis(rdb *redis.Client) {
+	if h.repo != nil {
+		h.repo.SetRedis(rdb)
+	}
+}
+
+// SetNotification wires the FCM service used for reassign notifications.
+func (h *Handler) SetNotification(n *notification.Service) { h.notif = n }
+
+// SetDispatcher wires the outbound webhook dispatcher.
+func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
+
 // RegisterRoutes mounts /orders/* on the authed group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/orders")
-	g.Get("/",                h.List)
-	g.Get("/:id",             h.Get)
-	g.Post("/:id/cancel",     h.Cancel)
-	g.Post("/:id/complete",   h.Complete)
+	g.Get("/",                       h.List)
+	g.Get("/:id",                    h.Get)
+	g.Get("/:id/available-workers",  h.AvailableWorkers)
+	g.Post("/:id/cancel",            middleware.RequirePermission("orders.cancel"), h.Cancel)
+	g.Post("/:id/complete",          middleware.RequirePermission("orders.complete"), h.Complete)
+	g.Post("/:id/reassign",          middleware.RequirePermission("orders.reassign"), h.Reassign)
 }
 
 // List handles GET /orders.
@@ -309,7 +593,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		}
 	}
 
-	items, total, err := h.repo.List(c.Context(),
+	items, total, err := h.repo.List(c.UserContext(),
 		q("search"), q("status"), q("category"), q("customer_id"), q("worker_id"),
 		fromTS, toTS, minC, maxC, q("sort_by"), q("sort_dir"), limit, offset,
 	)
@@ -322,7 +606,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Get handles GET /orders/:id.
 func (h *Handler) Get(c *fiber.Ctx) error {
-	d, err := h.repo.Get(c.Context(), c.Params("id"))
+	d, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "order not found"})
@@ -340,7 +624,7 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 	}
 	id := c.Params("id")
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	if err := h.repo.Cancel(c.Context(), id, req.Reason, adminEmail); err != nil {
+	if err := h.repo.Cancel(c.UserContext(), id, req.Reason, adminEmail); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "order.cancel", id, nil, req.Reason)
@@ -350,10 +634,92 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 // Complete handles POST /orders/:id/complete (Pro Mode only on the SPA).
 func (h *Handler) Complete(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.MarkComplete(c.Context(), id); err != nil {
+	if err := h.repo.MarkComplete(c.UserContext(), id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "order.complete_manual", id, nil, nil)
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+// AvailableWorkers handles GET /orders/:id/available-workers.
+// No extra permission required — equivalent to viewing the orders detail.
+func (h *Handler) AvailableWorkers(c *fiber.Ctx) error {
+	id := c.Params("id")
+	radiusKm := 10.0
+	const maxRadiusKm = 50.0
+	if v := c.Query("radius_km"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			// Hard cap: clamp to 50km before the DB call so a runaway client
+			// can't widen the geo search arbitrarily.
+			if f > maxRadiusKm {
+				f = maxRadiusKm
+			}
+			radiusKm = f
+		}
+	}
+	workers, err := h.repo.AvailableWorkersNear(c.UserContext(), id, radiusKm)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "order not found"})
+		}
+		log.Error().Err(err).Str("order_id", id).Msg("[crm.orders] available workers failed")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"items": workers, "radius_km": radiusKm})
+}
+
+// Reassign handles POST /orders/:id/reassign.
+func (h *Handler) Reassign(c *fiber.Ctx) error {
+	var req ReassignRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if req.NewWorkerID == "" || strings.TrimSpace(req.Reason) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "new_worker_id and reason are required"})
+	}
+	id := c.Params("id")
+	adminEmail, _ := c.Locals("crmAdminEmail").(string)
+
+	result, err := h.repo.Reassign(c.UserContext(), id, req.NewWorkerID, req.Reason, adminEmail)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "order not found"})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	h.audit(c, "order.reassign", id,
+		map[string]any{"old_helper_id": result.OldHelperID},
+		map[string]any{"new_helper_id": result.NewHelperID, "reason": req.Reason})
+
+	// Best-effort notifications — never fail the request on a notify error.
+	if h.notif != nil {
+		if result.OldHelperID != "" {
+			if err := h.notif.NotifyProBookingUnassigned(c.UserContext(), result.OldHelperID, id); err != nil {
+				log.Warn().Err(err).Str("helper_id", result.OldHelperID).Msg("[crm.orders] notify previous helper failed")
+			}
+		}
+		if err := h.notif.NotifyProBookingReassigned(c.UserContext(), result.NewHelperID, id, result.ServiceCategoryName); err != nil {
+			log.Warn().Err(err).Str("helper_id", result.NewHelperID).Msg("[crm.orders] notify new helper failed")
+		}
+		if result.CustomerID != "" {
+			if err := h.notif.NotifyCustomerWorkerChanged(c.UserContext(), result.CustomerID, result.NewHelperName, id); err != nil {
+				log.Warn().Err(err).Str("customer_id", result.CustomerID).Msg("[crm.orders] notify customer failed")
+			}
+		}
+	}
+
+	if h.dispatcher != nil {
+		h.dispatcher.Dispatch(c.UserContext(), webhooks.EventOrderReassigned, webhooks.OrderReassignedEvent{
+			OrderID:          id,
+			PreviousHelperID: result.OldHelperID,
+			NewHelperID:      result.NewHelperID,
+			Reason:           req.Reason,
+			ReassignedBy:     adminEmail,
+			OccurredAt:       time.Now().UTC(),
+		})
+	}
+
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -363,7 +729,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "orders",
 		TargetType: "order", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

@@ -43,7 +43,7 @@ func SduiAdminAuth(rdb *redis.Client) fiber.Handler {
 		minuteEpoch := time.Now().Unix() / 60
 		key := fmt.Sprintf("sdui:admin:rl:%s:%d", userID, minuteEpoch)
 
-		ctx, cancel := context.WithTimeout(c.Context(), 500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
 		defer cancel()
 
 		count, err := rdb.Incr(ctx, key).Result()

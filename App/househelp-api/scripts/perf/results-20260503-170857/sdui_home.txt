@@ -1,0 +1,14 @@
+Running 30s test @ http://localhost:8080/api/v1/sdui/page/home?lat=28.6&lon=77.2
+  12 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    59.44ms   14.55ms 671.42ms   91.38%
+    Req/Sec   559.24    113.76   777.00     82.28%
+  Latency Distribution
+     50%   55.44ms
+     75%   60.97ms
+     90%   70.96ms
+     99%  124.70ms
+  200474 requests in 30.07s, 163.67MB read
+  Non-2xx or 3xx responses: 200473
+Requests/sec:   6666.10
+Transfer/sec:      5.44MB

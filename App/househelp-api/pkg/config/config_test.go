@@ -10,9 +10,25 @@ const (
 func TestValidateJWTSecret_RejectsDefaultSecret(t *testing.T) {
 	t.Parallel()
 
-	err := validateJWTSecret("JWT_SECRET", "change-this-to-a-random-64-char-string-in-production")
-	if err == nil {
-		t.Fatalf("expected default secret to be rejected")
+	cases := []struct {
+		name   string
+		secret string
+	}{
+		{"exact placeholder", "change-this-to-a-random-64-char-string-in-production"},
+		// Padded variant from .env.example — must still be rejected because
+		// substring matching catches the placeholder regardless of suffix.
+		{"padded placeholder", "change-this-to-a-random-64-char-string-in-production-123456789012"},
+		{"uppercase variant", "CHANGE-THIS-TO-A-RANDOM-64-CHAR-STRING-IN-PRODUCTION-XXXXXXXXXXXX"},
+		{"mysecret padded", "mysecret-mysecret-mysecret-mysecret-mysecret-mysecret-mysecret-x"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := validateJWTSecret("JWT_SECRET", tc.secret); err == nil {
+				t.Fatalf("expected %q to be rejected", tc.name)
+			}
+		})
 	}
 }
 

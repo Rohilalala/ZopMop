@@ -17,6 +17,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
 // ── Models ─────────────────────────────────────────────────────────────
@@ -30,13 +32,17 @@ type Webhook struct {
 }
 
 type WebhookDelivery struct {
-	ID         int64           `json:"id"`
-	WebhookID  string          `json:"webhook_id"`
-	Event      string          `json:"event"`
-	Payload    json.RawMessage `json:"payload"`
-	StatusCode *int            `json:"status_code,omitempty"`
-	Succeeded  bool            `json:"succeeded"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID             int64           `json:"id"`
+	WebhookID      string          `json:"webhook_id"`
+	Event          string          `json:"event"`
+	Payload        json.RawMessage `json:"payload"`
+	ResponseStatus *int            `json:"status_code,omitempty"`
+	ResponseBody   *string         `json:"response_body,omitempty"`
+	DurationMS     *int            `json:"duration_ms,omitempty"`
+	Attempt        int             `json:"attempt"`
+	Succeeded      bool            `json:"succeeded"`
+	RetriedAt      *time.Time      `json:"retried_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 type Template struct {
@@ -92,9 +98,14 @@ type AuditRow struct {
 
 // ── Service ────────────────────────────────────────────────────────────
 
-type Service struct{ read, write *pgxpool.Pool }
+type Service struct {
+	read, write *pgxpool.Pool
+	dispatcher  *webhooks.Dispatcher
+}
 
-func NewService(read, write *pgxpool.Pool) *Service { return &Service{read: read, write: write} }
+func NewService(read, write *pgxpool.Pool, dispatcher *webhooks.Dispatcher) *Service {
+	return &Service{read: read, write: write, dispatcher: dispatcher}
+}
 
 // ── Webhooks ───────────────────────────────────────────────────────────
 
@@ -149,7 +160,8 @@ func (s *Service) DeleteWebhook(ctx context.Context, id string) error {
 
 func (s *Service) ListDeliveries(ctx context.Context, webhookID string) ([]WebhookDelivery, error) {
 	rows, err := s.read.Query(ctx, `
-		SELECT id, webhook_id::text, event, payload, status_code, succeeded, created_at
+		SELECT id, webhook_id::text, event, payload, response_status, response_body,
+		       duration_ms, attempt, succeeded, retried_at, created_at
 		FROM crm_webhook_deliveries
 		WHERE webhook_id = $1::uuid
 		ORDER BY created_at DESC LIMIT 50
@@ -161,7 +173,8 @@ func (s *Service) ListDeliveries(ctx context.Context, webhookID string) ([]Webho
 	out := []WebhookDelivery{}
 	for rows.Next() {
 		var d WebhookDelivery
-		if err := rows.Scan(&d.ID, &d.WebhookID, &d.Event, &d.Payload, &d.StatusCode, &d.Succeeded, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.WebhookID, &d.Event, &d.Payload, &d.ResponseStatus,
+			&d.ResponseBody, &d.DurationMS, &d.Attempt, &d.Succeeded, &d.RetriedAt, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -409,34 +422,36 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	w := r.Group("/webhooks")
 	w.Get("/",                h.ListWebhooks)
-	w.Post("/",               h.CreateWebhook)
-	w.Delete("/:id",          h.DeleteWebhook)
+	w.Post("/",               middleware.RequirePermission("webhooks.create"), h.CreateWebhook)
+	w.Delete("/:id",          middleware.RequirePermission("webhooks.delete"), h.DeleteWebhook)
 	w.Get("/:id/deliveries",  h.ListDeliveries)
+	w.Post("/:id/test",       middleware.RequirePermission("webhooks.create"), h.TestWebhook)
+	w.Post("/deliveries/:id/retry", middleware.RequirePermission("webhooks.create"), h.RetryDelivery)
 
 	t := r.Group("/templates")
 	t.Get("/",     h.ListTemplates)
-	t.Post("/",    h.CreateTemplate)
-	t.Put("/:id",  h.UpdateTemplate)
-	t.Delete("/:id", h.DeleteTemplate)
+	t.Post("/",    middleware.RequirePermission("templates.create"), h.CreateTemplate)
+	t.Put("/:id",  middleware.RequirePermission("templates.update"), h.UpdateTemplate)
+	t.Delete("/:id", middleware.RequirePermission("templates.delete"), h.DeleteTemplate)
 
 	s := r.Group("/support")
 	s.Get("/",            h.ListTickets)
-	s.Post("/:id/resolve", h.ResolveTicket)
+	s.Post("/:id/resolve", middleware.RequirePermission("tickets.resolve"), h.ResolveTicket)
 
 	v := r.Group("/app-versions")
 	v.Get("/",     h.ListAppVersions)
-	v.Post("/",    h.SetAppVersion)
+	v.Post("/",    middleware.RequirePermission("app_version.update"), h.SetAppVersion)
 
 	cl := r.Group("/changelog")
 	cl.Get("/",  h.ListChangelog)
-	cl.Post("/", h.CreateChangelog)
+	cl.Post("/", middleware.RequirePermission("changelog.publish"), h.CreateChangelog)
 
 	a := r.Group("/audit")
 	a.Get("/", h.ListAudit)
 }
 
 func (h *Handler) ListWebhooks(c *fiber.Ctx) error {
-	out, err := h.svc.ListWebhooks(c.Context())
+	out, err := h.svc.ListWebhooks(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -446,7 +461,7 @@ func (h *Handler) CreateWebhook(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.CreateWebhook(c.Context(), req, adminID)
+	id, err := h.svc.CreateWebhook(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -456,7 +471,7 @@ func (h *Handler) CreateWebhook(c *fiber.Ctx) error {
 
 func (h *Handler) DeleteWebhook(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.DeleteWebhook(c.Context(), id); err != nil {
+	if err := h.svc.DeleteWebhook(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "webhook.delete", id, nil, nil)
@@ -464,12 +479,58 @@ func (h *Handler) DeleteWebhook(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListDeliveries(c *fiber.Ctx) error {
-	out, err := h.svc.ListDeliveries(c.Context(), c.Params("id"))
+	out, err := h.svc.ListDeliveries(c.UserContext(), c.Params("id"))
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
+type testWebhookRequest struct {
+	Event  string          `json:"event"`
+	Sample json.RawMessage `json:"sample"`
+}
+
+func (h *Handler) TestWebhook(c *fiber.Ctx) error {
+	if h.svc.dispatcher == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "dispatcher not configured"})
+	}
+	var req testWebhookRequest
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+	}
+	id := c.Params("id")
+	var sample any
+	if len(req.Sample) > 0 {
+		sample = req.Sample
+	}
+	dlv, err := h.svc.dispatcher.Test(c.UserContext(), id, req.Event, sample)
+	if err != nil {
+		log.Error().Err(err).Str("webhook_id", id).Msg("[crm.platform] webhook test failed")
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "webhook.test", id, nil, fiber.Map{"event": dlv.Event})
+	return c.JSON(dlv)
+}
+
+func (h *Handler) RetryDelivery(c *fiber.Ctx) error {
+	if h.svc.dispatcher == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "dispatcher not configured"})
+	}
+	deliveryID, err := strconv.ParseInt(c.Params("id"), 10, 64)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid delivery id"})
+	}
+	newID, err := h.svc.dispatcher.Replay(c.UserContext(), deliveryID)
+	if err != nil {
+		log.Error().Err(err).Int64("delivery_id", deliveryID).Msg("[crm.platform] webhook retry failed")
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "webhook.retry", strconv.FormatInt(deliveryID, 10), nil, fiber.Map{"new_delivery_id": newID})
+	return c.JSON(fiber.Map{"new_delivery_id": newID})
+}
+
 func (h *Handler) ListTemplates(c *fiber.Ctx) error {
-	out, err := h.svc.ListTemplates(c.Context())
+	out, err := h.svc.ListTemplates(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -479,7 +540,7 @@ func (h *Handler) CreateTemplate(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.CreateTemplate(c.Context(), req, adminID)
+	id, err := h.svc.CreateTemplate(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -493,7 +554,7 @@ func (h *Handler) UpdateTemplate(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	id := c.Params("id")
-	if err := h.svc.UpdateTemplate(c.Context(), id, req); err != nil {
+	if err := h.svc.UpdateTemplate(c.UserContext(), id, req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "template.update", id, nil, req)
@@ -502,7 +563,7 @@ func (h *Handler) UpdateTemplate(c *fiber.Ctx) error {
 
 func (h *Handler) DeleteTemplate(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.DeleteTemplate(c.Context(), id); err != nil {
+	if err := h.svc.DeleteTemplate(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "template.delete", id, nil, nil)
@@ -511,13 +572,13 @@ func (h *Handler) DeleteTemplate(c *fiber.Ctx) error {
 
 func (h *Handler) ListTickets(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.svc.ListTickets(c.Context(), c.Query("status"), limit)
+	out, err := h.svc.ListTickets(c.UserContext(), c.Query("status"), limit)
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
 func (h *Handler) ResolveTicket(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.ResolveTicket(c.Context(), id); err != nil {
+	if err := h.svc.ResolveTicket(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "ticket.resolve", id, nil, nil)
@@ -525,7 +586,7 @@ func (h *Handler) ResolveTicket(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListAppVersions(c *fiber.Ctx) error {
-	out, err := h.svc.ListAppVersions(c.Context())
+	out, err := h.svc.ListAppVersions(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -535,7 +596,7 @@ func (h *Handler) SetAppVersion(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.SetAppVersion(c.Context(), req, adminID)
+	id, err := h.svc.SetAppVersion(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -544,7 +605,7 @@ func (h *Handler) SetAppVersion(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListChangelog(c *fiber.Ctx) error {
-	out, err := h.svc.ListChangelog(c.Context())
+	out, err := h.svc.ListChangelog(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -554,7 +615,7 @@ func (h *Handler) CreateChangelog(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.CreateChangelog(c.Context(), req, adminID)
+	id, err := h.svc.CreateChangelog(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -564,7 +625,7 @@ func (h *Handler) CreateChangelog(c *fiber.Ctx) error {
 
 func (h *Handler) ListAudit(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "100"))
-	out, err := h.svc.ListAudit(c.Context(),
+	out, err := h.svc.ListAudit(c.UserContext(),
 		c.Query("module"), c.Query("action"), c.Query("admin_email"), limit)
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
@@ -575,7 +636,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "platform",
 		TargetType: "platform", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

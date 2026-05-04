@@ -6,8 +6,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
+  
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,6 +17,8 @@ import {
   View,
   type TextStyle,
 } from 'react-native';
+import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
+import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -49,7 +50,7 @@ export default function ChatScreen() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const listRef = useRef<FlatList<BookingMessage>>(null);
+  const listRef = useRef<FlashList<BookingMessage>>(null);
 
   // ── Poll history ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -144,19 +145,18 @@ export default function ChatScreen() {
       >
         {/* Messages */}
         {!loaded && !error ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={AMBER} />
-          </View>
+          <LoadingSkeleton variant="bubbles" rows={6} />
         ) : error && messages.length === 0 ? (
           <View style={styles.loadingWrap}>
             <Text style={[fontMed, styles.errorText]}>{error}</Text>
           </View>
         ) : (
-          <FlatList
+          <FlashList
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
             contentContainerStyle={styles.listContent}
+            estimatedItemSize={80}
             renderItem={({ item }) => (
               <Bubble msg={item} mine={item.sender_id === myId} />
             )}

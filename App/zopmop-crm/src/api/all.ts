@@ -3,6 +3,21 @@
 // modules (users, workers) keep their own typed files.
 import { api } from './client';
 
+// ── Health ─────────────────────────────────────────────────────────────
+export type HealthMetrics = {
+  avg_latency_ms: number;
+  error_rate: number;
+  request_count: number;
+  uptime: 'up' | 'down' | 'unknown';
+  app_url: string;
+  checked_at: string;
+};
+
+export async function getHealthMetrics(): Promise<HealthMetrics> {
+  const r = await api.get<HealthMetrics>('/admin/health/metrics');
+  return r.data;
+}
+
 // ── Orders ─────────────────────────────────────────────────────────────
 export type Order = {
   id: string;
@@ -29,14 +44,35 @@ export type OrderDetail = Order & {
   cancelled_at?: string | null; cancelled_by?: string | null;
 };
 
+export type AvailableWorker = {
+  worker_id: string;
+  name: string;
+  rating: number;
+  distance_km: number;
+  categories: string[];
+  current_status: string;
+};
+
 export const ordersApi = {
   list: (p: Record<string, string | number>) => api.get('/admin/orders', { params: p }).then(r => r.data as { items: Order[]; total_count: number; limit: number; offset: number }),
   get: (id: string) => api.get<OrderDetail>(`/admin/orders/${id}`).then(r => r.data),
   cancel: (id: string, reason: string) => api.post(`/admin/orders/${id}/cancel`, { reason }),
   complete: (id: string) => api.post(`/admin/orders/${id}/complete`),
+  availableWorkers: (id: string) => api.get<AvailableWorker[]>(`/admin/orders/${id}/available-workers`).then(r => r.data),
+  reassign: (id: string, body: { new_worker_id: string; reason: string }) => api.post(`/admin/orders/${id}/reassign`, body),
 };
 
 // ── Refunds ────────────────────────────────────────────────────────────
+export type RefundStatus =
+  | 'pending'
+  | 'approved'
+  | 'processed'
+  | 'processed_manual'
+  | 'gateway_error'
+  | 'rejected'
+  | 'cancelled';
+export type PaymentMethod = 'cod' | 'upi' | 'card' | 'wallet' | 'netbanking';
+
 export type Refund = {
   id: string;
   user_id: string;
@@ -45,14 +81,40 @@ export type Refund = {
   amount_cents: number;
   source: string;
   source_ref?: string | null;
-  status: string;
+  status: RefundStatus;
   created_at: string;
   settled_at?: string | null;
+  // T1.6 gateway integration fields.
+  payment_method?: PaymentMethod | null;
+  payment_id?: string | null;
+  gateway_refund_id?: string | null;
+  processed_at?: string | null;
+  error_message?: string | null;
+  partial_amount_cents?: number | null;
+  approved_at?: string | null;
 };
+
+export type RefundApproveResponse = {
+  ok: boolean;
+  status?: RefundStatus;
+  gateway_refund_id?: string | null;
+};
+
+export type RefundFromOrderResponse = {
+  ok: boolean;
+  refund_id: string;
+  status: RefundStatus;
+  gateway_refund_id?: string | null;
+};
+
 export const refundsApi = {
   list: (p: Record<string, string | number>) => api.get('/admin/refunds', { params: p }).then(r => r.data as { items: Refund[]; total_count: number }),
-  approve: (id: string, body: { amount_cents?: number; reason: string }) => api.post(`/admin/refunds/${id}/approve`, body),
+  approve: (id: string, body: { amount_cents?: number; reason: string }) =>
+    api.post<RefundApproveResponse>(`/admin/refunds/${id}/approve`, body).then(r => r.data),
   reject:  (id: string, reason: string) => api.post(`/admin/refunds/${id}/reject`, { reason }),
+  retry:   (id: string) => api.post(`/admin/refunds/${id}/retry`).then(() => undefined),
+  fromOrder: (orderId: string, body: { amount_cents: number; reason: string }) =>
+    api.post<RefundFromOrderResponse>(`/admin/refunds/from-order/${orderId}`, body).then(r => r.data),
 };
 
 // ── Promos ─────────────────────────────────────────────────────────────
@@ -124,12 +186,46 @@ export type PushMsg = {
   id: string; title: string; body: string; image_url?: string | null; deep_link?: string | null;
   target_kind: string; estimated_reach: number;
   scheduled_at?: string | null; sent_at?: string | null; status: string; created_at: string;
+  sent_count?: number;
+  delivered_count?: number;
+  failed_count?: number;
+  error_message?: string;
 };
+
+export type PushTarget =
+  | { kind: 'users' }
+  | { kind: 'pros' }
+  | { kind: 'both' }
+  | { kind: 'user'; id: string }
+  | { kind: 'worker'; id: string };
+
+function targetParam(t: PushTarget): string {
+  switch (t.kind) {
+    case 'users':
+    case 'pros':
+    case 'both':
+      return t.kind;
+    case 'user':
+      return `user:${t.id}`;
+    case 'worker':
+      return `worker:${t.id}`;
+  }
+}
+
+export async function getPushReach(target: PushTarget): Promise<number> {
+  const r = await api.get<{ count: number }>(`/admin/growth/push/reach`, {
+    params: { target: targetParam(target) },
+  });
+  return r.data.count;
+}
+
 export const growthApi = {
   listPush: () => api.get<{ items: PushMsg[] }>('/admin/growth/push').then(r => r.data.items),
   createPush: (body: { title: string; body: string; image_url?: string; deep_link?: string; target_kind: string; user_ids?: string[]; scheduled_at?: string | null }) =>
     api.post<PushMsg>('/admin/growth/push', body).then(r => r.data),
   sendPush: (id: string) => api.post(`/admin/growth/push/${id}/send`),
+  cancelPush: (id: string) => api.post(`/admin/growth/push/${id}/cancel`).then(() => undefined),
+  retryPush: (id: string) => api.post(`/admin/growth/push/${id}/retry`).then(() => undefined),
   listLostUser: () => api.get<{ items: { id: string; name: string; inactive_days: number; trigger_kind: string; promo_code?: string | null; push_title?: string | null; push_body?: string | null; is_active: boolean; triggered_count: number; conversion_count: number; created_at: string }[] }>('/admin/growth/lost-user').then(r => r.data.items),
   createLostUser: (body: { name: string; inactive_days: number; trigger_kind: string; promo_code?: string; push_title?: string; push_body?: string; is_active: boolean }) =>
     api.post('/admin/growth/lost-user', body),
@@ -200,6 +296,17 @@ export const tsApi = {
 
 // ── Platform ───────────────────────────────────────────────────────────
 export type Webhook = { id: string; url: string; events: string[]; is_active: boolean; created_at: string };
+export type WebhookDelivery = {
+  id: number;
+  event: string;
+  status_code?: number | null;
+  response_body?: string | null;
+  duration_ms?: number | null;
+  attempt: number;
+  succeeded: boolean;
+  retried_at?: string | null;
+  created_at: string;
+};
 export type Template = { id: string; category: string; name: string; body: string; created_at: string };
 export type Ticket = { id: string; user_id?: string | null; subject: string; body: string; status: string; priority: string; assigned_to?: string | null; resolved_at?: string | null; created_at: string };
 export type AppVersion = { id: string; platform: string; min_version: string; force_update: boolean; force_message?: string | null; created_at: string };
@@ -209,7 +316,9 @@ export const platformApi = {
   listWebhooks: () => api.get<{ items: Webhook[] }>('/admin/webhooks').then(r => r.data.items),
   createWebhook: (body: { url: string; events: string[]; secret?: string }) => api.post('/admin/webhooks', body),
   deleteWebhook: (id: string) => api.delete(`/admin/webhooks/${id}`),
-  listDeliveries: (id: string) => api.get<{ items: { id: number; event: string; status_code?: number | null; succeeded: boolean; created_at: string }[] }>(`/admin/webhooks/${id}/deliveries`).then(r => r.data.items),
+  listDeliveries: (id: string) => api.get<{ items: WebhookDelivery[] }>(`/admin/webhooks/${id}/deliveries`).then(r => r.data.items),
+  testWebhook: (id: string, body?: { event?: string; sample?: unknown }) => api.post<WebhookDelivery>(`/admin/webhooks/${id}/test`, body ?? {}).then(r => r.data),
+  retryDelivery: (deliveryId: number) => api.post<{ new_delivery_id: number }>(`/admin/webhooks/deliveries/${deliveryId}/retry`).then(r => r.data),
 
   listTemplates: () => api.get<{ items: Template[] }>('/admin/templates').then(r => r.data.items),
   createTemplate: (body: { category: string; name: string; body: string }) => api.post('/admin/templates', body),

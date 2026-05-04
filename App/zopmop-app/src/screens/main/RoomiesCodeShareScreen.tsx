@@ -1,140 +1,47 @@
-import React, { useMemo } from 'react';
-import { Alert, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { MainStackParamList } from '../../types/navigation';
-import { useColors } from '../../context/ThemeContext';
-import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
-import { lightColors } from '../../theme/colors';
-type C = typeof lightColors;
-type Props = NativeStackScreenProps<MainStackParamList, 'RoomiesCodeShare'>;
+// RoomiesCodeShareScreen — dark home pattern.
+// Big invite-code display (3+3 split), copy + share actions, done CTA.
 
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 16,
-      gap: 4,
-    },
-    backBtn: { padding: 4, marginLeft: -4 },
-    headerTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-    },
-    body: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: Spacing['2xl'],
-      paddingBottom: 80,
-    },
-    iconWrap: {
-      width: 88,
-      height: 88,
-      borderRadius: Radius.full,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: Spacing.xl,
-      ...Shadow.sm,
-    },
-    groupName: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.4,
-      textAlign: 'center',
-      marginBottom: Spacing.sm,
-    },
-    subtitle: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-      textAlign: 'center',
-      lineHeight: 22,
-      marginBottom: Spacing['3xl'],
-    },
-    codeCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      paddingVertical: Spacing.xl,
-      paddingHorizontal: Spacing['2xl'],
-      alignItems: 'center',
-      width: '100%',
-      borderWidth: 1,
-      borderColor: c.border,
-      ...Shadow.sm,
-      marginBottom: Spacing.xl,
-    },
-    codeLabel: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      marginBottom: Spacing.sm,
-    },
-    codeValue: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: 40,
-      color: c.primary,
-      letterSpacing: 10,
-      marginBottom: Spacing.md,
-    },
-    copyRow: { flexDirection: 'row', gap: Spacing.sm },
-    actionBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: Spacing.sm,
-      paddingHorizontal: Spacing.base,
-      borderRadius: Radius.lg,
-      backgroundColor: c.primaryBg,
-    },
-    actionBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.primary,
-    },
-    caption: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textMuted,
-      textAlign: 'center',
-    },
-    doneBtn: {
-      marginHorizontal: Spacing.base,
-      marginBottom: Spacing.xl,
-      backgroundColor: c.primary,
-      borderRadius: Radius.xl,
-      paddingVertical: Spacing.md,
-      alignItems: 'center',
-      ...Shadow.sm,
-    },
-    doneBtnText: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.base,
-      color: '#FFF',
-    },
-  });
-}
+import React from 'react';
+import {
+  Share,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
+import type { MainStackParamList } from '../../types/navigation';
+import { showInfo } from '../../utils/toast';
+
+import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
+import { PressFx } from '../../components/ui/PressFx';
+
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+const H_PAD = 20;
+
+type Props = NativeStackScreenProps<MainStackParamList, 'RoomiesCodeShare'>;
 
 export default function RoomiesCodeShareScreen({ route }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { code, groupName } = route.params;
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
 
   const displayCode = `${code.slice(0, 3)} ${code.slice(3)}`;
 
   const handleCopy = () => {
-    Alert.alert('Code copied', `Your invite code is: ${displayCode}`);
+    showInfo(`Your invite code is: ${displayCode}`, { title: 'Code copied' });
   };
 
   const handleShare = async () => {
@@ -144,45 +51,180 @@ export default function RoomiesCodeShareScreen({ route }: Props) {
   };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Invite Code</Text>
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
+
+      <View style={[s.head, { paddingTop: insets.top + 10 }]}>
+        <View style={s.headRow}>
+          <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
+            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+          </PressFx>
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>Invite code</Text>
+          </View>
+        </View>
       </View>
 
       <View style={s.body}>
         <View style={s.iconWrap}>
-          <Ionicons name="home" size={40} color={c.primary} />
+          <View style={s.iconRing} />
+          <View style={s.iconCircle}>
+            <Feather name="users" size={32} color="#F5A300" />
+          </View>
         </View>
 
         <Text style={s.groupName}>{groupName}</Text>
         <Text style={s.subtitle}>
-          Share this code with up to 3 housemates to let them join your household.
+          Share this code with up to 3 housemates to let them join.
         </Text>
 
-        <View style={s.codeCard}>
-          <Text style={s.codeLabel}>Invite Code</Text>
+        <GlassCard radius={22} style={s.codeCard}>
+          <Text style={s.codeLabel}>Invite code</Text>
           <Text style={s.codeValue}>{displayCode}</Text>
           <View style={s.copyRow}>
-            <TouchableOpacity style={s.actionBtn} onPress={handleCopy} activeOpacity={0.7}>
-              <Ionicons name="copy-outline" size={16} color={c.primary} />
+            <PressFx style={s.actionBtn} onPress={handleCopy}>
+              <Feather name="copy" size={14} color="#F5A300" />
               <Text style={s.actionBtnText}>Copy</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.actionBtn} onPress={handleShare} activeOpacity={0.7}>
-              <Ionicons name="share-outline" size={16} color={c.primary} />
+            </PressFx>
+            <PressFx style={s.actionBtn} onPress={handleShare}>
+              <Feather name="share-2" size={14} color="#F5A300" />
               <Text style={s.actionBtnText}>Share</Text>
-            </TouchableOpacity>
+            </PressFx>
           </View>
-        </View>
+        </GlassCard>
 
-        <Text style={s.caption}>Code does not expire</Text>
+        <Text style={s.caption}>Code does not expire.</Text>
       </View>
 
-      <TouchableOpacity style={s.doneBtn} onPress={() => navigation.navigate('Home')} activeOpacity={0.8}>
+      <PressFx
+        style={[s.doneBtn, { marginBottom: 12 + insets.bottom }]}
+        onPress={() => navigation.navigate('Home')}
+      >
         <Text style={s.doneBtnText}>Done</Text>
-      </TouchableOpacity>
-    </SafeAreaView>
+      </PressFx>
+    </View>
   );
 }
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0A0A0A' },
+
+  head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  title: {
+    ...fontExtra,
+    fontSize: 24, color: '#FFFFFF',
+    letterSpacing: -0.6, lineHeight: 28,
+  },
+
+  body: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 40,
+  },
+
+  iconWrap: {
+    width: 110, height: 110,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 18,
+  },
+  iconRing: {
+    position: 'absolute',
+    width: 110, height: 110, borderRadius: 55,
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.18)',
+  },
+  iconCircle: {
+    width: 76, height: 76, borderRadius: 38,
+    backgroundColor: 'rgba(245,163,0,0.14)',
+    borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  groupName: {
+    ...fontExtra,
+    fontSize: 22,
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  subtitle: {
+    ...fontMed,
+    fontSize: 13.5,
+    color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 28,
+    paddingHorizontal: 8,
+  },
+
+  codeCard: {
+    width: '100%',
+    paddingVertical: 22,
+    paddingHorizontal: 22,
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  codeLabel: {
+    ...fontBold,
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.45)',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+  },
+  codeValue: {
+    ...fontExtra,
+    fontSize: 40,
+    color: '#F5A300',
+    letterSpacing: 8,
+    marginBottom: 16,
+  },
+  copyRow: { flexDirection: 'row', gap: 10 },
+  actionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245,163,0,0.12)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(245,163,0,0.28)',
+  },
+  actionBtnText: {
+    ...fontSemi,
+    fontSize: 12.5,
+    color: '#F5A300',
+  },
+  caption: {
+    ...fontMed,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+    textAlign: 'center',
+  },
+
+  doneBtn: {
+    marginHorizontal: 20,
+    backgroundColor: '#F5A300',
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  doneBtnText: {
+    ...fontBold,
+    fontSize: 14.5,
+    color: '#0A0A0A',
+    letterSpacing: 0.2,
+  },
+});

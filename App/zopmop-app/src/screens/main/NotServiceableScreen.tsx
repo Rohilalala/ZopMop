@@ -1,15 +1,25 @@
-import React, { useMemo } from 'react';
+// NotServiceableScreen — dark home pattern.
+// Pulsing pin illustration + apology copy + "currently serving" card + CTA.
+
+import React from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
   StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
-import { useColors, useTheme } from '../../context/ThemeContext';
+import { Feather } from '@expo/vector-icons';
+
+import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
+import { PressFx } from '../../components/ui/PressFx';
+
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 interface Props {
   locationName: string;
@@ -17,174 +27,158 @@ interface Props {
 }
 
 export default function NotServiceableScreen({ locationName, onChangeLocation }: Props) {
-  const c = useColors();
-  const { isDark } = useTheme();
-  const s = useMemo(() => createStyles(c), [c]);
-
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
 
-      <View style={s.container}>
-        {/* Illustration */}
-        <View style={s.illustrationWrap}>
-          <View style={s.circle}>
-            <Text style={s.emoji}>📍</Text>
-          </View>
-          <View style={s.pingRing1} />
-          <View style={s.pingRing2} />
-        </View>
-
-        {/* Text */}
-        <Text style={s.title}>We're not in{'\n'}your area yet</Text>
-        <Text style={s.subtitle}>
-          ZopMop isn't available in{' '}
-          <Text style={s.locationBold}>{locationName}</Text>
-          {' '}right now. We're expanding fast — check back soon!
-        </Text>
-
-        {/* Currently serving */}
-        <View style={s.servedCard}>
-          <Text style={s.servedLabel}>Currently serving</Text>
-          <View style={s.cityRow}>
-            <Text style={s.cityEmoji}>🏙️</Text>
-            <Text style={s.cityName}>Gurugram</Text>
-            <View style={s.liveBadge}>
-              <View style={s.liveDot} />
-              <Text style={s.liveText}>Live</Text>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <View style={s.container}>
+          <View style={s.illustrationWrap}>
+            <View style={s.pingRing2} />
+            <View style={s.pingRing1} />
+            <View style={s.pinCircle}>
+              <Feather name="map-pin" size={32} color="#F5A300" />
             </View>
           </View>
+
+          <Text style={s.title}>We're not in{'\n'}your area yet</Text>
+          <Text style={s.subtitle}>
+            ZopMop isn't available in{' '}
+            <Text style={s.locationBold}>{locationName}</Text>
+            {' '}right now. We're expanding fast — check back soon.
+          </Text>
+
+          <GlassCard radius={20} style={s.servedCard}>
+            <Text style={s.servedLabel}>Currently serving</Text>
+            <View style={s.cityRow}>
+              <Feather name="zap" size={16} color="#F5A300" />
+              <Text style={s.cityName}>Gurugram</Text>
+              <View style={s.liveBadge}>
+                <View style={s.liveDot} />
+                <Text style={s.liveText}>LIVE</Text>
+              </View>
+            </View>
+          </GlassCard>
+
+          <PressFx style={s.primaryBtn} onPress={onChangeLocation}>
+            <Text style={s.primaryBtnText}>Change location</Text>
+          </PressFx>
+
+          <Text style={s.comingSoon}>More cities coming soon</Text>
         </View>
-
-        {/* Actions */}
-        <TouchableOpacity style={s.primaryBtn} activeOpacity={0.85} onPress={onChangeLocation}>
-          <Text style={s.primaryBtnText}>Change Location</Text>
-        </TouchableOpacity>
-
-        <Text style={s.comingSoon}>More cities coming soon ✨</Text>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-function createStyles(c: typeof lightColors) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    container: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 32,
-      gap: 16,
-    },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0A0A0A' },
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    gap: 18,
+  },
 
-    // Pulsing pin illustration
-    illustrationWrap: {
-      width: 120, height: 120,
-      alignItems: 'center', justifyContent: 'center',
-      marginBottom: 8,
-    },
-    circle: {
-      width: 80, height: 80, borderRadius: 40,
-      backgroundColor: `${c.primary}15`,
-      borderWidth: 2, borderColor: `${c.primary}30`,
-      alignItems: 'center', justifyContent: 'center',
-      zIndex: 3,
-    },
-    emoji: { fontSize: 36 },
-    pingRing1: {
-      position: 'absolute',
-      width: 100, height: 100, borderRadius: 50,
-      borderWidth: 1.5, borderColor: `${c.primary}20`,
-    },
-    pingRing2: {
-      position: 'absolute',
-      width: 120, height: 120, borderRadius: 60,
-      borderWidth: 1, borderColor: `${c.primary}10`,
-    },
+  illustrationWrap: {
+    width: 140, height: 140,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 4,
+  },
+  pinCircle: {
+    width: 76, height: 76, borderRadius: 38,
+    backgroundColor: 'rgba(245,163,0,0.14)',
+    borderWidth: 1, borderColor: 'rgba(245,163,0,0.35)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 3,
+  },
+  pingRing1: {
+    position: 'absolute',
+    width: 104, height: 104, borderRadius: 52,
+    borderWidth: 1, borderColor: 'rgba(245,163,0,0.18)',
+  },
+  pingRing2: {
+    position: 'absolute',
+    width: 132, height: 132, borderRadius: 66,
+    borderWidth: 1, borderColor: 'rgba(245,163,0,0.08)',
+  },
 
-    title: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['3xl'],
-      color: c.text,
-      textAlign: 'center',
-      letterSpacing: -0.5,
-      lineHeight: FontSize['3xl'] * 1.2,
-    },
-    subtitle: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-      textAlign: 'center',
-      lineHeight: 24,
-      marginTop: -4,
-    },
-    locationBold: {
-      fontFamily: FontFamily.semibold,
-      color: c.text,
-    },
+  title: {
+    ...fontExtra,
+    fontSize: 28,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    letterSpacing: -0.6,
+    lineHeight: 32,
+  },
+  subtitle: {
+    ...fontMed,
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.6)',
+    textAlign: 'center',
+    lineHeight: 21,
+    marginTop: -4,
+    paddingHorizontal: 8,
+  },
+  locationBold: { ...fontSemi, color: '#FFFFFF' },
 
-    servedCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      borderWidth: 1, borderColor: c.border,
-      paddingHorizontal: 20, paddingVertical: 14,
-      width: '100%',
-      marginTop: 4,
-      ...Shadow.sm,
-    },
-    servedLabel: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      marginBottom: 8,
-    },
-    cityRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 8,
-    },
-    cityEmoji: { fontSize: 20 },
-    cityName: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.base,
-      color: c.text,
-      flex: 1,
-    },
-    liveBadge: {
-      flexDirection: 'row', alignItems: 'center', gap: 4,
-      backgroundColor: `${c.success}15`,
-      paddingHorizontal: 8, paddingVertical: 4,
-      borderRadius: Radius.full,
-    },
-    liveDot: {
-      width: 6, height: 6, borderRadius: 3,
-      backgroundColor: c.success,
-    },
-    liveText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.xs,
-      color: c.success,
-    },
+  servedCard: {
+    width: '100%',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    marginTop: 6,
+  },
+  servedLabel: {
+    ...fontBold,
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.45)',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  cityRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cityName: {
+    ...fontBold,
+    fontSize: 15,
+    color: '#FFFFFF',
+    flex: 1,
+    letterSpacing: -0.2,
+  },
+  liveBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(34,197,94,0.16)',
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 99,
+  },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22C55E' },
+  liveText: {
+    ...fontBold,
+    fontSize: 9,
+    color: '#22C55E',
+    letterSpacing: 0.6,
+  },
 
-    primaryBtn: {
-      width: '100%',
-      backgroundColor: c.primary,
-      borderRadius: Radius.xl,
-      paddingVertical: 15,
-      alignItems: 'center',
-      marginTop: 8,
-      ...Shadow.sm,
-    },
-    primaryBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: '#FFFFFF',
-    },
+  primaryBtn: {
+    width: '100%',
+    backgroundColor: '#F5A300',
+    borderRadius: 18,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  primaryBtnText: {
+    ...fontBold,
+    fontSize: 14.5,
+    color: '#0A0A0A',
+    letterSpacing: 0.1,
+  },
 
-    comingSoon: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textMuted,
-      marginTop: 4,
-    },
-  });
-}
+  comingSoon: {
+    ...fontMed,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+    marginTop: 2,
+  },
+});

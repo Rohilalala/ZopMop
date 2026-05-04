@@ -153,7 +153,10 @@ func (s *Service) TrackCanonicalEvent(ctx context.Context, req *CanonicalEventRe
 		return nil
 	}
 	eventName := req.EventName
-	userID := req.UserID
+	// Defense-in-depth: trust the JWT-verified UID, not the (already validated
+	// to match) client-supplied req.UserID. Keeps this site safe even if the
+	// equality check above is later removed or relaxed.
+	userID := authenticatedUserID
 	s.dispatchTracking(func() {
 		trackCtx, cancel := context.WithTimeout(context.Background(), trackEventTimeout)
 		defer cancel()

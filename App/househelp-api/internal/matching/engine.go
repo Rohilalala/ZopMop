@@ -3,6 +3,7 @@ package matching
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -245,6 +246,28 @@ func (e *Engine) geoSearchCandidates(
 		minRating = 3.0
 	}
 
+	// Pipeline TTL-marker EXISTS for every geo-search hit in one round-trip.
+	// Was: one EXISTS per Postgres row inside the scan loop (N round-trips).
+	// Now: a single pipelined batch keyed on the geoResults helperIDs.
+	aliveByID := make(map[string]bool, len(helperIDs))
+	{
+		pipe := e.rdb.Pipeline()
+		cmds := make(map[string]*redis.IntCmd, len(helperIDs))
+		for _, id := range helperIDs {
+			cmds[id] = pipe.Exists(ctx, fmt.Sprintf("helper:active:%s", id))
+		}
+		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil && !errors.Is(pipeErr, redis.Nil) {
+			log.Warn().Err(pipeErr).Msg("[engine] pipelined helper:active EXISTS failed; treating all as alive")
+			for _, id := range helperIDs {
+				aliveByID[id] = true
+			}
+		} else {
+			for id, cmd := range cmds {
+				aliveByID[id] = cmd.Val() > 0
+			}
+		}
+	}
+
 	rows, err := e.db.Query(ctx, `
 		SELECT
 			h.id,
@@ -270,7 +293,7 @@ func (e *Engine) geoSearchCandidates(
 	// ── Stage 3: Stale location check + score ─────────────────────────────────
 	// A helper whose TTL marker has expired was last seen > 5 minutes ago.
 	// We drop them to avoid assigning a booking to someone who may have gone
-	// offline.
+	// offline. The aliveByID map was filled by the single pipelined EXISTS above.
 	var candidates []HelperCandidate
 	for rows.Next() {
 		var c HelperCandidate
@@ -279,9 +302,7 @@ func (e *Engine) geoSearchCandidates(
 			continue
 		}
 
-		// Check TTL marker (set by location service on every GPS ping).
-		markerKey := fmt.Sprintf("helper:active:%s", c.HelperID)
-		if exists, _ := e.rdb.Exists(ctx, markerKey).Result(); exists == 0 {
+		if !aliveByID[c.HelperID] {
 			log.Debug().Str("helper_id", c.HelperID).
 				Msg("[engine] dropping stale helper — location TTL expired")
 			continue
@@ -387,16 +408,22 @@ func (e *Engine) updateSupplyCounter(ctx context.Context, lat, lng float64, coun
 // from generating fresh Redis invites long after the customer's 30-second
 // search window has expired.
 func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error) {
-	// Auto-cancel pending bookings that have outlived the customer-facing timeout.
-	// We cancel any pending booking older than 2 minutes regardless of match_attempts,
-	// because match_attempts stays 0 when no helpers are available — those bookings
-	// would otherwise stay pending forever and appear stuck in the user's bookings list.
+	// Auto-cancel pending bookings whose dispatch window has expired without
+	// any acceptance. We gate on `fire_at` (NOT created_at) so that scheduled
+	// future bookings — which sit at status=pending for hours/days while
+	// waiting for their fire_at to roll around — are NEVER auto-cancelled
+	// here. Only bookings whose fire_at has passed are considered "stale";
+	// the 2-minute grace gives the matcher a chance to land a helper.
+	//
+	// Filtering on fire_at IS NOT NULL skips legacy rows that pre-date the
+	// stealth/scheduled split; those will never auto-cancel here either.
 	if _, expErr := e.db.Exec(ctx, `
 		UPDATE bookings
 		   SET status = 'cancelled', updated_at = NOW(),
 		       cancelled_at = NOW(), cancelled_by = 'system'
-		 WHERE status = 'pending'
-		   AND created_at < NOW() - INTERVAL '2 minutes'
+		 WHERE status   = 'pending'
+		   AND fire_at IS NOT NULL
+		   AND fire_at < NOW() - INTERVAL '2 minutes'
 	`); expErr != nil {
 		log.Warn().Err(expErr).Msg("[engine] failed to auto-cancel expired pending bookings")
 	}
@@ -520,35 +547,37 @@ func (e *Engine) postgresGeoFallback(
 		fetchCount = 20
 	}
 
+	// Uses ST_DWithin on the geography column so the GIST index
+	// (idx_helpers_location) accelerates the radius filter. Distance is in
+	// meters from PostGIS; we convert to km for the candidate struct.
 	rows, err := e.db.Query(ctx, `
-		SELECT id, rating, total_jobs, active_bookings, current_lat, current_lng, dist_km
-		FROM (
-			SELECT
-				h.id,
-				COALESCE(h.rating, 5.0)   AS rating,
-				COALESCE(h.total_jobs, 0) AS total_jobs,
-				COALESCE(active.cnt, 0)   AS active_bookings,
-				h.current_lat,
-				h.current_lng,
-				(2 * 6371 * asin(sqrt(
-					power(sin(radians(h.current_lat - $1) / 2), 2) +
-					cos(radians($1)) * cos(radians(h.current_lat)) *
-					power(sin(radians(h.current_lng - $2) / 2), 2)
-				))) AS dist_km
-			FROM helpers h
-			LEFT JOIN (
-				SELECT helper_id, COUNT(*) AS cnt
-				FROM bookings
-				WHERE status IN ('accepted', 'in_progress')
-				GROUP BY helper_id
-			) active ON active.helper_id = h.id
-			WHERE h.is_available = true
-			  AND h.current_lat IS NOT NULL
-			  AND h.current_lng IS NOT NULL
-			  AND COALESCE(h.rating, 5.0) >= $3
-		) sub
-		WHERE dist_km <= $4
-		ORDER BY dist_km ASC
+		SELECT
+			h.id,
+			COALESCE(h.rating, 5.0)   AS rating,
+			COALESCE(h.total_jobs, 0) AS total_jobs,
+			COALESCE(active.cnt, 0)   AS active_bookings,
+			ST_Y(h.location::geometry) AS current_lat,
+			ST_X(h.location::geometry) AS current_lng,
+			ST_Distance(
+				h.location,
+				ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+			) / 1000.0 AS dist_km
+		FROM helpers h
+		LEFT JOIN (
+			SELECT helper_id, COUNT(*) AS cnt
+			FROM bookings
+			WHERE status IN ('accepted', 'in_progress')
+			GROUP BY helper_id
+		) active ON active.helper_id = h.id
+		WHERE h.is_available = true
+		  AND h.location IS NOT NULL
+		  AND COALESCE(h.rating, 5.0) >= $3
+		  AND ST_DWithin(
+				h.location,
+				ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+				$4 * 1000.0
+		      )
+		ORDER BY h.location <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
 		LIMIT $5
 	`, lat, lng, minRating, radiusKm, fetchCount)
 	if err != nil {

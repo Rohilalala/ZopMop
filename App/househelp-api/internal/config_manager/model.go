@@ -63,7 +63,7 @@ var DefaultConfigs = map[string]AppConfig{
 	ConfigPricingSurgeMultiplier:           {Key: ConfigPricingSurgeMultiplier, Value: "1.0", ValueType: "float", Description: "Surge pricing multiplier"},
 	ConfigPricingSurgeEnabled:              {Key: ConfigPricingSurgeEnabled, Value: "false", ValueType: "bool", Description: "Whether surge pricing is active"},
 	ConfigBookingCancellationWindowMinutes: {Key: ConfigBookingCancellationWindowMinutes, Value: "5", ValueType: "int", Description: "Free cancellation window in minutes"},
-	ConfigBookingMaxActivePerCustomer:      {Key: ConfigBookingMaxActivePerCustomer, Value: "1", ValueType: "int", Description: "Max simultaneous bookings per customer"},
+	ConfigBookingMaxActivePerCustomer:      {Key: ConfigBookingMaxActivePerCustomer, Value: "2", ValueType: "int", Description: "Max simultaneous bookings per customer"},
 	ConfigBookingMaxActivePerHelper:        {Key: ConfigBookingMaxActivePerHelper, Value: "3", ValueType: "int", Description: "Max simultaneous bookings per helper"},
 	ConfigAppMaintenanceMode:               {Key: ConfigAppMaintenanceMode, Value: "false", ValueType: "bool", Description: "Show maintenance screen to all users"},
 	ConfigAppMinVersionIOS:                 {Key: ConfigAppMinVersionIOS, Value: "1.0.0", ValueType: "string", Description: "Minimum supported iOS app version"},

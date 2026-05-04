@@ -16,6 +16,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, FontFamily, FontSize, Radius, Shadow, Spacing } from '../theme';
 import { deleteAddress, type ApiAddress } from '../api/addresses';
+import { showError } from '../utils/toast';
+import { haptics } from '../utils/haptics';
 import EditAddressModal from './EditAddressModal';
 import LocationSelectorModal from './LocationSelectorModal';
 
@@ -81,7 +83,7 @@ export default function AddressPickerModal({
             await deleteAddress(token, addr.id);
             onAddressDeleted(addr.id);
           } catch {
-            Alert.alert('Error', 'Could not delete. Please try again.');
+            showError('Could not delete. Please try again.');
           }
         },
       },
@@ -147,7 +149,7 @@ export default function AddressPickerModal({
                     key={addr.id}
                     address={addr}
                     selected={addr.id === selectedId}
-                    onSelect={() => { onSelect(addr); onClose(); }}
+                    onSelect={() => { haptics.light(); onSelect(addr); onClose(); }}
                     onEdit={() => setEditTarget(addr)}
                     onDelete={() => handleDelete(addr)}
                   />

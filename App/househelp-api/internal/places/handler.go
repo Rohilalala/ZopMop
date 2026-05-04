@@ -33,7 +33,7 @@ func (h *Handler) Autocomplete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "maps service not configured"})
 	}
 
-	results, err := h.maps.PlacesAutocomplete(c.Context(), q)
+	results, err := h.maps.PlacesAutocomplete(c.UserContext(), q)
 	if err != nil {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "places lookup failed"})
 	}

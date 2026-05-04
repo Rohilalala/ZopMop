@@ -1,18 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { MarkerF } from '@react-google-maps/api';
 import {
-  Check, FileText, ListOrdered, Pause, Play, PowerOff, Star, Tag, X,
+  Check, FileText, ListOrdered, MapPin, Pause, Play, PowerOff, Star, Tag, X,
 } from 'lucide-react';
 
 import {
   approveWorker, forceOffline, getWorker, getWorkerJobs, rejectWorker,
-  setWorkerCategories, suspendWorker, unsuspendWorker, workerActiveJob,
+  setWorkerCategories, setWorkerLocality, suspendWorker, unsuspendWorker, workerActiveJob,
   type WorkerDetail,
 } from '@/api/workers';
+import { listLocalities } from '@/api/localities';
 import { Drawer } from '@/components/ui/Drawer';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { GoogleMapWrapper } from '@/components/maps/GoogleMapWrapper';
+import { usePermission } from '@/auth/usePermission';
 
 // WorkerDrawer: tabbed detail panel.
 
@@ -62,9 +66,12 @@ function Header({ worker, onActed }: { worker: WorkerDetail; onActed: () => void
           <div className="w-14 h-14 rounded-full bg-accent/30 flex items-center justify-center font-semibold text-lg">
             {(worker.name ?? worker.phone)[0]?.toUpperCase()}
           </div>
-          {worker.is_available && (
-            <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-success border-2 border-surface" />
-          )}
+          <span
+            title={worker.is_online ? 'Online' : 'Offline'}
+            className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-surface ${
+              worker.is_online ? 'bg-success' : 'bg-text-muted'
+            }`}
+          />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -128,38 +135,82 @@ function Actions({ worker, onActed }: { worker: WorkerDetail; onActed: () => voi
     setReason('');
   }
 
+  const canApprove   = usePermission('workers.approve');
+  const canReject    = usePermission('workers.reject');
+  const canSuspend   = usePermission('workers.suspend');
+  const canUnsuspend = usePermission('workers.unsuspend');
+  const canOffline   = usePermission('workers.force_offline');
+
+  const denyClick = (can: boolean, action: () => void) => () => {
+    if (!can) {
+      showToast({ kind: 'error', message: 'Insufficient permissions' });
+      return;
+    }
+    action();
+  };
+
   return (
     <>
       <div className="mt-4 flex flex-wrap gap-2">
         {worker.status === 'pending' && (
           <>
-            <button className="btn-ghost text-success" onClick={() => setPending({ kind: 'approve' })}>
+            <button
+              className="btn-ghost text-success"
+              disabled={!canApprove}
+              title={!canApprove ? 'Insufficient permissions' : undefined}
+              onClick={denyClick(canApprove, () => setPending({ kind: 'approve' }))}
+            >
               <Check className="w-4 h-4" />Approve
             </button>
-            <button className="btn-ghost text-danger" onClick={() => setPending({ kind: 'reject' })}>
+            <button
+              className="btn-ghost text-danger"
+              disabled={!canReject}
+              title={!canReject ? 'Insufficient permissions' : undefined}
+              onClick={denyClick(canReject, () => setPending({ kind: 'reject' }))}
+            >
               <X className="w-4 h-4" />Reject
             </button>
           </>
         )}
         {worker.status === 'active' && (
           <>
-            <button className="btn-ghost text-warning" onClick={() => setPending({ kind: 'suspend' })}>
+            <button
+              className="btn-ghost text-warning"
+              disabled={!canSuspend}
+              title={!canSuspend ? 'Insufficient permissions' : undefined}
+              onClick={denyClick(canSuspend, () => setPending({ kind: 'suspend' }))}
+            >
               <Pause className="w-4 h-4" />Suspend
             </button>
             {worker.is_available && (
-              <button className="btn-ghost" onClick={() => setPending({ kind: 'force-offline' })}>
+              <button
+                className="btn-ghost"
+                disabled={!canOffline}
+                title={!canOffline ? 'Insufficient permissions' : undefined}
+                onClick={denyClick(canOffline, () => setPending({ kind: 'force-offline' }))}
+              >
                 <PowerOff className="w-4 h-4" />Force offline
               </button>
             )}
           </>
         )}
         {worker.status === 'suspended' && (
-          <button className="btn-ghost text-success" onClick={() => setPending({ kind: 'unsuspend' })}>
+          <button
+            className="btn-ghost text-success"
+            disabled={!canUnsuspend}
+            title={!canUnsuspend ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canUnsuspend, () => setPending({ kind: 'unsuspend' }))}
+          >
             <Play className="w-4 h-4" />Unsuspend
           </button>
         )}
         {worker.status === 'rejected' && (
-          <button className="btn-ghost text-success" onClick={() => setPending({ kind: 'approve' })}>
+          <button
+            className="btn-ghost text-success"
+            disabled={!canApprove}
+            title={!canApprove ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canApprove, () => setPending({ kind: 'approve' }))}
+          >
             <Check className="w-4 h-4" />Approve anyway
           </button>
         )}
@@ -269,6 +320,47 @@ function Tabs({ current, onChange }: { current: Tab; onChange: (t: Tab) => void 
   );
 }
 
+function LocalityRow({ worker }: { worker: WorkerDetail }) {
+  const qc = useQueryClient();
+  const localitiesQ = useQuery({
+    queryKey: ['localities-active'],
+    queryFn: () => listLocalities({ activeOnly: true }),
+  });
+  const setMut = useMutation({
+    mutationFn: (next: string) => setWorkerLocality(worker.id, next),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['worker', worker.id] });
+      showToast({ kind: 'success', message: 'Locality updated' });
+    },
+    onError: (e: any) =>
+      showToast({ kind: 'error', message: e?.response?.data?.error ?? 'Could not update' }),
+  });
+
+  const current = worker.locality ?? '';
+  return (
+    <div className="col-span-2">
+      <h3 className="text-xs uppercase tracking-wider text-text-muted mb-2">Locality</h3>
+      <select
+        className="input w-full max-w-xs"
+        value={current}
+        disabled={setMut.isPending || localitiesQ.isLoading}
+        onChange={(e) => setMut.mutate(e.target.value)}
+      >
+        <option value="">— No locality —</option>
+        {(localitiesQ.data ?? []).map((l) => (
+          <option key={l.id} value={l.name}>
+            {l.name} · {l.city}
+          </option>
+        ))}
+      </select>
+      <p className="text-xs text-text-muted mt-2">
+        Drives scheduled-invite matching. Pro can also set this themselves
+        from the app.
+      </p>
+    </div>
+  );
+}
+
 function OverviewTab({ worker }: { worker: WorkerDetail }) {
   const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
   return (
@@ -285,14 +377,102 @@ function OverviewTab({ worker }: { worker: WorkerDetail }) {
         <div className="text-sm text-text-primary">{worker.address || '—'}</div>
       </div>
 
-      {worker.current_lat != null && worker.current_lng != null && (
-        <div className="col-span-2">
-          <h3 className="text-xs uppercase tracking-wider text-text-muted mb-2">Current location</h3>
-          <code className="text-xs font-mono text-text-secondary">
-            {worker.current_lat.toFixed(5)}, {worker.current_lng.toFixed(5)}
-          </code>
+      <LocalityRow worker={worker} />
+
+      <div className="col-span-2">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-wider text-text-muted">Live location</h3>
+          <StatusPill tone={worker.is_online ? 'success' : 'neutral'}>
+            {worker.is_online ? 'Online' : 'Offline'}
+          </StatusPill>
         </div>
-      )}
+        {worker.current_lat != null && worker.current_lng != null ? (
+          <>
+            <WorkerLocationMap
+              workerId={worker.id}
+              lat={worker.current_lat}
+              lng={worker.current_lng}
+              name={worker.name ?? worker.phone}
+              online={worker.is_online}
+            />
+            <code className="block mt-2 text-[11px] font-mono text-text-muted">
+              {worker.current_lat.toFixed(5)}, {worker.current_lng.toFixed(5)}
+              {!worker.is_online && (
+                <span className="ml-2 text-text-secondary">· last known position</span>
+              )}
+            </code>
+          </>
+        ) : (
+          <div className="card-elevated p-6 flex items-center gap-3 text-text-secondary text-sm">
+            <MapPin className="w-5 h-5 text-text-muted" />
+            No location reported yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkerLocationMap({
+  lat,
+  lng,
+  name,
+  online,
+}: {
+  workerId: string;
+  lat: number;
+  lng: number;
+  name: string;
+  online: boolean;
+}) {
+  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const center = { lat, lng };
+  const color = online ? '#00D4AA' : '#4A4A6A';
+
+  // Re-pan + trigger resize when the drawer animates in: GoogleMap measures its
+  // container on mount, but the Drawer's translate animation means dimensions
+  // can settle after mount, leaving the marker correctly positioned but the
+  // viewport off. Firing a resize on the next frame nudges Maps to recalc.
+  useEffect(() => {
+    if (!map) return;
+    const t = window.setTimeout(() => {
+      google.maps.event.trigger(map, 'resize');
+      map.panTo(center);
+      map.setZoom(14);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [map, lat, lng]);
+
+  const r = 7;
+  const halo = r + 4;
+  const size = halo * 2 + 4;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${halo}" fill="${color}" fill-opacity="0.2"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="${color}" stroke="#0A0A0F" stroke-width="2"/>
+  </svg>`;
+  const iconUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+
+  return (
+    <div className="w-full h-[240px] rounded-xl overflow-hidden border border-border">
+      <GoogleMapWrapper
+        center={center}
+        zoom={14}
+        disableDefaultUI
+        style={{ width: '100%', height: '100%' }}
+        onLoad={setMap}
+      >
+        {map && (
+          <MarkerF
+            position={center}
+            title={name}
+            icon={{
+              url: iconUrl,
+              scaledSize: new google.maps.Size(size, size),
+              anchor: new google.maps.Point(size / 2, size / 2),
+            }}
+          />
+        )}
+      </GoogleMapWrapper>
     </div>
   );
 }
@@ -358,6 +538,7 @@ function CategoriesTab({ worker, onSaved }: { worker: WorkerDetail; onSaved: () 
     },
   });
   const dirty = draft.trim() !== worker.categories.join(', ');
+  const canSave = usePermission('workers.set_categories');
   return (
     <div className="p-8 space-y-4">
       <div>
@@ -369,7 +550,18 @@ function CategoriesTab({ worker, onSaved }: { worker: WorkerDetail; onSaved: () 
         />
       </div>
       <div className="flex justify-end">
-        <button className="btn-primary" disabled={!dirty} onClick={() => setConfirm(true)}>Save</button>
+        <button
+          className="btn-primary"
+          disabled={!dirty || !canSave}
+          title={!canSave ? 'Insufficient permissions' : undefined}
+          onClick={() => {
+            if (!canSave) {
+              showToast({ kind: 'error', message: 'Insufficient permissions' });
+              return;
+            }
+            setConfirm(true);
+          }}
+        >Save</button>
       </div>
       <ConfirmModal
         open={confirm}

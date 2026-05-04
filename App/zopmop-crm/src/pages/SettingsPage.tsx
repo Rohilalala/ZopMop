@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { growthApi, zonesApi, platformApi, tsApi, type Zone } from '@/api/all';
+import { growthApi, zonesApi, platformApi, tsApi, type Zone, type Webhook, type WebhookDelivery } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
+import { Drawer } from '@/components/ui/Drawer';
 import { showToast } from '@/components/ui/Toast';
+import { Can } from '@/auth/Can';
+import { usePermission } from '@/auth/usePermission';
 
 // SettingsPage: hub for the smaller config-y modules — loyalty config, zones,
 // surge, app version, changelog, response templates, audit log viewer.
@@ -15,8 +18,28 @@ const TABS = [
 ] as const;
 type Tab = typeof TABS[number];
 
+// Superadmin-only tabs are hidden from lower roles since their tab pages have
+// no read-only utility — only write controls. Audit + read-only tabs remain
+// visible to all. Per-button gating still applies inside each tab below.
+
 export function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('loyalty');
+  const canWebhooks   = usePermission('webhooks.create');
+  const canAppVersion = usePermission('app_version.update');
+  const canChangelog  = usePermission('changelog.publish');
+  const canLoyalty    = usePermission('loyalty.update');
+
+  const visibleTabs = TABS.filter((t) => {
+    if (t === 'webhooks')    return canWebhooks;
+    if (t === 'app-version') return canAppVersion;
+    if (t === 'changelog')   return canChangelog;
+    if (t === 'loyalty')     return canLoyalty;
+    return true;
+  });
+
+  const [tab, setTab] = useState<Tab>(visibleTabs[0] ?? 'zones');
+  // If the chosen tab is no longer visible (rare; role downgrade mid-session),
+  // fall back to the first visible.
+  const activeTab: Tab = visibleTabs.includes(tab) ? tab : (visibleTabs[0] ?? 'zones');
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -24,21 +47,21 @@ export function SettingsPage() {
         <p className="text-sm text-text-secondary mt-1">Loyalty, zones, surge, webhooks, templates, app version, changelog, audit log, blacklist.</p>
       </div>
       <div className="flex gap-1 border-b border-border overflow-x-auto">
-        {TABS.map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 text-sm capitalize border-b-2 transition whitespace-nowrap ${tab === t ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+        {visibleTabs.map((t) => (
+          <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 text-sm capitalize border-b-2 transition whitespace-nowrap ${activeTab === t ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
             {t.replace('-', ' ')}
           </button>
         ))}
       </div>
-      {tab === 'loyalty'    && <LoyaltyTab />}
-      {tab === 'zones'      && <ZonesTab />}
-      {tab === 'surge'      && <SurgeTab />}
-      {tab === 'webhooks'   && <WebhooksTab />}
-      {tab === 'templates'  && <TemplatesTab />}
-      {tab === 'app-version' && <AppVersionTab />}
-      {tab === 'changelog'  && <ChangelogTab />}
-      {tab === 'audit'      && <AuditTab />}
-      {tab === 'blacklist'  && <BlacklistTab />}
+      {activeTab === 'loyalty'    && <LoyaltyTab />}
+      {activeTab === 'zones'      && <ZonesTab />}
+      {activeTab === 'surge'      && <SurgeTab />}
+      {activeTab === 'webhooks'   && <WebhooksTab />}
+      {activeTab === 'templates'  && <TemplatesTab />}
+      {activeTab === 'app-version' && <AppVersionTab />}
+      {activeTab === 'changelog'  && <ChangelogTab />}
+      {activeTab === 'audit'      && <AuditTab />}
+      {activeTab === 'blacklist'  && <BlacklistTab />}
     </div>
   );
 }
@@ -77,10 +100,30 @@ function LoyaltyTab() {
       <label className="block text-sm">Points per ₹1 discount
         <input className="input mt-1" type="number" value={v.redeem} onChange={(e) => setRedeem(Number(e.target.value))} />
       </label>
-      <div className="flex justify-end"><button className="btn-primary" onClick={() => setConfirm(true)}>Save</button></div>
+      <div className="flex justify-end">
+        <LoyaltySaveBtn onClick={() => setConfirm(true)} />
+      </div>
       <ConfirmModal open={confirm} onClose={() => setConfirm(false)} onConfirm={() => m.mutateAsync()}
         title="Save loyalty config?" impact="Affects all future point accruals + redemptions." confirmLabel="Save" />
     </Card>
+  );
+}
+
+function LoyaltySaveBtn({ onClick }: { onClick: () => void }) {
+  const can = usePermission('loyalty.update');
+  return (
+    <button
+      className="btn-primary"
+      disabled={!can}
+      title={!can ? 'Insufficient permissions' : undefined}
+      onClick={() => {
+        if (!can) {
+          showToast({ kind: 'error', message: 'Insufficient permissions' });
+          return;
+        }
+        onClick();
+      }}
+    >Save</button>
   );
 }
 
@@ -94,12 +137,15 @@ function ZonesTab() {
     mutationFn: ({ id, active }: { id: string; active: boolean }) => zonesApi.toggle(id, active),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['zones'] }),
   });
+  const canToggle = usePermission('zones.toggle');
 
   return (
     <Card>
       <div className="flex justify-between mb-3">
         <h2 className="text-sm font-semibold">Zones (circle radius)</h2>
-        <button className="btn-primary !py-1 !px-3" onClick={() => setCreating(true)}>+ New zone</button>
+        <Can perm="zones.create">
+          <button className="btn-primary !py-1 !px-3" onClick={() => setCreating(true)}>+ New zone</button>
+        </Can>
       </div>
       {q.isLoading ? <Skeleton className="h-32" /> :
         (q.data?.length ?? 0) === 0 ? <EmptyState title="No zones" /> :
@@ -112,7 +158,18 @@ function ZonesTab() {
                 </div>
                 <StatusPill tone={z.is_active ? 'success' : 'neutral'}>{z.is_active ? 'active' : 'off'}</StatusPill>
                 <button className="btn-ghost !py-1 !px-2 text-xs" onClick={() => setEditing(z)}>Edit</button>
-                <button className="btn-ghost !py-1 !px-2 text-xs" onClick={() => tog.mutate({ id: z.id, active: !z.is_active })}>{z.is_active ? 'Disable' : 'Enable'}</button>
+                <button
+                  className="btn-ghost !py-1 !px-2 text-xs"
+                  disabled={!canToggle}
+                  title={!canToggle ? 'Insufficient permissions' : undefined}
+                  onClick={() => {
+                    if (!canToggle) {
+                      showToast({ kind: 'error', message: 'Insufficient permissions' });
+                      return;
+                    }
+                    tog.mutate({ id: z.id, active: !z.is_active });
+                  }}
+                >{z.is_active ? 'Disable' : 'Enable'}</button>
               </div>
             ))}
           </div>
@@ -129,6 +186,9 @@ function ZoneEditor({ z, onClose }: { z: Zone | null; onClose: () => void }) {
   const [lat, setLat]   = useState(z?.lat.toString() ?? '');
   const [lon, setLon]   = useState(z?.lon.toString() ?? '');
   const [rad, setRad]   = useState(z?.radius_km.toString() ?? '5');
+  const canCreate = usePermission('zones.create');
+  const canUpdate = usePermission('zones.update');
+  const canSave = z ? canUpdate : canCreate;
   const m = useMutation({
     mutationFn: () => {
       const body = { name, city, lat: Number(lat), lon: Number(lon), radius_km: Number(rad) };
@@ -148,7 +208,18 @@ function ZoneEditor({ z, onClose }: { z: Zone | null; onClose: () => void }) {
         <input className="input" placeholder="Radius km" value={rad} onChange={(e) => setRad(e.target.value)} />
         <div className="flex justify-end gap-2 pt-3 border-t border-border">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={() => m.mutateAsync()}>Save</button>
+          <button
+            className="btn-primary"
+            disabled={!canSave}
+            title={!canSave ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canSave) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              m.mutateAsync();
+            }}
+          >Save</button>
         </div>
       </div>
     </Modal>
@@ -173,6 +244,8 @@ function SurgeTab() {
     mutationFn: (id: string) => zonesApi.surgeDelete(id),
     onSuccess: () => { showToast({ kind: 'success', message: 'Removed.' }); qc.invalidateQueries({ queryKey: ['surge'] }); setDel(null); },
   });
+  const canCreate = usePermission('surge.create');
+  const canDelete = usePermission('surge.delete');
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -185,7 +258,18 @@ function SurgeTab() {
           </select>
           <input className="input" placeholder="Multiplier (e.g. 1.5)" value={mul} onChange={(e) => setMul(e.target.value)} />
           <input className="input" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <button className="btn-primary w-full" disabled={!zoneID || !mul} onClick={() => create.mutateAsync()}>Add</button>
+          <button
+            className="btn-primary w-full"
+            disabled={!zoneID || !mul || !canCreate}
+            title={!canCreate ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canCreate) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              create.mutateAsync();
+            }}
+          >Add</button>
         </div>
       </Card>
       <Card>
@@ -199,7 +283,18 @@ function SurgeTab() {
                     <div className="font-mono">{s.multiplier.toFixed(2)}×</div>
                     <div className="text-[11px] text-text-muted">{s.zone_id.slice(0, 8)} · {s.reason ?? '—'}</div>
                   </div>
-                  <button className="btn-ghost text-danger !py-1 !px-2 text-xs" onClick={() => setDel(s.id)}>Remove</button>
+                  <button
+                    className="btn-ghost text-danger !py-1 !px-2 text-xs"
+                    disabled={!canDelete}
+                    title={!canDelete ? 'Insufficient permissions' : undefined}
+                    onClick={() => {
+                      if (!canDelete) {
+                        showToast({ kind: 'error', message: 'Insufficient permissions' });
+                        return;
+                      }
+                      setDel(s.id);
+                    }}
+                  >Remove</button>
                 </div>
               ))}
             </div>
@@ -216,6 +311,8 @@ function WebhooksTab() {
   const q = useQuery({ queryKey: ['webhooks'], queryFn: platformApi.listWebhooks });
   const [url, setUrl] = useState('');
   const [events, setEvents] = useState('order.completed,refund.approved');
+  const [testing, setTesting] = useState<Webhook | null>(null);
+  const [viewing, setViewing] = useState<Webhook | null>(null);
   const create = useMutation({
     mutationFn: () => platformApi.createWebhook({ url, events: events.split(',').map((s) => s.trim()).filter(Boolean) }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Webhook added.' }); qc.invalidateQueries({ queryKey: ['webhooks'] }); setUrl(''); },
@@ -224,6 +321,8 @@ function WebhooksTab() {
     mutationFn: (id: string) => platformApi.deleteWebhook(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['webhooks'] }); showToast({ kind: 'success', message: 'Removed.' }); },
   });
+  const canCreate = usePermission('webhooks.create');
+  const canDelete = usePermission('webhooks.delete');
   return (
     <Card>
       <h2 className="text-sm font-semibold mb-3">Webhooks</h2>
@@ -231,7 +330,18 @@ function WebhooksTab() {
         <input className="input" placeholder="https://your-server/hook" value={url} onChange={(e) => setUrl(e.target.value)} />
         <input className="input" placeholder="events,comma,separated" value={events} onChange={(e) => setEvents(e.target.value)} />
       </div>
-      <button className="btn-primary mb-4" disabled={!url} onClick={() => create.mutateAsync()}>Add</button>
+      <button
+        className="btn-primary mb-4"
+        disabled={!url || !canCreate}
+        title={!canCreate ? 'Insufficient permissions' : undefined}
+        onClick={() => {
+          if (!canCreate) {
+            showToast({ kind: 'error', message: 'Insufficient permissions' });
+            return;
+          }
+          create.mutateAsync();
+        }}
+      >Add</button>
       {q.isLoading ? <Skeleton className="h-32" /> :
         (q.data?.length ?? 0) === 0 ? <EmptyState title="No webhooks" /> :
           <div className="divide-y divide-border">
@@ -242,12 +352,216 @@ function WebhooksTab() {
                   <div className="text-[11px] text-text-muted">{w.events.join(', ')}</div>
                 </div>
                 <StatusPill tone={w.is_active ? 'success' : 'neutral'}>{w.is_active ? 'active' : 'off'}</StatusPill>
-                <button className="btn-ghost text-danger !py-1 !px-2 text-xs" onClick={() => del.mutate(w.id)}>Delete</button>
+                <Can perm="webhooks.create">
+                  <button
+                    className="btn-ghost !py-1 !px-2 text-xs"
+                    onClick={() => setTesting(w)}
+                  >Test</button>
+                </Can>
+                <button
+                  className="btn-ghost !py-1 !px-2 text-xs"
+                  onClick={() => setViewing(w)}
+                >Deliveries</button>
+                <button
+                  className="btn-ghost text-danger !py-1 !px-2 text-xs"
+                  disabled={!canDelete}
+                  title={!canDelete ? 'Insufficient permissions' : undefined}
+                  onClick={() => {
+                    if (!canDelete) {
+                      showToast({ kind: 'error', message: 'Insufficient permissions' });
+                      return;
+                    }
+                    del.mutate(w.id);
+                  }}
+                >Delete</button>
               </div>
             ))}
           </div>
       }
+      {testing && <WebhookTestModal webhook={testing} onClose={() => setTesting(null)} />}
+      {viewing && <WebhookDeliveriesDrawer webhook={viewing} onClose={() => setViewing(null)} />}
     </Card>
+  );
+}
+
+// Default sample payload — built fresh each render so the unix timestamp is current.
+function defaultSample(): string {
+  return JSON.stringify({ message: 'hello from zopmop', ts: Math.floor(Date.now() / 1000) }, null, 2);
+}
+
+// WebhookTestModal: pick an event name + JSON sample, fire a test ping, render
+// the resulting Delivery row inline. JSON-validates before submit; if parse
+// fails, surface "Invalid JSON" inline and abort the call.
+function WebhookTestModal({ webhook, onClose }: { webhook: Webhook; onClose: () => void }) {
+  const [event, setEvent] = useState('test.ping');
+  const [sample, setSample] = useState(defaultSample());
+  const [jsonErr, setJsonErr] = useState<string | null>(null);
+  const [result, setResult] = useState<WebhookDelivery | null>(null);
+
+  const send = useMutation({
+    mutationFn: (body: { event: string; sample: unknown }) => platformApi.testWebhook(webhook.id, body),
+    onSuccess: (dlv) => {
+      setResult(dlv);
+      showToast({
+        kind: dlv.succeeded ? 'success' : 'error',
+        message: dlv.succeeded ? `Test sent — ${dlv.status_code ?? 'OK'}` : `Test failed — ${dlv.status_code ?? 'no response'}`,
+      });
+    },
+    onError: () => showToast({ kind: 'error', message: 'Test request failed.' }),
+  });
+
+  function onSend() {
+    setJsonErr(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(sample);
+    } catch {
+      setJsonErr('Invalid JSON');
+      return;
+    }
+    send.mutate({ event, sample: parsed });
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Test webhook" width="max-w-xl">
+      <div className="space-y-3">
+        <div className="text-xs text-text-muted font-mono truncate">{webhook.url}</div>
+        <label className="block text-xs uppercase tracking-wider text-text-muted">Event
+          <input className="input mt-1" value={event} onChange={(e) => setEvent(e.target.value)} />
+        </label>
+        <label className="block text-xs uppercase tracking-wider text-text-muted">Sample payload (JSON)
+          <textarea
+            className="input mt-1 min-h-[140px] font-mono text-xs"
+            value={sample}
+            onChange={(e) => { setSample(e.target.value); if (jsonErr) setJsonErr(null); }}
+            spellCheck={false}
+          />
+        </label>
+        {jsonErr && <div className="text-xs text-danger">{jsonErr}</div>}
+        <div className="flex justify-end gap-2 pt-3 border-t border-border">
+          <button className="btn-ghost" onClick={onClose} disabled={send.isPending}>Close</button>
+          <button className="btn-primary" disabled={send.isPending || !event} onClick={onSend}>
+            {send.isPending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+        {result && <DeliveryResultCard d={result} />}
+      </div>
+    </Modal>
+  );
+}
+
+// Inline summary of a Delivery returned by /test.
+function DeliveryResultCard({ d }: { d: WebhookDelivery }) {
+  const code = d.status_code ?? 0;
+  const tone: 'success' | 'danger' = d.succeeded ? 'success' : 'danger';
+  return (
+    <div className="mt-3 border border-border rounded-md p-3 space-y-2 bg-surface-elevated">
+      <div className="flex items-center gap-2">
+        <StatusPill tone={tone}>{d.succeeded ? 'succeeded' : 'failed'}</StatusPill>
+        <span className="font-mono text-xs">{code === 0 ? 'ERROR' : code}</span>
+        <span className="text-[11px] text-text-muted ml-auto">{d.duration_ms ?? '—'} ms</span>
+      </div>
+      <pre className="text-[11px] text-text-secondary whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+        {(d.response_body ?? '').slice(0, 2000) || '(empty body)'}
+      </pre>
+    </div>
+  );
+}
+
+// WebhookDeliveriesDrawer: right-side drawer listing recent deliveries. Polls
+// every 10s while mounted. Per-row Retry button if !succeeded.
+function WebhookDeliveriesDrawer({ webhook, onClose }: { webhook: Webhook; onClose: () => void }) {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ['webhook-deliveries', webhook.id],
+    queryFn: () => platformApi.listDeliveries(webhook.id),
+    refetchInterval: 10_000,
+  });
+  const [confirmRetry, setConfirmRetry] = useState<WebhookDelivery | null>(null);
+  const canRetry = usePermission('webhooks.create');
+
+  const retry = useMutation({
+    mutationFn: (id: number) => platformApi.retryDelivery(id),
+    onSuccess: (res) => {
+      showToast({ kind: 'success', message: `Replayed — new delivery #${res.new_delivery_id}` });
+      setConfirmRetry(null);
+      qc.invalidateQueries({ queryKey: ['webhook-deliveries', webhook.id] });
+    },
+    onError: () => showToast({ kind: 'error', message: 'Retry failed.' }),
+  });
+
+  return (
+    <Drawer open onClose={onClose} width="max-w-3xl">
+      <div className="p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Webhook deliveries</h2>
+          <div className="text-xs text-text-muted font-mono truncate mt-1">{webhook.url}</div>
+          <div className="text-[11px] text-text-muted mt-1">Polling every 10s.</div>
+        </div>
+        {q.isLoading ? <Skeleton className="h-40" /> :
+          (q.data?.length ?? 0) === 0 ? <EmptyState title="No deliveries yet" body="Fire a Test ping or wait for an event." /> :
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-text-muted uppercase tracking-wider text-[10px] border-b border-border">
+                  <tr>
+                    <th className="text-left py-2 pr-3">Time</th>
+                    <th className="text-left py-2 pr-3">Event</th>
+                    <th className="text-left py-2 pr-3">Status</th>
+                    <th className="text-left py-2 pr-3">Duration</th>
+                    <th className="text-left py-2 pr-3">Result</th>
+                    <th className="text-left py-2 pr-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {q.data?.map((d) => {
+                    const code = d.status_code ?? 0;
+                    const tone: 'success' | 'danger' = code >= 200 && code < 300 ? 'success' : 'danger';
+                    const label = code === 0 ? 'ERROR' : String(code);
+                    return (
+                      <tr key={d.id} className="align-top">
+                        <td className="py-2 pr-3 whitespace-nowrap text-text-secondary">{new Date(d.created_at).toLocaleString()}</td>
+                        <td className="py-2 pr-3 font-mono">{d.event}</td>
+                        <td className="py-2 pr-3"><StatusPill tone={tone}>{label}</StatusPill></td>
+                        <td className="py-2 pr-3 text-text-secondary">{d.duration_ms ?? '—'} ms</td>
+                        <td className="py-2 pr-3 font-mono text-text-secondary max-w-[260px] truncate" title={d.response_body ?? ''}>
+                          {(d.response_body ?? '').slice(0, 80) || '—'}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {d.retried_at && (
+                            <span className="text-[10px] text-text-muted mr-2">replayed {new Date(d.retried_at).toLocaleTimeString()}</span>
+                          )}
+                          {!d.succeeded && (
+                            <button
+                              className="btn-ghost !py-0.5 !px-2 text-[11px]"
+                              disabled={!canRetry || retry.isPending}
+                              title={!canRetry ? 'Insufficient permissions' : undefined}
+                              onClick={() => {
+                                if (!canRetry) {
+                                  showToast({ kind: 'error', message: 'Insufficient permissions' });
+                                  return;
+                                }
+                                setConfirmRetry(d);
+                              }}
+                            >Retry</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+        }
+      </div>
+      <ConfirmModal
+        open={!!confirmRetry}
+        onClose={() => setConfirmRetry(null)}
+        onConfirm={async () => { if (confirmRetry) await retry.mutateAsync(confirmRetry.id); }}
+        title="Retry delivery?"
+        impact={<>Re-sends the same payload to <span className="font-mono">{webhook.url}</span>. Creates a new delivery row.</>}
+        confirmLabel="Retry"
+      />
+    </Drawer>
   );
 }
 
@@ -266,6 +580,8 @@ function TemplatesTab() {
     mutationFn: (id: string) => platformApi.deleteTemplate(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['templates'] }),
   });
+  const canCreate = usePermission('templates.create');
+  const canDelete = usePermission('templates.delete');
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card>
@@ -276,7 +592,18 @@ function TemplatesTab() {
           </select>
           <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <textarea className="input min-h-[120px]" placeholder="Body" value={body} onChange={(e) => setBody(e.target.value)} />
-          <button className="btn-primary w-full" disabled={!name || !body} onClick={() => create.mutateAsync()}>Add</button>
+          <button
+            className="btn-primary w-full"
+            disabled={!name || !body || !canCreate}
+            title={!canCreate ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canCreate) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              create.mutateAsync();
+            }}
+          >Add</button>
         </div>
       </Card>
       <Card>
@@ -289,7 +616,18 @@ function TemplatesTab() {
                   <div className="flex items-center gap-2">
                     <StatusPill tone="info">{t.category}</StatusPill>
                     <div className="font-semibold flex-1">{t.name}</div>
-                    <button className="btn-ghost text-danger !py-1 !px-2 text-xs" onClick={() => del.mutate(t.id)}>×</button>
+                    <button
+                      className="btn-ghost text-danger !py-1 !px-2 text-xs"
+                      disabled={!canDelete}
+                      title={!canDelete ? 'Insufficient permissions' : undefined}
+                      onClick={() => {
+                        if (!canDelete) {
+                          showToast({ kind: 'error', message: 'Insufficient permissions' });
+                          return;
+                        }
+                        del.mutate(t.id);
+                      }}
+                    >×</button>
                   </div>
                   <div className="text-xs text-text-secondary mt-1 whitespace-pre-wrap">{t.body}</div>
                 </div>
@@ -313,6 +651,7 @@ function AppVersionTab() {
     mutationFn: () => platformApi.setAppVersion({ platform, min_version: min, force_update: force, force_message: msg || undefined }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Version policy saved.' }); qc.invalidateQueries({ queryKey: ['app-versions'] }); setMin(''); setMsg(''); setForce(false); },
   });
+  const canSave = usePermission('app_version.update');
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card>
@@ -324,7 +663,18 @@ function AppVersionTab() {
           <input className="input" placeholder="Min version (e.g. 1.4.2)" value={min} onChange={(e) => setMin(e.target.value)} />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> Force update</label>
           {force && <textarea className="input min-h-[60px]" placeholder="Force update message" value={msg} onChange={(e) => setMsg(e.target.value)} />}
-          <button className="btn-primary w-full" disabled={!min} onClick={() => create.mutateAsync()}>Save policy</button>
+          <button
+            className="btn-primary w-full"
+            disabled={!min || !canSave}
+            title={!canSave ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canSave) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              create.mutateAsync();
+            }}
+          >Save policy</button>
         </div>
       </Card>
       <Card>
@@ -356,6 +706,7 @@ function ChangelogTab() {
     mutationFn: () => platformApi.createChangelog({ version: v, body, is_published: pub }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Saved.' }); qc.invalidateQueries({ queryKey: ['changelog'] }); setV(''); setBody(''); setPub(false); },
   });
+  const canSave = usePermission('changelog.publish');
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card>
@@ -364,7 +715,18 @@ function ChangelogTab() {
           <input className="input" placeholder="Version (e.g. 1.5.0)" value={v} onChange={(e) => setV(e.target.value)} />
           <textarea className="input min-h-[120px]" placeholder="Body (markdown ok)" value={body} onChange={(e) => setBody(e.target.value)} />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pub} onChange={(e) => setPub(e.target.checked)} /> Publish immediately</label>
-          <button className="btn-primary w-full" disabled={!v || !body} onClick={() => create.mutateAsync()}>Save</button>
+          <button
+            className="btn-primary w-full"
+            disabled={!v || !body || !canSave}
+            title={!canSave ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canSave) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              create.mutateAsync();
+            }}
+          >Save</button>
         </div>
       </Card>
       <Card>
@@ -433,6 +795,8 @@ function BlacklistTab() {
     mutationFn: (id: string) => tsApi.removeBlacklist(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['blacklist'] }),
   });
+  const canAdd    = usePermission('blacklist.add');
+  const canRemove = usePermission('blacklist.remove');
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card>
@@ -443,7 +807,18 @@ function BlacklistTab() {
           </select>
           <input className="input" placeholder="Value" value={val} onChange={(e) => setVal(e.target.value)} />
           <input className="input" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <button className="btn-primary w-full" disabled={!val || !reason} onClick={() => add.mutateAsync()}>Add</button>
+          <button
+            className="btn-primary w-full"
+            disabled={!val || !reason || !canAdd}
+            title={!canAdd ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canAdd) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              add.mutateAsync();
+            }}
+          >Add</button>
         </div>
       </Card>
       <Card>
@@ -458,7 +833,18 @@ function BlacklistTab() {
                     <div className="font-mono truncate">{b.value}</div>
                     <div className="text-[11px] text-text-muted">{b.reason}</div>
                   </div>
-                  <button className="btn-ghost text-danger !py-1 !px-2 text-xs" onClick={() => del.mutate(b.id)}>Remove</button>
+                  <button
+                    className="btn-ghost text-danger !py-1 !px-2 text-xs"
+                    disabled={!canRemove}
+                    title={!canRemove ? 'Insufficient permissions' : undefined}
+                    onClick={() => {
+                      if (!canRemove) {
+                        showToast({ kind: 'error', message: 'Insufficient permissions' });
+                        return;
+                      }
+                      del.mutate(b.id);
+                    }}
+                  >Remove</button>
                 </div>
               ))}
             </div>

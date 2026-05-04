@@ -24,6 +24,7 @@ import { apiFetch } from '../../api/client';
 
 const { width: W } = Dimensions.get('window');
 import { BASE_URL } from '../../api/config';
+import { showError } from '../../utils/toast';
 
 // How long the loading bar runs (ms)
 const MATCH_DURATION = 30000;
@@ -154,11 +155,11 @@ export default function InstantMatchingScreen({ route }: Props) {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           if (!cancelled) {
-            Alert.alert(
-              'Location Required',
+            showError(
               'We need your location to find pros near you. Please enable location access in Settings and try again.',
-              [{ text: 'OK', onPress: () => navigation.goBack() }],
+              { title: 'Location Required' },
             );
+            navigation.goBack();
           }
           return;
         }
@@ -171,7 +172,7 @@ export default function InstantMatchingScreen({ route }: Props) {
           lng = pos.coords.longitude;
         } catch {
           if (!cancelled) {
-            Alert.alert('Location Unavailable', 'Could not get your current location. Please try again.');
+            showError('Could not get your current location. Please try again.', { title: 'Location Unavailable' });
             navigation.goBack();
           }
           return;

@@ -19,6 +19,7 @@ import { Drawer } from '@/components/ui/Drawer';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { usePermission } from '@/auth/usePermission';
 
 // UserDrawer: tabbed detail view. Overview | Orders | Notes.
 
@@ -149,32 +150,68 @@ function Actions({ user, onActed }: { user: UserDetail; onActed: () => void }) {
   const isBanned = user.status === 'banned';
   const isSuspended = user.status === 'suspended';
 
+  const canSuspend   = usePermission('users.suspend');
+  const canUnsuspend = usePermission('users.unsuspend');
+  const canBan       = usePermission('users.ban');
+  const canUnban     = usePermission('users.unban');
+  const canVIP       = usePermission('users.set_vip');
+
+  const denyClick = (can: boolean, action: () => void) => () => {
+    if (!can) {
+      showToast({ kind: 'error', message: 'Insufficient permissions' });
+      return;
+    }
+    action();
+  };
+
   return (
     <>
       <div className="mt-4 flex flex-wrap gap-2">
         {!isBanned && !isSuspended && (
-          <button className="btn-ghost text-warning" onClick={() => setPending({ kind: 'suspend' })}>
+          <button
+            className="btn-ghost text-warning"
+            disabled={!canSuspend}
+            title={!canSuspend ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canSuspend, () => setPending({ kind: 'suspend' }))}
+          >
             <Pause className="w-4 h-4" />Suspend
           </button>
         )}
         {isSuspended && (
-          <button className="btn-ghost text-success" onClick={() => setPending({ kind: 'unsuspend' })}>
+          <button
+            className="btn-ghost text-success"
+            disabled={!canUnsuspend}
+            title={!canUnsuspend ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canUnsuspend, () => setPending({ kind: 'unsuspend' }))}
+          >
             <Play className="w-4 h-4" />Unsuspend
           </button>
         )}
         {!isBanned && (
-          <button className="btn-ghost text-danger" onClick={() => setPending({ kind: 'ban' })}>
+          <button
+            className="btn-ghost text-danger"
+            disabled={!canBan}
+            title={!canBan ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canBan, () => setPending({ kind: 'ban' }))}
+          >
             <Ban className="w-4 h-4" />Ban
           </button>
         )}
         {isBanned && (
-          <button className="btn-ghost text-success" onClick={() => setPending({ kind: 'unban' })}>
+          <button
+            className="btn-ghost text-success"
+            disabled={!canUnban}
+            title={!canUnban ? 'Insufficient permissions' : undefined}
+            onClick={denyClick(canUnban, () => setPending({ kind: 'unban' }))}
+          >
             <Play className="w-4 h-4" />Lift ban
           </button>
         )}
         <button
           className={`btn-ghost ${user.is_vip ? 'text-warning' : ''}`}
-          onClick={() => setPending({ kind: 'vip', next: !user.is_vip })}
+          disabled={!canVIP}
+          title={!canVIP ? 'Insufficient permissions' : undefined}
+          onClick={denyClick(canVIP, () => setPending({ kind: 'vip', next: !user.is_vip }))}
         >
           <Star className="w-4 h-4" />
           {user.is_vip ? 'Remove VIP' : 'Add to VIP'}
@@ -369,6 +406,7 @@ function NotesTab({ userId }: { userId: string }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['user-notes', userId], queryFn: () => getUserNotes(userId) });
   const [draft, setDraft] = useState('');
+  const canAddNote = usePermission('users.add_note');
   const m = useMutation({
     mutationFn: () => addUserNote(userId, draft),
     onSuccess: () => {
@@ -389,8 +427,15 @@ function NotesTab({ userId }: { userId: string }) {
         <div className="flex justify-end">
           <button
             className="btn-primary !py-2"
-            disabled={!draft.trim() || m.isPending}
-            onClick={() => m.mutateAsync()}
+            disabled={!draft.trim() || m.isPending || !canAddNote}
+            title={!canAddNote ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canAddNote) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              m.mutateAsync();
+            }}
           >
             {m.isPending ? 'Saving…' : 'Add note'}
           </button>

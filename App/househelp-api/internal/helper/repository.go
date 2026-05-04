@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -123,16 +124,53 @@ func (r *Repository) GetBookingInviteDetails(ctx context.Context, bookingIDs []s
 	return out, nil
 }
 
-// SetAvailability updates the helper's is_available flag in Postgres.
-func (r *Repository) SetAvailability(ctx context.Context, helperID string, available bool) error {
+// SetAvailability flips the helper's is_available flag and, only when the
+// value actually changes, appends a row to helper_status_log. Returns
+// (changed, error). The caller uses `changed` to decide whether to emit
+// downstream events (analytics + webhook) — re-toggling to the same value is
+// a no-op so we don't spam an "online" event every heartbeat.
+//
+// The UPDATE + INSERT run in one transaction so the log can never get out of
+// sync with the live flag.
+func (r *Repository) SetAvailability(ctx context.Context, helperID string, available bool) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := r.db.Exec(ctx,
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var prev bool
+	if err := tx.QueryRow(ctx,
+		`SELECT is_available FROM helpers WHERE id = $1 FOR UPDATE`,
+		helperID,
+	).Scan(&prev); err != nil {
+		return false, fmt.Errorf("load helper: %w", err)
+	}
+	if prev == available {
+		return false, tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx,
 		`UPDATE helpers SET is_available = $1 WHERE id = $2`,
 		available, helperID,
-	)
-	return err
+	); err != nil {
+		return false, fmt.Errorf("update helper: %w", err)
+	}
+
+	statusStr := "offline"
+	if available {
+		statusStr = "online"
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO helper_status_log (helper_id, status) VALUES ($1, $2)`,
+		helperID, statusStr,
+	); err != nil {
+		return false, fmt.Errorf("insert status log: %w", err)
+	}
+	return true, tx.Commit(ctx)
 }
 
 // GetLastLocation returns the helper's most recent persisted lat/lng.
@@ -159,12 +197,36 @@ func (r *Repository) UpdateLocation(ctx context.Context, helperID string, lat, l
 
 	_, err := r.db.Exec(ctx,
 		`UPDATE helpers
-		 SET current_lat  = $1,
-		     current_lng  = $2,
-		     hex_cell_id  = $3,
-		     is_available = true
+		 SET current_lat      = $1,
+		     current_lng      = $2,
+		     hex_cell_id      = $3,
+		     is_available     = true,
+		     last_location_at = NOW()
 		 WHERE id = $4`,
 		lat, lng, cellID, helperID,
 	)
+	return err
+}
+
+// UpdateLocality validates the locality against active localities (case
+// insensitive). Empty/whitespace clears the field. Returns a friendly
+// error if the locality isn't on the active list.
+func (r *Repository) UpdateLocality(ctx context.Context, helperID, locality string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	loc := strings.TrimSpace(locality)
+	if loc == "" {
+		_, err := r.db.Exec(ctx, `UPDATE helpers SET locality = NULL WHERE id = $1::uuid`, helperID)
+		return err
+	}
+	var canonical string
+	err := r.db.QueryRow(ctx, `
+		SELECT name FROM localities WHERE active = true AND name ILIKE $1 LIMIT 1
+	`, loc).Scan(&canonical)
+	if err != nil {
+		return fmt.Errorf("unknown locality")
+	}
+	_, err = r.db.Exec(ctx, `UPDATE helpers SET locality = $2 WHERE id = $1::uuid`, helperID, canonical)
 	return err
 }

@@ -6,6 +6,8 @@ import { promosApi, type Promo } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import { Can } from '@/auth/Can';
+import { usePermission } from '@/auth/usePermission';
 
 const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
@@ -27,7 +29,9 @@ export function PromosPage() {
           <h1 className="text-2xl font-semibold">Promos</h1>
           <p className="text-sm text-text-secondary mt-1">Discount codes, campaign tracking.</p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New promo</button>
+        <Can perm="promos.create">
+          <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New promo</button>
+        </Can>
       </div>
 
       <Card className="!p-4">
@@ -137,6 +141,11 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
     setF((x) => ({ ...x, code }));
   }
 
+  const canCreate = usePermission('promos.create');
+  const canUpdate = usePermission('promos.update');
+  const canToggle = usePermission('promos.toggle');
+  const canSave = promo ? canUpdate : canCreate;
+
   return (
     <Modal open onClose={onClose} title={promo ? `Edit ${promo.code}` : 'Create promo'} width="max-w-2xl">
       <div className="space-y-3">
@@ -169,13 +178,35 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.stackable} onChange={(e) => setF({ ...f, stackable: e.target.checked })} /> Stackable with other promos</label>
         <div className="flex justify-between pt-3 border-t border-border">
           {promo ? (
-            <button className="btn-ghost text-warning" onClick={() => setToggleConfirm(true)}>
+            <button
+              className="btn-ghost text-warning"
+              disabled={!canToggle}
+              title={!canToggle ? 'Insufficient permissions' : undefined}
+              onClick={() => {
+                if (!canToggle) {
+                  showToast({ kind: 'error', message: 'Insufficient permissions' });
+                  return;
+                }
+                setToggleConfirm(true);
+              }}
+            >
               {promo.is_active ? 'Deactivate' : 'Activate'}
             </button>
           ) : <span />}
           <div className="flex gap-2">
             <button className="btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" onClick={() => setConfirm(true)}>Save</button>
+            <button
+              className="btn-primary"
+              disabled={!canSave}
+              title={!canSave ? 'Insufficient permissions' : undefined}
+              onClick={() => {
+                if (!canSave) {
+                  showToast({ kind: 'error', message: 'Insufficient permissions' });
+                  return;
+                }
+                setConfirm(true);
+              }}
+            >Save</button>
           </div>
         </div>
       </div>

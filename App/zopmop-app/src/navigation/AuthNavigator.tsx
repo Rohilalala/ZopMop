@@ -18,7 +18,7 @@ export default function AuthNavigator() {
   return (
     <Stack.Navigator
       initialRouteName="ZopIntro"
-      screenOptions={{ headerShown: false, animation: 'fade' }}
+      screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: '#0A0A0A' } }}
     >
       <Stack.Screen
         name="ZopIntro"

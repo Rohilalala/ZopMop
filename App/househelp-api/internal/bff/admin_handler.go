@@ -91,7 +91,7 @@ func envParam(c *fiber.Ctx) string {
 // ── /admin/pages ─────────────────────────────────────────────────────────────
 
 func (a *AdminHandler) listPages(c *fiber.Ctx) error {
-	pages, err := a.repo.ListPages(c.Context())
+	pages, err := a.repo.ListPages(c.UserContext())
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -101,7 +101,7 @@ func (a *AdminHandler) listPages(c *fiber.Ctx) error {
 func (a *AdminHandler) listConfigs(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	env := envParam(c)
-	out, err := a.repo.ListConfigs(c.Context(), pageID, env)
+	out, err := a.repo.ListConfigs(c.UserContext(), pageID, env)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -145,11 +145,11 @@ func (a *AdminHandler) createDraft(c *fiber.Ctx) error {
 		ExperimentID: req.ExperimentID,
 		CreatedBy:    a.actor(c),
 	}
-	out, err := a.repo.CreateDraft(c.Context(), rec)
+	out, err := a.repo.CreateDraft(c.UserContext(), rec)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), pageID, &out.ID, "created", a.actor(c), "", out.ConfigJSON)
+	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, &out.ID, "created", a.actor(c), "", out.ConfigJSON)
 	return c.Status(201).JSON(out)
 }
 
@@ -157,7 +157,7 @@ func (a *AdminHandler) getConfig(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	version := c.Params("version")
 	env := envParam(c)
-	out, err := a.repo.GetByVersion(c.Context(), pageID, version, env)
+	out, err := a.repo.GetByVersion(c.UserContext(), pageID, version, env)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
@@ -192,7 +192,7 @@ func (a *AdminHandler) patchDraft(c *fiber.Ctx) error {
 		ExperimentID: req.ExperimentID,
 		ConfigJSON:   req.ConfigJSON,
 	}
-	out, err := a.repo.UpdateDraft(c.Context(), pageID, version, env, ifMatch, patch)
+	out, err := a.repo.UpdateDraft(c.UserContext(), pageID, version, env, ifMatch, patch)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -212,7 +212,7 @@ func (a *AdminHandler) deleteDraft(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	version := c.Params("version")
 	env := envParam(c)
-	if err := a.repo.DeleteDraft(c.Context(), pageID, version, env); err != nil {
+	if err := a.repo.DeleteDraft(c.UserContext(), pageID, version, env); err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
@@ -221,7 +221,7 @@ func (a *AdminHandler) deleteDraft(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), pageID, nil, "deleted", a.actor(c), "draft "+version, nil)
+	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, nil, "deleted", a.actor(c), "draft "+version, nil)
 	return c.SendStatus(204)
 }
 
@@ -229,14 +229,14 @@ func (a *AdminHandler) stage(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	version := c.Params("version")
 	env := envParam(c)
-	rec, err := a.repo.GetByVersion(c.Context(), pageID, version, env)
+	rec, err := a.repo.GetByVersion(c.UserContext(), pageID, version, env)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
 		}
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	res, vErr := a.validator.Validate(c.Context(), rec.ConfigJSON)
+	res, vErr := a.validator.Validate(c.UserContext(), rec.ConfigJSON)
 	if vErr != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "validate: " + vErr.Error()})
 	}
@@ -247,7 +247,7 @@ func (a *AdminHandler) stage(c *fiber.Ctx) error {
 			"warnings": res.Warnings,
 		})
 	}
-	out, err := a.repo.Stage(c.Context(), pageID, version, env, a.actor(c))
+	out, err := a.repo.Stage(c.UserContext(), pageID, version, env, a.actor(c))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -269,7 +269,7 @@ func (a *AdminHandler) activate(c *fiber.Ctx) error {
 	version := c.Params("version")
 	env := envParam(c)
 	ifMatch := c.Get("If-Match")
-	out, err := a.repo.Activate(c.Context(), pageID, version, env, a.actor(c), ifMatch)
+	out, err := a.repo.Activate(c.UserContext(), pageID, version, env, a.actor(c), ifMatch)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -283,7 +283,7 @@ func (a *AdminHandler) activate(c *fiber.Ctx) error {
 	}
 	// Cache invalidation post-commit.
 	if a.rdb != nil {
-		ctx := c.Context()
+		ctx := c.UserContext()
 		_ = a.rdb.Del(ctx, "sdui:page:"+pageID+":last_good").Err()
 		_ = a.rdb.Del(ctx, "sdui:page:"+pageID+":etag").Err()
 	}
@@ -294,7 +294,7 @@ func (a *AdminHandler) activate(c *fiber.Ctx) error {
 func (a *AdminHandler) rollback(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	env := envParam(c)
-	out, err := a.repo.Rollback(c.Context(), pageID, env, a.actor(c))
+	out, err := a.repo.Rollback(c.UserContext(), pageID, env, a.actor(c))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "no archived config to roll back to"})
@@ -302,7 +302,7 @@ func (a *AdminHandler) rollback(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	if a.rdb != nil {
-		ctx := c.Context()
+		ctx := c.UserContext()
 		_ = a.rdb.Del(ctx, "sdui:page:"+pageID+":last_good").Err()
 		_ = a.rdb.Del(ctx, "sdui:page:"+pageID+":etag").Err()
 	}
@@ -323,7 +323,7 @@ func (a *AdminHandler) preview(c *fiber.Ctx) error {
 		requestedUser = actor
 	}
 
-	rec, err := a.repo.Preview(c.Context(), pageID, version, env)
+	rec, err := a.repo.Preview(c.UserContext(), pageID, version, env)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
@@ -347,18 +347,18 @@ func (a *AdminHandler) preview(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "parse: " + err.Error()})
 	}
 	refKeys := extractRefKeys(cfg.Sections)
-	hydrated, missing, hErr := a.hydrator.Hydrate(c.Context(), rc, refKeys)
+	hydrated, missing, hErr := a.hydrator.Hydrate(c.UserContext(), rc, refKeys)
 	if hErr != nil {
 		log.Warn().Err(hErr).Msg("[sdui] preview hydrate partial")
 	}
-	page, rErr := a.resolver.Resolve(c.Context(), rc, &cfg, hydrated, missing)
+	page, rErr := a.resolver.Resolve(c.UserContext(), rc, &cfg, hydrated, missing)
 	if rErr != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "resolve: " + rErr.Error()})
 	}
 	page.ConfigVersion = rec.Version
 
 	_ = a.repo.AppendAuditLog(
-		c.Context(), pageID, &rec.ID, "previewed", actor,
+		c.UserContext(), pageID, &rec.ID, "previewed", actor,
 		"preview as user="+requestedUser, rec.ConfigJSON,
 	)
 
@@ -368,7 +368,7 @@ func (a *AdminHandler) preview(c *fiber.Ctx) error {
 func (a *AdminHandler) auditLog(c *fiber.Ctx) error {
 	pageID := c.Params("page_id")
 	limit := c.QueryInt("limit", 100)
-	out, err := a.repo.ListAuditLog(c.Context(), pageID, limit)
+	out, err := a.repo.ListAuditLog(c.UserContext(), pageID, limit)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -382,10 +382,10 @@ func (a *AdminHandler) killOn(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Set(c.Context(), "sdui:kill:"+pageID, "1", 24*time.Hour).Err(); err != nil {
+	if err := a.rdb.Set(c.UserContext(), "sdui:kill:"+pageID, "1", 24*time.Hour).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), pageID, nil, "kill_switch", a.actor(c), "enabled", nil)
+	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, nil, "kill_switch", a.actor(c), "enabled", nil)
 	return c.JSON(fiber.Map{"page_id": pageID, "kill_switch": true})
 }
 
@@ -394,10 +394,10 @@ func (a *AdminHandler) killOff(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Del(c.Context(), "sdui:kill:"+pageID).Err(); err != nil {
+	if err := a.rdb.Del(c.UserContext(), "sdui:kill:"+pageID).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), pageID, nil, "kill_switch", a.actor(c), "disabled", nil)
+	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, nil, "kill_switch", a.actor(c), "disabled", nil)
 	return c.JSON(fiber.Map{"page_id": pageID, "kill_switch": false})
 }
 
@@ -406,7 +406,7 @@ func (a *AdminHandler) killStatus(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.JSON(fiber.Map{"page_id": pageID, "kill_switch": false})
 	}
-	exists, _ := a.rdb.Exists(c.Context(), "sdui:kill:"+pageID).Result()
+	exists, _ := a.rdb.Exists(c.UserContext(), "sdui:kill:"+pageID).Result()
 	return c.JSON(fiber.Map{"page_id": pageID, "kill_switch": exists > 0})
 }
 
@@ -415,10 +415,10 @@ func (a *AdminHandler) expKillOn(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Set(c.Context(), "sdui:kill:exp:"+expID, "1", 24*time.Hour).Err(); err != nil {
+	if err := a.rdb.Set(c.UserContext(), "sdui:kill:exp:"+expID, "1", 24*time.Hour).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), "_experiment", nil, "kill_switch", a.actor(c), "exp:"+expID+" enabled", nil)
+	_ = a.repo.AppendAuditLog(c.UserContext(), "_experiment", nil, "kill_switch", a.actor(c), "exp:"+expID+" enabled", nil)
 	return c.JSON(fiber.Map{"experiment_id": expID, "kill_switch": true})
 }
 
@@ -427,17 +427,17 @@ func (a *AdminHandler) expKillOff(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Del(c.Context(), "sdui:kill:exp:"+expID).Err(); err != nil {
+	if err := a.rdb.Del(c.UserContext(), "sdui:kill:exp:"+expID).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	_ = a.repo.AppendAuditLog(c.Context(), "_experiment", nil, "kill_switch", a.actor(c), "exp:"+expID+" disabled", nil)
+	_ = a.repo.AppendAuditLog(c.UserContext(), "_experiment", nil, "kill_switch", a.actor(c), "exp:"+expID+" disabled", nil)
 	return c.JSON(fiber.Map{"experiment_id": expID, "kill_switch": false})
 }
 
 // ── allowed-actions CRUD ─────────────────────────────────────────────────────
 
 func (a *AdminHandler) listAllowed(c *fiber.Ctx) error {
-	out, err := a.repo.ListAllowedActions(c.Context())
+	out, err := a.repo.ListAllowedActions(c.UserContext())
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -460,11 +460,11 @@ func (a *AdminHandler) createAllowed(c *fiber.Ctx) error {
 	for i, m := range req.Methods {
 		req.Methods[i] = strings.ToUpper(m)
 	}
-	out, err := a.repo.InsertAllowedAction(c.Context(), req.Endpoint, req.Methods, a.actor(c))
+	out, err := a.repo.InsertAllowedAction(c.UserContext(), req.Endpoint, req.Methods, a.actor(c))
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	a.whitelist.Invalidate(c.Context())
+	a.whitelist.Invalidate(c.UserContext())
 	return c.Status(201).JSON(out)
 }
 
@@ -474,12 +474,12 @@ func (a *AdminHandler) deleteAllowed(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
 	}
-	if err := a.repo.DeleteAllowedAction(c.Context(), id); err != nil {
+	if err := a.repo.DeleteAllowedAction(c.UserContext(), id); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
 		}
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	a.whitelist.Invalidate(c.Context())
+	a.whitelist.Invalidate(c.UserContext())
 	return c.SendStatus(204)
 }

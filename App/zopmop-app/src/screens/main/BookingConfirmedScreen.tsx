@@ -15,6 +15,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BackHandler,
   Dimensions,
   Image,
   Linking,
@@ -58,6 +59,7 @@ import { PressFx } from '../../components/ui/PressFx';
 import ZopLookingUp from '../../../assets/zop/zop-looking-up.svg';
 import { useAuth } from '../../context/AuthContext';
 import { getMatchStatus } from '../../api/matching';
+import { haptics } from '../../utils/haptics';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -91,6 +93,10 @@ export default function BookingConfirmedScreen() {
   const shortId = `ZM-${(bookingId ?? '').replace(/-/g, '').slice(0, 4).toUpperCase()}`;
   const totalRupees = `₹${(totalCents / 100).toFixed(0)}`;
 
+  useEffect(() => {
+    haptics.medium();
+  }, []);
+
   // Live booking lifecycle for instant bookings — drives the dynamic hero title.
   // Stages: 'on_the_way' (default) → 'at_door' (pro tapped "I've Arrived")
   // → 'in_progress' (job started) → 'completed' (job done).
@@ -99,6 +105,26 @@ export default function BookingConfirmedScreen() {
   const [liveStage, setLiveStage] = useState<LiveStage>('on_the_way');
   const [livePhone, setLivePhone] = useState<string | undefined>(helperPhone);
   const [liveHelperName, setLiveHelperName] = useState<string | undefined>(helperName);
+  const [livePhotoUrl, setLivePhotoUrl] = useState<string | undefined>(undefined);
+  const [liveRating, setLiveRating] = useState<number | undefined>(helperRating);
+  const [liveTotalJobs, setLiveTotalJobs] = useState<number | undefined>(undefined);
+
+  // Fire success haptic exactly once when the booking transitions to completed.
+  useEffect(() => {
+    if (liveStage === 'completed') haptics.success();
+  }, [liveStage]);
+
+  // Android hardware back: exit to home root, not back into the booking flow.
+  // Prevents stack restore from re-mounting this screen and re-firing confetti.
+  useFocusEffect(
+    React.useCallback(() => {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.popToTop();
+        return true;
+      });
+      return () => sub.remove();
+    }, [navigation])
+  );
 
   useFocusEffect(
     React.useCallback(() => {
@@ -111,6 +137,9 @@ export default function BookingConfirmedScreen() {
           if (!alive) return;
           if (ms.helper?.phone) setLivePhone(ms.helper.phone);
           if (ms.helper?.name) setLiveHelperName(ms.helper.name);
+          if (ms.helper?.photo_url) setLivePhotoUrl(ms.helper.photo_url);
+          if (typeof ms.helper?.rating === 'number') setLiveRating(ms.helper.rating);
+          if (typeof ms.helper?.total_jobs === 'number') setLiveTotalJobs(ms.helper.total_jobs);
 
           const bs = ms.booking_status;
           if (bs === 'completed') { setLiveStage('completed'); return; }
@@ -197,6 +226,15 @@ export default function BookingConfirmedScreen() {
           sub={heroSub}
           shortId={shortId}
         />
+
+        {isInstant && liveHelperName && (
+          <ProProfileCard
+            name={liveHelperName}
+            photoUrl={livePhotoUrl}
+            rating={liveRating}
+            totalJobs={liveTotalJobs}
+          />
+        )}
 
         <Ticket
           serviceName={serviceName ?? 'Service'}
@@ -567,6 +605,72 @@ function CheckOrb() {
           />
         </Svg>
       </Animated.View>
+    </View>
+  );
+}
+
+// ── Pro profile card — assigned pro photo, rating, jobs ────────────────────
+
+function ProProfileCard({
+  name,
+  photoUrl,
+  rating,
+  totalJobs,
+}: {
+  name: string;
+  photoUrl?: string;
+  rating?: number;
+  totalJobs?: number;
+}) {
+  const initial = (name || 'P')[0].toUpperCase();
+  const ratingValue = typeof rating === 'number' ? rating : undefined;
+  return (
+    <View style={styles.proCard}>
+      <View style={styles.proCardAvWrap}>
+        {photoUrl ? (
+          <Image source={{ uri: photoUrl }} style={styles.proCardAv} />
+        ) : (
+          <View style={[styles.proCardAv, styles.proCardAvFallback]}>
+            <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 22 }]}>{initial}</Text>
+          </View>
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[fontBold, styles.proCardName]} numberOfLines={1}>
+          {name}
+        </Text>
+        <View style={styles.proCardStars}>
+          <StarRow rating={ratingValue ?? 0} />
+          {ratingValue !== undefined && (
+            <Text style={[fontSemi, styles.proCardRatingText]}>
+              {ratingValue.toFixed(1)}
+            </Text>
+          )}
+        </View>
+        <Text style={[fontMed, styles.proCardJobs]}>
+          {typeof totalJobs === 'number' ? `${totalJobs} jobs completed` : 'New pro'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function StarRow({ rating }: { rating: number }) {
+  const stars = [0, 1, 2, 3, 4];
+  return (
+    <View style={{ flexDirection: 'row', gap: 2 }}>
+      {stars.map((i) => {
+        const filled = rating >= i + 1;
+        const half = !filled && rating > i + 0.25 && rating < i + 1;
+        return (
+          <Feather
+            key={i}
+            name="star"
+            size={12}
+            color={filled || half ? '#F5A300' : 'rgba(255,255,255,0.25)'}
+          />
+        );
+      })}
     </View>
   );
 }
@@ -1139,6 +1243,58 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,163,0,0.14)',
     borderWidth: 0.5,
     borderColor: 'rgba(245,163,0,0.3)',
+  },
+
+  // Pro profile card (between hero and ticket)
+  proCard: {
+    marginHorizontal: H_PAD,
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  proCardAvWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'rgba(245,163,0,0.6)',
+  },
+  proCardAv: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 28,
+  },
+  proCardAvFallback: {
+    backgroundColor: '#F5A300',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  proCardName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    letterSpacing: -0.2,
+  },
+  proCardStars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  proCardRatingText: {
+    color: '#F5A300',
+    fontSize: 12,
+  },
+  proCardJobs: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 11.5,
+    marginTop: 3,
   },
 
   // Ticket

@@ -32,7 +32,7 @@ func (h *Handler) RegisterAdminRoutes(router fiber.Router) {
 
 // GetPublicConfig handles GET /app/config.
 func (h *Handler) GetPublicConfig(c *fiber.Ctx) error {
-	config, err := h.service.GetPublicConfig(c.Context())
+	config, err := h.service.GetPublicConfig(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get public config")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -44,7 +44,7 @@ func (h *Handler) GetPublicConfig(c *fiber.Ctx) error {
 
 // GetAllConfigs handles GET /admin/config.
 func (h *Handler) GetAllConfigs(c *fiber.Ctx) error {
-	configs, err := h.service.GetAllConfigs(c.Context())
+	configs, err := h.service.GetAllConfigs(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get all configs")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -70,9 +70,9 @@ func (h *Handler) UpdateConfig(c *fiber.Ctx) error {
 	userID, _ := c.Locals("userID").(string)
 
 	// Get old value for logging.
-	oldValue, _ := h.service.GetConfig(c.Context(), key)
+	oldValue, _ := h.service.GetConfig(c.UserContext(), key)
 
-	if err := h.service.SetConfig(c.Context(), key, body.Value, userID); err != nil {
+	if err := h.service.SetConfig(c.UserContext(), key, body.Value, userID); err != nil {
 		log.Error().Err(err).Str("key", key).Msg("failed to update config")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update config",
@@ -80,7 +80,7 @@ func (h *Handler) UpdateConfig(c *fiber.Ctx) error {
 	}
 
 	// Log change.
-	h.service.LogConfigChange(c.Context(), userID, key, oldValue, body.Value)
+	h.service.LogConfigChange(c.UserContext(), userID, key, oldValue, body.Value)
 
 	return c.JSON(fiber.Map{
 		"message": "config updated",
@@ -106,7 +106,7 @@ func (h *Handler) BulkUpdateConfig(c *fiber.Ctx) error {
 
 	userID, _ := c.Locals("userID").(string)
 
-	if err := h.service.BulkSetConfig(c.Context(), req.Configs, userID); err != nil {
+	if err := h.service.BulkSetConfig(c.UserContext(), req.Configs, userID); err != nil {
 		log.Error().Err(err).Msg("failed to bulk update config")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update configs",

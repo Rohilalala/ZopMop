@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
+import { navigationRef } from './src/navigation/navigationRef';
 import {
   useFonts,
   PlusJakartaSans_400Regular,
@@ -20,8 +21,10 @@ import MainNavigator from './src/navigation/MainNavigator';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider, useColors } from './src/context/ThemeContext';
 import { RoomiesProvider } from './src/context/RoomiesContext';
+import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
+import Toast from 'react-native-toast-message';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -30,7 +33,8 @@ function Navigation() {
   if (isLoading) return null;
   return (
     <ErrorBoundary>
-      <NavigationContainer>
+      <Toast />
+      <NavigationContainer ref={navigationRef}>
         {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
       </NavigationContainer>
     </ErrorBoundary>
@@ -42,7 +46,7 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
   setSplashDone: (v: boolean) => void;
   onLayout: () => void;
 }) {
-  const colors = useColors();
+  useColors();
   const { status, retry } = useBackendHealth();
 
   // Sticky "show backend-down screen" flag. Goes true the first time the
@@ -56,7 +60,7 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
   }, [status]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }} onLayout={onLayout}>
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }} onLayout={onLayout}>
       {!splashDone ? (
         <SplashScreen onReady={() => setSplashDone(true)} />
       ) : showDown ? (
@@ -93,13 +97,15 @@ export default function App() {
       <SafeAreaProvider>
         <ThemeProvider>
           <AuthProvider>
-            <RoomiesProvider>
-              <ThemedRoot
-                splashDone={splashDone}
-                setSplashDone={setSplashDone}
-                onLayout={onLayoutRootView}
-              />
-            </RoomiesProvider>
+            <PrefetchProvider>
+              <RoomiesProvider>
+                <ThemedRoot
+                  splashDone={splashDone}
+                  setSplashDone={setSplashDone}
+                  onLayout={onLayoutRootView}
+                />
+              </RoomiesProvider>
+            </PrefetchProvider>
           </AuthProvider>
         </ThemeProvider>
       </SafeAreaProvider>

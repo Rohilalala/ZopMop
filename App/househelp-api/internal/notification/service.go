@@ -110,12 +110,32 @@ func (s *Service) sendToToken(ctx context.Context, token, title, body string, da
 }
 
 func (s *Service) sendToTokens(ctx context.Context, tokens []string, title, body string, data map[string]string) error {
+	_, err := s.sendToTokensWithReport(ctx, tokens, title, body, data)
+	return err
+}
+
+// MulticastReport carries FCM batch outcomes back to callers that need to
+// (a) record send statistics and (b) prune tokens that FCM has flagged as
+// permanently invalid (e.g. uninstalled apps).
+type MulticastReport struct {
+	Success      int
+	Failure      int
+	InvalidTokens []string // Tokens FCM reports as unregistered / invalid — safe to delete.
+}
+
+// sendToTokensWithReport is the reporting variant of sendToTokens. It walks
+// the per-message responses to surface "unregistered" tokens so the caller
+// can purge them from device_tokens. When FCM is mocked (no client) the
+// report is empty.
+func (s *Service) sendToTokensWithReport(ctx context.Context, tokens []string, title, body string, data map[string]string) (*MulticastReport, error) {
+	rep := &MulticastReport{}
 	if len(tokens) == 0 {
-		return nil
+		return rep, nil
 	}
 	if s.fcmClient == nil {
 		log.Info().Int("count", len(tokens)).Str("title", title).Msg("[notif] multicast mocked (FCM offline)")
-		return nil
+		rep.Success = len(tokens)
+		return rep, nil
 	}
 	br, err := s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
 		Notification: &messaging.Notification{Title: title, Body: body},
@@ -123,10 +143,25 @@ func (s *Service) sendToTokens(ctx context.Context, tokens []string, title, body
 		Tokens:       tokens,
 	})
 	if err != nil {
-		return fmt.Errorf("FCM multicast failed: %w", err)
+		return rep, fmt.Errorf("FCM multicast failed: %w", err)
 	}
-	log.Info().Int("success", br.SuccessCount).Int("failure", br.FailureCount).Msg("[notif] multicast sent")
-	return nil
+	rep.Success = br.SuccessCount
+	rep.Failure = br.FailureCount
+	for i, r := range br.Responses {
+		if r == nil || r.Success || r.Error == nil {
+			continue
+		}
+		// Per-token "this device is gone" signals: registration-token-not-
+		// registered AND invalid-argument both indicate the token will never
+		// succeed again. Prune from device_tokens.
+		if messaging.IsUnregistered(r.Error) {
+			if i < len(tokens) {
+				rep.InvalidTokens = append(rep.InvalidTokens, tokens[i])
+			}
+		}
+	}
+	log.Info().Int("success", rep.Success).Int("failure", rep.Failure).Int("invalid", len(rep.InvalidTokens)).Msg("[notif] multicast sent")
+	return rep, nil
 }
 
 // ── Customer notifications ────────────────────────────────────────────────────
@@ -195,6 +230,28 @@ func (s *Service) NotifyCustomerBookingCompleted(ctx context.Context, customerID
 	)
 }
 
+// NotifyCustomerRefundProcessed tells the customer their refund has been
+// initiated. amountINR is the human-readable rupee amount (e.g. "499" or
+// "1,250"). The body intentionally hedges with "5-7 business days" so support
+// volume doesn't spike when the bank settles slower than the gateway.
+func (s *Service) NotifyCustomerRefundProcessed(ctx context.Context, customerID, amountINR, bookingID string) error {
+	token := s.fcmToken(ctx, customerID)
+	if token == "" {
+		return nil
+	}
+	data := map[string]string{
+		"type": "refund_processed",
+	}
+	if bookingID != "" {
+		data["booking_id"] = bookingID
+	}
+	return s.sendToToken(ctx, token,
+		"Refund processed",
+		"Your refund of ₹"+amountINR+" has been processed. It will reflect in your account within 5-7 business days.",
+		data,
+	)
+}
+
 // NotifyCustomerReengagement sends a generic personalized reminder notification.
 func (s *Service) NotifyCustomerReengagement(ctx context.Context, customerID, title, body string, data map[string]string) error {
 	token := s.fcmToken(ctx, customerID)
@@ -255,9 +312,197 @@ func (s *Service) NotifyProBookingAssigned(ctx context.Context, helperID, bookin
 	)
 }
 
+// NotifyProBookingReassigned tells the new pro that an admin reassigned an
+// existing booking to them.
+func (s *Service) NotifyProBookingReassigned(ctx context.Context, helperID, bookingID, serviceType string) error {
+	token := s.fcmToken(ctx, helperID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token,
+		"Job Reassigned to You",
+		"You've been assigned a "+serviceType+" job by support. Check your bookings.",
+		map[string]string{
+			"type":       "booking_reassigned",
+			"booking_id": bookingID,
+		},
+	)
+}
+
+// NotifyProBookingUnassigned tells the previous pro that an admin moved their
+// booking to a different worker.
+func (s *Service) NotifyProBookingUnassigned(ctx context.Context, helperID, bookingID string) error {
+	token := s.fcmToken(ctx, helperID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token,
+		"Job Reassigned",
+		"This job has been reassigned to another helper by support.",
+		map[string]string{
+			"type":       "booking_unassigned",
+			"booking_id": bookingID,
+		},
+	)
+}
+
+// NotifyCustomerWorkerChanged tells the customer that an admin reassigned
+// their booking to a different worker.
+func (s *Service) NotifyCustomerWorkerChanged(ctx context.Context, customerID, newHelperName, bookingID string) error {
+	token := s.fcmToken(ctx, customerID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token,
+		"Helper Changed",
+		newHelperName+" will now be handling your booking.",
+		map[string]string{
+			"type":       "worker_changed",
+			"booking_id": bookingID,
+		},
+	)
+}
+
+// ── Leave-driven reassignment / cancellation ────────────────────────────────
+
+// NotifyCustomerHelperReassigned tells the customer that their assigned pro
+// went on leave and a different one is taking over the same slot.
+func (s *Service) NotifyCustomerHelperReassigned(ctx context.Context, customerID, bookingID string) error {
+	token := s.fcmToken(ctx, customerID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token,
+		"Helper updated",
+		"Your service provider has changed. Your booking is confirmed.",
+		map[string]string{
+			"type":       "helper_reassigned",
+			"booking_id": bookingID,
+		},
+	)
+}
+
+// NotifyCustomerBookingCancelledNoCoverage tells the customer their booking
+// was cancelled because no replacement pro was available, and includes a
+// list of nearest open alternatives.
+func (s *Service) NotifyCustomerBookingCancelledNoCoverage(ctx context.Context, customerID, bookingID, when, alternatives string) error {
+	token := s.fcmToken(ctx, customerID)
+	if token == "" {
+		return nil
+	}
+	body := "We're sorry, your booking on " + when + " has been cancelled as no service provider is available."
+	if alternatives != "" {
+		body += " Here are the nearest available slots: " + alternatives
+	}
+	return s.sendToToken(ctx, token,
+		"Booking cancelled",
+		body,
+		map[string]string{
+			"type":       "cancelled_no_coverage",
+			"booking_id": bookingID,
+		},
+	)
+}
+
 // ── Admin broadcast ───────────────────────────────────────────────────────────
 
 // SendToTokens is kept for admin bulk broadcast where the caller supplies tokens directly.
 func (s *Service) SendToTokens(ctx context.Context, tokens []string, title, body string, data map[string]string) error {
 	return s.sendToTokens(ctx, tokens, title, body, data)
+}
+
+// SendData fires a data-only push to all of a user's registered devices. No
+// `notification` payload is included, so iOS / Android won't auto-display
+// anything — the app's foreground/background handler routes on the `data`
+// fields (e.g. type="SCHEDULED_INVITE") and decides the UX.
+//
+// Used by the scheduled-dispatch + stealth-dispatch invite chains: the pro
+// must land on the new ProScheduledInviteScreen, never on the OS tray.
+//
+// FCM background data delivery on iOS requires `content-available: 1` —
+// Firebase Admin SDK sets that automatically when only Data is provided
+// (see APNS payload builder in firebase.google.com/go/v4/messaging).
+func (s *Service) SendData(ctx context.Context, userID string, data map[string]string) error {
+	tokens, err := s.deviceTokensFor(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("send data: load tokens: %w", err)
+	}
+	if len(tokens) == 0 {
+		return nil // user has no registered devices — nothing to do
+	}
+	return s.sendDataToTokens(ctx, tokens, data)
+}
+
+// deviceTokensFor returns every active device_tokens row for the given
+// account, regardless of role (user_id or worker_id). Used by SendData so
+// scheduled invites land on every device a pro is signed in on.
+func (s *Service) deviceTokensFor(ctx context.Context, accountID string) ([]string, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+	qCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	rows, err := s.db.Query(qCtx, `
+		SELECT DISTINCT dt.fcm_token
+		FROM device_tokens dt
+		WHERE (dt.user_id = $1::uuid OR dt.worker_id = $1::uuid)
+		  AND dt.fcm_token <> ''
+		  AND dt.updated_at > now() - interval '90 days'
+	`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err == nil && t != "" {
+			out = append(out, t)
+		}
+	}
+	return out, rows.Err()
+}
+
+// sendDataToTokens is the multicast data-only sender. Skips the notification
+// payload so the OS tray stays out of it; the app routes via data["type"].
+func (s *Service) sendDataToTokens(ctx context.Context, tokens []string, data map[string]string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	if s.fcmClient == nil {
+		log.Info().Int("count", len(tokens)).Interface("data", data).Msg("[notif] data-only multicast mocked (FCM offline)")
+		return nil
+	}
+	_, err := s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
+		Data:   data,
+		Tokens: tokens,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				// content-available wakes the app for background delivery.
+				"apns-priority":   "5",
+				"apns-push-type":  "background",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					ContentAvailable: true,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("FCM data multicast failed: %w", err)
+	}
+	return nil
+}
+
+// SendToTokensWithReport is the reporting-variant of SendToTokens. Returns
+// per-batch success/failure counts and the list of invalid tokens that the
+// caller should evict from its token store.
+func (s *Service) SendToTokensWithReport(ctx context.Context, tokens []string, title, body string, data map[string]string) (*MulticastReport, error) {
+	return s.sendToTokensWithReport(ctx, tokens, title, body, data)
 }

@@ -1,0 +1,14 @@
+Running 30s test @ http://localhost:8080/api/v1/insights/nearby?lat=28.6&lng=77.2
+  12 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    10.50ms   19.03ms 353.37ms   93.55%
+    Req/Sec     5.35k     2.00k   17.79k    67.65%
+  Latency Distribution
+     50%    5.67ms
+     75%   11.73ms
+     90%   22.12ms
+     99%  100.90ms
+  1902616 requests in 30.08s, 1.60GB read
+  Non-2xx or 3xx responses: 1902616
+Requests/sec:  63248.73
+Transfer/sec:     54.41MB

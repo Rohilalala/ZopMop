@@ -190,9 +190,12 @@ function Row({ worker, alt, onClick }: { worker: WorkerListItem; alt: boolean; o
             <div className="w-8 h-8 rounded-full bg-accent/30 flex items-center justify-center text-xs font-semibold">
               {(worker.name ?? worker.phone)[0]?.toUpperCase()}
             </div>
-            {worker.is_available && (
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-success border-2 border-surface" />
-            )}
+            <span
+              title={worker.is_online ? 'Online' : 'Offline'}
+              className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-surface ${
+                worker.is_online ? 'bg-success' : 'bg-text-muted'
+              }`}
+            />
           </div>
           <div className="min-w-0">
             <div className="text-text-primary truncate">{worker.name ?? '—'}</div>

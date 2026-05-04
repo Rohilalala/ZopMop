@@ -185,27 +185,27 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 
 func (h *Handler) Summary(c *fiber.Ctx) error {
 	from, to := parseRange(c)
-	out, err := h.svc.Summary(c.Context(), from, to)
+	out, err := h.svc.Summary(c.UserContext(), from, to)
 	return jsonOrErr(c, out, err)
 }
 func (h *Handler) RevenueDaily(c *fiber.Ctx) error {
 	from, to := parseRange(c)
-	out, err := h.svc.RevenueDaily(c.Context(), from, to)
+	out, err := h.svc.RevenueDaily(c.UserContext(), from, to)
 	return jsonOrErr(c, fiber.Map{"points": out}, err)
 }
 func (h *Handler) OrdersDaily(c *fiber.Ctx) error {
 	from, to := parseRange(c)
-	out, err := h.svc.OrdersDaily(c.Context(), from, to)
+	out, err := h.svc.OrdersDaily(c.UserContext(), from, to)
 	return jsonOrErr(c, fiber.Map{"points": out}, err)
 }
 func (h *Handler) SignupsDaily(c *fiber.Ctx) error {
 	from, to := parseRange(c)
-	out, err := h.svc.SignupsDaily(c.Context(), from, to)
+	out, err := h.svc.SignupsDaily(c.UserContext(), from, to)
 	return jsonOrErr(c, fiber.Map{"points": out}, err)
 }
 func (h *Handler) ByCategory(c *fiber.Ctx) error {
 	from, to := parseRange(c)
-	out, err := h.svc.ByCategory(c.Context(), from, to)
+	out, err := h.svc.ByCategory(c.UserContext(), from, to)
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 

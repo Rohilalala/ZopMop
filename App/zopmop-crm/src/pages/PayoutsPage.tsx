@@ -4,6 +4,7 @@ import { payoutsApi, type Payout } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import { usePermission } from '@/auth/usePermission';
 
 const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
@@ -55,6 +56,8 @@ function PayoutRow({ p, canAct }: { p: Payout; canAct: boolean }) {
   const [open, setOpen] = useState<null | 'paid' | 'failed'>(null);
   const [ref, setRef] = useState('');
   const [notes, setNotes] = useState('');
+  const canPaid = usePermission('payouts.mark_paid');
+  const canFailed = usePermission('payouts.mark_failed');
   const paid = useMutation({ mutationFn: () => payoutsApi.paid(p.id, ref), onSuccess: () => { showToast({ kind: 'success', message: 'Marked paid.' }); qc.invalidateQueries({ queryKey: ['payouts'] }); setOpen(null); setRef(''); } });
   const failed = useMutation({ mutationFn: () => payoutsApi.failed(p.id, notes), onSuccess: () => { showToast({ kind: 'success', message: 'Marked failed.' }); qc.invalidateQueries({ queryKey: ['payouts'] }); setOpen(null); setNotes(''); } });
   return (
@@ -74,8 +77,30 @@ function PayoutRow({ p, canAct }: { p: Payout; canAct: boolean }) {
         </td>
         {canAct && (
           <td className="px-4 py-3 text-right">
-            <button className="btn-ghost text-success !py-1" onClick={() => setOpen('paid')}>Mark paid</button>
-            <button className="btn-ghost text-danger !py-1 ml-2" onClick={() => setOpen('failed')}>Failed</button>
+            <button
+              className="btn-ghost text-success !py-1"
+              disabled={!canPaid}
+              title={!canPaid ? 'Insufficient permissions' : undefined}
+              onClick={() => {
+                if (!canPaid) {
+                  showToast({ kind: 'error', message: 'Insufficient permissions' });
+                  return;
+                }
+                setOpen('paid');
+              }}
+            >Mark paid</button>
+            <button
+              className="btn-ghost text-danger !py-1 ml-2"
+              disabled={!canFailed}
+              title={!canFailed ? 'Insufficient permissions' : undefined}
+              onClick={() => {
+                if (!canFailed) {
+                  showToast({ kind: 'error', message: 'Insufficient permissions' });
+                  return;
+                }
+                setOpen('failed');
+              }}
+            >Failed</button>
           </td>
         )}
       </tr>

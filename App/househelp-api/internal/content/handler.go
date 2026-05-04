@@ -49,7 +49,7 @@ func (h *Handler) RegisterAdminContentRoutes(router fiber.Router) {
 
 // GetHome handles GET /app/home.
 func (h *Handler) GetHome(c *fiber.Ctx) error {
-	content, err := h.service.GetAppHomeContent(c.Context())
+	content, err := h.service.GetAppHomeContent(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get home content")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -68,7 +68,7 @@ func (h *Handler) GetScreen(c *fiber.Ctx) error {
 		})
 	}
 
-	screen, err := h.service.GetScreenContent(c.Context(), key)
+	screen, err := h.service.GetScreenContent(c.UserContext(), key)
 	if err != nil {
 		log.Error().Err(err).Str("key", key).Msg("failed to get screen content")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -88,7 +88,7 @@ func (h *Handler) GetScreen(c *fiber.Ctx) error {
 
 // GetServices handles GET /app/services.
 func (h *Handler) GetServices(c *fiber.Ctx) error {
-	services, err := h.service.GetActiveServices(c.Context())
+	services, err := h.service.GetActiveServices(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -100,7 +100,7 @@ func (h *Handler) GetServices(c *fiber.Ctx) error {
 
 // GetFAQs handles GET /app/faqs.
 func (h *Handler) GetFAQs(c *fiber.Ctx) error {
-	faqs, err := h.service.GetActiveFAQs(c.Context())
+	faqs, err := h.service.GetActiveFAQs(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get FAQs")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -114,7 +114,7 @@ func (h *Handler) GetFAQs(c *fiber.Ctx) error {
 
 // AdminGetBanners handles GET /admin/content/banners.
 func (h *Handler) AdminGetBanners(c *fiber.Ctx) error {
-	banners, err := h.service.GetAllBanners(c.Context())
+	banners, err := h.service.GetAllBanners(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get all banners")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -153,7 +153,7 @@ func (h *Handler) AdminCreateBanner(c *fiber.Ctx) error {
 		CreatedBy:    adminID,
 	}
 
-	if err := h.service.CreateBanner(c.Context(), banner); err != nil {
+	if err := h.service.CreateBanner(c.UserContext(), banner); err != nil {
 		log.Error().Err(err).Msg("failed to create banner")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to create banner",
@@ -196,7 +196,7 @@ func (h *Handler) AdminUpdateBanner(c *fiber.Ctx) error {
 		EndsAt:       req.EndsAt,
 	}
 
-	if err := h.service.UpdateBanner(c.Context(), banner); err != nil {
+	if err := h.service.UpdateBanner(c.UserContext(), banner); err != nil {
 		log.Error().Err(err).Msg("failed to update banner")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update banner",
@@ -213,7 +213,7 @@ func (h *Handler) AdminDeleteBanner(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid banner id"})
 	}
 
-	if err := h.service.DeleteBanner(c.Context(), bannerID); err != nil {
+	if err := h.service.DeleteBanner(c.UserContext(), bannerID); err != nil {
 		log.Error().Err(err).Msg("failed to delete banner")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to delete banner",
@@ -225,7 +225,7 @@ func (h *Handler) AdminDeleteBanner(c *fiber.Ctx) error {
 
 // AdminGetScreens handles GET /admin/content/screens.
 func (h *Handler) AdminGetScreens(c *fiber.Ctx) error {
-	screens, err := h.service.GetAllScreenContents(c.Context())
+	screens, err := h.service.GetAllScreenContents(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get screen contents")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -261,7 +261,7 @@ func (h *Handler) AdminUpdateScreen(c *fiber.Ctx) error {
 	}
 
 	adminID, _ := c.Locals("adminID").(string)
-	if err := h.service.UpdateScreenContent(c.Context(), screenKey, req.Content, adminID); err != nil {
+	if err := h.service.UpdateScreenContent(c.UserContext(), screenKey, req.Content, adminID); err != nil {
 		log.Error().Err(err).Msg("failed to update screen content")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update screen content",
@@ -301,7 +301,7 @@ func validateScreenContentSchema(content json.RawMessage) error {
 
 // AdminGetServices handles GET /admin/services.
 func (h *Handler) AdminGetServices(c *fiber.Ctx) error {
-	services, err := h.service.GetAllServiceCategories(c.Context())
+	services, err := h.service.GetAllServiceCategories(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get all service categories")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -338,7 +338,7 @@ func (h *Handler) AdminCreateService(c *fiber.Ctx) error {
 		CreatedBy:      adminID,
 	}
 
-	if err := h.service.CreateServiceCategory(c.Context(), sc); err != nil {
+	if err := h.service.CreateServiceCategory(c.UserContext(), sc); err != nil {
 		log.Error().Err(err).Msg("failed to create service category")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to create service",
@@ -372,7 +372,7 @@ func (h *Handler) AdminUpdateService(c *fiber.Ctx) error {
 		DisplayOrder:   req.DisplayOrder,
 	}
 
-	if err := h.service.UpdateServiceCategory(c.Context(), sc); err != nil {
+	if err := h.service.UpdateServiceCategory(c.UserContext(), sc); err != nil {
 		log.Error().Err(err).Msg("failed to update service category")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update service",
@@ -389,7 +389,7 @@ func (h *Handler) AdminDeleteService(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
 	}
 
-	if err := h.service.DeleteServiceCategory(c.Context(), serviceID); err != nil {
+	if err := h.service.DeleteServiceCategory(c.UserContext(), serviceID); err != nil {
 		log.Error().Err(err).Msg("failed to delete service category")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to delete service",

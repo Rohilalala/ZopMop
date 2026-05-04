@@ -5,17 +5,30 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
+  
   Alert,
-  Switch,
+  Animated,
+  Easing,
+  Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { LoadingBars } from '../../components/ui/LoadingBars';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
+import Svg, {
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  RadialGradient as SvgRadialGradient,
+  Stop,
+  Rect,
+} from 'react-native-svg';
+import ReAnimated, { FadeOutLeft } from 'react-native-reanimated';
+import * as Location from 'expo-location';
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
+import { FontFamily } from '../../theme';
+import { C } from '../../theme/screen';
+import { BackgroundGlow, ScreenHeader, SectionHeader, Card } from '../../components/screen/ScreenChrome';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
@@ -23,15 +36,19 @@ import { listAddresses, type ApiAddress } from '../../api/addresses';
 import { createScheduledBooking, getBookings } from '../../api/bookings';
 import SchedulingModal from '../../components/SchedulingModal';
 import AddressPickerModal from '../../components/AddressPickerModal';
-import * as Location from 'expo-location';
 import { promoStore } from '../../utils/promoStore';
+import { haptics } from '../../utils/haptics';
+import { showError } from '../../utils/toast';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { serviceIcon } from '../../components/home/serviceIcon';
+import { CartScreenSkeleton } from '../../components/skeletons/CartScreenSkeleton';
+import { EmptyState } from '../../components/EmptyState';
+import ZopHappy from '../../../assets/zop/zop-happy.svg';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
-type C = typeof lightColors;
 
-const PLATFORM_FEE_CENTS = 2000; // ₹20
+const PLATFORM_FEE_CENTS = 2000;
 
-/** Minimal UUID v4 — no external dep needed. */
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
@@ -39,138 +56,12 @@ function generateUUID(): string {
   });
 }
 
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { padding: 16, gap: 12 },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      backgroundColor: c.white,
-      borderBottomWidth: 1,
-      borderBottomColor: c.border,
-    },
-    backBtn: {
-      width: 36, height: 36, borderRadius: Radius.full,
-      backgroundColor: c.surface, borderWidth: 1, borderColor: c.border,
-      alignItems: 'center', justifyContent: 'center',
-    },
-    backIcon: { fontSize: 18, color: c.text, marginTop: -1 },
-    headerTitle: {
-      flex: 1, textAlign: 'center',
-      fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text,
-    },
-    card: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      padding: 16,
-      borderWidth: 1,
-      borderColor: c.border,
-      ...Shadow.sm,
-      gap: 8,
-    },
-    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    cardLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
-    editLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary },
-    addressTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
-    addressFull: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
-    addAddressText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, paddingVertical: 4 },
-    slotLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: c.primary },
-    slotPlaceholder: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
-    serviceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 },
-    serviceRowBorder: { borderTopWidth: 1, borderTopColor: c.border },
-    serviceLeft: { flex: 1 },
-    serviceName: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
-    serviceDuration: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 2 },
-    serviceRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    servicePrice: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
-    removeBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
-    removeBtnText: { fontSize: 14, color: c.danger, fontFamily: FontFamily.semibold },
-    priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-    priceKey: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
-    priceVal: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.text },
-    totalRow: { borderTopWidth: 1, borderTopColor: c.border, marginTop: 6, paddingTop: 10 },
-    totalKey: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text },
-    totalVal: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.primary },
-    emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32 },
-    emptyEmoji: { fontSize: 56, marginBottom: 4 },
-    emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: c.text },
-    emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center' },
-    browseBtn: {
-      marginTop: 8, backgroundColor: c.primary,
-      paddingHorizontal: 28, paddingVertical: 12, borderRadius: Radius.xl, ...Shadow.sm,
-    },
-    browseBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: '#FFFFFF' },
-    bottomBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16, paddingVertical: 12,
-      backgroundColor: c.white,
-      borderTopWidth: 1, borderTopColor: c.border,
-      gap: 16,
-      ...Shadow.md,
-    },
-    totalInfo: { flex: 1 },
-    totalInfoLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
-    totalInfoValue: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: c.text },
-    payBtn: {
-      flex: 1, backgroundColor: c.primary,
-      borderRadius: Radius.xl, paddingVertical: 14,
-      alignItems: 'center', ...Shadow.sm,
-    },
-    payBtnDisabled: { opacity: 0.6 },
-    payBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: '#FFFFFF' },
-
-    // ── Roomies split card ─────────────────────────────────────────────────────
-    roomiesCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      padding: 16,
-      borderWidth: 1.5,
-      borderColor: c.primary,
-      ...Shadow.sm,
-      gap: 10,
-    },
-    roomiesHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    roomiesLabelBlock: { flex: 1 },
-    roomiesLabel: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
-    roomiesSubtext: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
-    memberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
-    memberRowBorder: { borderTopWidth: 1, borderTopColor: c.border },
-    memberAvatar: {
-      width: 32, height: 32, borderRadius: 16,
-      backgroundColor: c.primary + '22',
-      alignItems: 'center', justifyContent: 'center',
-    },
-    memberAvatarText: { fontSize: 15 },
-    memberInfo: { flex: 1 },
-    memberName: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.text },
-    memberVault: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 1 },
-    checkbox: {
-      width: 22, height: 22, borderRadius: 6,
-      borderWidth: 2, borderColor: c.border,
-      alignItems: 'center', justifyContent: 'center',
-    },
-    checkboxActive: { borderColor: c.primary, backgroundColor: c.primary },
-    checkboxTick: { color: '#fff', fontSize: 12, fontFamily: FontFamily.bold },
-    splitSummaryBox: {
-      backgroundColor: c.primary + '10',
-      borderRadius: Radius.md,
-      padding: 10,
-      gap: 4,
-    },
-    splitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    splitKey: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textSecondary },
-    splitVal: { fontFamily: FontFamily.medium, fontSize: FontSize.xs, color: c.text },
-    splitShareKey: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    splitShareVal: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.primary },
-    splitDivider: { height: 1, backgroundColor: c.border, marginVertical: 4 },
-    splitNote: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, textAlign: 'center' },
-  });
-}
+// Module-level cache: keeps last fetched addresses + selection so re-opening
+// Cart from Home doesn't flash the skeleton while we re-load identical data.
+const cartMemCache: {
+  addresses: ApiAddress[];
+  selectedAddress: ApiAddress | null;
+} = { addresses: [], selectedAddress: null };
 
 export default function CartScreen() {
   const navigation = useNavigation<Nav>();
@@ -178,11 +69,11 @@ export default function CartScreen() {
   const { items, itemCount, subtotalCents, removeItem, refreshCart } = useCart();
   const { token, user } = useAuth();
   const { myGroup, bookGroupChore } = useRoomies();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const insets = useSafeAreaInsets();
 
-  const [addresses, setAddresses] = useState<ApiAddress[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(null);
+  const [addresses, setAddresses] = useState<ApiAddress[]>(cartMemCache.addresses);
+  const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(cartMemCache.selectedAddress);
+  const [hydrating, setHydrating] = useState(cartMemCache.addresses.length === 0);
   const [addressPickerVisible, setAddressPickerVisible] = useState(false);
   const [schedulingVisible, setSchedulingVisible] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
@@ -191,27 +82,22 @@ export default function CartScreen() {
   const [removing, setRemoving] = useState<string | null>(null);
   const bookingInFlight = useRef(false);
 
-  // ── Roomies split ──────────────────────────────────────────────────────────
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
-  /** True only when the selected address is the group's registered address. */
   const isRoomiesAddress =
     !!myGroup && !!selectedAddress && selectedAddress.id === myGroup.group.address_id;
 
-  /** Group members other than the current user. */
   const otherMembers = useMemo(
     () => (myGroup?.members ?? []).filter((m) => m.user_id !== user?.id),
     [myGroup, user?.id],
   );
 
-  /** Reset/initialise split whenever the selected address changes. */
   useEffect(() => {
     if (!isRoomiesAddress) {
       setSplitEnabled(false);
       setSelectedMemberIds(new Set());
     } else {
-      // Pre-select everyone by default.
       setSelectedMemberIds(new Set(otherMembers.map((m) => m.user_id)));
     }
   }, [selectedAddress?.id, isRoomiesAddress]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -230,17 +116,17 @@ export default function CartScreen() {
     });
   }
 
-  // ── Address loading ────────────────────────────────────────────────────────
   async function loadAddresses() {
     if (!token) return;
     try {
       const list = await listAddresses(token);
       setAddresses(list);
+      cartMemCache.addresses = list;
       if (list.length === 0) return;
 
       const preselectedId = route.params?.selectedAddressId;
       if (preselectedId) {
-        const preselected = list.find(a => a.id === preselectedId);
+        const preselected = list.find((a) => a.id === preselectedId);
         if (preselected) { setSelectedAddress(preselected); return; }
       }
 
@@ -257,73 +143,60 @@ export default function CartScreen() {
           }
           if (minDist > 0.009) picked = null;
         }
-      } catch { /* location unavailable */ }
+      } catch {}
 
       if (!picked) {
         try {
           const past = await getBookings(token, 'past', 1);
           if (past.length > 0 && past[0].address_id) {
-            picked = list.find(a => a.id === past[0].address_id) ?? null;
+            picked = list.find((a) => a.id === past[0].address_id) ?? null;
           }
-        } catch { /* no past bookings */ }
+        } catch {}
       }
 
-      setSelectedAddress(picked ?? list[0]);
+      const finalSelected = picked ?? list[0];
+      setSelectedAddress(finalSelected);
+      cartMemCache.selectedAddress = finalSelected;
     } catch (err) {
       console.error('[Cart] failed to load addresses', err);
-      Alert.alert('Could not load addresses', 'Check your connection and try again.');
+      showError('Check your connection and try again.', { title: 'Could not load addresses' });
     }
   }
 
-  useEffect(() => { loadAddresses(); }, [token]);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      await Promise.all([refreshCart(), loadAddresses()]);
+      if (active) setHydrating(false);
+    })();
+    return () => { active = false; };
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRemove = useCallback(async (itemId: string) => {
     setRemoving(itemId);
-    try {
-      await removeItem(itemId);
-    } finally {
-      setRemoving(null);
-    }
+    try { await removeItem(itemId); } finally { setRemoving(null); }
   }, [removeItem]);
 
-  // ── Checkout ───────────────────────────────────────────────────────────────
   const handleCheckout = useCallback(async () => {
     if (!token) return;
-    if (!selectedAddress) {
-      Alert.alert('No address', 'Please select a delivery address.');
-      return;
-    }
-    if (!selectedSlotId) {
-      Alert.alert('No time selected', 'Please select a date and time slot.');
-      return;
-    }
+    if (!selectedAddress) { showError('Please select a delivery address.', { title: 'No address' }); return; }
+    if (!selectedSlotId) { showError('Please pick a date and time slot.', { title: 'No time selected' }); return; }
     if (itemCount === 0) return;
     if (bookingInFlight.current) return;
+    haptics.medium();
 
     const doSplit = splitEnabled && !!myGroup && selectedMemberIds.size > 0;
 
     bookingInFlight.current = true;
     setBooking(true);
     const promoCode = promoStore.get() ?? undefined;
-    console.info('[Cart] checkout start', {
-      addressId: selectedAddress.id,
-      slotId: selectedSlotId,
-      itemCount,
-      hasPromo: !!promoCode,
-      split: doSplit,
-      splitCount,
-    });
-
     try {
-      // Step 1: create the actual scheduled booking.
       const created = await createScheduledBooking(token, {
         address_id: selectedAddress.id,
         time_slot_id: selectedSlotId,
         ...(promoCode ? { promo_code: promoCode } : {}),
       });
-      console.info('[Cart] booking created');
 
-      // Step 2 (optional): record roomies cost distribution.
       if (doSplit && myGroup) {
         try {
           await bookGroupChore(myGroup.group.id, {
@@ -331,7 +204,6 @@ export default function CartScreen() {
             selected_member_ids: [...selectedMemberIds],
             idempotency_key: generateUUID(),
           });
-          console.info('[Cart] roomies cost split recorded');
         } catch (splitErr) {
           console.warn('[Cart] split recording failed — booking still confirmed', splitErr);
         }
@@ -347,257 +219,288 @@ export default function CartScreen() {
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
       });
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.error ??
-        err?.response?.data?.message ??
-        err?.message ??
-        'Something went wrong. Please try again.';
-      console.error('[Cart] booking failed', err?.response?.data ?? err?.message);
-      Alert.alert('Booking Failed', msg);
+      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? 'Something went wrong. Please try again.';
+      showError(msg, { title: 'Booking failed' });
     } finally {
       setBooking(false);
       bookingInFlight.current = false;
     }
   }, [
     token, selectedAddress, selectedSlotId, itemCount, refreshCart, navigation,
-    splitEnabled, myGroup, selectedMemberIds, totalCents, myShareCents, splitCount, bookGroupChore,
+    splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore, selectedSlotLabel,
   ]);
 
-  // ── Empty state ────────────────────────────────────────────────────────────
-  if (itemCount === 0) {
+  if (hydrating) {
     return (
-      <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-        <View style={s.header}>
-          <TouchableOpacity style={s.backBtn} onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Text style={s.backIcon}>←</Text>
-          </TouchableOpacity>
-          <Text style={s.headerTitle}>Cart</Text>
-          <View style={{ width: 36 }} />
-        </View>
-        <View style={s.emptyState}>
-          <Text style={s.emptyEmoji}>🛒</Text>
-          <Text style={s.emptyTitle}>Your cart is empty</Text>
-          <Text style={s.emptySub}>Add services from the home screen to get started</Text>
-          <TouchableOpacity style={s.browseBtn} onPress={() => navigation.goBack()} activeOpacity={0.85}>
-            <Text style={s.browseBtnText}>Browse Services</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <View style={s.root}>
+        <BackgroundGlow />
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader
+            title="Cart"
+            onBack={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')}
+          />
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 130 + insets.bottom }}
+            showsVerticalScrollIndicator={false}
+          >
+            <CartScreenSkeleton />
+          </ScrollView>
+        </SafeAreaView>
+      </View>
     );
   }
 
-  // ── Main render ────────────────────────────────────────────────────────────
-  return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Text style={s.backIcon}>←</Text>
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Cart ({itemCount})</Text>
-        <View style={{ width: 36 }} />
+  if (itemCount === 0) {
+    return (
+      <View style={s.root}>
+        <BackgroundGlow />
+        <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <ScreenHeader
+            title="Cart"
+            onBack={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')}
+          />
+          <EmptyState
+            illustration={<FloatingZop />}
+            title="Let's get cleaning!"
+            subtitle="Pick a service and Zop will send a pro your way."
+            ctaLabel="Browse services"
+            onCtaPress={() => navigation.navigate('AllServices', {})}
+            style={{ flex: 1 }}
+          />
+        </SafeAreaView>
       </View>
+    );
+  }
 
-      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+  return (
+    <View style={s.root}>
+      <BackgroundGlow />
 
-        {/* ── Address ──────────────────────────────────────────────────────── */}
-        <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={() => setAddressPickerVisible(true)}>
-          <View style={s.cardHeader}>
-            <Text style={s.cardLabel}>📍 Delivery Address</Text>
-            <Text style={s.editLink}>{selectedAddress ? 'Change' : 'Add'}</Text>
-          </View>
-          {selectedAddress ? (
-            <>
-              <Text style={s.addressTitle}>{selectedAddress.title || selectedAddress.tag}</Text>
-              <Text style={s.addressFull} numberOfLines={2}>{selectedAddress.full_address}</Text>
-            </>
-          ) : (
-            <Text style={s.addAddressText}>+ Add an address</Text>
-          )}
-        </TouchableOpacity>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+        <ScreenHeader
+          title={`Cart`}
+          subtitle={`${itemCount} item${itemCount === 1 ? '' : 's'} · ready to confirm`}
+          onBack={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')}
+        />
 
-        {/* ── Roomies Split Card — visible only when address matches group ── */}
-        {isRoomiesAddress && (
-          <View style={s.roomiesCard}>
-            {/* Toggle row */}
-            <View style={s.roomiesHeaderRow}>
-              <Text style={s.memberAvatarText}>🏠</Text>
-              <View style={s.roomiesLabelBlock}>
-                <Text style={s.roomiesLabel}>Split with Roomies</Text>
-                <Text style={s.roomiesSubtext}>
-                  {splitEnabled
-                    ? `Splitting with ${selectedMemberIds.size} roomie${selectedMemberIds.size !== 1 ? 's' : ''}`
-                    : 'Tap to divide costs with your household'}
-                </Text>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 130 + insets.bottom }}
+          showsVerticalScrollIndicator={false}
+        >
+          <SectionHeader>Address</SectionHeader>
+          <TouchableOpacity activeOpacity={0.85} onPress={() => setAddressPickerVisible(true)}>
+            <Card>
+              <View style={s.addrRow}>
+                <View style={s.addrPin}>
+                  <Feather name="map-pin" size={16} color={C.amber} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  {selectedAddress ? (
+                    <>
+                      <Text style={s.addrTitle}>{selectedAddress.title || selectedAddress.tag}</Text>
+                      <Text style={s.addrSub} numberOfLines={2}>{selectedAddress.full_address}</Text>
+                    </>
+                  ) : (
+                    <Text style={s.addrTitle}>Add delivery address</Text>
+                  )}
+                </View>
+                <Text style={s.changeLink}>{selectedAddress ? 'Change' : 'Add'}</Text>
               </View>
-              <Switch
-                value={splitEnabled}
-                onValueChange={(val) => {
-                  setSplitEnabled(val);
-                  if (val && selectedMemberIds.size === 0) {
-                    setSelectedMemberIds(new Set(otherMembers.map((m) => m.user_id)));
-                  }
-                }}
-                trackColor={{ false: c.border, true: c.primary + '80' }}
-                thumbColor={splitEnabled ? c.primary : c.textMuted}
-              />
-            </View>
+            </Card>
+          </TouchableOpacity>
 
-            {/* Member list + breakdown (visible when toggled on) */}
-            {splitEnabled && (
-              <>
-                {otherMembers.length === 0 ? (
-                  <Text style={s.splitNote}>
-                    You're the only member in this group. Invite roomies to split costs.
-                  </Text>
-                ) : (
-                  <>
-                    <Text style={[s.splitKey, { marginBottom: -2 }]}>Who to split with:</Text>
-
-                    {otherMembers.map((member, i) => {
-                      const isSelected = selectedMemberIds.has(member.user_id);
-                      const isHost = member.role === 'host';
-                      return (
-                        <TouchableOpacity
-                          key={member.user_id}
-                          style={[s.memberRow, i > 0 && s.memberRowBorder]}
-                          activeOpacity={0.7}
-                          onPress={() => toggleMember(member.user_id)}
-                        >
-                          <View style={s.memberAvatar}>
-                            <Text style={s.memberAvatarText}>{isHost ? '👑' : '👤'}</Text>
-                          </View>
-                          <View style={s.memberInfo}>
-                            <Text style={s.memberName}>{isHost ? 'Host' : `Roomie ${i + 1}`}</Text>
-                            <Text style={s.memberVault}>
-                              {member.prepaid_balance > 0
-                                ? `Vault: ₹${(member.prepaid_balance / 100).toFixed(0)}`
-                                : 'No vault balance'}
-                            </Text>
-                          </View>
-                          <View style={[s.checkbox, isSelected && s.checkboxActive]}>
-                            {isSelected && <Text style={s.checkboxTick}>✓</Text>}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-
-                    {/* Cost breakdown summary */}
-                    <View style={s.splitSummaryBox}>
-                      <View style={s.splitRow}>
-                        <Text style={s.splitKey}>Total order</Text>
-                        <Text style={s.splitVal}>₹{(totalCents / 100).toFixed(0)}</Text>
-                      </View>
-                      <View style={s.splitRow}>
-                        <Text style={s.splitKey}>Split between</Text>
-                        <Text style={s.splitVal}>{splitCount} people</Text>
-                      </View>
-                      {selectedMemberIds.size === 0 && (
-                        <Text style={[s.splitNote, { textAlign: 'left', marginTop: 2 }]}>
-                          Select at least one roomie to split costs.
-                        </Text>
-                      )}
-                      {selectedMemberIds.size > 0 && (
-                        <>
-                          <View style={s.splitDivider} />
-                          <View style={s.splitRow}>
-                            <Text style={s.splitShareKey}>Your share</Text>
-                            <Text style={s.splitShareVal}>₹{(myShareCents / 100).toFixed(0)}</Text>
-                          </View>
-                        </>
-                      )}
-                    </View>
-
-                    <Text style={s.splitNote}>
-                      Roomies pay from Vault balance. Shortfalls become tracked debts.
+          {isRoomiesAddress && (
+            <>
+              <SectionHeader>Roomies split</SectionHeader>
+              <Card>
+                <View style={s.splitHeader}>
+                  <View style={s.splitIcon}>
+                    <Feather name="home" size={16} color={C.amber} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={s.splitTitle}>Split with Roomies</Text>
+                    <Text style={s.splitMeta}>
+                      {splitEnabled
+                        ? `Splitting with ${selectedMemberIds.size} roomie${selectedMemberIds.size === 1 ? '' : 's'}`
+                        : 'Tap to divide costs with your household'}
                     </Text>
+                  </View>
+                  <DarkToggle on={splitEnabled} onChange={(v) => {
+                    setSplitEnabled(v);
+                    if (v && selectedMemberIds.size === 0) {
+                      setSelectedMemberIds(new Set(otherMembers.map((m) => m.user_id)));
+                    }
+                  }} />
+                </View>
+
+                {splitEnabled && (
+                  <>
+                    {otherMembers.length === 0 ? (
+                      <Text style={s.splitNote}>You're the only member in this group. Invite roomies to split costs.</Text>
+                    ) : (
+                      <>
+                        <View style={s.divider} />
+                        {otherMembers.map((member, i) => {
+                          const sel = selectedMemberIds.has(member.user_id);
+                          const isHost = member.role === 'host';
+                          return (
+                            <TouchableOpacity
+                              key={member.user_id}
+                              activeOpacity={0.8}
+                              onPress={() => toggleMember(member.user_id)}
+                              style={[s.memberRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.divider }]}
+                            >
+                              <View style={s.memberAvatar}>
+                                <Feather name={isHost ? 'star' : 'user'} size={14} color={C.amber} />
+                              </View>
+                              <View style={{ flex: 1, minWidth: 0 }}>
+                                <Text style={s.memberName}>{isHost ? 'Host' : `Roomie ${i + 1}`}</Text>
+                                <Text style={s.memberMeta}>
+                                  {member.prepaid_balance > 0
+                                    ? `Vault ₹${(member.prepaid_balance / 100).toFixed(0)}`
+                                    : 'No vault balance'}
+                                </Text>
+                              </View>
+                              <View style={[s.checkbox, sel && s.checkboxOn]}>
+                                {sel && <Feather name="check" size={12} color={C.ink} />}
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+
+                        <View style={s.splitSummary}>
+                          <View style={s.splitRow}>
+                            <Text style={s.splitKey}>Total order</Text>
+                            <Text style={s.splitVal}>₹{(totalCents / 100).toFixed(0)}</Text>
+                          </View>
+                          <View style={s.splitRow}>
+                            <Text style={s.splitKey}>Split between</Text>
+                            <Text style={s.splitVal}>{splitCount} people</Text>
+                          </View>
+                          {selectedMemberIds.size > 0 ? (
+                            <>
+                              <View style={s.splitDashed} />
+                              <View style={s.splitRow}>
+                                <Text style={s.splitTotalKey}>Your share</Text>
+                                <Text style={s.splitTotalVal}>₹{(myShareCents / 100).toFixed(0)}</Text>
+                              </View>
+                            </>
+                          ) : (
+                            <Text style={[s.splitNote, { textAlign: 'left', marginTop: 4 }]}>
+                              Select at least one roomie to split costs.
+                            </Text>
+                          )}
+                        </View>
+                        <Text style={s.splitNote}>
+                          Roomies pay from Vault balance. Shortfalls become tracked debts.
+                        </Text>
+                      </>
+                    )}
                   </>
                 )}
-              </>
-            )}
-          </View>
-        )}
-
-        {/* ── Schedule ─────────────────────────────────────────────────────── */}
-        <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={() => setSchedulingVisible(true)}>
-          <View style={s.cardHeader}>
-            <Text style={s.cardLabel}>🗓 Schedule</Text>
-            <Text style={s.editLink}>Select</Text>
-          </View>
-          {selectedSlotLabel ? (
-            <Text style={s.slotLabel}>{selectedSlotLabel}</Text>
-          ) : (
-            <Text style={s.slotPlaceholder}>Tap to choose a date & time</Text>
+              </Card>
+            </>
           )}
-        </TouchableOpacity>
 
-        {/* ── Services ─────────────────────────────────────────────────────── */}
-        <View style={s.card}>
-          <Text style={s.cardLabel}>🧹 Services</Text>
-          {items.map((item, i) => (
-            <View key={item.id} style={[s.serviceRow, i > 0 && s.serviceRowBorder]}>
-              <View style={s.serviceLeft}>
-                <Text style={s.serviceName}>{item.service_name}</Text>
-                <Text style={s.serviceDuration}>{item.duration_minutes} min</Text>
+          <SectionHeader>Schedule</SectionHeader>
+          <TouchableOpacity activeOpacity={0.85} onPress={() => setSchedulingVisible(true)}>
+            <Card>
+              <View style={s.addrRow}>
+                <View style={s.addrPin}>
+                  <Feather name="calendar" size={16} color={C.amber} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  {selectedSlotLabel ? (
+                    <>
+                      <Text style={s.addrTitle}>{selectedSlotLabel}</Text>
+                      <Text style={s.addrSub}>Tap to change</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={s.addrTitle}>Pick a date & time</Text>
+                      <Text style={s.addrSub}>Required to confirm booking</Text>
+                    </>
+                  )}
+                </View>
+                <Text style={s.changeLink}>{selectedSlotLabel ? 'Change' : 'Select'}</Text>
               </View>
-              <View style={s.serviceRight}>
-                <Text style={s.servicePrice}>₹{(item.price_cents / 100).toFixed(0)}</Text>
-                <TouchableOpacity
-                  onPress={() => handleRemove(item.id)}
-                  activeOpacity={0.7}
-                  disabled={removing === item.id}
-                  style={s.removeBtn}
-                >
-                  {removing === item.id
-                    ? <ActivityIndicator size="small" color={c.danger} />
-                    : <Text style={s.removeBtnText}>✕</Text>
-                  }
-                </TouchableOpacity>
-              </View>
+            </Card>
+          </TouchableOpacity>
+
+          <SectionHeader>Services</SectionHeader>
+          <Card>
+            {items.map((item, i) => {
+              const img = serviceIcon({ id: item.service_id, name: item.service_name });
+              return (
+                <ReAnimated.View key={item.id} exiting={FadeOutLeft.duration(250)}>
+                  <View style={s.svcRow}>
+                    <View style={s.svcIcon}>
+                      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+                        <Defs>
+                          <SvgLinearGradient id={`svcBg-${item.id}`} x1="0" y1="0" x2="0" y2="1">
+                            <Stop offset="0%" stopColor="#1A1A1C" />
+                            <Stop offset="100%" stopColor="#0F0F11" />
+                          </SvgLinearGradient>
+                          <SvgRadialGradient id={`svcTop-${item.id}`} cx="50%" cy="18%" rx="120%" ry="90%">
+                            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.10" />
+                            <Stop offset="60%" stopColor="#FFFFFF" stopOpacity="0" />
+                          </SvgRadialGradient>
+                          <SvgRadialGradient id={`svcBot-${item.id}`} cx="50%" cy="110%" rx="80%" ry="60%">
+                            <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.16" />
+                            <Stop offset="70%" stopColor="#F5A300" stopOpacity="0" />
+                          </SvgRadialGradient>
+                        </Defs>
+                        <Rect width="100%" height="100%" rx="11" fill={`url(#svcBg-${item.id})`} />
+                        <Rect width="100%" height="100%" rx="11" fill={`url(#svcTop-${item.id})`} />
+                        <Rect width="100%" height="100%" rx="11" fill={`url(#svcBot-${item.id})`} />
+                      </Svg>
+                      {img && <Image source={img} style={s.svcImg} resizeMode="contain" />}
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.svcName} numberOfLines={1}>{item.service_name}</Text>
+                      <Text style={s.svcMeta}>{item.duration_minutes} min</Text>
+                    </View>
+                    <Text style={s.svcPrice}>₹{(item.price_cents / 100).toFixed(0)}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleRemove(item.id)}
+                      activeOpacity={0.7}
+                      disabled={removing === item.id}
+                      style={s.removeBtn}
+                      hitSlop={10}
+                    >
+                      {removing === item.id
+                        ? <LoadingBars size="small" color={C.danger} />
+                        : <Feather name="x" size={14} color={C.danger} />}
+                    </TouchableOpacity>
+                  </View>
+                  {i < items.length - 1 && <View style={s.divider} />}
+                </ReAnimated.View>
+              );
+            })}
+          </Card>
+
+          <SectionHeader>Bill details</SectionHeader>
+          <Card>
+            <BillRow label="Subtotal" value={`₹${(subtotalCents / 100).toFixed(0)}`} />
+            <BillRow label="Platform fee" value={`₹${(feeCents / 100).toFixed(0)}`} />
+            <View style={s.totalRow}>
+              <Text style={s.totalLabel}>Total to pay</Text>
+              <Text style={s.totalValue}>₹{(totalCents / 100).toFixed(0)}</Text>
             </View>
-          ))}
-        </View>
+          </Card>
+        </ScrollView>
 
-        {/* ── Price Summary ─────────────────────────────────────────────────── */}
-        <View style={s.card}>
-          <Text style={s.cardLabel}>💰 Price Summary</Text>
-          <View style={s.priceRow}>
-            <Text style={s.priceKey}>Subtotal</Text>
-            <Text style={s.priceVal}>₹{(subtotalCents / 100).toFixed(0)}</Text>
-          </View>
-          <View style={s.priceRow}>
-            <Text style={s.priceKey}>Platform fee</Text>
-            <Text style={s.priceVal}>₹{(feeCents / 100).toFixed(0)}</Text>
-          </View>
-          <View style={[s.priceRow, s.totalRow]}>
-            <Text style={s.totalKey}>Total</Text>
-            <Text style={s.totalVal}>₹{(totalCents / 100).toFixed(0)}</Text>
-          </View>
+        <View style={[s.payDock, { paddingBottom: 16 + insets.bottom }]}>
+          <PrimaryButton
+            label={`Confirm booking · ₹${(myShareCents / 100).toFixed(0)}`}
+            onPress={handleCheckout}
+            isLoading={booking}
+            showChevron
+          />
         </View>
-
-        <View style={{ height: 100 }} />
-      </ScrollView>
-
-      {/* ── Sticky bottom bar ─────────────────────────────────────────────── */}
-      <View style={s.bottomBar}>
-        <View style={s.totalInfo}>
-          <Text style={s.totalInfoLabel}>
-            {splitEnabled && splitCount > 1 ? 'Your share' : 'Total'}
-          </Text>
-          <Text style={s.totalInfoValue}>₹{(myShareCents / 100).toFixed(0)}</Text>
-        </View>
-        <TouchableOpacity
-          style={[s.payBtn, booking && s.payBtnDisabled]}
-          activeOpacity={0.85}
-          disabled={booking}
-          onPress={handleCheckout}
-        >
-          {booking
-            ? <ActivityIndicator color="#FFFFFF" />
-            : <Text style={s.payBtnText}>Confirm Booking</Text>
-          }
-        </TouchableOpacity>
-      </View>
+      </SafeAreaView>
 
       <SchedulingModal
         visible={schedulingVisible}
@@ -615,12 +518,12 @@ export default function CartScreen() {
         token={token}
         addresses={addresses}
         selectedId={selectedAddress?.id ?? null}
-        onSelect={addr => setSelectedAddress(addr)}
+        onSelect={(addr) => setSelectedAddress(addr)}
         onClose={() => setAddressPickerVisible(false)}
-        onAddressEdited={updated => setAddresses(prev => prev.map(a => a.id === updated.id ? updated : a))}
-        onAddressDeleted={id => {
-          setAddresses(prev => {
-            const next = prev.filter(a => a.id !== id);
+        onAddressEdited={(updated) => setAddresses((prev) => prev.map((a) => a.id === updated.id ? updated : a))}
+        onAddressDeleted={(id) => {
+          setAddresses((prev) => {
+            const next = prev.filter((a) => a.id !== id);
             if (selectedAddress?.id === id) setSelectedAddress(next[0] ?? null);
             return next;
           });
@@ -639,9 +542,203 @@ export default function CartScreen() {
               }
               setSelectedAddress(best);
             }
-          } catch { /* ignore */ }
+          } catch {}
         }}
       />
-    </SafeAreaView>
+    </View>
+  );
+}
+
+function BillRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={s.billRow}>
+      <Text style={s.billLabel}>{label}</Text>
+      <Text style={s.billValue}>{value}</Text>
+    </View>
+  );
+}
+
+function DarkToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: on ? 1 : 0,
+      duration: 220,
+      easing: Easing.bezier(0.37, 1.95, 0.66, 0.56),
+      useNativeDriver: false,
+    }).start();
+  }, [on]);
+  const left = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 20] });
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={() => onChange(!on)} style={{ padding: 2 }}>
+      <View style={[s.toggleTrack, on ? null : s.toggleOff]}>
+        {on && (
+          <View style={StyleSheet.absoluteFill}>
+            <Svg width="46" height="28">
+              <Defs>
+                <SvgLinearGradient id="togGrad" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0%" stopColor={C.amberHi} />
+                  <Stop offset="100%" stopColor={C.amber} />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="46" height="28" rx="14" fill="url(#togGrad)" />
+            </Svg>
+          </View>
+        )}
+        <Animated.View style={[s.toggleThumb, { left }]} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.bg },
+
+  // Empty state
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 14 },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.amberSoft,
+    marginBottom: 8,
+  },
+  emptyTitle: { fontFamily: FontFamily.bold, fontSize: 20, color: C.white, letterSpacing: -0.4 },
+  emptySub: { fontFamily: FontFamily.medium, fontSize: 13, color: C.textMuted, textAlign: 'center', lineHeight: 18 },
+  browseBtn: {
+    marginTop: 12, height: 50, paddingHorizontal: 28, borderRadius: 14,
+    overflow: 'hidden',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  browseBtnText: { fontFamily: FontFamily.extrabold, fontSize: 14, color: C.ink, letterSpacing: 0.2 },
+
+  // Address row + schedule row
+  addrRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  addrPin: {
+    width: 36, height: 36, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.amberSoft,
+  },
+  addrTitle: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white, letterSpacing: -0.1 },
+  addrSub: { fontFamily: FontFamily.medium, fontSize: 11.5, color: C.textMuted, marginTop: 2, lineHeight: 15 },
+  changeLink: { fontFamily: FontFamily.bold, fontSize: 11.5, color: C.amber, letterSpacing: 0.2 },
+
+  // Roomies split
+  splitHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  splitIcon: {
+    width: 36, height: 36, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.amberSoft,
+  },
+  splitTitle: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white, letterSpacing: -0.1 },
+  splitMeta: { fontFamily: FontFamily.medium, fontSize: 11.5, color: C.textMuted, marginTop: 2 },
+  memberRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12,
+  },
+  memberAvatar: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.amberSoft,
+  },
+  memberName: { fontFamily: FontFamily.semibold, fontSize: 13, color: C.white, letterSpacing: -0.05 },
+  memberMeta: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, marginTop: 1 },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: C.amber, borderColor: C.amber },
+  splitSummary: {
+    marginTop: 4,
+    backgroundColor: 'rgba(245,163,0,0.06)',
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  splitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  splitKey: { fontFamily: FontFamily.medium, fontSize: 12, color: C.textMuted },
+  splitVal: { fontFamily: FontFamily.semibold, fontSize: 12, color: C.text },
+  splitDashed: {
+    height: 1, marginVertical: 4,
+    borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: 'rgba(255,255,255,0.10)',
+  },
+  splitTotalKey: { fontFamily: FontFamily.bold, fontSize: 13, color: C.white },
+  splitTotalVal: { fontFamily: FontFamily.bold, fontSize: 13, color: C.amber },
+  splitNote: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, textAlign: 'center', marginTop: 2 },
+  divider: { height: 1, backgroundColor: C.divider, marginVertical: 8 },
+
+  // Service row
+  svcRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
+  svcIcon: { width: 42, height: 42, borderRadius: 11, position: 'relative', overflow: 'hidden' },
+  svcImg: { position: 'absolute', left: '11%', top: '11%', width: '78%', height: '78%' },
+  svcName: { fontFamily: FontFamily.bold, fontSize: 13.5, color: C.white, letterSpacing: -0.1, lineHeight: 16 },
+  svcMeta: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, marginTop: 2 },
+  svcPrice: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
+  removeBtn: {
+    width: 28, height: 28, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.dangerSoft,
+  },
+
+  // Bill
+  billRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
+  billLabel: { fontFamily: FontFamily.medium, fontSize: 12.5, color: C.textSecondary },
+  billValue: { fontFamily: FontFamily.medium, fontSize: 12.5, color: C.textSecondary },
+  totalRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingTop: 10, marginTop: 6,
+    borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  totalLabel: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
+  totalValue: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
+
+  // Toggle
+  toggleTrack: { width: 46, height: 28, borderRadius: 14, overflow: 'hidden', position: 'relative' },
+  toggleOff: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  toggleThumb: {
+    position: 'absolute', top: 2,
+    width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    zIndex: 1,
+  },
+
+  // Pay dock
+  payDock: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    paddingHorizontal: 20, paddingTop: 16,
+    backgroundColor: 'rgba(10,10,10,0.92)',
+    borderTopWidth: 0.5, borderTopColor: C.glassBorderHi,
+  },
+  payBtnWrap: {
+    height: 54, borderRadius: 14, overflow: 'hidden',
+    shadowColor: C.amber, shadowOpacity: 0.4, shadowRadius: 30, shadowOffset: { width: 0, height: 14 },
+    elevation: 12,
+  },
+  payBtnInner: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18,
+  },
+  payAmt: { fontFamily: FontFamily.extrabold, fontSize: 18, color: C.ink, letterSpacing: -0.4, lineHeight: 20 },
+  paySub: { fontFamily: FontFamily.semibold, fontSize: 10.5, color: C.ink, opacity: 0.7, marginTop: 3 },
+  payCta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  payCtaText: { fontFamily: FontFamily.extrabold, fontSize: 14, color: C.ink, letterSpacing: -0.1 },
+});
+
+function FloatingZop() {
+  const y = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(y, { toValue: -10, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(y, { toValue: 0,   duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [y]);
+  return (
+    <Animated.View style={{ transform: [{ translateY: y }] }}>
+      <ZopHappy width={160} height={160} />
+    </Animated.View>
   );
 }

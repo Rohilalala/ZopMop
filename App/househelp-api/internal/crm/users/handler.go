@@ -1,6 +1,7 @@
 package users
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -10,17 +11,31 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
 // Handler is the HTTP layer for the users module.
 type Handler struct {
-	repo     *Repository
-	recorder *audit.Recorder
+	repo       *Repository
+	recorder   *audit.Recorder
+	dispatcher *webhooks.Dispatcher
 }
 
 // NewHandler constructs a Handler.
 func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 	return &Handler{repo: repo, recorder: recorder}
+}
+
+// SetDispatcher wires the outbound webhook dispatcher. nil-safe; when unset
+// the handler skips fan-out silently.
+func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
+
+func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
+	if h.dispatcher == nil {
+		return
+	}
+	h.dispatcher.Dispatch(ctx, event, payload)
 }
 
 // RegisterRoutes mounts /users/* under the authed admin group.
@@ -30,19 +45,19 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g.Get("/:id",         h.Get)
 	g.Get("/:id/orders",  h.Orders)
 	g.Get("/:id/notes",   h.ListNotes)
-	g.Post("/:id/notes",  h.AddNote)
+	g.Post("/:id/notes",  middleware.RequirePermission("users.add_note"), h.AddNote)
 	g.Get("/:id/active-orders", h.ActiveOrders)
-	g.Post("/:id/suspend",   h.Suspend)
-	g.Post("/:id/unsuspend", h.Unsuspend)
-	g.Post("/:id/ban",       h.Ban)
-	g.Post("/:id/unban",     h.Unban)
-	g.Post("/:id/vip",       h.SetVIP)
+	g.Post("/:id/suspend",   middleware.RequirePermission("users.suspend"), h.Suspend)
+	g.Post("/:id/unsuspend", middleware.RequirePermission("users.unsuspend"), h.Unsuspend)
+	g.Post("/:id/ban",       middleware.RequirePermission("users.ban"), h.Ban)
+	g.Post("/:id/unban",     middleware.RequirePermission("users.unban"), h.Unban)
+	g.Post("/:id/vip",       middleware.RequirePermission("users.set_vip"), h.SetVIP)
 }
 
 // List handles GET /users.
 func (h *Handler) List(c *fiber.Ctx) error {
 	f := parseListFilter(c)
-	out, err := h.repo.List(c.Context(), f)
+	out, err := h.repo.List(c.UserContext(), f)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -52,7 +67,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Get handles GET /users/:id.
 func (h *Handler) Get(c *fiber.Ctx) error {
-	d, err := h.repo.Get(c.Context(), c.Params("id"))
+	d, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
@@ -66,7 +81,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 // Orders handles GET /users/:id/orders.
 func (h *Handler) Orders(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.repo.Orders(c.Context(), c.Params("id"), limit)
+	out, err := h.repo.Orders(c.UserContext(), c.Params("id"), limit)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] orders failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -76,7 +91,7 @@ func (h *Handler) Orders(c *fiber.Ctx) error {
 
 // ListNotes handles GET /users/:id/notes.
 func (h *Handler) ListNotes(c *fiber.Ctx) error {
-	out, err := h.repo.ListNotes(c.Context(), c.Params("id"))
+	out, err := h.repo.ListNotes(c.UserContext(), c.Params("id"))
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] list notes failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -95,7 +110,7 @@ func (h *Handler) AddNote(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	n, err := h.repo.AddNote(c.Context(), c.Params("id"), adminID, adminEmail, req.Body)
+	n, err := h.repo.AddNote(c.UserContext(), c.Params("id"), adminID, adminEmail, req.Body)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] add note failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -107,7 +122,7 @@ func (h *Handler) AddNote(c *fiber.Ctx) error {
 // ActiveOrders handles GET /users/:id/active-orders. Used by the SPA before
 // suspend/ban so the confirmation modal can show "user has N active orders".
 func (h *Handler) ActiveOrders(c *fiber.Ctx) error {
-	has, count, err := h.repo.HasActiveOrders(c.Context(), c.Params("id"))
+	has, count, err := h.repo.HasActiveOrders(c.UserContext(), c.Params("id"))
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] active orders failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -122,17 +137,25 @@ func (h *Handler) Suspend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "reason required"})
 	}
 	id := c.Params("id")
-	if err := h.repo.Suspend(c.Context(), id, req.Reason); err != nil {
+	if err := h.repo.Suspend(c.UserContext(), id, req.Reason); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "user.suspend", id, nil, req.Reason)
+	adminID, _ := c.Locals("crmAdminID").(string)
+	h.fireWebhook(c.UserContext(), webhooks.EventAdminUserSuspended, webhooks.AdminUserActionEvent{
+		UserID:     id,
+		Action:     "suspended",
+		Reason:     req.Reason,
+		AdminID:    adminID,
+		OccurredAt: time.Now().UTC(),
+	})
 	return c.JSON(fiber.Map{"ok": true})
 }
 
 // Unsuspend handles POST /users/:id/unsuspend.
 func (h *Handler) Unsuspend(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.Unsuspend(c.Context(), id); err != nil {
+	if err := h.repo.Unsuspend(c.UserContext(), id); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "user.unsuspend", id, nil, nil)
@@ -146,17 +169,25 @@ func (h *Handler) Ban(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "reason required"})
 	}
 	id := c.Params("id")
-	if err := h.repo.Ban(c.Context(), id, req.Reason); err != nil {
+	if err := h.repo.Ban(c.UserContext(), id, req.Reason); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "user.ban", id, nil, req.Reason)
+	adminID, _ := c.Locals("crmAdminID").(string)
+	h.fireWebhook(c.UserContext(), webhooks.EventAdminUserBanned, webhooks.AdminUserActionEvent{
+		UserID:     id,
+		Action:     "banned",
+		Reason:     req.Reason,
+		AdminID:    adminID,
+		OccurredAt: time.Now().UTC(),
+	})
 	return c.JSON(fiber.Map{"ok": true})
 }
 
 // Unban handles POST /users/:id/unban.
 func (h *Handler) Unban(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.Unban(c.Context(), id); err != nil {
+	if err := h.repo.Unban(c.UserContext(), id); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "user.unban", id, nil, nil)
@@ -170,7 +201,7 @@ func (h *Handler) SetVIP(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	id := c.Params("id")
-	if err := h.repo.SetVIP(c.Context(), id, req.IsVIP); err != nil {
+	if err := h.repo.SetVIP(c.UserContext(), id, req.IsVIP); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "user.vip.set", id, nil, req.IsVIP)
@@ -191,7 +222,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, targetID string, before, after any
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID:    adminID,
 		AdminEmail: adminEmail,
 		Action:     action,

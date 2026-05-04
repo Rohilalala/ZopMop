@@ -27,12 +27,38 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
 	router.Put("/me/location", h.UpdateLocation)
 	router.Put("/me/status", h.SetStatus)
+	router.Patch("/me", h.UpdateProfile)
+}
+
+// updateProfileRequest is the editable subset of helper profile fields. Add
+// more here as the pro app grows; keep it whitelisted to prevent client-side
+// privilege escalation (no role / approval_status here, ever).
+type updateProfileRequest struct {
+	Locality *string `json:"locality,omitempty"`
+}
+
+// UpdateProfile handles PATCH /helpers/me — currently only the My Area
+// (locality) field. Validates the locality against the active list so a
+// pro can't pin themselves to a stale or inactive area.
+func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
+	helperID, _ := c.Locals("userID").(string)
+	var req updateProfileRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if req.Locality != nil {
+		if err := h.service.UpdateLocality(c.UserContext(), helperID, *req.Locality); err != nil {
+			log.Warn().Err(err).Str("helper_id", helperID).Msg("[helper] update locality failed")
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 // GetProfile handles GET /helpers/me/profile.
 func (h *Handler) GetProfile(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
-	profile, err := h.service.GetProfile(c.Context(), helperID)
+	profile, err := h.service.GetProfile(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper profile")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "profile not found"})
@@ -44,7 +70,7 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 // Returns all pending booking invites the matching engine has assigned to this helper.
 func (h *Handler) GetInvites(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
-	invites, err := h.service.GetInvites(c.Context(), helperID)
+	invites, err := h.service.GetInvites(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get invites")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch invites"})
@@ -59,7 +85,7 @@ func (h *Handler) DeclineInvite(c *fiber.Ctx) error {
 	if !validator.IsUUID(bookingID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
-	if err := h.service.DeclineInvite(c.Context(), helperID, bookingID); err != nil {
+	if err := h.service.DeclineInvite(c.UserContext(), helperID, bookingID); err != nil {
 		log.Error().Err(err).
 			Str("helper_id", helperID).
 			Str("booking_id", bookingID).
@@ -80,7 +106,7 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 	if req.Lat < -90 || req.Lat > 90 || req.Lng < -180 || req.Lng > 180 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid coordinates"})
 	}
-	if err := h.service.UpdateLocation(c.Context(), helperID, req.Lat, req.Lng); err != nil {
+	if err := h.service.UpdateLocation(c.UserContext(), helperID, req.Lat, req.Lng); err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to update location")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update location"})
 	}
@@ -95,7 +121,7 @@ func (h *Handler) SetStatus(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
-	if err := h.service.SetAvailability(c.Context(), helperID, req.IsAvailable); err != nil {
+	if err := h.service.SetAvailability(c.UserContext(), helperID, req.IsAvailable); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update status"})
 	}
 	return c.JSON(fiber.Map{"is_available": req.IsAvailable})

@@ -6,9 +6,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  ActivityIndicator,
+  
   Dimensions,
 } from 'react-native';
+import { LoadingBars } from './ui/LoadingBars';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../theme';
 import { getTimeSlots, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
 
@@ -21,32 +22,64 @@ interface Props {
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
-// Generate the next 7 days from today — called at render time so dates stay fresh.
-function buildDays(): { iso: string; label: string; dayName: string }[] {
+// SCHEDULING_LEAD_DAYS — hard cap matches backend booking.scheduledBookingMaxLeadDays.
+// Customer can pick today, tomorrow, or day-after-tomorrow. Anything beyond is
+// rejected by classifyScheduling with ErrSlotTooFar.
+const SCHEDULING_LEAD_DAYS = 2;
+
+// IST cutoff hour. Past this (device-time-IST), today + tomorrow become
+// non-selectable — the booking would land in the stealth-instant path,
+// which we keep transparent to the customer by only offering day-after slots.
+const IST_CUTOFF_HOUR = 20; // 8pm IST
+
+// istHour returns the current hour-of-day in India (0-23). Computed off
+// UTC + 5h30 so the device's own tz doesn't confuse the cutoff.
+function istHour(): number {
+  const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  return istNow.getUTCHours();
+}
+
+// Build the selectable date list. Capped at SCHEDULING_LEAD_DAYS + 1 entries
+// (today through today+lead). disabled flag honours the 8pm IST cutoff —
+// today + tomorrow flip to disabled past cutoff so only day-after-tomorrow
+// remains selectable.
+function buildDays(): { iso: string; label: string; dayName: string; disabled: boolean }[] {
   const days = [];
   const now = new Date();
-  for (let i = 0; i < 7; i++) {
+  const pastCutoff = istHour() >= IST_CUTOFF_HOUR;
+  for (let i = 0; i <= SCHEDULING_LEAD_DAYS; i++) {
     const d = new Date(now);
     d.setDate(now.getDate() + i);
     const iso = d.toISOString().split('T')[0];
     const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-IN', { weekday: 'short' });
     const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-    days.push({ iso, label, dayName });
+    // Past cutoff: disable today + tomorrow. Day-after-tomorrow stays open.
+    const disabled = pastCutoff && i < 2;
+    days.push({ iso, label, dayName, disabled });
   }
   return days;
 }
 
+// firstSelectableIso picks the earliest non-disabled day for the default
+// selection — defaults to the last day in the list when everything's
+// disabled (defensive; current rules guarantee at least day-after stays
+// open).
+function firstSelectableIso(days: ReturnType<typeof buildDays>): string {
+  return (days.find((d) => !d.disabled) ?? days[days.length - 1]).iso;
+}
+
 export default function SchedulingModal({ visible, token, onClose, onConfirm }: Props) {
-  // Recompute every time the modal opens so dates are never stale past midnight.
+  // Recompute every time the modal opens so dates are never stale past
+  // midnight or past the 8pm IST cutoff (which moves selectable days).
   const DAYS = React.useMemo(() => buildDays(), [visible]);
-  const [selectedDay, setSelectedDay] = useState(() => buildDays()[0].iso);
+  const [selectedDay, setSelectedDay] = useState(() => firstSelectableIso(buildDays()));
   const [periods, setPeriods] = useState<ApiSlotPeriod[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
 
-  // Sync selectedDay to today whenever modal opens fresh.
+  // Sync selectedDay to the earliest still-selectable day on open.
   useEffect(() => {
-    if (visible) setSelectedDay(DAYS[0].iso);
+    if (visible) setSelectedDay(firstSelectableIso(DAYS));
   }, [visible]);
 
   useEffect(() => {
@@ -102,12 +135,33 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
             return (
               <TouchableOpacity
                 key={day.iso}
-                style={[s.dayChip, active && s.dayChipActive]}
+                style={[
+                  s.dayChip,
+                  active && s.dayChipActive,
+                  day.disabled && s.dayChipDisabled,
+                ]}
                 activeOpacity={0.7}
+                disabled={day.disabled}
                 onPress={() => setSelectedDay(day.iso)}
               >
-                <Text style={[s.dayName, active && s.dayNameActive]}>{day.dayName}</Text>
-                <Text style={[s.dayLabel, active && s.dayLabelActive]}>{day.label}</Text>
+                <Text
+                  style={[
+                    s.dayName,
+                    active && s.dayNameActive,
+                    day.disabled && s.dayTextDisabled,
+                  ]}
+                >
+                  {day.dayName}
+                </Text>
+                <Text
+                  style={[
+                    s.dayLabel,
+                    active && s.dayLabelActive,
+                    day.disabled && s.dayTextDisabled,
+                  ]}
+                >
+                  {day.label}
+                </Text>
               </TouchableOpacity>
             );
           })}
@@ -116,7 +170,7 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
         {/* Slots — grouped by period */}
         <View style={s.slotsContainer}>
           {loading ? (
-            <ActivityIndicator color={Colors.primary} style={{ marginVertical: 32 }} />
+            <LoadingBars color={Colors.primary} style={{ marginVertical: 32 }} />
           ) : periods.length === 0 ? (
             <Text style={s.noSlots}>No slots available for this date</Text>
           ) : (
@@ -230,6 +284,8 @@ const s = StyleSheet.create({
     minWidth: 68,
   },
   dayChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  dayChipDisabled: { opacity: 0.32, backgroundColor: 'transparent' },
+  dayTextDisabled: { color: Colors.textMuted ?? 'rgba(0,0,0,0.4)' },
   dayName: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: Colors.textSecondary },
   dayNameActive: { color: Colors.white },
   dayLabel: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: Colors.text, marginTop: 2 },

@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 var ErrNotFound = errors.New("experiment not found")
@@ -191,16 +192,16 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/experiments")
 	g.Get("/",        h.List)
-	g.Post("/",       h.Create)
+	g.Post("/",       middleware.RequirePermission("experiments.create"), h.Create)
 	g.Get("/:id",     h.Get)
-	g.Post("/:id/start",  h.Start)
-	g.Post("/:id/pause",  h.Pause)
-	g.Post("/:id/stop",   h.Stop)
-	g.Post("/:id/rollout", h.Rollout)
+	g.Post("/:id/start",  middleware.RequirePermission("experiments.start"), h.Start)
+	g.Post("/:id/pause",  middleware.RequirePermission("experiments.pause"), h.Pause)
+	g.Post("/:id/stop",   middleware.RequirePermission("experiments.stop"), h.Stop)
+	g.Post("/:id/rollout", middleware.RequirePermission("experiments.rollout"), h.Rollout)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	out, err := h.repo.List(c.Context())
+	out, err := h.repo.List(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.experiments] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -209,7 +210,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	out, err := h.repo.Get(c.Context(), c.Params("id"))
+	out, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "experiment not found"})
@@ -225,7 +226,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	out, err := h.repo.Create(c.Context(), req, adminID)
+	out, err := h.repo.Create(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -245,7 +246,7 @@ func (h *Handler) Rollout(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "winner variant id required"})
 	}
 	id := c.Params("id")
-	if err := h.repo.SetStatus(c.Context(), id, "rolled_out", body.Winner); err != nil {
+	if err := h.repo.SetStatus(c.UserContext(), id, "rolled_out", body.Winner); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "experiment.rollout", id, nil, body.Winner)
@@ -254,7 +255,7 @@ func (h *Handler) Rollout(c *fiber.Ctx) error {
 
 func (h *Handler) statusChange(c *fiber.Ctx, status, action string) error {
 	id := c.Params("id")
-	if err := h.repo.SetStatus(c.Context(), id, status, ""); err != nil {
+	if err := h.repo.SetStatus(c.UserContext(), id, status, ""); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, action, id, nil, nil)
@@ -267,7 +268,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "experiments",
 		TargetType: "experiment", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

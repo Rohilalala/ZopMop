@@ -1,185 +1,246 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import mapboxgl, { Map, Marker } from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin, Star, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { InfoWindowF } from '@react-google-maps/api';
+import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { Maximize2, Star, X } from 'lucide-react';
 
 import { getLivePins, type LivePin } from '@/api/workers';
+import { GoogleMapWrapper } from '@/components/maps/GoogleMapWrapper';
 import { Card, EmptyState, StatusPill } from '@/components/ui';
 
-// LiveMapPage: full-screen Mapbox map with one pulsing marker per online
-// worker. Color = job status (idle / en_route / on_job). Click → side panel.
-//
-// If VITE_MAPBOX_TOKEN is missing we render an empty-state instead of
-// crashing; the rest of the CRM keeps working.
-
-const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN ?? '';
+// Live worker map: one custom SVG marker per online worker, colored by job
+// status. Click a marker → InfoWindow with quick detail card. Auto-fits the
+// first non-empty payload only — re-fitting on every refetch would yank the
+// view from under an admin who's panned.
 
 const STATUS_COLOR: Record<LivePin['job_status'], string> = {
-  idle:     '#00D4AA', // accent / teal
-  en_route: '#FFB547', // warning / amber
-  on_job:   '#FF4D6A', // danger / red
+  idle:     '#00D4AA',
+  en_route: '#FFB547',
+  on_job:   '#FF4D6A',
   offline:  '#4A4A6A',
 };
 
-export function LiveMapPage() {
-  if (!TOKEN) {
-    return (
-      <div className="p-6">
-        <Card>
-          <EmptyState
-            icon={<MapPin className="w-10 h-10" />}
-            title="Mapbox token missing"
-            body="Set VITE_MAPBOX_TOKEN in App/zopmop-crm/.env to render the live map. The rest of the CRM is unaffected."
-          />
-        </Card>
-      </div>
-    );
-  }
-  return <LiveMap />;
+const DELHI: google.maps.LatLngLiteral = { lat: 28.6, lng: 77.2 };
+const CLUSTER_THRESHOLD = 100;
+
+function statusPin(color: string, scale = 1): google.maps.Icon {
+  // Inlined SVG → data URL: 14px circle (18px on hover) with dark border + soft
+  // halo so it reads against the dark basemap. No asset files to ship.
+  const r = 7 * scale;
+  const halo = r + 4;
+  const size = halo * 2 + 4;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${halo}" fill="${color}" fill-opacity="0.2"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="${color}" stroke="#0A0A0F" stroke-width="2"/>
+  </svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(size / 2, size / 2),
+  };
 }
 
-function LiveMap() {
-  const mapEl = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<Map | null>(null);
-  const markers = useRef<Record<string, Marker>>({});
-  const [selected, setSelected] = useState<LivePin | null>(null);
-
+export function LiveMapPage() {
+  const [map, setMap] = useState<google.maps.Map | null>(null);
   const q = useQuery({
     queryKey: ['live-pins'],
     queryFn: getLivePins,
     refetchInterval: 10_000,
   });
-
-  // Init map once.
-  useEffect(() => {
-    if (!mapEl.current || mapRef.current) return;
-    mapboxgl.accessToken = TOKEN;
-    const map = new mapboxgl.Map({
-      container: mapEl.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [77.2, 28.6], // default to Delhi; auto-fits to pins on first data tick
-      zoom: 10,
-    });
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
-    mapRef.current = map;
-    return () => {
-      map.remove();
-      mapRef.current = null;
-      markers.current = {};
-    };
-  }, []);
-
-  // Sync markers to data. Adds new markers, updates existing positions, and
-  // removes ones that have dropped from the response.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !q.data) return;
-
-    const nextIds = new Set<string>();
-    for (const p of q.data) {
-      nextIds.add(p.id);
-      const existing = markers.current[p.id];
-      if (existing) {
-        existing.setLngLat([p.lng, p.lat]);
-        const el = existing.getElement();
-        el.style.background = STATUS_COLOR[p.job_status];
-      } else {
-        const el = document.createElement('div');
-        el.style.cssText = `
-          width: 14px; height: 14px; border-radius: 50%;
-          background: ${STATUS_COLOR[p.job_status]};
-          border: 2px solid #0A0A0F;
-          box-shadow: 0 0 0 4px ${STATUS_COLOR[p.job_status]}33;
-          cursor: pointer; transition: transform 150ms;
-        `;
-        el.addEventListener('mouseenter', () => { el.style.transform = 'scale(1.3)'; });
-        el.addEventListener('mouseleave', () => { el.style.transform = 'scale(1)'; });
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setSelected(p);
-        });
-        const marker = new mapboxgl.Marker({ element: el })
-          .setLngLat([p.lng, p.lat])
-          .addTo(map);
-        markers.current[p.id] = marker;
-      }
-    }
-    // Remove stale markers.
-    for (const id of Object.keys(markers.current)) {
-      if (!nextIds.has(id)) {
-        markers.current[id].remove();
-        delete markers.current[id];
-      }
-    }
-  }, [q.data]);
-
-  // Auto-fit on first data load only — re-fitting on every refresh would
-  // disorient an admin who's panned the view.
-  const didFit = useRef(false);
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !q.data || didFit.current || q.data.length === 0) return;
-    const bounds = new mapboxgl.LngLatBounds();
-    for (const p of q.data) bounds.extend([p.lng, p.lat]);
-    map.fitBounds(bounds, { padding: 80, maxZoom: 12, duration: 600 });
-    didFit.current = true;
-  }, [q.data]);
-
-  const counts = useMemo(() => {
-    const out = { idle: 0, en_route: 0, on_job: 0 };
-    for (const p of q.data ?? []) (out as Record<string, number>)[p.job_status] = ((out as Record<string, number>)[p.job_status] ?? 0) + 1;
-    return out;
-  }, [q.data]);
+  const pins = q.data ?? [];
 
   return (
     <div className="relative h-[calc(100vh-4rem)]">
-      <div ref={mapEl} className="absolute inset-0" />
+      <GoogleMapWrapper
+        center={DELHI}
+        zoom={10}
+        className="absolute inset-0"
+        style={{ position: 'absolute', inset: 0 }}
+        onLoad={setMap}
+      >
+        <Markers map={map} pins={pins} />
+      </GoogleMapWrapper>
 
-      {/* Legend overlay */}
-      <div className="absolute top-4 left-4 card-elevated px-4 py-3 z-10">
-        <div className="text-xs uppercase tracking-wider text-text-muted mb-2">
-          {q.data?.length ?? 0} workers online
-        </div>
-        <div className="flex flex-col gap-1.5 text-xs">
-          <LegendRow color={STATUS_COLOR.idle}     label="Idle"     count={counts.idle} />
-          <LegendRow color={STATUS_COLOR.en_route} label="En route" count={counts.en_route} />
-          <LegendRow color={STATUS_COLOR.on_job}   label="On job"   count={counts.on_job} />
-        </div>
-      </div>
+      <Legend pins={pins} map={map} />
 
-      {/* Side panel */}
-      {selected && (
-        <aside className="absolute top-4 right-4 bottom-4 w-80 card-elevated p-5 z-10 flex flex-col">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <div className="text-lg font-semibold">{selected.name ?? selected.phone}</div>
-              <div className="text-xs text-text-secondary">{selected.phone}</div>
-            </div>
-            <button onClick={() => setSelected(null)} className="text-text-muted hover:text-text-primary"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="flex items-center gap-2 mb-4">
-            <StatusPill tone={
-              selected.job_status === 'idle' ? 'success'
-              : selected.job_status === 'en_route' ? 'warning'
-              : 'danger'
-            }>{selected.job_status.replace('_', ' ')}</StatusPill>
-            <span className="inline-flex items-center gap-1 text-xs text-text-secondary">
-              <Star className="w-3 h-3 text-warning fill-warning" />
-              {selected.rating.toFixed(2)}
-            </span>
-          </div>
-          {selected.active_booking_id && (
-            <div className="card p-3 mb-4">
-              <div className="text-[11px] uppercase tracking-wider text-text-muted">Active booking</div>
-              <div className="font-mono text-xs mt-1">{selected.active_booking_id}</div>
-            </div>
-          )}
-          <div className="text-[11px] text-text-muted font-mono">
-            {selected.lat.toFixed(5)}, {selected.lng.toFixed(5)}
-          </div>
-        </aside>
+      {!q.isLoading && pins.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
+          <Card className="pointer-events-auto">
+            <EmptyState title="No workers currently online" />
+          </Card>
+        </div>
       )}
+    </div>
+  );
+}
+
+function Markers({ map, pins }: { map: google.maps.Map | null; pins: LivePin[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const markersRef = useRef<Record<string, google.maps.Marker>>({});
+  const clustererRef = useRef<MarkerClusterer | null>(null);
+  const didFitRef = useRef(false);
+
+  // Sync markers diff-style each render: add new, move existing, drop stale.
+  // Cluster only above CLUSTER_THRESHOLD — clustering at low counts hides
+  // individuals behind cluster dots, defeating the operational purpose.
+  useEffect(() => {
+    if (!map) return;
+    const nextIds = new Set<string>();
+    for (const p of pins) {
+      nextIds.add(p.id);
+      const existing = markersRef.current[p.id];
+      const scale = hoveredId === p.id ? 1.3 : 1;
+      const icon = statusPin(STATUS_COLOR[p.job_status], scale);
+      if (existing) {
+        existing.setPosition({ lat: p.lat, lng: p.lng });
+        existing.setIcon(icon);
+        existing.setTitle(p.name ?? p.phone);
+      } else {
+        const marker = new google.maps.Marker({
+          position: { lat: p.lat, lng: p.lng },
+          icon,
+          title: p.name ?? p.phone,
+          map: clustererRef.current ? null : map,
+        });
+        marker.addListener('click', () => setSelectedId(p.id));
+        marker.addListener('mouseover', () => setHoveredId(p.id));
+        marker.addListener('mouseout', () => setHoveredId((id) => (id === p.id ? null : id)));
+        markersRef.current[p.id] = marker;
+      }
+    }
+    for (const id of Object.keys(markersRef.current)) {
+      if (!nextIds.has(id)) {
+        markersRef.current[id].setMap(null);
+        delete markersRef.current[id];
+      }
+    }
+
+    const useCluster = pins.length > CLUSTER_THRESHOLD;
+    if (useCluster && !clustererRef.current) {
+      clustererRef.current = new MarkerClusterer({
+        map,
+        markers: Object.values(markersRef.current),
+      });
+    } else if (!useCluster && clustererRef.current) {
+      clustererRef.current.clearMarkers();
+      clustererRef.current = null;
+      for (const m of Object.values(markersRef.current)) m.setMap(map);
+    } else if (useCluster && clustererRef.current) {
+      clustererRef.current.clearMarkers();
+      clustererRef.current.addMarkers(Object.values(markersRef.current));
+    }
+  }, [map, pins, hoveredId]);
+
+  // Auto-fit once on first non-empty payload.
+  useEffect(() => {
+    if (didFitRef.current || !map || pins.length === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    for (const p of pins) bounds.extend({ lat: p.lat, lng: p.lng });
+    map.fitBounds(bounds, 80);
+    didFitRef.current = true;
+  }, [map, pins]);
+
+  // Cleanup on unmount.
+  useEffect(() => {
+    return () => {
+      for (const m of Object.values(markersRef.current)) m.setMap(null);
+      markersRef.current = {};
+      clustererRef.current?.clearMarkers();
+      clustererRef.current = null;
+    };
+  }, []);
+
+  const selected = useMemo(
+    () => pins.find((p) => p.id === selectedId) ?? null,
+    [pins, selectedId],
+  );
+
+  if (!selected) return null;
+  return (
+    <InfoWindowF
+      position={{ lat: selected.lat, lng: selected.lng }}
+      onCloseClick={() => setSelectedId(null)}
+      options={{ pixelOffset: new google.maps.Size(0, -16) }}
+    >
+      <InfoCard pin={selected} onClose={() => setSelectedId(null)} />
+    </InfoWindowF>
+  );
+}
+
+function InfoCard({ pin, onClose }: { pin: LivePin; onClose: () => void }) {
+  return (
+    <div className="bg-surface-elevated border border-border rounded-lg p-3 min-w-[240px] text-text-primary">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <div className="text-sm font-semibold">{pin.name ?? pin.phone}</div>
+          <div className="text-[11px] text-text-secondary">{pin.phone}</div>
+        </div>
+        <button onClick={onClose} className="text-text-muted hover:text-text-primary" aria-label="Close">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2 mb-2">
+        <StatusPill tone={
+          pin.job_status === 'idle' ? 'success'
+          : pin.job_status === 'en_route' ? 'warning'
+          : 'danger'
+        }>{pin.job_status.replace('_', ' ')}</StatusPill>
+        <span className="inline-flex items-center gap-1 text-[11px] text-text-secondary">
+          <Star className="w-3 h-3 text-warning fill-warning" />
+          {pin.rating.toFixed(2)}
+        </span>
+      </div>
+      {pin.active_booking_id && (
+        <div className="mb-2">
+          <div className="text-[10px] uppercase tracking-wider text-text-muted">Active booking</div>
+          <Link to="/orders" className="font-mono text-[11px] text-primary hover:underline">
+            {pin.active_booking_id}
+          </Link>
+        </div>
+      )}
+      {pin.updated_at && (
+        <div className="text-[10px] text-text-muted">
+          Updated {new Date(pin.updated_at).toLocaleTimeString()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Legend({ pins, map }: { pins: LivePin[]; map: google.maps.Map | null }) {
+  const counts = useMemo(() => {
+    const out: Record<string, number> = { idle: 0, en_route: 0, on_job: 0 };
+    for (const p of pins) out[p.job_status] = (out[p.job_status] ?? 0) + 1;
+    return out;
+  }, [pins]);
+
+  const fitAll = useCallback(() => {
+    if (!map || pins.length === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    for (const p of pins) bounds.extend({ lat: p.lat, lng: p.lng });
+    map.fitBounds(bounds, 80);
+  }, [map, pins]);
+
+  return (
+    <div className="absolute top-4 left-4 card-elevated px-4 py-3 z-10">
+      <div className="text-xs uppercase tracking-wider text-text-muted mb-2">
+        {pins.length} workers online
+      </div>
+      <div className="flex flex-col gap-1.5 text-xs">
+        <LegendRow color={STATUS_COLOR.idle}     label="Idle"     count={counts.idle ?? 0} />
+        <LegendRow color={STATUS_COLOR.en_route} label="En route" count={counts.en_route ?? 0} />
+        <LegendRow color={STATUS_COLOR.on_job}   label="On job"   count={counts.on_job ?? 0} />
+      </div>
+      <button
+        onClick={fitAll}
+        disabled={!map || pins.length === 0}
+        className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-[11px] text-primary hover:underline disabled:opacity-40 disabled:no-underline"
+      >
+        <Maximize2 className="w-3 h-3" />
+        Fit all workers
+      </button>
     </div>
   );
 }

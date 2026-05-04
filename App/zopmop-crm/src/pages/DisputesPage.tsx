@@ -4,6 +4,8 @@ import { tsApi } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import { Can } from '@/auth/Can';
+import { usePermission } from '@/auth/usePermission';
 
 const STATUS = ['open', 'in_progress', 'resolved', 'escalated'] as const;
 
@@ -17,7 +19,9 @@ export function DisputesPage() {
           <h1 className="text-2xl font-semibold">Disputes</h1>
           <p className="text-sm text-text-secondary mt-1">User/worker conflict cases. SLA = 48h from open.</p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>+ New case</button>
+        <Can perm="disputes.create">
+          <button className="btn-primary" onClick={() => setCreating(true)}>+ New case</button>
+        </Can>
       </div>
       <div className="flex gap-1 border-b border-border">
         {STATUS.map((s) => (
@@ -37,6 +41,7 @@ function List({ status }: { status: string }) {
   const q = useQuery({ queryKey: ['disputes', status], queryFn: () => tsApi.listDisputes(status) });
   const [resolveID, setResolveID] = useState<string | null>(null);
   const [resolution, setResolution] = useState('');
+  const canResolve = usePermission('disputes.resolve');
   const m = useMutation({
     mutationFn: () => tsApi.resolveDispute(resolveID!, resolution),
     onSuccess: () => { showToast({ kind: 'success', message: 'Resolved.' }); qc.invalidateQueries({ queryKey: ['disputes'] }); setResolveID(null); setResolution(''); },
@@ -64,7 +69,18 @@ function List({ status }: { status: string }) {
                 </div>
               </div>
               {status !== 'resolved' && (
-                <button className="btn-ghost !py-1 !px-2 text-xs" onClick={() => setResolveID(d.id)}>Resolve</button>
+                <button
+                  className="btn-ghost !py-1 !px-2 text-xs"
+                  disabled={!canResolve}
+                  title={!canResolve ? 'Insufficient permissions' : undefined}
+                  onClick={() => {
+                    if (!canResolve) {
+                      showToast({ kind: 'error', message: 'Insufficient permissions' });
+                      return;
+                    }
+                    setResolveID(d.id);
+                  }}
+                >Resolve</button>
               )}
             </div>
           </Card>
@@ -92,6 +108,7 @@ function NewDispute({ onClose }: { onClose: () => void }) {
   const [desc, setDesc] = useState('');
   const [sev, setSev]   = useState('medium');
   const [src, setSrc]   = useState('admin');
+  const canCreate = usePermission('disputes.create');
   const m = useMutation({
     mutationFn: () => tsApi.createDispute({ description: desc, severity: sev, source: src }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Case opened.' }); qc.invalidateQueries({ queryKey: ['disputes'] }); onClose(); },
@@ -110,7 +127,18 @@ function NewDispute({ onClose }: { onClose: () => void }) {
         </div>
         <div className="flex justify-end gap-2 pt-3 border-t border-border">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={!desc} onClick={() => m.mutateAsync()}>Create</button>
+          <button
+            className="btn-primary"
+            disabled={!desc || !canCreate}
+            title={!canCreate ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canCreate) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              m.mutateAsync();
+            }}
+          >Create</button>
         </div>
       </div>
     </Modal>

@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 
-import { ordersApi, type Order } from '@/api/all';
+import { ordersApi, refundsApi, type Order } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
-import { ConfirmModal } from '@/components/ui/Modal';
+import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { Drawer } from '@/components/ui/Drawer';
 import { showToast } from '@/components/ui/Toast';
 import { useProMode } from '@/store/proMode';
+import { usePermission } from '@/auth/usePermission';
+import { Can } from '@/auth/Can';
 
 const PAGE = 25;
 const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
@@ -130,6 +132,8 @@ function OrderDrawer({ id, onClose }: { id: string | null; onClose: () => void }
   const q = useQuery({ queryKey: ['order', id], queryFn: () => ordersApi.get(id!), enabled: open });
   const [pending, setPending] = useState<null | 'cancel' | 'complete'>(null);
   const [reason, setReason] = useState('');
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
 
   const cancel = useMutation({
     mutationFn: () => ordersApi.cancel(id!, reason),
@@ -174,12 +178,14 @@ function OrderDrawer({ id, onClose }: { id: string | null; onClose: () => void }
             </div>
           </div>
 
-          {q.data.status !== 'completed' && q.data.status !== 'cancelled' && (
-            <div className="flex flex-wrap gap-2 pt-3 border-t border-border">
-              <button className="btn-ghost text-danger" onClick={() => setPending('cancel')}>Cancel order</button>
-              {proMode && <button className="btn-ghost text-warning" onClick={() => setPending('complete')}>Force complete (Pro)</button>}
-            </div>
-          )}
+          <OrderActions
+            proMode={proMode}
+            status={q.data.status}
+            onCancel={() => setPending('cancel')}
+            onComplete={() => setPending('complete')}
+            onReassign={() => setReassignOpen(true)}
+            onRefund={() => setRefundOpen(true)}
+          />
         </div>
       )}
 
@@ -207,7 +213,348 @@ function OrderDrawer({ id, onClose }: { id: string | null; onClose: () => void }
         confirmLabel="Force complete"
         destructive
       />
+
+      {id && reassignOpen && q.data && (
+        <ReassignModal
+          orderId={id}
+          currentHelperName={q.data.worker_name ?? null}
+          onClose={() => setReassignOpen(false)}
+          onSuccess={() => {
+            setReassignOpen(false);
+            qc.invalidateQueries({ queryKey: ['orders'] });
+            qc.invalidateQueries({ queryKey: ['order', id] });
+          }}
+        />
+      )}
+
+      {id && refundOpen && q.data && (
+        <RefundModal
+          orderId={id}
+          orderTotalCents={q.data.price_cents}
+          onClose={() => setRefundOpen(false)}
+          onSuccess={() => {
+            setRefundOpen(false);
+            qc.invalidateQueries({ queryKey: ['orders'] });
+            qc.invalidateQueries({ queryKey: ['order', id] });
+            qc.invalidateQueries({ queryKey: ['refunds'] });
+          }}
+        />
+      )}
     </Drawer>
+  );
+}
+
+function OrderActions({ proMode, status, onCancel, onComplete, onReassign, onRefund }: { proMode: boolean; status: string; onCancel: () => void; onComplete: () => void; onReassign: () => void; onRefund: () => void }) {
+  const canCancel = usePermission('orders.cancel');
+  const canComplete = usePermission('orders.complete');
+  const canRefund = usePermission('refunds.approve_full');
+  const reassignable = status === 'assigned' || status === 'in_progress';
+  const cancellable = status !== 'completed' && status !== 'cancelled';
+  return (
+    <div className="flex flex-wrap gap-2 pt-3 border-t border-border">
+      {cancellable && (
+        <button
+          className="btn-ghost text-danger"
+          disabled={!canCancel}
+          title={!canCancel ? 'Insufficient permissions' : undefined}
+          onClick={() => {
+            if (!canCancel) {
+              showToast({ kind: 'error', message: 'Insufficient permissions' });
+              return;
+            }
+            onCancel();
+          }}
+        >Cancel order</button>
+      )}
+      {reassignable && (
+        <Can perm="orders.reassign">
+          <button className="btn-ghost text-info" onClick={onReassign}>Reassign worker</button>
+        </Can>
+      )}
+      <button
+        className="btn-primary"
+        disabled={!canRefund}
+        title={!canRefund ? 'Insufficient permissions' : undefined}
+        onClick={() => {
+          if (!canRefund) {
+            showToast({ kind: 'error', message: 'Insufficient permissions' });
+            return;
+          }
+          onRefund();
+        }}
+      >Process refund</button>
+      {proMode && cancellable && (
+        <button
+          className="btn-ghost text-warning"
+          disabled={!canComplete}
+          title={!canComplete ? 'Insufficient permissions' : undefined}
+          onClick={() => {
+            if (!canComplete) {
+              showToast({ kind: 'error', message: 'Insufficient permissions' });
+              return;
+            }
+            onComplete();
+          }}
+        >Force complete (Pro)</button>
+      )}
+    </div>
+  );
+}
+
+function RefundModal({
+  orderId,
+  orderTotalCents,
+  onClose,
+  onSuccess,
+}: {
+  orderId: string;
+  orderTotalCents: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [percent, setPercent] = useState(100);
+  const [reason, setReason] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const canPartial = usePermission('refunds.approve_partial');
+
+  const amountCents = Math.round((orderTotalCents * percent) / 100);
+  const isPartial = percent < 100;
+  const blockedByPartial = isPartial && !canPartial;
+
+  const refund = useMutation({
+    mutationFn: () => refundsApi.fromOrder(orderId, { amount_cents: amountCents, reason }),
+    onSuccess: (res) => {
+      const human =
+        res.status === 'processed' ? 'Refund processed via gateway.' :
+        res.status === 'processed_manual' ? 'Refund recorded for manual settlement.' :
+        res.status === 'gateway_error' ? 'Gateway returned an error — refund saved for retry.' :
+        `Refund created (${res.status}).`;
+      showToast({ kind: res.status === 'gateway_error' ? 'error' : 'success', message: human });
+      setConfirmOpen(false);
+      onSuccess();
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string; error?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? (err as { message?: string })?.message
+        ?? 'Failed to process refund';
+      showToast({ kind: 'error', message: msg });
+      setConfirmOpen(false);
+    },
+  });
+
+  const canSubmit = amountCents > 0 && reason.trim().length > 0 && !blockedByPartial && !refund.isPending;
+
+  return (
+    <>
+      <Modal open={!confirmOpen} onClose={onClose} title="Process refund" width="max-w-lg">
+        <div className="space-y-5">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-text-muted">Order total</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums">{fmt(orderTotalCents)}</div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs uppercase tracking-wider text-text-muted">Refund percentage</label>
+              <span className="text-sm font-mono">{percent}%</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={percent}
+              onChange={(e) => setPercent(Number(e.target.value))}
+              className="w-full accent-primary"
+            />
+            <div className="mt-1 flex justify-between text-[10px] text-text-muted">
+              <span>1%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-md border border-border p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">Refund amount</div>
+              <div className="mt-1 text-xl font-semibold tabular-nums text-success">{fmt(amountCents)}</div>
+            </div>
+            <div className="rounded-md border border-border p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">Customer pays</div>
+              <div className="mt-1 text-xl font-semibold tabular-nums">{fmt(orderTotalCents - amountCents)}</div>
+            </div>
+          </div>
+
+          {blockedByPartial && (
+            <div className="text-xs text-danger">
+              Partial refunds require the <span className="font-mono">refunds.approve_partial</span> role. Slide to 100% or escalate.
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-text-muted mb-2">Reason (required)</label>
+            <textarea
+              className="input min-h-[80px]"
+              placeholder="Why is this refund being issued?"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button className="btn-ghost" onClick={onClose}>Cancel</button>
+            <button
+              className="btn-primary"
+              disabled={!canSubmit}
+              onClick={() => setConfirmOpen(true)}
+            >Refund {fmt(amountCents)}</button>
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => refund.mutateAsync()}
+        title="Confirm refund"
+        impact={
+          <span>
+            Refund <span className="font-semibold text-text-primary">{fmt(amountCents)}</span>{' '}
+            ({percent}% of {fmt(orderTotalCents)}) for order{' '}
+            <span className="font-mono text-text-primary">#{orderId.slice(0, 8)}</span>?
+            The gateway will be charged immediately and the customer notified.
+          </span>
+        }
+        confirmLabel="Refund"
+        destructive
+      />
+    </>
+  );
+}
+
+function ReassignModal({
+  orderId,
+  currentHelperName,
+  onClose,
+  onSuccess,
+}: {
+  orderId: string;
+  currentHelperName: string | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const wq = useQuery({
+    queryKey: ['order-available-workers', orderId],
+    queryFn: () => ordersApi.availableWorkers(orderId),
+  });
+  const [selected, setSelected] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const reassign = useMutation({
+    mutationFn: () => ordersApi.reassign(orderId, { new_worker_id: selected!, reason }),
+    onSuccess: () => {
+      showToast({ kind: 'success', message: 'Worker reassigned' });
+      setConfirmOpen(false);
+      onSuccess();
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message
+        ?? 'Failed to reassign worker';
+      showToast({ kind: 'error', message: msg });
+      setConfirmOpen(false);
+    },
+  });
+
+  const items = wq.data ?? [];
+  const selectedWorker = items.find((w) => w.worker_id === selected) ?? null;
+  const canSubmit = !!selected && reason.trim().length > 0 && !reassign.isPending;
+
+  return (
+    <>
+      <Modal open={!confirmOpen} onClose={onClose} title="Reassign worker" width="max-w-2xl">
+        <div className="space-y-4">
+          {wq.isLoading ? (
+            <div className="text-sm text-text-secondary py-6 text-center">Loading available workers…</div>
+          ) : wq.isError ? (
+            <div className="py-6 text-center space-y-3">
+              <div className="text-sm text-danger">Failed to load workers</div>
+              <button className="btn-ghost text-xs" onClick={() => wq.refetch()}>Retry</button>
+            </div>
+          ) : items.length === 0 ? (
+            <div className="text-sm text-text-secondary py-6 text-center">
+              No available workers in this zone. Consider expanding the search radius or waiting.
+            </div>
+          ) : (
+            <div className="max-h-[320px] overflow-y-auto border border-border rounded-md divide-y divide-border">
+              {items.map((w) => {
+                const isSel = w.worker_id === selected;
+                return (
+                  <button
+                    key={w.worker_id}
+                    type="button"
+                    onClick={() => setSelected(w.worker_id)}
+                    className={`w-full text-left px-4 py-3 flex items-start gap-3 transition ${isSel ? 'bg-primary/10' : 'hover:bg-surface-elevated/40'}`}
+                  >
+                    <span className={`mt-1 w-3 h-3 rounded-full border ${isSel ? 'bg-primary border-primary' : 'border-border'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-text-primary truncate">{w.name}</span>
+                        <span className="text-xs text-warning">★ {w.rating.toFixed(1)}</span>
+                        <span className="text-xs text-text-secondary">· {w.distance_km.toFixed(1)} km</span>
+                        <span className="text-[10px] uppercase tracking-wider text-text-muted ml-auto">{w.current_status}</span>
+                      </div>
+                      {w.categories.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {w.categories.map((c) => (
+                            <span key={c} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-elevated text-text-secondary">{c}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-text-muted mb-2">Reason (required)</label>
+            <textarea
+              className="input min-h-[80px]"
+              placeholder="Why is this order being reassigned?"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button className="btn-ghost" onClick={onClose}>Cancel</button>
+            <button
+              className="btn-primary"
+              disabled={!canSubmit}
+              onClick={() => setConfirmOpen(true)}
+            >Reassign</button>
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => reassign.mutateAsync()}
+        title="Confirm reassignment"
+        impact={
+          <span>
+            You are reassigning order <span className="font-mono text-text-primary">#{orderId.slice(0, 8)}</span> from{' '}
+            <span className="text-text-primary">{currentHelperName ?? 'unassigned'}</span> to{' '}
+            <span className="text-text-primary">{selectedWorker?.name ?? '—'}</span>.
+            The customer and both workers will be notified. Proceed?
+          </span>
+        }
+        confirmLabel="Reassign"
+      />
+    </>
   );
 }
 

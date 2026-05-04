@@ -1,0 +1,180 @@
+goroutine profile: total 801
+385 @ 0x10438aadc 0x1043690cc 0x1052ee27c 0x1047a64c4 0x104b3156c 0x1047a64c4 0x104b3c084 0x1047a64c4 0x104b3d120 0x1047a64c4 0x1052ee84c 0x1047b95fc 0x1047b97c8 0x10476473c 0x10476e59c 0x10476e300 0x1043925d4
+#	0x1052ee27b	main.main.Timeout.func10+0x13b					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:67
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3156b	github.com/gofiber/fiber/v2/middleware/csrf.New.func1+0x3bb	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/csrf/csrf.go:48
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3c083	github.com/gofiber/fiber/v2/middleware/cors.New.func1+0x203	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/cors/cors.go:173
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3d11f	github.com/gofiber/helmet/v2.New.func1+0x40f			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/helmet/v2@v2.2.26/main.go:182
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1052ee84b	main.main.RequestID.New.func20+0xcb				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/requestid/requestid.go:31
+#	0x1047b95fb	github.com/gofiber/fiber/v2.(*App).next+0x15b			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x1047b97c7	github.com/gofiber/fiber/v2.(*App).handler+0x67			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:170
+#	0x10476473b	github.com/valyala/fasthttp.(*Server).serveConn+0xacb		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:2359
+#	0x10476e59b	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:224
+#	0x10476e2ff	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+385 @ 0x10438aadc 0x104369c64 0x104369c45 0x10438c1cc 0x1043fc32c 0x1043ff0a8 0x1043ff0b1 0x104407344 0x10440733d 0x104911b78 0x104908c84 0x1049090e0 0x104908d84 0x1052eeee8 0x1047a64c4 0x1052ee57c 0x1043925d4
+#	0x10438c1cb	internal/poll.runtime_Semacquire+0x2b				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/sema.go:76
+#	0x1043fc32b	internal/poll.(*fdMutex).rwlock+0xdb				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_mutex.go:154
+#	0x1043ff0a7	internal/poll.(*FD).writeLock+0x47				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_mutex.go:239
+#	0x1043ff0b0	internal/poll.(*FD).Write+0x50					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:361
+#	0x104407343	os.(*File).write+0x53						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/os/file_posix.go:46
+#	0x10440733c	os.(*File).Write+0x4c						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/os/file.go:215
+#	0x104911b77	github.com/rs/zerolog.LevelWriterAdapter.WriteLevel+0x37	/Users/adityarohilla/go/pkg/mod/github.com/rs/zerolog@v1.33.0/writer.go:27
+#	0x104908c83	github.com/rs/zerolog.(*Event).write+0x113			/Users/adityarohilla/go/pkg/mod/github.com/rs/zerolog@v1.33.0/event.go:80
+#	0x1049090df	github.com/rs/zerolog.(*Event).msg+0x1bf			/Users/adityarohilla/go/pkg/mod/github.com/rs/zerolog@v1.33.0/event.go:151
+#	0x104908d83	github.com/rs/zerolog.(*Event).Msg+0x23				/Users/adityarohilla/go/pkg/mod/github.com/rs/zerolog@v1.33.0/event.go:110
+#	0x1052eeee7	main.main.RequestLogger.func11+0x187				/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/security.go:109
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1052ee57b	main.main.Timeout.func10.1+0x5b					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:63
+
+8 @ 0x10438aadc 0x10434ec40 0x104389cf0 0x1043fc988 0x1043fdb04 0x1043fdaf5 0x1044c0c48 0x1044cf5e4 0x10456d740 0x10456d888 0x10476411c 0x10476e59c 0x10476e300 0x1043925d4
+#	0x104389cef	internal/poll.runtime_pollWait+0x9f				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1043fc987	internal/poll.(*pollDesc).wait+0x27				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1043fdb03	internal/poll.(*pollDesc).waitRead+0x233			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1043fdaf4	internal/poll.(*FD).Read+0x224					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:165
+#	0x1044c0c47	net.(*netFD).Read+0x27						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x1044cf5e3	net.(*conn).Read+0x33						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x10456d73f	bufio.(*Reader).fill+0xdf					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:113
+#	0x10456d887	bufio.(*Reader).Peek+0x57					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:152
+#	0x10476411b	github.com/valyala/fasthttp.(*Server).serveConn+0x4ab		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:2169
+#	0x10476e59b	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:224
+#	0x10476e2ff	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+2 @ 0x10438e900 0x1043abd14 0x1043aaf38 0x1043fda70 0x1043fda5d 0x1043fd9c5 0x1044c0c48 0x1044cf5e4 0x10456d740 0x10456d888 0x10476411c 0x10476e59c 0x10476e300 0x1043925d4
+#	0x10438e8ff	syscall.syscalln+0x1f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/sys_darwin.go:38
+#	0x1043abd13	syscall.syscall+0x23						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/syscall_darwin.go:365
+#	0x1043aaf37	syscall.read+0x47						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/zsyscall_darwin_arm64.go:1245
+#	0x1043fda6f	syscall.Read+0x19f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/syscall_unix.go:183
+#	0x1043fda5c	internal/poll.ignoringEINTRIO+0x18c				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:738
+#	0x1043fd9c4	internal/poll.(*FD).Read+0xf4					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:161
+#	0x1044c0c47	net.(*netFD).Read+0x27						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x1044cf5e3	net.(*conn).Read+0x33						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x10456d73f	bufio.(*Reader).fill+0xdf					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:113
+#	0x10456d887	bufio.(*Reader).Peek+0x57					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:152
+#	0x10476411b	github.com/valyala/fasthttp.(*Server).serveConn+0x4ab		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:2169
+#	0x10476e59b	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:224
+#	0x10476e2ff	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+1 @ 0x104326f04 0x1043c3060 0x1043c3680 0x1043c3649 0x1052ee180 0x1047a64c4 0x104b3156c 0x1047a64c4 0x104b3c084 0x1047a64c4 0x104b3d120 0x1047a64c4 0x1052ee84c 0x1047b95fc 0x1047b97c8 0x10476473c 0x10476e59c 0x10476e300 0x1043925d4
+#	0x1043c305f	context.WithDeadlineCause+0x23f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/context/context.go:656
+#	0x1043c367f	context.WithDeadline+0x4f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/context/context.go:626
+#	0x1043c3648	context.WithTimeout+0x18					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/context/context.go:704
+#	0x1052ee17f	main.main.Timeout.func10+0x3f					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:45
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3156b	github.com/gofiber/fiber/v2/middleware/csrf.New.func1+0x3bb	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/csrf/csrf.go:48
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3c083	github.com/gofiber/fiber/v2/middleware/cors.New.func1+0x203	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/cors/cors.go:173
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104b3d11f	github.com/gofiber/helmet/v2.New.func1+0x40f			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/helmet/v2@v2.2.26/main.go:182
+#	0x1047a64c3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1052ee84b	main.main.RequestID.New.func20+0xcb				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/requestid/requestid.go:31
+#	0x1047b95fb	github.com/gofiber/fiber/v2.(*App).next+0x15b			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x1047b97c7	github.com/gofiber/fiber/v2.(*App).handler+0x67			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:170
+#	0x10476473b	github.com/valyala/fasthttp.(*Server).serveConn+0xacb		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:2359
+#	0x10476e59b	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:224
+#	0x10476e2ff	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+1 @ 0x10434b62c 0x1043898e4 0x10463eb44 0x10463e970 0x10463c174 0x104650ec4 0x104651734 0x1045e8138 0x1045e9b20 0x104604050 0x1045e659c 0x1043925d4
+#	0x10463eb43	runtime/pprof.writeRuntimeProfile+0xb3	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:851
+#	0x10463e96f	runtime/pprof.writeGoroutine+0x4f	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:784
+#	0x10463c173	runtime/pprof.(*Profile).WriteTo+0x143	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:408
+#	0x104650ec3	net/http/pprof.handler.ServeHTTP+0x413	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/pprof/pprof.go:273
+#	0x104651733	net/http/pprof.Index+0xa3		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/pprof/pprof.go:397
+#	0x1045e8137	net/http.HandlerFunc.ServeHTTP+0x37	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2286
+#	0x1045e9b1f	net/http.(*ServeMux).ServeHTTP+0x18f	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2828
+#	0x10460404f	net/http.serverHandler.ServeHTTP+0xaf	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3311
+#	0x1045e659b	net/http.(*conn).serve+0x51b		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2073
+
+1 @ 0x10434fc80 0x10438cfd8 0x104654e8c 0x1043925d4
+#	0x10438cfd7	os/signal.signal_recv+0x107	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/sigqueue.go:149
+#	0x104654e8b	os/signal.loop+0x1b		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/os/signal/signal_unix.go:23
+
+1 @ 0x10438aadc 0x10431e230 0x10431dd84 0x1052e75cc 0x104355424 0x1043925d4
+#	0x1052e75cb	main.main+0x3d3b	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:579
+#	0x104355423	runtime.main+0x2b3	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/proc.go:290
+
+1 @ 0x10438aadc 0x10431e230 0x10431dda4 0x1046d4e4c 0x1043925d4
+#	0x1046d4e4b	github.com/gofiber/fiber/v2/utils.StartTimeStampUpdater.func1.1+0x7b	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/utils/time.go:26
+
+1 @ 0x10438aadc 0x10431e230 0x10431dda4 0x104b1d1d0 0x1043925d4
+#	0x104b1d1cf	github.com/gofiber/fiber/v2/internal/memory.(*Storage).gc+0x8f	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/internal/memory/memory.go:114
+
+1 @ 0x10438aadc 0x10431e230 0x10431dda4 0x1052c5f04 0x1043925d4
+#	0x1052c5f03	github.com/adityarohilla/househelp-api/internal/leave.StartMonthlyResetCron.func1+0xc3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/leave/cron.go:34
+
+1 @ 0x10438aadc 0x10431e230 0x10431dda4 0x1052cefb4 0x1043925d4
+#	0x1052cefb3	github.com/adityarohilla/househelp-api/internal/roomies.StartAutoSettleCron.func1+0xb3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/roomies/cron.go:22
+
+1 @ 0x10438aadc 0x10434ec40 0x104389cf0 0x1043fc988 0x104400b34 0x104400b25 0x1044c2348 0x1044d7e94 0x1044d729c 0x1045eb414 0x1045eb0d0 0x1052ee9e8 0x1052ee9e9 0x1043925d4
+#	0x104389cef	internal/poll.runtime_pollWait+0x9f		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1043fc987	internal/poll.(*pollDesc).wait+0x27		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x104400b33	internal/poll.(*pollDesc).waitRead+0x213	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x104400b24	internal/poll.(*FD).Accept+0x204		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:613
+#	0x1044c2347	net.(*netFD).accept+0x27			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_unix.go:150
+#	0x1044d7e93	net.(*TCPListener).accept+0x23			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock_posix.go:159
+#	0x1044d729b	net.(*TCPListener).Accept+0x2b			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock.go:387
+#	0x1045eb413	net/http.(*Server).Serve+0x243			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3434
+#	0x1045eb0cf	net/http.(*Server).ListenAndServe+0x7f		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3360
+#	0x1052ee9e7	net/http.ListenAndServe+0xa7			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3675
+#	0x1052ee9e8	main.main.func1+0xa8				/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:118
+
+1 @ 0x10438aadc 0x10434ec40 0x104389cf0 0x1043fc988 0x104400b34 0x104400b25 0x1044c2348 0x1044d7e94 0x1044d729c 0x1047632b4 0x104762adc 0x1047b1fbc 0x1052e7850 0x1043925d4
+#	0x104389cef	internal/poll.runtime_pollWait+0x9f			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1043fc987	internal/poll.(*pollDesc).wait+0x27			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x104400b33	internal/poll.(*pollDesc).waitRead+0x213		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x104400b24	internal/poll.(*FD).Accept+0x204			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:613
+#	0x1044c2347	net.(*netFD).accept+0x27				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_unix.go:150
+#	0x1044d7e93	net.(*TCPListener).accept+0x23				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock_posix.go:159
+#	0x1044d729b	net.(*TCPListener).Accept+0x2b				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock.go:387
+#	0x1047632b3	github.com/valyala/fasthttp.acceptConn+0x43		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:1923
+#	0x104762adb	github.com/valyala/fasthttp.(*Server).Serve+0x42b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:1816
+#	0x1047b1fbb	github.com/gofiber/fiber/v2.(*App).Listen+0x18b		/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/listen.go:93
+#	0x1052e784f	main.main.func9+0xaf					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:571
+
+1 @ 0x10438aadc 0x1043690cc 0x104915140 0x1049142b4 0x1043925d4
+#	0x10491513f	github.com/jackc/pgx/v5/pgxpool.(*Pool).backgroundHealthCheck+0x9f	/Users/adityarohilla/go/pkg/mod/github.com/jackc/pgx/v5@v5.7.2/pgxpool/pool.go:411
+#	0x1049142b3	github.com/jackc/pgx/v5/pgxpool.NewWithConfig.func3+0x33		/Users/adityarohilla/go/pkg/mod/github.com/jackc/pgx/v5@v5.7.2/pgxpool/pool.go:275
+
+1 @ 0x10438aadc 0x1043690cc 0x10522c94c 0x1043925d4
+#	0x10522c94b	github.com/adityarohilla/househelp-api/internal/analytics.(*RollupWorker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/analytics/rollup_worker.go:46
+
+1 @ 0x10438aadc 0x1043690cc 0x1052845f4 0x1043925d4
+#	0x1052845f3	github.com/adityarohilla/househelp-api/internal/matching.(*Batcher).run+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/batch.go:84
+
+1 @ 0x10438aadc 0x1043690cc 0x10528b8c4 0x1043925d4
+#	0x10528b8c3	github.com/adityarohilla/househelp-api/internal/matching.(*RebookScanner).Start+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/rebook_scanner.go:48
+
+1 @ 0x10438aadc 0x1043690cc 0x10528c6cc 0x1043925d4
+#	0x10528c6cb	github.com/adityarohilla/househelp-api/internal/matching.(*ScheduledDispatcher).Start+0xeb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/scheduled_dispatch.go:74
+
+1 @ 0x10438aadc 0x1043690cc 0x10528da54 0x1043925d4
+#	0x10528da53	github.com/adityarohilla/househelp-api/internal/matching.(*StealthDispatcher).Start+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/stealth_dispatch.go:57
+
+1 @ 0x10438aadc 0x1043690cc 0x1052cd80c 0x1043925d4
+#	0x1052cd80b	github.com/adityarohilla/househelp-api/internal/reengagement.(*Worker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/reengagement/worker.go:46
+
+1 @ 0x10438aadc 0x1043690cc 0x1052dd81c 0x1043925d4
+#	0x1052dd81b	github.com/adityarohilla/househelp-api/internal/segments.(*Worker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/segments/segments.go:88
+
+1 @ 0x10438aadc 0x10438ee70 0x10476da60 0x1043925d4
+#	0x10438ee6f	time.Sleep+0x14f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/time.go:363
+#	0x10476da5f	github.com/valyala/fasthttp.(*workerPool).Start.func2+0x4f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:67
+
+1 @ 0x10438aadc 0x10438ee70 0x10476ea34 0x1043925d4
+#	0x10438ee6f	time.Sleep+0x14f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/time.go:363
+#	0x10476ea33	github.com/valyala/fasthttp.updateServerDate.func1+0x23	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/header.go:2289
+
+1 @ 0x10438e900 0x1043abd14 0x1043aaf38 0x1043fda70 0x1043fda5d 0x1043fd9c5 0x1044c0c48 0x1044cf5e4 0x1045e0e18 0x1043925d4
+#	0x10438e8ff	syscall.syscalln+0x1f				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/sys_darwin.go:38
+#	0x1043abd13	syscall.syscall+0x23				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/syscall_darwin.go:365
+#	0x1043aaf37	syscall.read+0x47				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/zsyscall_darwin_arm64.go:1245
+#	0x1043fda6f	syscall.Read+0x19f				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/syscall/syscall_unix.go:183
+#	0x1043fda5c	internal/poll.ignoringEINTRIO+0x18c		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:738
+#	0x1043fd9c4	internal/poll.(*FD).Read+0xf4			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:161
+#	0x1044c0c47	net.(*netFD).Read+0x27				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x1044cf5e3	net.(*conn).Read+0x33				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x1045e0e17	net/http.(*connReader).backgroundRead+0x37	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:702
+

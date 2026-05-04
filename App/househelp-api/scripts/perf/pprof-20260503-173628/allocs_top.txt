@@ -1,0 +1,27 @@
+File: api
+Type: alloc_objects
+Time: 2026-05-03 17:36:58 IST
+Showing nodes accounting for 2913761, 23.95% of 12166390 total
+Dropped 104 nodes (cum <= 60831)
+Showing top 20 nodes out of 69
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%   11812804 97.09%  github.com/gofiber/fiber/v2.(*App).next
+         0     0%     0%   11585466 95.23%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0%     0%    9604202 78.94%  main.main.RequestLogger.func11
+         0     0%     0%    9604202 78.94%  main.main.Timeout.func10.1
+         0     0%     0%    9340005 76.77%  github.com/gofiber/fiber/v2/middleware/compress.New.func3
+   1496503 12.30% 12.30%    9340005 76.77%  main.main.RateLimiter.NamedRateLimiter.func20
+         0     0% 12.30%    2958179 24.31%  github.com/redis/go-redis/v9.(*Script).Run
+         0     0% 12.30%    2564957 21.08%  github.com/redis/go-redis/v9.(*Script).EvalSha (inline)
+         0     0% 12.30%    2564957 21.08%  github.com/redis/go-redis/v9.cmdable.EvalSha
+   1187879  9.76% 22.06%    2564957 21.08%  github.com/redis/go-redis/v9.cmdable.eval
+         0     0% 22.06%    2497804 20.53%  github.com/valyala/fasthttp.(*Server).serveConn
+         0     0% 22.06%    2497804 20.53%  github.com/valyala/fasthttp.(*workerPool).getCh.func1
+         0     0% 22.06%    2497804 20.53%  github.com/valyala/fasthttp.(*workerPool).workerFunc
+         0     0% 22.06%    2474848 20.34%  github.com/gofiber/fiber/v2.(*App).handler
+    229379  1.89% 23.95%    2472799 20.32%  main.main.RequestID.New.func19
+         0     0% 23.95%    2276634 18.71%  github.com/redis/go-redis/v9.(*Client).Process
+         0     0% 23.95%    2276634 18.71%  github.com/redis/go-redis/v9.(*baseClient)._process
+         0     0% 23.95%    2276634 18.71%  github.com/redis/go-redis/v9.(*baseClient).process
+         0     0% 23.95%    2276634 18.71%  github.com/redis/go-redis/v9.(*baseClient).withConn
+         0     0% 23.95%    2276634 18.71%  github.com/redis/go-redis/v9.(*hooksMixin).processHook (inline)

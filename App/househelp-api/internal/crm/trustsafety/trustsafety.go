@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 type Dispute struct {
@@ -297,27 +298,27 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	d := r.Group("/disputes")
 	d.Get("/",        h.ListDisputes)
-	d.Post("/",       h.CreateDispute)
-	d.Post("/:id/resolve", h.ResolveDispute)
+	d.Post("/",       middleware.RequirePermission("disputes.create"), h.CreateDispute)
+	d.Post("/:id/resolve", middleware.RequirePermission("disputes.resolve"), h.ResolveDispute)
 
 	f := r.Group("/fraud")
 	f.Get("/",        h.ListFraud)
-	f.Post("/:id/review", h.ReviewFraud)
+	f.Post("/:id/review", middleware.RequirePermission("fraud.review"), h.ReviewFraud)
 
 	b := r.Group("/blacklist")
 	b.Get("/",        h.ListBlacklist)
-	b.Post("/",       h.AddBlacklist)
-	b.Delete("/:id",  h.RemoveBlacklist)
+	b.Post("/",       middleware.RequirePermission("blacklist.add"), h.AddBlacklist)
+	b.Delete("/:id",  middleware.RequirePermission("blacklist.remove"), h.RemoveBlacklist)
 
 	in := r.Group("/incidents")
 	in.Get("/",       h.ListIncidents)
-	in.Post("/",      h.CreateIncident)
-	in.Post("/:id/resolve", h.ResolveIncident)
+	in.Post("/",      middleware.RequirePermission("incidents.create"), h.CreateIncident)
+	in.Post("/:id/resolve", middleware.RequirePermission("incidents.resolve"), h.ResolveIncident)
 }
 
 func (h *Handler) ListDisputes(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.svc.ListDisputes(c.Context(), c.Query("status"), limit)
+	out, err := h.svc.ListDisputes(c.UserContext(), c.Query("status"), limit)
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -326,7 +327,7 @@ func (h *Handler) CreateDispute(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-	id, err := h.svc.CreateDispute(c.Context(), req)
+	id, err := h.svc.CreateDispute(c.UserContext(), req)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -338,7 +339,7 @@ func (h *Handler) ResolveDispute(c *fiber.Ctx) error {
 	var body struct{ Resolution string `json:"resolution"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.svc.ResolveDispute(c.Context(), id, body.Resolution); err != nil {
+	if err := h.svc.ResolveDispute(c.UserContext(), id, body.Resolution); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "dispute.resolve", id, nil, body.Resolution)
@@ -346,7 +347,7 @@ func (h *Handler) ResolveDispute(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListFraud(c *fiber.Ctx) error {
-	out, err := h.svc.ListFraud(c.Context(), c.Query("status"))
+	out, err := h.svc.ListFraud(c.UserContext(), c.Query("status"))
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -354,7 +355,7 @@ func (h *Handler) ReviewFraud(c *fiber.Ctx) error {
 	var body struct{ Status string `json:"status"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.svc.ReviewFraud(c.Context(), id, body.Status); err != nil {
+	if err := h.svc.ReviewFraud(c.UserContext(), id, body.Status); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "fraud.review", id, nil, body.Status)
@@ -362,7 +363,7 @@ func (h *Handler) ReviewFraud(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListBlacklist(c *fiber.Ctx) error {
-	out, err := h.svc.ListBlacklist(c.Context())
+	out, err := h.svc.ListBlacklist(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -374,7 +375,7 @@ func (h *Handler) AddBlacklist(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.AddBlacklist(c.Context(), body.Kind, body.Value, body.Reason, adminID)
+	id, err := h.svc.AddBlacklist(c.UserContext(), body.Kind, body.Value, body.Reason, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -384,7 +385,7 @@ func (h *Handler) AddBlacklist(c *fiber.Ctx) error {
 
 func (h *Handler) RemoveBlacklist(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.RemoveBlacklist(c.Context(), id); err != nil {
+	if err := h.svc.RemoveBlacklist(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "blacklist.remove", id, nil, nil)
@@ -392,7 +393,7 @@ func (h *Handler) RemoveBlacklist(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListIncidents(c *fiber.Ctx) error {
-	out, err := h.svc.ListIncidents(c.Context())
+	out, err := h.svc.ListIncidents(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -402,7 +403,7 @@ func (h *Handler) CreateIncident(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.CreateIncident(c.Context(), req, adminID)
+	id, err := h.svc.CreateIncident(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -412,7 +413,7 @@ func (h *Handler) CreateIncident(c *fiber.Ctx) error {
 
 func (h *Handler) ResolveIncident(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.ResolveIncident(c.Context(), id); err != nil {
+	if err := h.svc.ResolveIncident(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "incident.resolve", id, nil, nil)
@@ -425,7 +426,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "trustsafety",
 		TargetType: "ts", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

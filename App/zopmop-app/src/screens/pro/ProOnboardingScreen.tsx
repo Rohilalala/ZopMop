@@ -5,13 +5,14 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
+  
   Animated,
   Alert,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { useNavigation } from '@react-navigation/native';
@@ -25,6 +26,7 @@ import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { apiFetch } from '../../api/client';
+import { showError } from '../../utils/toast';
 
 const { width: W } = Dimensions.get('window');
 
@@ -88,10 +90,7 @@ export default function ProOnboardingScreen({ route }: Props) {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Location needed',
-          'Please allow location access so we can match you with nearby customers.'
-        );
+        showError('Please allow location access so we can match you with nearby customers.', { title: 'Location needed' });
         return;
       }
       const pos = await Location.getCurrentPositionAsync({
@@ -109,7 +108,7 @@ export default function ProOnboardingScreen({ route }: Props) {
         setAddress(parts.join(', '));
       }
     } catch {
-      Alert.alert('Could not detect location', 'Please try again or contact support.');
+      showError('Please try again or contact support.', { title: 'Could not detect location' });
     } finally {
       setGpsLoading(false);
     }
@@ -122,11 +121,11 @@ export default function ProOnboardingScreen({ route }: Props) {
     try {
       const pending = pendingAuthStore.get();
       if (!pending?.token) {
-        Alert.alert('Connection Error', 'Cannot reach the server. Check your network and try again.');
+        showError('Cannot reach the server. Check your network and try again.', { title: 'Connection Error' });
         return;
       }
       if (!gpsLat || !gpsLng) {
-        Alert.alert('Location required', 'Please detect your location first.');
+        showError('Please detect your location first.', { title: 'Location required' });
         return;
       }
 
@@ -164,7 +163,7 @@ export default function ProOnboardingScreen({ route }: Props) {
       signIn(data.token, data.user);
       pendingAuthStore.clear();
     } catch (err: any) {
-      Alert.alert('Something went wrong', 'Please check your details and try again.');
+      showError('Please check your details and try again.', { title: 'Something went wrong' });
     } finally {
       setSubmitting(false);
     }
@@ -174,19 +173,19 @@ export default function ProOnboardingScreen({ route }: Props) {
   function nextStep() {
     if (step === 1) {
       if (selectedServices.length === 0) {
-        Alert.alert('Pick a service', 'Select at least one service you can do.');
+        showError('Select at least one service you can do.', { title: 'Pick a service' });
         return;
       }
       setStep(2);
     } else if (step === 2) {
       if (!gpsLat || !gpsLng) {
-        Alert.alert('Location needed', 'Tap "Use my location" to capture your GPS.');
+        showError('Tap "Use my location" to capture your GPS.', { title: 'Location needed' });
         return;
       }
       setStep(3);
     } else if (step === 3) {
       if (selectedSlots.length === 0) {
-        Alert.alert('Pick availability', 'Select at least one time slot.');
+        showError('Select at least one time slot.', { title: 'Pick availability' });
         return;
       }
       setStep(4);
@@ -301,7 +300,7 @@ export default function ProOnboardingScreen({ route }: Props) {
                 disabled={gpsLoading}
               >
                 {gpsLoading ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <LoadingBars size="small" color="#FFFFFF" />
                 ) : gpsLat != null ? (
                   <Text style={s.locationBtnText}>✓  Location captured</Text>
                 ) : (
@@ -398,7 +397,7 @@ export default function ProOnboardingScreen({ route }: Props) {
               disabled={submitting}
             >
               {submitting ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <LoadingBars color="#FFFFFF" />
               ) : (
                 <Text style={s.ctaBtnText}>Start Working</Text>
               )}

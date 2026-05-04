@@ -7,6 +7,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,7 +53,7 @@ func JWT(cfg JWTConfig) fiber.Handler {
 
 		// Confirm session still active (not revoked, not expired). Cheap
 		// indexed lookup; if pool is hot this is sub-millisecond.
-		ok, err := sessionStillActive(c.Context(), cfg.DB, claims.SessionID, claims.AdminID)
+		ok, err := sessionStillActive(c.UserContext(), cfg.DB, claims.SessionID, claims.AdminID)
 		if err != nil {
 			log.Error().Err(err).Msg("[crm.mw] session lookup failed")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -103,11 +104,30 @@ func sessionStillActive(ctx context.Context, db *pgxpool.Pool, sessionID, adminI
 func RequireRole(allowed ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		role, _ := c.Locals("crmAdminRole").(string)
-		for _, r := range allowed {
-			if r == role {
-				return c.Next()
-			}
+		if slices.Contains(allowed, role) {
+			return c.Next()
 		}
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "insufficient permissions"})
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error":         "insufficient_permissions",
+			"required_role": strings.Join(allowed, "|"),
+			"your_role":     role,
+		})
+	}
+}
+
+// RequirePermission gates a route on a permission key. Looks up the minimum role
+// from the permissions map and compares against the caller's role using the role
+// hierarchy. Returns 403 with required_role/your_role on denial.
+func RequirePermission(perm string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		role, _ := c.Locals("crmAdminRole").(string)
+		if auth.HasPermission(role, perm) {
+			return c.Next()
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error":         "insufficient_permissions",
+			"required_role": auth.MinRoleFor(perm),
+			"your_role":     role,
+		})
 	}
 }

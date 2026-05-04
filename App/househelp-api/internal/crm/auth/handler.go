@@ -66,7 +66,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "email and password required"})
 	}
 
-	res, err := h.svc.Login(c.Context(), req, c.IP())
+	res, err := h.svc.Login(c.UserContext(), req, c.IP())
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidCredentials):
@@ -98,7 +98,7 @@ func (h *Handler) VerifyTOTP(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "code must be 6 digits"})
 	}
 
-	res, err := h.svc.VerifyTOTPAndIssue(c.Context(), req, c.Get("User-Agent"), c.IP())
+	res, err := h.svc.VerifyTOTPAndIssue(c.UserContext(), req, c.Get("User-Agent"), c.IP())
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidChallenge):
@@ -116,7 +116,7 @@ func (h *Handler) VerifyTOTP(c *fiber.Ctx) error {
 	h.setRefreshCookie(c, res.RefreshTokenPlaintext, res.RefreshExpiresAt)
 
 	if h.recorder != nil {
-		h.recorder.Log(c.Context(), audit.Entry{
+		h.recorder.Log(c.UserContext(), audit.Entry{
 			AdminID:    res.Admin.ID,
 			AdminEmail: res.Admin.Email,
 			Action:     "auth.login",
@@ -143,7 +143,7 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 	if cookieVal == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "no session"})
 	}
-	res, err := h.svc.Refresh(c.Context(), cookieVal)
+	res, err := h.svc.Refresh(c.UserContext(), cookieVal)
 	if err != nil {
 		h.clearRefreshCookie(c)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "session expired"})
@@ -160,14 +160,14 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 func (h *Handler) Logout(c *fiber.Ctx) error {
 	cookieVal := c.Cookies(RefreshCookieName)
 	if cookieVal != "" {
-		_ = h.svc.Logout(c.Context(), cookieVal)
+		_ = h.svc.Logout(c.UserContext(), cookieVal)
 	}
 	h.clearRefreshCookie(c)
 
 	if h.recorder != nil {
 		adminID, _ := c.Locals("crmAdminID").(string)
 		adminEmail, _ := c.Locals("crmAdminEmail").(string)
-		h.recorder.Log(c.Context(), audit.Entry{
+		h.recorder.Log(c.UserContext(), audit.Entry{
 			AdminID:    adminID,
 			AdminEmail: adminEmail,
 			Action:     "auth.logout",
@@ -187,7 +187,7 @@ func (h *Handler) ListSessions(c *fiber.Ctx) error {
 	if adminID == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}
-	out, err := h.svc.ListSessions(c.Context(), adminID, currentSession)
+	out, err := h.svc.ListSessions(c.UserContext(), adminID, currentSession)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.auth] list sessions failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -206,11 +206,11 @@ func (h *Handler) RevokeSession(c *fiber.Ctx) error {
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session id required"})
 	}
-	if err := h.svc.RevokeSession(c.Context(), adminID, id); err != nil {
+	if err := h.svc.RevokeSession(c.UserContext(), adminID, id); err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
 	}
 	if h.recorder != nil {
-		h.recorder.Log(c.Context(), audit.Entry{
+		h.recorder.Log(c.UserContext(), audit.Entry{
 			AdminID:    adminID,
 			AdminEmail: adminEmail,
 			Action:     "auth.revoke_session",
@@ -232,7 +232,7 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	if adminID == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}
-	a, err := h.svc.GetAdmin(c.Context(), adminID)
+	a, err := h.svc.GetAdmin(c.UserContext(), adminID)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 )
 
@@ -92,15 +93,37 @@ type Waitlist struct {
 
 // ── Service ────────────────────────────────────────────────────────────
 
+// fcmBatchSize caps each multicast send. FCM rejects payloads with more
+// than 500 tokens per request, so SendPush chunks larger reaches into
+// 500-token batches.
+const fcmBatchSize = 500
+
 type Service struct {
 	read, write *pgxpool.Pool
 	notif       *notification.Service
+	resolver    *notification.TokenResolver
 }
 
 // NewService constructs the growth Service. notif is optional — when nil,
-// SendPush still flips status='sent' but no FCM call is made.
+// SendPush still flips status='sent' but no FCM call is made. resolver is
+// optional too; when nil, SendPush falls back to the legacy users.fcm_token
+// columns so dev environments missing the device_tokens table still work.
 func NewService(read, write *pgxpool.Pool, notif *notification.Service) *Service {
 	return &Service{read: read, write: write, notif: notif}
+}
+
+// SetTokenResolver injects the device_tokens-backed resolver. Called from
+// cmd/crm-api/main.go after construction so existing callers don't need to
+// know about the new dependency.
+func (s *Service) SetTokenResolver(r *notification.TokenResolver) {
+	s.resolver = r
+}
+
+// Resolver returns the configured token resolver (may be nil). Exposed so
+// the handler layer can call CountUsers/CountWorkers/etc. for the reach
+// endpoint without re-wiring a duplicate resolver.
+func (s *Service) Resolver() *notification.TokenResolver {
+	return s.resolver
 }
 
 // ── Push: list / create / cancel ───────────────────────────────────────
@@ -203,8 +226,10 @@ func (s *Service) GetPush(ctx context.Context, id string) (*PushMsg, error) {
 }
 
 // SendPush dispatches a push immediately. Loads the row, resolves target
-// users → FCM tokens, sends via notification.Service. On dispatch failure
-// the row is flipped to 'failed' so the admin sees the error in history.
+// users → FCM tokens via TokenResolver, sends in 500-token chunks via
+// notification.Service, and records sent / delivered / failed counts.
+// Tokens that FCM flags as unregistered are pruned from device_tokens so
+// future sends don't waste quota on dead devices.
 func (s *Service) SendPush(ctx context.Context, id string) error {
 	msg, err := s.GetPush(ctx, id)
 	if err != nil {
@@ -227,13 +252,36 @@ func (s *Service) SendPush(ctx context.Context, id string) error {
 		data["image_url"] = *msg.ImageURL
 	}
 
-	dispatchErr := error(nil)
-	if s.notif != nil && len(tokens) > 0 {
-		dispatchErr = s.notif.SendToTokens(ctx, tokens, msg.Title, msg.Body, data)
-	} else if s.notif == nil {
+	var (
+		sentCount      = len(tokens)
+		deliveredCount int
+		failedCount    int
+		dispatchErr    error
+	)
+
+	switch {
+	case s.notif == nil:
 		log.Warn().Str("push_id", id).Msg("[crm.push] notification service nil — push marked sent without FCM call")
-	} else {
+	case len(tokens) == 0:
 		log.Warn().Str("push_id", id).Msg("[crm.push] no FCM tokens for target — push has no recipients")
+	default:
+		// Chunk into FCM batches of 500. The first error stops the loop and
+		// flips the row to 'failed', but already-completed batches still
+		// count toward delivered/failed totals.
+		for start := 0; start < len(tokens); start += fcmBatchSize {
+			end := min(start+fcmBatchSize, len(tokens))
+			batch := tokens[start:end]
+			rep, err := s.notif.SendToTokensWithReport(ctx, batch, msg.Title, msg.Body, data)
+			if rep != nil {
+				deliveredCount += rep.Success
+				failedCount += rep.Failure
+				s.pruneInvalidTokens(ctx, id, rep.InvalidTokens)
+			}
+			if err != nil {
+				dispatchErr = err
+				break
+			}
+		}
 	}
 
 	finalStatus := "sent"
@@ -243,9 +291,11 @@ func (s *Service) SendPush(ctx context.Context, id string) error {
 	}
 
 	res, err := s.write.Exec(ctx, `
-		UPDATE crm_push_messages SET status=$2, sent_at=now()
+		UPDATE crm_push_messages
+		SET status=$2, sent_at=now(),
+		    sent_count=$3, delivered_count=$4, failed_count=$5
 		WHERE id = $1::uuid AND status IN ('draft','scheduled')
-	`, id, finalStatus)
+	`, id, finalStatus, sentCount, deliveredCount, failedCount)
 	if err != nil {
 		return fmt.Errorf("mark sent: %w", err)
 	}
@@ -255,14 +305,87 @@ func (s *Service) SendPush(ctx context.Context, id string) error {
 	if dispatchErr != nil {
 		return fmt.Errorf("dispatch failed: %w", dispatchErr)
 	}
-	log.Info().Str("push_id", id).Int("tokens", len(tokens)).Msg("[crm.push] dispatched")
+	log.Info().Str("push_id", id).
+		Int("tokens", sentCount).Int("delivered", deliveredCount).Int("failed", failedCount).
+		Msg("[crm.push] dispatched")
 	return nil
 }
 
+// CancelPush flips a 'draft' or 'scheduled' push to 'cancelled' so the
+// scheduler skips it. Idempotent: re-cancelling a row that's already
+// 'cancelled' returns nil. Rows in terminal states ('sent','failed')
+// cannot be cancelled.
+func (s *Service) CancelPush(ctx context.Context, id string) error {
+	res, err := s.write.Exec(ctx, `
+		UPDATE crm_push_messages
+		SET status = 'cancelled'
+		WHERE id = $1::uuid AND status IN ('draft','scheduled','cancelled')
+	`, id)
+	if err != nil {
+		return fmt.Errorf("cancel push: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		// Row is in a terminal state ('sent'/'failed') or doesn't exist.
+		// Surface a 4xx-able error so the handler can distinguish.
+		return errors.New("push not cancellable (already sent, failed, or missing)")
+	}
+	return nil
+}
+
+// RetryPush resets a 'failed' push back to 'draft' and immediately
+// dispatches via SendPush. Only callable on rows currently in 'failed'.
+func (s *Service) RetryPush(ctx context.Context, id string) error {
+	res, err := s.write.Exec(ctx, `
+		UPDATE crm_push_messages
+		SET status = 'draft', error_message = NULL, sent_at = NULL
+		WHERE id = $1::uuid AND status = 'failed'
+	`, id)
+	if err != nil {
+		return fmt.Errorf("retry push: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("push is not in failed state")
+	}
+	return s.SendPush(ctx, id)
+}
+
+// pruneInvalidTokens deletes FCM tokens that came back as unregistered.
+// Best-effort — failures are logged but don't fail the parent send.
+func (s *Service) pruneInvalidTokens(ctx context.Context, pushID string, invalid []string) {
+	if s.resolver == nil || len(invalid) == 0 {
+		return
+	}
+	for _, t := range invalid {
+		if err := s.resolver.DeleteToken(ctx, t); err != nil {
+			log.Warn().Err(err).Str("push_id", pushID).Msg("[crm.push] failed to prune invalid FCM token")
+		}
+	}
+}
+
 // collectTargetTokens resolves the target_kind into a slice of FCM tokens.
-// "users" / "pros" / "both" pull every active user with that role + a non-
-// empty fcm_token; "specific" reads target_filter.user_ids and pulls those.
+// Prefers the device_tokens-backed resolver when one is wired; falls back
+// to the legacy users.fcm_token columns otherwise so dev DBs without the
+// new table still function.
 func (s *Service) collectTargetTokens(ctx context.Context, kind, pushID string) ([]string, error) {
+	if s.resolver != nil {
+		switch kind {
+		case "users":
+			return s.resolver.Users(ctx)
+		case "pros":
+			return s.resolver.Workers(ctx)
+		case "both":
+			return s.resolver.Both(ctx)
+		case "specific":
+			ids, err := s.specificUserIDs(ctx, pushID)
+			if err != nil {
+				return nil, err
+			}
+			return s.resolver.UsersByID(ctx, ids)
+		}
+		return nil, nil
+	}
+
+	// Legacy fallback (no resolver wired).
 	switch kind {
 	case "users":
 		return s.tokensByRole(ctx, "customer")
@@ -274,6 +397,27 @@ func (s *Service) collectTargetTokens(ctx context.Context, kind, pushID string) 
 		return s.specificTokens(ctx, pushID)
 	}
 	return nil, nil
+}
+
+// specificUserIDs reads target_filter.user_ids out of the push row. Used by
+// the resolver-backed path; the legacy path inlines this query.
+func (s *Service) specificUserIDs(ctx context.Context, pushID string) ([]string, error) {
+	var raw []byte
+	err := s.read.QueryRow(ctx,
+		`SELECT target_filter FROM crm_push_messages WHERE id = $1::uuid`, pushID,
+	).Scan(&raw)
+	if err != nil {
+		return nil, fmt.Errorf("load target_filter: %w", err)
+	}
+	var filter struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &filter); err != nil {
+			return nil, fmt.Errorf("decode target_filter: %w", err)
+		}
+	}
+	return filter.UserIDs, nil
 }
 
 func (s *Service) tokensByRole(ctx context.Context, role string) ([]string, error) {
@@ -321,28 +465,17 @@ func (s *Service) tokensByRoles(ctx context.Context, roles []string) ([]string, 
 }
 
 func (s *Service) specificTokens(ctx context.Context, pushID string) ([]string, error) {
-	var raw []byte
-	err := s.read.QueryRow(ctx,
-		`SELECT target_filter FROM crm_push_messages WHERE id = $1::uuid`, pushID,
-	).Scan(&raw)
+	ids, err := s.specificUserIDs(ctx, pushID)
 	if err != nil {
-		return nil, fmt.Errorf("load target_filter: %w", err)
+		return nil, err
 	}
-	var filter struct {
-		UserIDs []string `json:"user_ids"`
-	}
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &filter); err != nil {
-			return nil, fmt.Errorf("decode target_filter: %w", err)
-		}
-	}
-	if len(filter.UserIDs) == 0 {
+	if len(ids) == 0 {
 		return nil, nil
 	}
 	rows, err := s.read.Query(ctx, `
 		SELECT fcm_token FROM users
 		WHERE id = ANY($1::uuid[]) AND fcm_token IS NOT NULL AND fcm_token <> ''
-	`, filter.UserIDs)
+	`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +489,33 @@ func (s *Service) specificTokens(ctx context.Context, pushID string) ([]string, 
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// PushReach returns the count of users / workers reachable via active push.
+// target encoding mirrors the CRM compose UI:
+//
+//	users        — all customers with a recent token
+//	pros         — all helpers with a recent token
+//	both         — union of customers + helpers
+//	user:<id>    — count for one customer (0 or 1)
+//	worker:<id>  — count for one helper (0 or 1)
+func (s *Service) PushReach(ctx context.Context, target string) (int, error) {
+	if s.resolver == nil {
+		return 0, errors.New("token resolver not configured")
+	}
+	switch {
+	case target == "users":
+		return s.resolver.CountUsers(ctx)
+	case target == "pros":
+		return s.resolver.CountWorkers(ctx)
+	case target == "both":
+		return s.resolver.CountBoth(ctx)
+	case len(target) > 5 && target[:5] == "user:":
+		return s.resolver.CountUser(ctx, target[5:])
+	case len(target) > 7 && target[:7] == "worker:":
+		return s.resolver.CountWorker(ctx, target[7:])
+	}
+	return 0, fmt.Errorf("invalid target %q", target)
 }
 
 // ── Lost-user campaigns ────────────────────────────────────────────────
@@ -510,20 +670,23 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/growth")
 	g.Get("/push",                h.ListPush)
-	g.Post("/push",               h.CreatePush)
-	g.Post("/push/:id/send",      h.SendPush)
+	g.Post("/push",               middleware.RequirePermission("push.create"), h.CreatePush)
+	g.Get("/push/reach",          middleware.RequirePermission("push.create"), h.PushReach)
+	g.Post("/push/:id/send",      middleware.RequirePermission("push.send"), h.SendPush)
+	g.Post("/push/:id/cancel",    middleware.RequirePermission("push.create"), h.CancelPush)
+	g.Post("/push/:id/retry",     middleware.RequirePermission("push.send"), h.RetryPush)
 	g.Get("/lost-user",           h.ListLostUser)
-	g.Post("/lost-user",          h.CreateLostUser)
-	g.Post("/lost-user/:id/toggle", h.ToggleLostUser)
+	g.Post("/lost-user",          middleware.RequirePermission("lost_user.create"), h.CreateLostUser)
+	g.Post("/lost-user/:id/toggle", middleware.RequirePermission("lost_user.toggle"), h.ToggleLostUser)
 	g.Get("/loyalty",             h.GetLoyalty)
-	g.Put("/loyalty",             h.SetLoyalty)
+	g.Put("/loyalty",             middleware.RequirePermission("loyalty.update"), h.SetLoyalty)
 	g.Get("/waitlist",            h.ListWaitlists)
-	g.Post("/waitlist",           h.CreateWaitlist)
+	g.Post("/waitlist",           middleware.RequirePermission("waitlist.create"), h.CreateWaitlist)
 }
 
 func (h *Handler) ListPush(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.svc.ListPush(c.Context(), limit)
+	out, err := h.svc.ListPush(c.UserContext(), limit)
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -533,7 +696,7 @@ func (h *Handler) CreatePush(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	out, err := h.svc.CreatePush(c.Context(), req, adminID)
+	out, err := h.svc.CreatePush(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -541,17 +704,47 @@ func (h *Handler) CreatePush(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+func (h *Handler) PushReach(c *fiber.Ctx) error {
+	target := c.Query("target", "")
+	if target == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "target query param required"})
+	}
+	n, err := h.svc.PushReach(c.UserContext(), target)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"count": n})
+}
+
 func (h *Handler) SendPush(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.svc.SendPush(c.Context(), id); err != nil {
+	if err := h.svc.SendPush(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "growth.push.send", id, nil, nil)
 	return c.JSON(fiber.Map{"ok": true})
 }
 
+func (h *Handler) CancelPush(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.svc.CancelPush(c.UserContext(), id); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "growth.push.cancel", id, nil, nil)
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) RetryPush(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.svc.RetryPush(c.UserContext(), id); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "growth.push.retry", id, nil, nil)
+	return c.JSON(fiber.Map{"ok": true})
+}
+
 func (h *Handler) ListLostUser(c *fiber.Ctx) error {
-	out, err := h.svc.ListLostUser(c.Context())
+	out, err := h.svc.ListLostUser(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -561,7 +754,7 @@ func (h *Handler) CreateLostUser(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.svc.CreateLostUser(c.Context(), req, adminID)
+	id, err := h.svc.CreateLostUser(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -573,7 +766,7 @@ func (h *Handler) ToggleLostUser(c *fiber.Ctx) error {
 	var body struct{ Active bool `json:"active"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.svc.ToggleLostUser(c.Context(), id, body.Active); err != nil {
+	if err := h.svc.ToggleLostUser(c.UserContext(), id, body.Active); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "growth.lost_user.toggle", id, nil, body.Active)
@@ -581,7 +774,7 @@ func (h *Handler) ToggleLostUser(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetLoyalty(c *fiber.Ctx) error {
-	out, err := h.svc.GetLoyalty(c.Context())
+	out, err := h.svc.GetLoyalty(c.UserContext())
 	return jsonOrErr(c, out, err)
 }
 
@@ -591,7 +784,7 @@ func (h *Handler) SetLoyalty(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	if err := h.svc.SetLoyalty(c.Context(), req, adminID); err != nil {
+	if err := h.svc.SetLoyalty(c.UserContext(), req, adminID); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "growth.loyalty.set", "", nil, req)
@@ -599,7 +792,7 @@ func (h *Handler) SetLoyalty(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListWaitlists(c *fiber.Ctx) error {
-	out, err := h.svc.ListWaitlists(c.Context())
+	out, err := h.svc.ListWaitlists(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -608,7 +801,7 @@ func (h *Handler) CreateWaitlist(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-	id, err := h.svc.CreateWaitlist(c.Context(), req)
+	id, err := h.svc.CreateWaitlist(c.UserContext(), req)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -622,7 +815,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "growth",
 		TargetType: "growth", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

@@ -7,6 +7,7 @@ import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { useProMode } from '@/store/proMode';
+import { usePermission } from '@/auth/usePermission';
 
 // FlagsPage: grouped by category. Each card has an inline editor that
 // matches the flag's data type. Saving opens a confirmation modal first.
@@ -24,6 +25,7 @@ export function FlagsPage() {
   const flagsQ = useQuery({ queryKey: ['flags'], queryFn: listFlags });
   const [pending, setPending] = useState<Pending>(null);
   const [snapsOpen, setSnapsOpen] = useState(false);
+  const canUpdate = usePermission('flags.update');
 
   const grouped = useMemo(() => {
     const map: Record<string, Flag[]> = {};
@@ -77,9 +79,14 @@ export function FlagsPage() {
                   key={f.def.key}
                   flag={f}
                   proMode={proMode}
-                  onChange={(next) =>
-                    setPending({ key: f.def.key, next, before: f.value, flag: f })
-                  }
+                  canUpdate={canUpdate}
+                  onChange={(next) => {
+                    if (!canUpdate) {
+                      showToast({ kind: 'error', message: 'Insufficient permissions' });
+                      return;
+                    }
+                    setPending({ key: f.def.key, next, before: f.value, flag: f });
+                  }}
                 />
               ))}
             </div>
@@ -116,11 +123,12 @@ export function FlagsPage() {
 }
 
 function FlagCard({
-  flag, onChange, proMode,
+  flag, onChange, proMode, canUpdate,
 }: {
   flag: Flag;
   onChange: (next: unknown) => void;
   proMode: boolean;
+  canUpdate: boolean;
 }) {
   const { def, value } = flag;
   return (
@@ -135,8 +143,8 @@ function FlagCard({
         </StatusPill>
       </div>
 
-      <div className="mt-3">
-        <FlagEditor flag={flag} onCommit={onChange} />
+      <div className="mt-3" title={!canUpdate ? 'Insufficient permissions' : undefined}>
+        <FlagEditor flag={flag} onCommit={onChange} disabled={!canUpdate} />
       </div>
 
       {proMode && (
@@ -150,14 +158,15 @@ function FlagCard({
   );
 }
 
-function FlagEditor({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown) => void }) {
+function FlagEditor({ flag, onCommit, disabled }: { flag: Flag; onCommit: (next: unknown) => void; disabled: boolean }) {
   const { def, value } = flag;
   if (def.type === 'bool') {
     const checked = !!value;
     return (
       <button
         onClick={() => onCommit(!checked)}
-        className={`w-12 h-6 rounded-full relative transition ${checked ? 'bg-primary' : 'bg-border'}`}
+        disabled={disabled}
+        className={`w-12 h-6 rounded-full relative transition ${checked ? 'bg-primary' : 'bg-border'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         aria-label="toggle flag"
       >
         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${checked ? 'left-[26px]' : 'left-0.5'}`} />
@@ -165,13 +174,14 @@ function FlagEditor({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown) 
     );
   }
   if (def.type === 'number') {
-    return <NumericInput flag={flag} onCommit={onCommit} />;
+    return <NumericInput flag={flag} onCommit={onCommit} disabled={disabled} />;
   }
   if (def.type === 'enum') {
     return (
       <select
         className="input"
         value={String(value ?? '')}
+        disabled={disabled}
         onChange={(e) => onCommit(e.target.value)}
       >
         {def.enum_options?.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
@@ -179,10 +189,10 @@ function FlagEditor({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown) 
     );
   }
   // string / json
-  return <StringInput flag={flag} onCommit={onCommit} />;
+  return <StringInput flag={flag} onCommit={onCommit} disabled={disabled} />;
 }
 
-function NumericInput({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown) => void }) {
+function NumericInput({ flag, onCommit, disabled }: { flag: Flag; onCommit: (next: unknown) => void; disabled: boolean }) {
   const [draft, setDraft] = useState(String(flag.value ?? ''));
   const min = flag.def.min, max = flag.def.max;
   const num = Number(draft);
@@ -196,10 +206,11 @@ function NumericInput({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown
         onChange={(e) => setDraft(e.target.value)}
         min={min}
         max={max}
+        disabled={disabled}
       />
       <button
         className="btn-primary"
-        disabled={!valid || num === Number(flag.value)}
+        disabled={!valid || num === Number(flag.value) || disabled}
         onClick={() => onCommit(num)}
       >
         <Save className="w-4 h-4" />
@@ -213,13 +224,13 @@ function NumericInput({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown
   );
 }
 
-function StringInput({ flag, onCommit }: { flag: Flag; onCommit: (next: unknown) => void }) {
+function StringInput({ flag, onCommit, disabled }: { flag: Flag; onCommit: (next: unknown) => void; disabled: boolean }) {
   const [draft, setDraft] = useState(String(flag.value ?? ''));
   const dirty = draft !== String(flag.value ?? '');
   return (
     <div className="flex items-center gap-2">
-      <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} />
-      <button className="btn-primary" disabled={!dirty} onClick={() => onCommit(draft)}>
+      <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={disabled} />
+      <button className="btn-primary" disabled={!dirty || disabled} onClick={() => onCommit(draft)}>
         <Save className="w-4 h-4" />
       </button>
     </div>
@@ -240,6 +251,7 @@ function SnapshotsModal({ open, onClose }: { open: boolean; onClose: () => void 
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['snapshots'], queryFn: listSnapshots, enabled: open });
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const canRollback = usePermission('flags.rollback');
 
   const rb = useMutation({
     mutationFn: rollbackSnapshot,
@@ -287,7 +299,15 @@ function SnapshotsModal({ open, onClose }: { open: boolean; onClose: () => void 
                     </div>
                     <button
                       className="btn-ghost text-xs"
-                      onClick={() => setPendingId(s.id)}
+                      disabled={!canRollback}
+                      title={!canRollback ? 'Insufficient permissions' : undefined}
+                      onClick={() => {
+                        if (!canRollback) {
+                          showToast({ kind: 'error', message: 'Insufficient permissions' });
+                          return;
+                        }
+                        setPendingId(s.id);
+                      }}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       Rollback

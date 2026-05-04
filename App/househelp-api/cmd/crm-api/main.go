@@ -26,6 +26,10 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
 	"github.com/adityarohilla/househelp-api/internal/crm/growth"
+	"github.com/adityarohilla/househelp-api/internal/crm/healthmetrics"
+	"github.com/adityarohilla/househelp-api/internal/crm/leaves"
+	"github.com/adityarohilla/househelp-api/internal/crm/localities"
+	"github.com/adityarohilla/househelp-api/internal/crm/notifications"
 	"github.com/adityarohilla/househelp-api/internal/crm/orders"
 	"github.com/adityarohilla/househelp-api/internal/crm/payouts"
 	"github.com/adityarohilla/househelp-api/internal/crm/platform"
@@ -36,6 +40,8 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -109,10 +115,15 @@ func main() {
 		},
 	})
 
+	// In-memory sliding-window metrics for the CRM dashboard health strip.
+	// Constructed early so the middleware below captures every request.
+	metricsCollector := healthmetrics.New(5 * time.Minute)
+
 	app.Use(requestID())
 	app.Use(securityHeaders(cfg.IsProduction()))
 	app.Use(corsMiddleware(cfg.AllowedOrigins))
 	app.Use(requestLogger())
+	app.Use(metricsCollector.Middleware())
 
 	// Public health check. No auth, no rate limit — used by k8s probes.
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -155,6 +166,13 @@ func main() {
 	alertsSvc := alerts.NewService(readPool)
 	alertsHandler := alerts.NewHandler(alertsSvc)
 
+	notificationsSvc := notifications.NewService(dbPool)
+	notificationsHandler := notifications.NewHandler(notificationsSvc)
+
+	leavesRepo := leaves.NewRepository(readPool, dbPool)
+	leavesSvc := leaves.NewService(leavesRepo)
+	leavesHandler := leaves.NewHandler(leavesSvc, auditRecorder)
+
 	dashSvc := dashboard.NewService(readPool)
 	dashHandler := dashboard.NewHandler(dashSvc)
 
@@ -183,11 +201,26 @@ func main() {
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 
 	notifSvc := notification.NewService(ctx, dbPool)
+	// Token resolver reads device_tokens through the read pool — counts /
+	// fan-out queries don't need to hit the write pool. DeleteToken uses
+	// the same pool because device-token cleanup is low-volume.
+	tokenResolver := notification.NewTokenResolver(readPool)
 	growthSvc := growth.NewService(readPool, dbPool, notifSvc)
+	growthSvc.SetTokenResolver(tokenResolver)
 	growthHandler := growth.NewHandler(growthSvc, auditRecorder)
+
+	// Scheduled-push cron. Uses the write pool for FOR UPDATE SKIP LOCKED.
+	// Stopped before the dispatcher + DB pools in the shutdown block below.
+	pushScheduler := growth.NewScheduler(growthSvc, dbPool)
+	pushScheduler.Start(ctx)
 
 	zonesRepo := zones.NewRepository(readPool, dbPool)
 	zonesHandler := zones.NewHandler(zonesRepo, auditRecorder)
+
+	// Localities — operational areas the CRM admin manages and the pro app
+	// reads via a public endpoint mounted in cmd/api.
+	localitiesRepo := localities.NewRepository(dbPool)
+	localitiesHandler := localities.NewHandler(localitiesRepo, auditRecorder)
 
 	payoutsRepo := payouts.NewRepository(readPool, dbPool)
 	payoutsHandler := payouts.NewHandler(payoutsRepo, auditRecorder)
@@ -195,8 +228,39 @@ func main() {
 	tsSvc := trustsafety.NewService(readPool, dbPool)
 	tsHandler := trustsafety.NewHandler(tsSvc, auditRecorder)
 
-	platformSvc := platform.NewService(readPool, dbPool)
+	webhookDispatcher := webhooks.New(dbPool)
+
+	// Fan dispatcher out to every module that fires admin events. SetDispatcher
+	// is nil-safe in the handlers, but always set it here so events flow.
+	usersHandler.SetDispatcher(webhookDispatcher)
+	workersHandler.SetDispatcher(webhookDispatcher)
+	flagsHandler.SetDispatcher(webhookDispatcher)
+	promosHandler.SetDispatcher(webhookDispatcher)
+	zonesHandler.SetDispatcher(webhookDispatcher)
+	refundsHandler.SetDispatcher(webhookDispatcher)
+	refundsHandler.SetNotification(notifSvc)
+
+	// Pick the active payment gateway. Razorpay activates when both
+	// RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are set; otherwise the
+	// manual gateway marks every approved refund as processed_manual for
+	// ops to settle offline.
+	var refundGateway payments.Gateway = &payments.ManualGateway{}
+	if rzp := payments.NewRazorpayGateway(); rzp != nil {
+		refundGateway = rzp
+		log.Info().Msg("[payments] razorpay gateway active")
+	} else {
+		log.Info().Msg("[payments] using manual gateway (RAZORPAY_KEY_ID/SECRET not set)")
+	}
+	refundsHandler.SetGateway(refundGateway)
+
+	ordersHandler.SetDispatcher(webhookDispatcher)
+	ordersHandler.SetRedis(rdb)
+	ordersHandler.SetNotification(notifSvc)
+
+	platformSvc := platform.NewService(readPool, dbPool, webhookDispatcher)
 	platformHandler := platform.NewHandler(platformSvc, auditRecorder)
+
+	healthHandler := healthmetrics.NewHandler(metricsCollector, cfg.AppAPIURL)
 
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
@@ -218,6 +282,8 @@ func main() {
 
 	flagsHandler.RegisterRoutes(authed)
 	alertsHandler.RegisterRoutes(authed)
+	notificationsHandler.RegisterRoutes(authed)
+	leavesHandler.RegisterRoutes(authed)
 	dashHandler.RegisterRoutes(authed)
 	usersHandler.RegisterRoutes(authed)
 	workersHandler.RegisterRoutes(authed)
@@ -229,9 +295,11 @@ func main() {
 	analyticsHandler.RegisterRoutes(authed)
 	growthHandler.RegisterRoutes(authed)
 	zonesHandler.RegisterRoutes(authed)
+	localitiesHandler.RegisterRoutes(authed)
 	payoutsHandler.RegisterRoutes(authed)
 	tsHandler.RegisterRoutes(authed)
 	platformHandler.RegisterRoutes(authed)
+	healthHandler.RegisterRoutes(authed)
 
 	// Module stub handler — every other module of the CRM lands here until
 	// the dedicated package is wired in. Keeps the SPA's nav working even
@@ -262,6 +330,18 @@ func main() {
 	defer cancel()
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("[crm] shutdown error")
+	}
+	// Stop the push scheduler before the dispatcher + DB pools — gives any
+	// in-flight Tick (and the SendPush it's running) up to 30s to drain.
+	schedulerCtx, schedulerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := pushScheduler.Stop(schedulerCtx); err != nil {
+		log.Error().Err(err).Msg("[crm] push scheduler stop error")
+	}
+	schedulerCancel()
+	dispatcherCtx, dispatcherCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dispatcherCancel()
+	if err := webhookDispatcher.Close(dispatcherCtx); err != nil {
+		log.Error().Err(err).Msg("[crm] webhook dispatcher drain error")
 	}
 	log.Info().Msg("[crm] stopped")
 }

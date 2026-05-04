@@ -50,6 +50,13 @@ interface CacheEnvelope {
   etag?:         string;
 }
 
+// Module-level in-memory cache. Survives across screen mounts so
+// re-navigating to a previously loaded page renders synchronously without
+// showing the skeleton again. AsyncStorage is still used as the durable
+// cross-launch cache below; this layer just removes the async read flicker.
+const memPageCache: Map<string, SduiPage> = new Map();
+const memEtagCache: Map<string, string>   = new Map();
+
 export interface UseSduiPageResult {
   page:    SduiPage | null;
   loading: boolean;
@@ -64,6 +71,7 @@ export interface UseSduiPageResult {
 interface UseSduiPageOpts {
   lat?: number;
   lon?: number;
+  initialPage?: SduiPage | null;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -142,13 +150,14 @@ export function useSduiPage(
   pageId: string,
   opts?:  UseSduiPageOpts,
 ): UseSduiPageResult {
-  const [page,    setPage]    = useState<SduiPage | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const initialPage = opts?.initialPage ?? memPageCache.get(pageId) ?? null;
+  const [page,    setPage]    = useState<SduiPage | null>(initialPage);
+  const [loading, setLoading] = useState<boolean>(initialPage == null);
   const [error,   setError]   = useState<string | null>(null);
 
   // Most recent ETag from server; sent on subsequent requests so the BFF can
   // 304 us. Kept in a ref to avoid re-renders.
-  const etagRef = useRef<string | null>(null);
+  const etagRef = useRef<string | null>(memEtagCache.get(pageId) ?? null);
 
   // Stable references to opts values so the effect re-runs only when
   // coordinates actually change, not on every render.
@@ -205,9 +214,14 @@ export function useSduiPage(
         // Compare config_hash to skip identical pages (preserves stable refs
         // so memoised SectionRenderers don't re-render).
         setPage((prev) => {
-          if (prev && prev.config_hash === sanitised.config_hash) return prev;
+          if (prev && prev.config_hash === sanitised.config_hash) {
+            memPageCache.set(pageId, prev);
+            return prev;
+          }
+          memPageCache.set(pageId, sanitised);
           return sanitised;
         });
+        if (etagRef.current) memEtagCache.set(pageId, etagRef.current);
         setError(null);
 
         // Persist for next launch.
@@ -243,8 +257,14 @@ export function useSduiPage(
     let cancelled = false;
 
     (async () => {
-      let cacheHit = false;
+      // Prefetched page already in state — skip cache read, fetch in background.
+      let cacheHit = initialPage != null;
       try {
+        if (cacheHit) {
+          if (cancelled) return;
+          await doFetch(true);
+          return;
+        }
         const raw = await AsyncStorage.getItem(cacheKey(pageId));
         if (raw && !cancelled) {
           const parsed = JSON.parse(raw) as CacheEnvelope;
@@ -252,8 +272,12 @@ export function useSduiPage(
             const sanitised = sanitizePage(parsed.page);
             if (sanitised) {
               setPage(sanitised);
+              memPageCache.set(pageId, sanitised);
               cacheHit = true;
-              if (parsed.etag) etagRef.current = parsed.etag;
+              if (parsed.etag) {
+                etagRef.current = parsed.etag;
+                memEtagCache.set(pageId, parsed.etag);
+              }
             }
           } else {
             // Schema bump — drop stale cache.
@@ -273,7 +297,7 @@ export function useSduiPage(
     return () => {
       cancelled = true;
     };
-  }, [pageId, doFetch]);
+  }, [pageId, doFetch, initialPage]);
 
   const refetch = useCallback(async () => {
     await doFetch(false);

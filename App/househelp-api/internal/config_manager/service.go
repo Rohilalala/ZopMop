@@ -9,6 +9,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/pkg/database"
 )
 
 const configCacheTTL = 5 * time.Minute
@@ -29,10 +31,14 @@ func NewService(repo *Repository, rdb *redis.Client) *Service {
 func (s *Service) GetConfig(ctx context.Context, key string) (string, error) {
 	cacheKey := fmt.Sprintf("cfg:%s", key)
 
-	// Try cache.
+	// Try cache. redis.Nil is a benign miss; any other error means Redis is
+	// down — log a warning and fall through to Postgres rather than aborting.
 	cached, err := s.rdb.Get(ctx, cacheKey).Result()
 	if err == nil {
 		return cached, nil
+	}
+	if database.IsRedisDown(err) {
+		log.Warn().Err(err).Str("key", key).Msg("redis GET failed; falling through to database")
 	}
 
 	// Cache miss — fetch from database.

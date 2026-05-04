@@ -8,7 +8,8 @@
 //   3. Daytime + nearby_count > 0: live stats row (count · avg rating · ETA).
 
 import React, { useEffect } from 'react';
-import { View, Text, ActivityIndicator, type TextStyle } from 'react-native';
+import { View, Text, type TextStyle } from 'react-native';
+import { LoadingBars } from '../ui/LoadingBars';
 import Animated, {
   FadeIn,
   useAnimatedStyle,
@@ -112,7 +113,7 @@ export function LivePill({ stats, loading }: Props) {
   if (loading || !stats) {
     return (
       <View style={SHELL}>
-        <ActivityIndicator size="small" color="#F5A300" />
+        <LoadingBars size="small" color="#F5A300" />
         <Text style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.55)' }]}>
           Checking nearby pros…
         </Text>

@@ -18,6 +18,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
 var ErrNotFound = errors.New("promo not found")
@@ -260,30 +262,41 @@ func (r *Repository) GenerateCode(ctx context.Context) (string, error) {
 }
 
 type Handler struct {
-	repo     *Repository
-	recorder *audit.Recorder
+	repo       *Repository
+	recorder   *audit.Recorder
+	dispatcher *webhooks.Dispatcher
 }
 
 func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 	return &Handler{repo: repo, recorder: recorder}
 }
 
+// SetDispatcher wires the outbound webhook dispatcher.
+func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
+
+func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
+	if h.dispatcher == nil {
+		return
+	}
+	h.dispatcher.Dispatch(ctx, event, payload)
+}
+
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/promos")
 	g.Get("/",                 h.List)
 	g.Get("/generate-code",    h.GenerateCode)
-	g.Post("/",                h.Create)
+	g.Post("/",                middleware.RequirePermission("promos.create"), h.Create)
 	g.Get("/:id",              h.Get)
 	g.Get("/:id/stats",        h.Stats)
-	g.Put("/:id",              h.Update)
-	g.Post("/:id/deactivate",  h.Deactivate)
-	g.Post("/:id/activate",    h.Activate)
+	g.Put("/:id",              middleware.RequirePermission("promos.update"), h.Update)
+	g.Post("/:id/deactivate",  middleware.RequirePermission("promos.toggle"), h.Deactivate)
+	g.Post("/:id/activate",    middleware.RequirePermission("promos.toggle"), h.Activate)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
-	items, total, err := h.repo.List(c.Context(), c.Query("search"), c.Query("status"), limit, offset)
+	items, total, err := h.repo.List(c.UserContext(), c.Query("search"), c.Query("status"), limit, offset)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.promos] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -292,7 +305,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	out, err := h.repo.Get(c.Context(), c.Params("id"))
+	out, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "promo not found"})
@@ -303,11 +316,11 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Stats(c *fiber.Ctx) error {
-	p, err := h.repo.Get(c.Context(), c.Params("id"))
+	p, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "promo not found"})
 	}
-	out, err := h.repo.Stats(c.Context(), p.Code)
+	out, err := h.repo.Stats(c.UserContext(), p.Code)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
@@ -315,7 +328,7 @@ func (h *Handler) Stats(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GenerateCode(c *fiber.Ctx) error {
-	code, err := h.repo.GenerateCode(c.Context())
+	code, err := h.repo.GenerateCode(c.UserContext())
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
@@ -328,11 +341,17 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	out, err := h.repo.Create(c.Context(), req, adminID)
+	out, err := h.repo.Create(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "promo.create", out.ID, nil, req)
+	h.fireWebhook(c.UserContext(), webhooks.EventAdminPromoCreated, webhooks.AdminPromoCreatedEvent{
+		PromoID:    out.ID,
+		Code:       out.Code,
+		AdminID:    adminID,
+		OccurredAt: time.Now().UTC(),
+	})
 	return c.JSON(out)
 }
 
@@ -342,7 +361,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	id := c.Params("id")
-	if err := h.repo.Update(c.Context(), id, req); err != nil {
+	if err := h.repo.Update(c.UserContext(), id, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "promo.update", id, nil, req)
@@ -351,7 +370,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 
 func (h *Handler) Deactivate(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.SetActive(c.Context(), id, false); err != nil {
+	if err := h.repo.SetActive(c.UserContext(), id, false); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "promo.deactivate", id, nil, nil)
@@ -360,7 +379,7 @@ func (h *Handler) Deactivate(c *fiber.Ctx) error {
 
 func (h *Handler) Activate(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.SetActive(c.Context(), id, true); err != nil {
+	if err := h.repo.SetActive(c.UserContext(), id, true); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "promo.activate", id, nil, nil)
@@ -373,7 +392,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "promos",
 		TargetType: "promo", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

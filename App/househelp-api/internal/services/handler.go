@@ -41,7 +41,7 @@ func (h *Handler) RegisterAdminRoutes(router fiber.Router) {
 
 // List handles GET /services — returns all active services.
 func (h *Handler) List(c *fiber.Ctx) error {
-	list, err := h.svc.List(c.Context())
+	list, err := h.svc.List(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to list services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch services"})
@@ -55,7 +55,7 @@ func (h *Handler) GetDetails(c *fiber.Ctx) error {
 	if !validator.IsUUID(serviceID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
 	}
-	details, err := h.svc.GetDetails(c.Context(), serviceID)
+	details, err := h.svc.GetDetails(c.UserContext(), serviceID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
@@ -72,7 +72,7 @@ func (h *Handler) GetAddons(c *fiber.Ctx) error {
 	if !validator.IsUUID(serviceID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
 	}
-	addons, err := h.svc.GetAddons(c.Context(), serviceID)
+	addons, err := h.svc.GetAddons(c.UserContext(), serviceID)
 	if err != nil {
 		log.Error().Err(err).Str("service_id", serviceID).Msg("failed to get service addons")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch addons"})
@@ -84,7 +84,7 @@ func (h *Handler) GetAddons(c *fiber.Ctx) error {
 
 // ListAll handles GET /admin/services — returns all services including inactive.
 func (h *Handler) ListAll(c *fiber.Ctx) error {
-	list, err := h.svc.ListAll(c.Context())
+	list, err := h.svc.ListAll(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to list all services")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch services"})
@@ -112,7 +112,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 			"fields": validator.FormatValidationErrors(err),
 		})
 	}
-	svc, err := h.svc.Update(c.Context(), serviceID, req)
+	svc, err := h.svc.Update(c.UserContext(), serviceID, req)
 	if err != nil {
 		log.Error().Err(err).Str("service_id", serviceID).Msg("failed to update service")
 		if err.Error() == "service not found" {
@@ -135,7 +135,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 			"fields": validator.FormatValidationErrors(err),
 		})
 	}
-	svc, err := h.svc.Create(c.Context(), req)
+	svc, err := h.svc.Create(c.UserContext(), req)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to create service")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create service"})
@@ -149,7 +149,7 @@ func (h *Handler) Delete(c *fiber.Ctx) error {
 	if !validator.IsUUID(serviceID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid service id"})
 	}
-	if err := h.svc.Delete(c.Context(), serviceID); err != nil {
+	if err := h.svc.Delete(c.UserContext(), serviceID); err != nil {
 		log.Error().Err(err).Str("service_id", serviceID).Msg("failed to delete service")
 		if err.Error() == "service not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})

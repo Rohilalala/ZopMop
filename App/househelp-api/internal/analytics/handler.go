@@ -46,7 +46,7 @@ func (h *Handler) RegisterClientRoutes(router fiber.Router) {
 // GetOverview handles GET /admin/analytics/overview?days=7
 func (h *Handler) GetOverview(c *fiber.Ctx) error {
 	days := parseDays(c, 7)
-	result, err := h.svc.GetOverview(c.Context(), days)
+	result, err := h.svc.GetOverview(c.UserContext(), days)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetOverview error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load overview"})
@@ -57,7 +57,7 @@ func (h *Handler) GetOverview(c *fiber.Ctx) error {
 // GetFunnel handles GET /admin/analytics/funnel?days=30
 func (h *Handler) GetFunnel(c *fiber.Ctx) error {
 	days := parseDays(c, 30)
-	result, err := h.svc.GetFunnel(c.Context(), days)
+	result, err := h.svc.GetFunnel(c.UserContext(), days)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetFunnel error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load funnel"})
@@ -68,7 +68,7 @@ func (h *Handler) GetFunnel(c *fiber.Ctx) error {
 // GetBookingTrends handles GET /admin/analytics/bookings?days=30
 func (h *Handler) GetBookingTrends(c *fiber.Ctx) error {
 	days := parseDays(c, 30)
-	result, err := h.svc.GetBookingTrends(c.Context(), days)
+	result, err := h.svc.GetBookingTrends(c.UserContext(), days)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetBookingTrends error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load booking trends"})
@@ -81,7 +81,7 @@ func (h *Handler) GetWorkerPerformance(c *fiber.Ctx) error {
 	days := parseDays(c, 30)
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	result, err := h.svc.GetWorkerPerformance(c.Context(), days, limit)
+	result, err := h.svc.GetWorkerPerformance(c.UserContext(), days, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetWorkerPerformance error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load worker metrics"})
@@ -92,7 +92,7 @@ func (h *Handler) GetWorkerPerformance(c *fiber.Ctx) error {
 // GetOperationalMetrics handles GET /admin/analytics/operations?days=7
 func (h *Handler) GetOperationalMetrics(c *fiber.Ctx) error {
 	days := parseDays(c, 7)
-	result, err := h.svc.GetOperationalMetrics(c.Context(), days)
+	result, err := h.svc.GetOperationalMetrics(c.UserContext(), days)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetOperationalMetrics error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load operational metrics"})
@@ -103,7 +103,7 @@ func (h *Handler) GetOperationalMetrics(c *fiber.Ctx) error {
 // GetRevenueTrends handles GET /admin/analytics/revenue?days=30
 func (h *Handler) GetRevenueTrends(c *fiber.Ctx) error {
 	days := parseDays(c, 30)
-	result, err := h.svc.GetRevenueTrends(c.Context(), days)
+	result, err := h.svc.GetRevenueTrends(c.UserContext(), days)
 	if err != nil {
 		log.Error().Err(err).Msg("[analytics] GetRevenueTrends error")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load revenue trends"})
@@ -135,7 +135,7 @@ func (h *Handler) TrackClientEvent(c *fiber.Ctx) error {
 		}
 	}
 
-	if err := h.svc.TrackClientEvent(c.Context(), &req, userID); err != nil {
+	if err := h.svc.TrackClientEvent(c.UserContext(), &req, userID); err != nil {
 		switch {
 		case errors.Is(err, ErrUnknownClientEvent):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unknown event name"})
@@ -160,7 +160,7 @@ func (h *Handler) TrackCanonicalEvent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
-	if err := h.svc.TrackCanonicalEvent(c.Context(), &req, userID); err != nil {
+	if err := h.svc.TrackCanonicalEvent(c.UserContext(), &req, userID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 

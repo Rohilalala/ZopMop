@@ -8,8 +8,9 @@ import {
   Animated,
   Linking,
   Alert,
-  ActivityIndicator,
+  
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,6 +21,8 @@ import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { acceptBooking, getHelperInvites } from '../../api/matching';
+import { haptics } from '../../utils/haptics';
+import { showError, showInfo } from '../../utils/toast';
 
 const COUNTDOWN_SECONDS = 20;
 
@@ -58,12 +61,8 @@ export default function ProMatchedScreen({ route }: Props) {
           if (invitePollRef.current) clearInterval(invitePollRef.current);
           if (countdownRef.current) clearInterval(countdownRef.current);
           fillAnim.stopAnimation();
-          Alert.alert(
-            'Booking Cancelled',
-            'The customer has cancelled this booking.',
-            [{ text: 'OK', onPress: () => navigation.goBack() }],
-            { cancelable: false },
-          );
+          showInfo('The customer has cancelled this booking.', { title: 'Booking Cancelled' });
+          navigation.goBack();
         }
       } catch { /* keep polling */ }
     }, 5000);
@@ -99,6 +98,11 @@ export default function ProMatchedScreen({ route }: Props) {
     }
   }, [secondsLeft, navigation]);
 
+  // Fire confirmation haptic the moment the invite card appears.
+  useEffect(() => {
+    haptics.medium();
+  }, []);
+
   // Pulse animation for the match icon
   const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -115,17 +119,19 @@ export default function ProMatchedScreen({ route }: Props) {
   function openMaps() {
     const url = `https://maps.google.com/?q=${customerLat},${customerLng}`;
     Linking.openURL(url).catch(() => {
-      Alert.alert('Could not open Maps', 'Please install Google Maps on your device.');
+      showError('Please install Google Maps on your device.', { title: 'Could not open Maps' });
     });
   }
 
   async function handleAccept() {
     if (!token || token === '__guest__' || expired || accepting) return;
+    haptics.heavy();
     if (countdownRef.current) clearInterval(countdownRef.current);
     fillAnim.stopAnimation();
     setAccepting(true);
     try {
       await acceptBooking(token, bookingId);
+      haptics.success();
       navigation.replace('ProActive', {
         bookingId,
         serviceName: serviceName ?? 'Home Service',
@@ -134,12 +140,13 @@ export default function ProMatchedScreen({ route }: Props) {
         customerLng,
       });
     } catch (err: any) {
-      Alert.alert('Could not accept', err?.message ?? 'Please try again.');
+      showError(err?.message ?? 'Please try again.', { title: 'Could not accept' });
       setAccepting(false);
     }
   }
 
   function handleDecline() {
+    haptics.warning();
     Alert.alert('Decline booking?', 'You can decline and wait for the next one.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Decline', style: 'destructive', onPress: () => navigation.goBack() },
@@ -226,7 +233,7 @@ export default function ProMatchedScreen({ route }: Props) {
           {/* Label sits above fill */}
           <View style={s.acceptContent}>
             {accepting
-              ? <ActivityIndicator color="#FFFFFF" />
+              ? <LoadingBars color="#FFFFFF" />
               : expired
                 ? <Text style={s.acceptBtnText}>Expired</Text>
                 : <Text style={s.acceptBtnText}>✅  Accept ({secondsLeft}s)</Text>

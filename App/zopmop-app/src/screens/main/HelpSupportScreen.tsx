@@ -1,19 +1,32 @@
-import React, { useMemo } from 'react';
+// HelpSupportScreen — dark home pattern.
+// Layout: Bloom backdrop → sticky header (back + title + sub) → contact list
+// (GlassCard) → FAQ list (GlassCard, expandable rows).
+
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   Linking,
-  Alert,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
+
+import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
+import { PressFx } from '../../components/ui/PressFx';
+import { showInfo } from '../../utils/toast';
+
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+const H_PAD = 20;
 
 const FAQS = [
   {
@@ -26,33 +39,41 @@ const FAQS = [
   },
   {
     q: 'How are payments handled?',
-    a: 'You can pay after the service is completed via UPI, card, or wallet. No advance payment required.',
+    a: 'Pay after the service is completed via UPI, card, or wallet. No advance payment required.',
   },
   {
     q: 'How do I report an issue with a service?',
-    a: 'Contact our support team within 24 hours of the service and we will resolve it promptly.',
+    a: 'Contact support within 24 hours of the service and we will resolve it promptly.',
   },
 ];
 
-const CONTACT_OPTIONS = [
+type ContactOption = {
+  id: string;
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  sublabel: string;
+  action: () => void;
+};
+
+const CONTACT_OPTIONS: ContactOption[] = [
   {
     id: 'chat',
-    icon: 'chatbubble-ellipses-outline' as const,
-    label: 'Live Chat',
+    icon: 'message-circle',
+    label: 'Live chat',
     sublabel: 'Typically replies in under 2 mins',
-    action: () => Alert.alert('Chat', 'Live chat is coming soon.'),
+    action: () => showInfo('Live chat is coming soon.', { title: 'Chat' }),
   },
   {
     id: 'call',
-    icon: 'call-outline' as const,
-    label: 'Call Us',
+    icon: 'phone',
+    label: 'Call us',
     sublabel: 'Mon–Sat, 9 AM – 7 PM',
     action: () => Linking.openURL('tel:+911800000000'),
   },
   {
     id: 'email',
-    icon: 'mail-outline' as const,
-    label: 'Email Support',
+    icon: 'mail',
+    label: 'Email support',
     sublabel: 'support@zopmop.com',
     action: () => Linking.openURL('mailto:support@zopmop.com'),
   },
@@ -60,169 +81,194 @@ const CONTACT_OPTIONS = [
 
 export default function HelpSupportScreen() {
   const navigation = useNavigation();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  const [expanded, setExpanded] = React.useState<number | null>(null);
+  const insets = useSafeAreaInsets();
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Help & Support</Text>
-      </View>
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
 
-      <ScrollView style={s.scroll} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-        {/* Contact options */}
-        <Text style={s.sectionLabel}>Contact Us</Text>
-        <View style={s.listCard}>
-          {CONTACT_OPTIONS.map((opt, idx) => (
-            <React.Fragment key={opt.id}>
-              <TouchableOpacity style={s.listRow} activeOpacity={0.7} onPress={opt.action}>
-                <View style={s.iconBox}>
-                  <Ionicons name={opt.icon} size={20} color={c.primary} />
-                </View>
-                <View style={s.listText}>
-                  <Text style={s.listLabel}>{opt.label}</Text>
-                  <Text style={s.listSub}>{opt.sublabel}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-              </TouchableOpacity>
-              {idx < CONTACT_OPTIONS.length - 1 && <View style={s.divider} />}
-            </React.Fragment>
-          ))}
+      <ScrollView
+        style={{ flex: 1, backgroundColor: 'transparent' }}
+        contentContainerStyle={{ paddingBottom: 60 + insets.bottom }}
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[0]}
+      >
+        <View style={[s.head, { paddingTop: insets.top + 10 }]}>
+          <View style={s.headRow}>
+            <PressFx
+              onPress={() => navigation.goBack()}
+              style={s.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            </PressFx>
+            <View style={{ flex: 1 }}>
+              <Text style={s.title}>Help & support</Text>
+              <Text style={s.sub}>We're here when you need us.</Text>
+            </View>
+          </View>
         </View>
 
-        {/* FAQs */}
-        <Text style={s.sectionLabel}>Frequently Asked Questions</Text>
-        <View style={s.listCard}>
-          {FAQS.map((faq, idx) => (
-            <React.Fragment key={idx}>
-              <TouchableOpacity
-                style={s.faqRow}
-                activeOpacity={0.7}
-                onPress={() => setExpanded(expanded === idx ? null : idx)}
-              >
-                <Text style={s.faqQ} numberOfLines={expanded === idx ? undefined : 2}>
-                  {faq.q}
-                </Text>
-                <Ionicons
-                  name={expanded === idx ? 'chevron-up' : 'chevron-down'}
-                  size={16}
-                  color={c.textMuted}
-                />
-              </TouchableOpacity>
-              {expanded === idx && (
-                <View style={s.faqAnswer}>
-                  <Text style={s.faqA}>{faq.a}</Text>
-                </View>
-              )}
-              {idx < FAQS.length - 1 && <View style={s.divider} />}
-            </React.Fragment>
-          ))}
+        <Text style={s.secH}>Contact us</Text>
+        <View style={s.body}>
+          <GlassCard radius={20} style={s.card}>
+            {CONTACT_OPTIONS.map((opt, idx) => (
+              <React.Fragment key={opt.id}>
+                <PressFx onPress={opt.action} style={s.row}>
+                  <View style={s.rowIcon}>
+                    <Feather name={opt.icon} size={18} color="#F5A300" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.rowTitle}>{opt.label}</Text>
+                    <Text style={s.rowSub}>{opt.sublabel}</Text>
+                  </View>
+                  <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.35)" />
+                </PressFx>
+                {idx < CONTACT_OPTIONS.length - 1 && <View style={s.divider} />}
+              </React.Fragment>
+            ))}
+          </GlassCard>
         </View>
 
-        <View style={{ height: 40 }} />
+        <Text style={s.secH}>Frequently asked</Text>
+        <View style={s.body}>
+          <GlassCard radius={20} style={s.card}>
+            {FAQS.map((faq, idx) => {
+              const open = expanded === idx;
+              return (
+                <React.Fragment key={idx}>
+                  <PressFx
+                    onPress={() => setExpanded(open ? null : idx)}
+                    style={s.faqRow}
+                  >
+                    <Text style={s.faqQ} numberOfLines={open ? undefined : 2}>
+                      {faq.q}
+                    </Text>
+                    <Feather
+                      name={open ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color="rgba(255,255,255,0.45)"
+                    />
+                  </PressFx>
+                  {open && (
+                    <View style={s.faqAnswer}>
+                      <Text style={s.faqA}>{faq.a}</Text>
+                    </View>
+                  )}
+                  {idx < FAQS.length - 1 && <View style={s.divider} />}
+                </React.Fragment>
+              );
+            })}
+          </GlassCard>
+        </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
-function createStyles(c: typeof lightColors) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 16,
-      gap: 4,
-    },
-    backBtn: { padding: 4, marginLeft: -4 },
-    headerTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-    },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0A0A0A' },
 
-    scroll: { flex: 1 },
-    content: { paddingHorizontal: 16, paddingBottom: 40 },
+  // Sticky head
+  head: {
+    backgroundColor: '#0A0A0A',
+    paddingHorizontal: H_PAD,
+    paddingBottom: 14,
+  },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  title: {
+    ...fontExtra,
+    fontSize: 24,
+    color: '#FFFFFF',
+    letterSpacing: -0.6,
+    lineHeight: 28,
+  },
+  sub: {
+    ...fontMed,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 2,
+  },
 
-    sectionLabel: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.xs,
-      color: c.textSecondary,
-      letterSpacing: 0.6,
-      textTransform: 'uppercase',
-      marginBottom: 10,
-      marginTop: 4,
-    },
+  // Section header
+  secH: {
+    ...fontBold,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.45)',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    paddingHorizontal: H_PAD + 4,
+    paddingTop: 22,
+    paddingBottom: 10,
+  },
 
-    listCard: {
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      borderWidth: 1,
-      borderColor: c.border,
-      overflow: 'hidden',
-      marginBottom: 20,
-      ...Shadow.sm,
-    },
-    listRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      gap: 12,
-    },
-    iconBox: {
-      width: 40,
-      height: 40,
-      borderRadius: Radius.md,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    listText: { flex: 1 },
-    listLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: c.text,
-      marginBottom: 2,
-    },
-    listSub: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-    },
+  body: { paddingHorizontal: H_PAD },
 
-    divider: { height: 1, backgroundColor: c.border, marginLeft: 68 },
+  card: { padding: 8 },
 
-    faqRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      gap: 10,
-    },
-    faqQ: {
-      flex: 1,
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.base,
-      color: c.text,
-      lineHeight: 22,
-    },
-    faqAnswer: {
-      paddingHorizontal: 16,
-      paddingBottom: 14,
-    },
-    faqA: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      lineHeight: 20,
-    },
-  });
-}
+  // Contact row
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  rowIcon: {
+    width: 38, height: 38, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(245,163,0,0.12)',
+  },
+  rowTitle: {
+    ...fontSemi,
+    fontSize: 14,
+    color: '#FFFFFF',
+    letterSpacing: -0.1,
+  },
+  rowSub: {
+    ...fontMed,
+    fontSize: 11.5,
+    color: 'rgba(255,255,255,0.5)',
+    marginTop: 2,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginHorizontal: 10,
+  },
+
+  // FAQ row
+  faqRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  faqQ: {
+    flex: 1,
+    ...fontSemi,
+    fontSize: 13.5,
+    color: '#FFFFFF',
+    lineHeight: 19,
+  },
+  faqAnswer: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  faqA: {
+    ...fontMed,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.65)',
+    lineHeight: 19,
+  },
+});

@@ -42,11 +42,17 @@ func CSRF(isProduction bool) fiber.Handler {
 			if c.Get("Authorization") != "" {
 				return true
 			}
+			path := c.Path()
+			// Liveness / readiness probes have no session to protect and are
+			// hit by load balancers + monitoring. Issuing+storing a CSRF token
+			// for every probe dominates inuse heap under sustained polling.
+			if path == "/health" || path == "/ready" {
+				return true
+			}
 			// Login/logout endpoints cannot be CSRF-protected because the
 			// client has no session yet when it calls them. They are still
 			// safe: auth endpoints are IP-rate-limited (SensitivePublicRateLimit)
 			// and the OTP flow requires knowledge of a phone + one-time code.
-			path := c.Path()
 			return strings.HasPrefix(path, "/api/v1/auth/")
 		},
 	})

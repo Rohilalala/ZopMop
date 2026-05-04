@@ -1,0 +1,207 @@
+goroutine profile: total 45
+12 @ 0x10444aadc 0x1044290cc 0x1053ad5bc 0x1048669b4 0x104bf1cc4 0x1048669b4 0x104bfc574 0x1048669b4 0x104bfd610 0x1048669b4 0x1053adb8c 0x104879aec 0x104879cb8 0x104824c2c 0x10482ea8c 0x10482e7f0 0x1044525d4
+#	0x1053ad5bb	main.main.Timeout.func10+0x13b					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:67
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104bf1cc3	github.com/gofiber/fiber/v2/middleware/csrf.New.func1+0x623	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/csrf/csrf.go:138
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104bfc573	github.com/gofiber/fiber/v2/middleware/cors.New.func1+0x203	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/cors/cors.go:173
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x104bfd60f	github.com/gofiber/helmet/v2.New.func1+0x40f			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/helmet/v2@v2.2.26/main.go:182
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053adb8b	main.main.RequestID.New.func19+0xcb				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/requestid/requestid.go:31
+#	0x104879aeb	github.com/gofiber/fiber/v2.(*App).next+0x15b			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x104879cb7	github.com/gofiber/fiber/v2.(*App).handler+0x67			/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:170
+#	0x104824c2b	github.com/valyala/fasthttp.(*Server).serveConn+0xacb		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:2359
+#	0x10482ea8b	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:224
+#	0x10482e7ef	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+6 @ 0x10444aadc 0x10440ec40 0x104449cf0 0x1044bc988 0x1044bdb04 0x1044bdaf5 0x104580be8 0x10458f584 0x10462d6e0 0x10462e190 0x1049e2cd8 0x1049e2ad0 0x1049e486c 0x1049f7968 0x1049e7a3c 0x104a2c1c4 0x104a2bd54 0x104a2bf70 0x104a2be78 0x104a2d7c4 0x104a2d7a9 0x104a441cc 0x104a443b4 0x1053acd2c 0x104879aec 0x1048669c8 0x1053a2dd0 0x1048669b4 0x1053ae0d8 0x1048669b4 0x1053ad8bc 0x1044525d4
+#	0x104449cef	internal/poll.runtime_pollWait+0x9f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1044bc987	internal/poll.(*pollDesc).wait+0x27					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1044bdb03	internal/poll.(*pollDesc).waitRead+0x233				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1044bdaf4	internal/poll.(*FD).Read+0x224						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:165
+#	0x104580be7	net.(*netFD).Read+0x27							/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x10458f583	net.(*conn).Read+0x33							/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x10462d6df	bufio.(*Reader).fill+0xdf						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:113
+#	0x10462e18f	bufio.(*Reader).ReadSlice+0x2f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:377
+#	0x1049e2cd7	github.com/redis/go-redis/v9/internal/proto.(*Reader).readLine+0x27	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:131
+#	0x1049e2acf	github.com/redis/go-redis/v9/internal/proto.(*Reader).ReadLine+0x1f	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:96
+#	0x1049e486b	github.com/redis/go-redis/v9/internal/proto.(*Reader).ReadArrayLen+0x1b	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:427
+#	0x1049f7967	github.com/redis/go-redis/v9.(*ZSliceCmd).readReply+0x27		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/command.go:2659
+#	0x1049e7a3b	github.com/redis/go-redis/v9/internal/pool.(*Conn).WithReader+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/pool/conn.go:74
+#	0x104a2c1c3	github.com/redis/go-redis/v9.(*baseClient)._process.func1+0x1c3		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:457
+#	0x104a2bd53	github.com/redis/go-redis/v9.(*baseClient).withConn+0xa3		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:400
+#	0x104a2bf6f	github.com/redis/go-redis/v9.(*baseClient)._process+0x9f		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:445
+#	0x104a2be77	github.com/redis/go-redis/v9.(*baseClient).process+0x77			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:414
+#	0x104a2d7c3	github.com/redis/go-redis/v9.(*hooksMixin).processHook+0x43		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:190
+#	0x104a2d7a8	github.com/redis/go-redis/v9.(*Client).Process+0x28			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:706
+#	0x104a441cb	github.com/redis/go-redis/v9.cmdable.ZRangeArgsWithScores+0x18b		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/sortedset_commands.go:433
+#	0x104a443b3	github.com/redis/go-redis/v9.cmdable.ZRangeWithScores+0xa3		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/sortedset_commands.go:446
+#	0x1053acd2b	main.main.RateLimiter.NamedRateLimiter.func20+0x41b			/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/ratelimit.go:217
+#	0x104879aeb	github.com/gofiber/fiber/v2.(*App).next+0x15b				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x1048669c7	github.com/gofiber/fiber/v2.(*Ctx).Next+0x57				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1042
+#	0x1053a2dcf	github.com/gofiber/fiber/v2/middleware/compress.New.func3+0x3f		/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/compress/compress.go:55
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ae0d7	main.main.RequestLogger.func11+0x37					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/security.go:90
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ad8bb	main.main.Timeout.func10.1+0x5b						/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:63
+
+4 @ 0x10444aadc 0x10440ec40 0x104449cf0 0x1044bc988 0x1044bdb04 0x1044bdaf5 0x104580be8 0x10458f584 0x10462d6e0 0x10462e190 0x1049e2cd8 0x1049e2ad0 0x1049e2ef0 0x1049f1134 0x1049e7a3c 0x104a2c1c4 0x104a2bd54 0x104a2bf70 0x104a2be78 0x104a2d7c4 0x104a2d7a9 0x104a2fd30 0x104ae5b10 0x104a2f6dc 0x104a2f6cd 0x1053acc6c 0x104879aec 0x1048669c8 0x1053a2dd0 0x1048669b4 0x1053ae0d8 0x1048669b4 0x1053ad8bc 0x1044525d4
+#	0x104449cef	internal/poll.runtime_pollWait+0x9f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1044bc987	internal/poll.(*pollDesc).wait+0x27					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1044bdb03	internal/poll.(*pollDesc).waitRead+0x233				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1044bdaf4	internal/poll.(*FD).Read+0x224						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:165
+#	0x104580be7	net.(*netFD).Read+0x27							/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x10458f583	net.(*conn).Read+0x33							/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x10462d6df	bufio.(*Reader).fill+0xdf						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:113
+#	0x10462e18f	bufio.(*Reader).ReadSlice+0x2f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/bufio/bufio.go:377
+#	0x1049e2cd7	github.com/redis/go-redis/v9/internal/proto.(*Reader).readLine+0x27	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:131
+#	0x1049e2acf	github.com/redis/go-redis/v9/internal/proto.(*Reader).ReadLine+0x1f	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:96
+#	0x1049e2eef	github.com/redis/go-redis/v9/internal/proto.(*Reader).ReadReply+0x1f	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/proto/reader.go:155
+#	0x1049f1133	github.com/redis/go-redis/v9.(*Cmd).readReply+0x23			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/command.go:488
+#	0x1049e7a3b	github.com/redis/go-redis/v9/internal/pool.(*Conn).WithReader+0x6b	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/pool/conn.go:74
+#	0x104a2c1c3	github.com/redis/go-redis/v9.(*baseClient)._process.func1+0x1c3		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:457
+#	0x104a2bd53	github.com/redis/go-redis/v9.(*baseClient).withConn+0xa3		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:400
+#	0x104a2bf6f	github.com/redis/go-redis/v9.(*baseClient)._process+0x9f		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:445
+#	0x104a2be77	github.com/redis/go-redis/v9.(*baseClient).process+0x77			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:414
+#	0x104a2d7c3	github.com/redis/go-redis/v9.(*hooksMixin).processHook+0x43		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:190
+#	0x104a2d7a8	github.com/redis/go-redis/v9.(*Client).Process+0x28			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:706
+#	0x104a2fd2f	github.com/redis/go-redis/v9.cmdable.eval+0x2df				/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/scripting_commands.go:62
+#	0x104ae5b0f	github.com/redis/go-redis/v9.cmdable.EvalSha+0x5f			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/scripting_commands.go:39
+#	0x104a2f6db	github.com/redis/go-redis/v9.(*Script).EvalSha+0x5b			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/script.go:59
+#	0x104a2f6cc	github.com/redis/go-redis/v9.(*Script).Run+0x4c				/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/script.go:69
+#	0x1053acc6b	main.main.RateLimiter.NamedRateLimiter.func20+0x35b			/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/ratelimit.go:170
+#	0x104879aeb	github.com/gofiber/fiber/v2.(*App).next+0x15b				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x1048669c7	github.com/gofiber/fiber/v2.(*Ctx).Next+0x57				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1042
+#	0x1053a2dcf	github.com/gofiber/fiber/v2/middleware/compress.New.func3+0x3f		/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/compress/compress.go:55
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ae0d7	main.main.RequestLogger.func11+0x37					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/security.go:90
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ad8bb	main.main.Timeout.func10.1+0x5b						/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:63
+
+2 @ 0x10444aadc 0x1044290cc 0x1049e946c 0x1049e9114 0x104a2b480 0x104a2b3c8 0x104a2bcec 0x104a2bf70 0x104a2be78 0x104a2d7c4 0x104a2d7a9 0x104a2fd30 0x104ae5b10 0x104a2f6dc 0x104a2f6cd 0x1053acc6c 0x104879aec 0x1048669c8 0x1053a2dd0 0x1048669b4 0x1053ae0d8 0x1048669b4 0x1053ad8bc 0x1044525d4
+#	0x1049e946b	github.com/redis/go-redis/v9/internal/pool.(*ConnPool).waitTurn+0xeb	/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/pool/pool.go:318
+#	0x1049e9113	github.com/redis/go-redis/v9/internal/pool.(*ConnPool).Get+0x43		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/internal/pool/pool.go:264
+#	0x104a2b47f	github.com/redis/go-redis/v9.(*baseClient)._getConn+0x2f		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:265
+#	0x104a2b3c7	github.com/redis/go-redis/v9.(*baseClient).getConn+0x57			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:253
+#	0x104a2bceb	github.com/redis/go-redis/v9.(*baseClient).withConn+0x3b		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:390
+#	0x104a2bf6f	github.com/redis/go-redis/v9.(*baseClient)._process+0x9f		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:445
+#	0x104a2be77	github.com/redis/go-redis/v9.(*baseClient).process+0x77			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:414
+#	0x104a2d7c3	github.com/redis/go-redis/v9.(*hooksMixin).processHook+0x43		/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:190
+#	0x104a2d7a8	github.com/redis/go-redis/v9.(*Client).Process+0x28			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/redis.go:706
+#	0x104a2fd2f	github.com/redis/go-redis/v9.cmdable.eval+0x2df				/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/scripting_commands.go:62
+#	0x104ae5b0f	github.com/redis/go-redis/v9.cmdable.EvalSha+0x5f			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/scripting_commands.go:39
+#	0x104a2f6db	github.com/redis/go-redis/v9.(*Script).EvalSha+0x5b			/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/script.go:59
+#	0x104a2f6cc	github.com/redis/go-redis/v9.(*Script).Run+0x4c				/Users/adityarohilla/go/pkg/mod/github.com/redis/go-redis/v9@v9.7.3/script.go:69
+#	0x1053acc6b	main.main.RateLimiter.NamedRateLimiter.func20+0x35b			/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/ratelimit.go:170
+#	0x104879aeb	github.com/gofiber/fiber/v2.(*App).next+0x15b				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/router.go:143
+#	0x1048669c7	github.com/gofiber/fiber/v2.(*Ctx).Next+0x57				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1042
+#	0x1053a2dcf	github.com/gofiber/fiber/v2/middleware/compress.New.func3+0x3f		/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/middleware/compress/compress.go:55
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ae0d7	main.main.RequestLogger.func11+0x37					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/security.go:90
+#	0x1048669b3	github.com/gofiber/fiber/v2.(*Ctx).Next+0x43				/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/ctx.go:1039
+#	0x1053ad8bb	main.main.Timeout.func10.1+0x5b						/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/middleware/timeout.go:63
+
+1 @ 0x10440b62c 0x1044498e4 0x1046feae4 0x1046fe910 0x1046fc114 0x104710e64 0x1047116d4 0x1046a80d8 0x1046a9ac0 0x1046c3ff0 0x1046a653c 0x1044525d4
+#	0x1046feae3	runtime/pprof.writeRuntimeProfile+0xb3	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:851
+#	0x1046fe90f	runtime/pprof.writeGoroutine+0x4f	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:784
+#	0x1046fc113	runtime/pprof.(*Profile).WriteTo+0x143	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/pprof/pprof.go:408
+#	0x104710e63	net/http/pprof.handler.ServeHTTP+0x413	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/pprof/pprof.go:273
+#	0x1047116d3	net/http/pprof.Index+0xa3		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/pprof/pprof.go:397
+#	0x1046a80d7	net/http.HandlerFunc.ServeHTTP+0x37	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2286
+#	0x1046a9abf	net/http.(*ServeMux).ServeHTTP+0x18f	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2828
+#	0x1046c3fef	net/http.serverHandler.ServeHTTP+0xaf	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3311
+#	0x1046a653b	net/http.(*conn).serve+0x51b		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:2073
+
+1 @ 0x10440fc80 0x10444cfd8 0x104714e2c 0x1044525d4
+#	0x10444cfd7	os/signal.signal_recv+0x107	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/sigqueue.go:149
+#	0x104714e2b	os/signal.loop+0x1b		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/os/signal/signal_unix.go:23
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddd84 0x1053a725c 0x104415424 0x1044525d4
+#	0x1053a725b	main.main+0x3d4b	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:580
+#	0x104415423	runtime.main+0x2b3	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/proc.go:290
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddda4 0x104794dec 0x1044525d4
+#	0x104794deb	github.com/gofiber/fiber/v2/utils.StartTimeStampUpdater.func1.1+0x7b	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/utils/time.go:26
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddda4 0x10482ea64 0x10482e7f0 0x1044525d4
+#	0x10482ea63	github.com/valyala/fasthttp.(*workerPool).workerFunc+0x43	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:219
+#	0x10482e7ef	github.com/valyala/fasthttp.(*workerPool).getCh.func1+0x2f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:196
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddda4 0x104bdd6c0 0x1044525d4
+#	0x104bdd6bf	github.com/gofiber/fiber/v2/internal/memory.(*Storage).gc+0x8f	/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/internal/memory/memory.go:114
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddda4 0x105385764 0x1044525d4
+#	0x105385763	github.com/adityarohilla/househelp-api/internal/leave.StartMonthlyResetCron.func1+0xc3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/leave/cron.go:34
+
+1 @ 0x10444aadc 0x1043de230 0x1043ddda4 0x10538e814 0x1044525d4
+#	0x10538e813	github.com/adityarohilla/househelp-api/internal/roomies.StartAutoSettleCron.func1+0xb3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/roomies/cron.go:22
+
+1 @ 0x10444aadc 0x10440ec40 0x104449cf0 0x1044bc988 0x1044bdb04 0x1044bdaf5 0x104580be8 0x10458f584 0x1046a0db8 0x1044525d4
+#	0x104449cef	internal/poll.runtime_pollWait+0x9f		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1044bc987	internal/poll.(*pollDesc).wait+0x27		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1044bdb03	internal/poll.(*pollDesc).waitRead+0x233	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1044bdaf4	internal/poll.(*FD).Read+0x224			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:165
+#	0x104580be7	net.(*netFD).Read+0x27				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_posix.go:68
+#	0x10458f583	net.(*conn).Read+0x33				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/net.go:196
+#	0x1046a0db7	net/http.(*connReader).backgroundRead+0x37	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:702
+
+1 @ 0x10444aadc 0x10440ec40 0x104449cf0 0x1044bc988 0x1044c0b34 0x1044c0b25 0x1045822e8 0x104597e34 0x10459723c 0x1046ab3b4 0x1046ab070 0x1053add28 0x1053add29 0x1044525d4
+#	0x104449cef	internal/poll.runtime_pollWait+0x9f		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1044bc987	internal/poll.(*pollDesc).wait+0x27		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1044c0b33	internal/poll.(*pollDesc).waitRead+0x213	/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1044c0b24	internal/poll.(*FD).Accept+0x204		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:613
+#	0x1045822e7	net.(*netFD).accept+0x27			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_unix.go:150
+#	0x104597e33	net.(*TCPListener).accept+0x23			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock_posix.go:159
+#	0x10459723b	net.(*TCPListener).Accept+0x2b			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock.go:387
+#	0x1046ab3b3	net/http.(*Server).Serve+0x243			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3434
+#	0x1046ab06f	net/http.(*Server).ListenAndServe+0x7f		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3360
+#	0x1053add27	net/http.ListenAndServe+0xa7			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/http/server.go:3675
+#	0x1053add28	main.main.func1+0xa8				/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:119
+
+1 @ 0x10444aadc 0x10440ec40 0x104449cf0 0x1044bc988 0x1044c0b34 0x1044c0b25 0x1045822e8 0x104597e34 0x10459723c 0x1048237a4 0x104822fcc 0x1048724ac 0x1053a74e0 0x1044525d4
+#	0x104449cef	internal/poll.runtime_pollWait+0x9f			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/netpoll.go:351
+#	0x1044bc987	internal/poll.(*pollDesc).wait+0x27			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:84
+#	0x1044c0b33	internal/poll.(*pollDesc).waitRead+0x213		/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_poll_runtime.go:89
+#	0x1044c0b24	internal/poll.(*FD).Accept+0x204			/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/internal/poll/fd_unix.go:613
+#	0x1045822e7	net.(*netFD).accept+0x27				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/fd_unix.go:150
+#	0x104597e33	net.(*TCPListener).accept+0x23				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock_posix.go:159
+#	0x10459723b	net.(*TCPListener).Accept+0x2b				/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/net/tcpsock.go:387
+#	0x1048237a3	github.com/valyala/fasthttp.acceptConn+0x43		/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:1923
+#	0x104822fcb	github.com/valyala/fasthttp.(*Server).Serve+0x42b	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/server.go:1816
+#	0x1048724ab	github.com/gofiber/fiber/v2.(*App).Listen+0x18b		/Users/adityarohilla/go/pkg/mod/github.com/gofiber/fiber/v2@v2.52.12/listen.go:93
+#	0x1053a74df	main.main.func9+0xaf					/Users/adityarohilla/Documents/ZopMop/App/househelp-api/cmd/api/main.go:572
+
+1 @ 0x10444aadc 0x1044290cc 0x1049d5630 0x1049d47a4 0x1044525d4
+#	0x1049d562f	github.com/jackc/pgx/v5/pgxpool.(*Pool).backgroundHealthCheck+0x9f	/Users/adityarohilla/go/pkg/mod/github.com/jackc/pgx/v5@v5.7.2/pgxpool/pool.go:411
+#	0x1049d47a3	github.com/jackc/pgx/v5/pgxpool.NewWithConfig.func3+0x33		/Users/adityarohilla/go/pkg/mod/github.com/jackc/pgx/v5@v5.7.2/pgxpool/pool.go:275
+
+1 @ 0x10444aadc 0x1044290cc 0x1052ec55c 0x1044525d4
+#	0x1052ec55b	github.com/adityarohilla/househelp-api/internal/analytics.(*RollupWorker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/analytics/rollup_worker.go:46
+
+1 @ 0x10444aadc 0x1044290cc 0x105344204 0x1044525d4
+#	0x105344203	github.com/adityarohilla/househelp-api/internal/matching.(*Batcher).run+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/batch.go:84
+
+1 @ 0x10444aadc 0x1044290cc 0x10534b4d4 0x1044525d4
+#	0x10534b4d3	github.com/adityarohilla/househelp-api/internal/matching.(*RebookScanner).Start+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/rebook_scanner.go:48
+
+1 @ 0x10444aadc 0x1044290cc 0x10534c2dc 0x1044525d4
+#	0x10534c2db	github.com/adityarohilla/househelp-api/internal/matching.(*ScheduledDispatcher).Start+0xeb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/scheduled_dispatch.go:74
+
+1 @ 0x10444aadc 0x1044290cc 0x10534d664 0x1044525d4
+#	0x10534d663	github.com/adityarohilla/househelp-api/internal/matching.(*StealthDispatcher).Start+0xe3	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/matching/stealth_dispatch.go:57
+
+1 @ 0x10444aadc 0x1044290cc 0x10538d06c 0x1044525d4
+#	0x10538d06b	github.com/adityarohilla/househelp-api/internal/reengagement.(*Worker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/reengagement/worker.go:46
+
+1 @ 0x10444aadc 0x1044290cc 0x10539d07c 0x1044525d4
+#	0x10539d07b	github.com/adityarohilla/househelp-api/internal/segments.(*Worker).Start.func1+0xcb	/Users/adityarohilla/Documents/ZopMop/App/househelp-api/internal/segments/segments.go:88
+
+1 @ 0x10444aadc 0x10444ee70 0x10482df50 0x1044525d4
+#	0x10444ee6f	time.Sleep+0x14f						/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/time.go:363
+#	0x10482df4f	github.com/valyala/fasthttp.(*workerPool).Start.func2+0x4f	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/workerpool.go:67
+
+1 @ 0x10444aadc 0x10444ee70 0x10482ef24 0x1044525d4
+#	0x10444ee6f	time.Sleep+0x14f					/Users/adityarohilla/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.2.darwin-arm64/src/runtime/time.go:363
+#	0x10482ef23	github.com/valyala/fasthttp.updateServerDate.func1+0x23	/Users/adityarohilla/go/pkg/mod/github.com/valyala/fasthttp@v1.51.0/header.go:2289
+

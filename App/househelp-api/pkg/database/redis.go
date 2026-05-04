@@ -2,12 +2,27 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
+
+// IsCacheMiss reports whether err is a benign Redis key-miss (redis.Nil).
+// Callers should silently treat this as "not cached" and fall through to source.
+func IsCacheMiss(err error) bool {
+	return errors.Is(err, redis.Nil)
+}
+
+// IsRedisDown reports whether err represents a real Redis failure
+// (connection refused, timeout, broken pipe, etc.) rather than a benign miss.
+// Callers should log this at warn level and fall through to a degraded path
+// rather than aborting the request.
+func IsRedisDown(err error) bool {
+	return err != nil && !errors.Is(err, redis.Nil)
+}
 
 // NewRedisClient creates and validates a Redis client connection.
 // PoolSize 10, ping with 5s timeout.

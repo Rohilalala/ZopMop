@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { Animated } from 'react-native';
 import { getCart, addToCart, removeFromCart, type ApiCart, type ApiCartItem } from '../api/cart';
 import { useAuth } from './AuthContext';
+import { showError } from '../utils/toast';
+import { haptics } from '../utils/haptics';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -47,16 +49,46 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const addItem = useCallback(async (serviceId: string, durationMinutes: number) => {
     if (!token) return;
-    const updated = await addToCart(token, serviceId, durationMinutes);
-    setCart(updated);
+    haptics.medium();
+    const snapshot = cart;
+    const now = new Date().toISOString();
+    const tempItem: ApiCartItem = {
+      id: `tmp-${Date.now()}`,
+      cart_id: snapshot?.id ?? 'tmp-cart',
+      service_id: serviceId,
+      service_name: '',
+      duration_minutes: durationMinutes,
+      price_cents: 0,
+    };
+    const optimistic: ApiCart = snapshot
+      ? { ...snapshot, items: [...snapshot.items, tempItem], updated_at: now }
+      : { id: 'tmp-cart', user_id: '', items: [tempItem], created_at: now, updated_at: now };
+    setCart(optimistic);
     pulseBadge();
-  }, [token, pulseBadge]);
+    try {
+      const updated = await addToCart(token, serviceId, durationMinutes);
+      setCart(updated);
+    } catch {
+      setCart(snapshot);
+      showError('Failed to update cart');
+    }
+  }, [token, cart, pulseBadge]);
 
   const removeItem = useCallback(async (itemId: string) => {
     if (!token) return;
-    const updated = await removeFromCart(token, itemId);
-    setCart(updated);
-  }, [token]);
+    haptics.medium();
+    const snapshot = cart;
+    if (snapshot) {
+      setCart({ ...snapshot, items: snapshot.items.filter(i => i.id !== itemId) });
+    }
+    try {
+      const updated = await removeFromCart(token, itemId);
+      setCart(updated);
+    } catch {
+      setCart(snapshot);
+      showError('Failed to update cart');
+    }
+  }, [token, cart]);
 
   const items = cart?.items ?? [];
   const itemCount = items.length;

@@ -16,9 +16,13 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.zopmop.app",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "entitlements": {
+        "aps-environment": "development"
+      },
       "infoPlist": {
         "CFBundleDisplayName": "ZopMop",
         "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification", "fetch"],
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -54,7 +58,16 @@
       ],
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
-      "expo-secure-store"
+      "@react-native-firebase/messaging",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ]
     ]
   }
 }

@@ -27,11 +27,11 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Dimensions,
   Platform,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
@@ -55,13 +55,17 @@ import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
 import { Bloom } from '../../components/home/Bloom';
-import { BottomTabBar } from '../../components/home/BottomTabBar';
 import NotServiceableScreen from './NotServiceableScreen';
+import { HomeScreenSkeleton } from '../../components/skeletons/HomeScreenSkeleton';
 
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
 import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
+import { showError, showSuccess, showInfo } from '../../utils/toast';
+import { haptics } from '../../utils/haptics';
+import { usePrefetch } from '../../context/PrefetchContext';
+import { writeLastKnownLocation } from '../../utils/locationCache';
 import type { SduiAction, SduiSection } from '../../sdui/types';
 import {
   Easing,
@@ -84,18 +88,29 @@ export default function HomeScreen() {
   const { token, user } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
+  const { consumeHome } = usePrefetch();
+
+  // Read prefetched data once on mount. Already-fetched SDUI page + coords
+  // become initial state, so first paint is instant when prefetch completed.
+  const prefetchedRef = useRef(consumeHome());
+  const prefetched = prefetchedRef.current;
 
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationName, setLocationName] = useState('Detecting location…');
   const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>();
-  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [addressTag, setAddressTag] = useState<string | undefined>();
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(prefetched?.coords ?? null);
   const [serviceable, setServiceable] = useState(true);
-  const [bootstrapping, setBootstrapping] = useState(true);
+  const [bootstrapping, setBootstrapping] = useState(prefetched?.page == null);
 
   // ── SDUI page fetch (driven by resolved coords) ───────────────────────────
   const { page, loading, fetchSection, refetch } = useSduiPage(
     'home',
-    coords ? { lat: coords.lat, lon: coords.lon } : undefined,
+    {
+      lat: coords?.lat,
+      lon: coords?.lon,
+      initialPage: prefetched?.page ?? null,
+    },
   );
 
   // ── Pull-to-refresh easter egg ────────────────────────────────────────────
@@ -137,6 +152,7 @@ export default function HomeScreen() {
   const FLY_SCALE  = 56 / 130;             // matches small loading Zop
 
   const onRefresh = useCallback(async () => {
+    haptics.medium();
     setRefreshing(true);
 
     // Cancel any in-flight animations so a re-trigger reads cleanly.
@@ -292,11 +308,17 @@ export default function HomeScreen() {
               }
               if (nearest && minDist < 0.009) {
                 name = nearest.full_address.split(',').slice(0, 2).join(',').trim();
-                if (!cancelled) setSelectedAddressId(nearest.id);
+                if (!cancelled) {
+                  setSelectedAddressId(nearest.id);
+                  setAddressTag(nearest.tag ?? undefined);
+                }
               } else if (saved.length > 0) {
                 const home = saved.find((a) => a.tag === 'Home') ?? saved[0];
                 name = home.full_address.split(',').slice(0, 2).join(',').trim();
-                if (!cancelled) setSelectedAddressId(home.id);
+                if (!cancelled) {
+                  setSelectedAddressId(home.id);
+                  setAddressTag(home.tag ?? undefined);
+                }
               } else {
                 try {
                   const [place] = await Location.reverseGeocodeAsync({
@@ -326,6 +348,7 @@ export default function HomeScreen() {
       if (cancelled) return;
       setCoords({ lat, lon });
       setBootstrapping(false);
+      writeLastKnownLocation({ lat, lon, name, addressId: selectedAddressId });
     })();
     return () => {
       cancelled = true;
@@ -334,15 +357,31 @@ export default function HomeScreen() {
 
   const handleLocationSelect = useCallback(
     async (name: string, lat: number, lon: number, addressId?: string) => {
-      setLocationName(name.split(',').slice(0, 2).join(',').trim());
+      const shortName = name.split(',').slice(0, 2).join(',').trim();
+      setLocationName(shortName);
       setSelectedAddressId(addressId);
+      // Resolve tag for the picked address. If the user picked a saved one,
+      // look it up in their list; otherwise clear so the header falls back
+      // to "Current location".
+      if (addressId && token && token !== '__guest__') {
+        try {
+          const saved = await listAddresses(token);
+          const match = saved.find((a) => a.id === addressId);
+          setAddressTag(match?.tag ?? undefined);
+        } catch {
+          setAddressTag(undefined);
+        }
+      } else {
+        setAddressTag(undefined);
+      }
       const result = await checkServiceability(lat, lon).catch(() => ({
         serviceable: true,
       }));
       setServiceable(result.serviceable);
       setCoords({ lat, lon });
+      writeLastKnownLocation({ lat, lon, name: shortName, addressId });
     },
-    [],
+    [token],
   );
 
   // ── Action routing ────────────────────────────────────────────────────────
@@ -367,7 +406,10 @@ export default function HomeScreen() {
               .navigate(screen, params),
         },
         apiFetch,
-        showToast: (message, _variant) => Alert.alert('', message),
+        showToast: (message, variant) =>
+          variant === 'error' ? showError(message)
+            : variant === 'success' ? showSuccess(message)
+            : showInfo(message),
       });
     },
     [navigation, fetchSection],
@@ -398,9 +440,12 @@ export default function HomeScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <Bloom />
-        <View style={styles.center}>
-          <ActivityIndicator color="#F5A300" />
-        </View>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 80 }}
+        >
+          <HomeScreenSkeleton />
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -423,7 +468,6 @@ export default function HomeScreen() {
   const Header = (
     <HomeHero
       name={user?.name ?? undefined}
-      onSearchPress={() => navigation.navigate('AllServices', {})}
       eggTranslateX={heroTransX}
       eggTranslateY={heroTransY}
       eggScale={heroScale}
@@ -442,6 +486,7 @@ export default function HomeScreen() {
         locationName={locationName}
         onLocationPress={() => setLocationModalVisible(true)}
         selectedAddressId={selectedAddressId}
+        addressTag={addressTag}
       />
 
       <FlashList
@@ -466,7 +511,6 @@ export default function HomeScreen() {
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
-      <BottomTabBar active="home" />
       {locationModal}
     </SafeAreaView>
   );

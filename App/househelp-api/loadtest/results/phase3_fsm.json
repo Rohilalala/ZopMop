@@ -1,0 +1,138 @@
+{
+    "metrics": {
+        "data_received": {
+            "count": 79216,
+            "rate": 307736.5343899928
+        },
+        "http_req_blocked": {
+            "avg": 0.20548000000000002,
+            "min": 0,
+            "med": 0.003,
+            "max": 1.971,
+            "p(90)": 0.7852,
+            "p(95)": 1.4642
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 101.020075,
+            "min": 31.234,
+            "med": 101.339,
+            "max": 189.417,
+            "p(90)": 172.7904,
+            "p(95)": 189.37035
+        },
+        "http_req_waiting": {
+            "p(95)": 164.03629999999995,
+            "avg": 49.73169000000001,
+            "min": 0.652,
+            "med": 33.4885,
+            "max": 189.361,
+            "p(90)": 137.3153
+        },
+        "data_sent": {
+            "count": 50391,
+            "rate": 195757.82297068936
+        },
+        "http_req_tls_handshaking": {
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0
+        },
+        "checks": {
+            "passes": 80,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_duration": {
+            "max": 189.417,
+            "p(90)": 137.9388,
+            "p(95)": 164.24524999999997,
+            "avg": 49.851449999999986,
+            "min": 0.664,
+            "med": 33.531000000000006
+        },
+        "iteration_duration": {
+            "min": 247.129209,
+            "med": 251.851813,
+            "max": 256.0885,
+            "p(90)": 255.6261708,
+            "p(95)": 255.82709135,
+            "avg": 252.0646168
+        },
+        "http_req_connecting": {
+            "p(90)": 0.39130000000000004,
+            "p(95)": 0.77565,
+            "avg": 0.10735000000000001,
+            "min": 0,
+            "med": 0,
+            "max": 0.823
+        },
+        "http_req_receiving": {
+            "p(90)": 0.08520000000000001,
+            "p(95)": 0.10304999999999999,
+            "avg": 0.04788999999999997,
+            "min": 0.007,
+            "med": 0.0385,
+            "max": 0.38
+        },
+        "http_req_failed": {
+            "passes": 60,
+            "fails": 40,
+            "value": 0.6
+        },
+        "http_req_sending": {
+            "avg": 0.07186999999999993,
+            "min": 0.003,
+            "med": 0.0125,
+            "max": 0.638,
+            "p(90)": 0.4572,
+            "p(95)": 0.5184499999999999
+        },
+        "http_reqs": {
+            "count": 100,
+            "rate": 388.4777499368724
+        },
+        "iterations": {
+            "count": 20,
+            "rate": 77.69554998737448
+        }
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "pending→completed rejected (4xx)": {
+                    "name": "pending→completed rejected (4xx)",
+                    "path": "::pending→completed rejected (4xx)",
+                    "id": "d03895011d00cf15df04301753adf5a0",
+                    "passes": 20,
+                    "fails": 0
+                },
+                "first cancel ok": {
+                    "path": "::first cancel ok",
+                    "id": "2623455c4df7b1a4ee1acb4d561e8ce9",
+                    "passes": 20,
+                    "fails": 0,
+                    "name": "first cancel ok"
+                },
+                "cancelled→completed rejected (4xx)": {
+                    "id": "5d87d8e93e3c378db828d5d82911395f",
+                    "passes": 20,
+                    "fails": 0,
+                    "name": "cancelled→completed rejected (4xx)",
+                    "path": "::cancelled→completed rejected (4xx)"
+                },
+                "cancelled→in_progress rejected (4xx)": {
+                    "name": "cancelled→in_progress rejected (4xx)",
+                    "path": "::cancelled→in_progress rejected (4xx)",
+                    "id": "0aa9ee0d1199e079bdebb4721f6372b4",
+                    "passes": 20,
+                    "fails": 0
+                }
+            }
+    }
+}

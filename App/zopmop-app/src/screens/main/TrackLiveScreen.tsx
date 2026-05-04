@@ -35,6 +35,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -44,7 +45,7 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
 import { useAuth } from '../../context/AuthContext';
-import { getBookingTracking, type TrackingResponse } from '../../api/matching';
+import { getBookingTrackingWsUrl, type TrackingResponse } from '../../api/matching';
 import polyline from '@mapbox/polyline';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -120,31 +121,64 @@ export default function TrackLiveScreen() {
     navigation.navigate('Chat', { bookingId, helperName });
   };
 
-  // Live tracking — poll backend every 5 s. Coordinates and ETA come from
-  // here once the first response lands; until then we render a loading map
-  // centred on the default region so the screen has structure but no
-  // misleading "fake" pins.
+  // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
+  // ~5s on this socket — replaces the previous setInterval poll. Saves mobile
+  // battery + signaling overhead (single persistent TCP vs new HTTP every 5s).
   const { token } = useAuth();
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
 
   useEffect(() => {
     if (!bookingId || !token || token === '__guest__') return;
     let alive = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let backoffMs = 1000;
 
-    const tick = async () => {
+    const connect = () => {
+      if (!alive) return;
       try {
-        const res = await getBookingTracking(token, bookingId);
-        if (alive) setTracking(res);
+        ws = new WebSocket(getBookingTrackingWsUrl(bookingId));
       } catch {
-        // Network blip — keep last-known tracking; next poll will retry.
+        return; // bad URL (e.g. http:// in production) — leave tracking null
       }
+
+      ws.onopen = () => {
+        try {
+          ws?.send(JSON.stringify({ type: 'auth', token }));
+        } catch {}
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const raw = typeof ev.data === 'string' ? ev.data : '';
+          const msg = JSON.parse(raw);
+          if (msg && typeof msg === 'object' && 'helper_lat' in msg) {
+            if (alive) setTracking(msg as TrackingResponse);
+          }
+          // Server emits {"error": ...} on auth/booking-state failures and
+          // closes; reconnect logic below handles transient cases.
+        } catch {}
+      };
+
+      const scheduleReconnect = () => {
+        if (!alive) return;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, backoffMs);
+        backoffMs = Math.min(backoffMs * 2, 15000);
+      };
+
+      ws.onerror = scheduleReconnect;
+      ws.onclose = scheduleReconnect;
     };
 
-    tick();
-    const id = setInterval(tick, 5000);
+    connect();
     return () => {
       alive = false;
-      clearInterval(id);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+        try { ws.close(); } catch {}
+      }
     };
   }, [bookingId, token]);
 
@@ -550,6 +584,26 @@ function Step({
   timeAccent?: boolean;
   connectorBelow?: Connector;
 }) {
+  // Animate marker scale + opacity when this step lights up. Pending starts
+  // small and dim; on advance to active/done it pops in via spring.
+  const scale = useSharedValue(state === 'pending' ? 0.85 : 1);
+  const op = useSharedValue(state === 'pending' ? 0.55 : 1);
+  useEffect(() => {
+    scale.value = withSpring(state === 'pending' ? 0.85 : 1, {
+      damping: 12,
+      stiffness: 180,
+      mass: 0.7,
+    });
+    op.value = withTiming(state === 'pending' ? 0.55 : 1, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [state, scale, op]);
+  const markerAStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: op.value,
+  }));
+
   return (
     <View
       style={{
@@ -587,7 +641,7 @@ function Step({
         </View>
       )}
 
-      <View
+      <Animated.View
         style={[
           styles.marker,
           state === 'done' && { backgroundColor: GREEN },
@@ -600,6 +654,7 @@ function Step({
             elevation: 6,
           },
           state === 'pending' && { backgroundColor: 'rgba(255,255,255,0.06)' },
+          markerAStyle,
         ]}
       >
         {state === 'active' && (
@@ -622,7 +677,7 @@ function Step({
           size={13}
           color={state === 'done' ? '#FFFFFF' : state === 'active' ? '#0D0D0F' : 'rgba(255,255,255,0.4)'}
         />
-      </View>
+      </Animated.View>
       <View style={{ flex: 1, paddingTop: 4 }}>
         <Text
           style={[

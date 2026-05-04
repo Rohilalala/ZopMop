@@ -110,13 +110,13 @@ graph TD
 | **Confidence** | High |
 
 **Description:**  
-The Google Maps API key `AIzaSyDvyOQs4SFHLZoupsERIXBCKUhAHMSJU7w` is hardcoded directly in `app.json` at line 44 under the Android config. This file is version-controlled and committed to the repository.
+The Google Maps API key `AIzaSy...REDACTED` is hardcoded directly in `app.json` at line 44 under the Android config. This file is version-controlled and committed to the repository.
 
 **Evidence:**
 ```json
 "config": {
   "googleMaps": {
-    "apiKey": "AIzaSyDvyOQs4SFHLZoupsERIXBCKUhAHMSJU7w"
+    "apiKey": "AIzaSy...REDACTED"
   }
 }
 ```
@@ -147,7 +147,7 @@ The environment variable `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` uses Expo's `EXPO_PUB
 **Evidence:**
 ```
 # .env
-EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=AIzaSyDvyOQs4SFHLZoupsERIXBCKUhAHMSJU7w
+EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=AIzaSy...REDACTED
 ```
 ```typescript
 // HomeScreen.tsx:95-99

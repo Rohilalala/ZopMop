@@ -25,6 +25,7 @@ type ListItem struct {
 	AvatarURL       *string    `json:"avatar_url,omitempty"`
 	Status          Status     `json:"status"`
 	IsAvailable     bool       `json:"is_available"`
+	IsOnline        bool       `json:"is_online"` // is_available AND fresh location ping
 	IsVIP           bool       `json:"is_vip"`
 	Rating          float64    `json:"rating"`
 	TotalJobs       int        `json:"total_jobs"`
@@ -44,6 +45,7 @@ type Detail struct {
 	CompletedJobs30d int      `json:"completed_jobs_30d"`
 	Earnings30dCents int64    `json:"earnings_30d_cents"`
 	CancellationRate float64  `json:"cancellation_rate"`
+	Locality         *string  `json:"locality,omitempty"`
 }
 
 // JobRow is one row of a worker's job history.

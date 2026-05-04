@@ -106,7 +106,10 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		SELECT
 		  u.id::text, u.phone, u.name, u.avatar_url,
 		  %s AS status,
-		  h.is_available, u.is_vip, h.rating, h.total_jobs, h.services,
+		  h.is_available,
+		  (h.is_available AND h.last_location_at IS NOT NULL
+		    AND h.last_location_at > NOW() - INTERVAL '90 seconds') AS is_online,
+		  u.is_vip, h.rating, h.total_jobs, h.services,
 		  u.created_at, last_b.created_at AS last_active_at
 		FROM users u
 		JOIN helpers h ON h.id = u.id
@@ -135,7 +138,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		)
 		if err := rows.Scan(
 			&it.ID, &it.Phone, &it.Name, &it.AvatarURL, &status,
-			&it.IsAvailable, &it.IsVIP, &it.Rating, &it.TotalJobs, &it.Categories,
+			&it.IsAvailable, &it.IsOnline, &it.IsVIP, &it.Rating, &it.TotalJobs, &it.Categories,
 			&it.JoinedAt, &it.LastActiveAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan worker: %w", err)
@@ -167,14 +170,18 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		SELECT
 		  u.id::text, u.phone, u.name, u.avatar_url,
 		  %s AS status,
-		  h.is_available, u.is_vip, h.rating, h.total_jobs, h.services,
+		  h.is_available,
+		  (h.is_available AND h.last_location_at IS NOT NULL
+		    AND h.last_location_at > NOW() - INTERVAL '90 seconds') AS is_online,
+		  u.is_vip, h.rating, h.total_jobs, h.services,
 		  u.created_at, last_b.created_at AS last_active_at,
 		  COALESCE(h.address, ''),
 		  h.current_lat, h.current_lng,
 		  u.suspend_reason, u.ban_reason,
 		  COALESCE(stats.completed_30d, 0),
 		  COALESCE(stats.earnings_30d_cents, 0),
-		  COALESCE(stats.cancellation_rate, 0)
+		  COALESCE(stats.cancellation_rate, 0),
+		  h.locality
 		FROM users u
 		JOIN helpers h ON h.id = u.id
 		LEFT JOIN LATERAL (
@@ -205,11 +212,12 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	)
 	err := r.read.QueryRow(ctx, q, id).Scan(
 		&d.ID, &d.Phone, &d.Name, &d.AvatarURL, &status,
-		&d.IsAvailable, &d.IsVIP, &d.Rating, &d.TotalJobs, &d.Categories,
+		&d.IsAvailable, &d.IsOnline, &d.IsVIP, &d.Rating, &d.TotalJobs, &d.Categories,
 		&d.JoinedAt, &d.LastActiveAt,
 		&d.Address, &lat, &lng,
 		&d.SuspendReason, &d.BanReason,
 		&d.CompletedJobs30d, &d.Earnings30dCents, &d.CancellationRate,
+		&d.Locality,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -254,7 +262,9 @@ func (r *Repository) Jobs(ctx context.Context, workerID string, limit int) ([]Jo
 }
 
 // LivePins returns all currently-online workers with coordinates. Used by
-// the Live Map page; refreshed every 10s.
+// the Live Map page; refreshed every 10s. Filters mirror List(StatusActive)
+// so suspended/banned/pending/rejected helpers never leak onto the map even
+// if they happen to have stale lat/lng + is_available=TRUE.
 func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 	rows, err := r.read.Query(ctx, `
 		SELECT u.id::text, u.name, u.phone, h.current_lat::float8, h.current_lng::float8, h.rating::float8,
@@ -271,7 +281,13 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 		WHERE h.is_available = TRUE
 		  AND h.current_lat IS NOT NULL
 		  AND h.current_lng IS NOT NULL
+		  AND h.last_location_at IS NOT NULL
+		  AND h.last_location_at > NOW() - INTERVAL '90 seconds'
 		  AND u.deleted_at IS NULL
+		  AND u.role = 'pro'
+		  AND u.banned_at IS NULL
+		  AND u.is_suspended = FALSE
+		  AND h.approval_status = 'approved'
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("live pins: %w", err)
@@ -411,4 +427,32 @@ func (r *Repository) SetCategories(ctx context.Context, workerID string, cats []
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetLocality validates against active localities and writes the canonical
+// (case-corrected) name back. Empty input clears the field. Returns the
+// stored value or an error suitable for surfacing to the admin user.
+func (r *Repository) SetLocality(ctx context.Context, workerID, locality string) (string, error) {
+	loc := strings.TrimSpace(locality)
+	if loc == "" {
+		_, err := r.write.Exec(ctx, `UPDATE helpers SET locality = NULL WHERE id = $1::uuid`, workerID)
+		if err != nil {
+			return "", fmt.Errorf("clear locality: %w", err)
+		}
+		return "", nil
+	}
+	var canonical string
+	err := r.write.QueryRow(ctx,
+		`SELECT name FROM localities WHERE active = true AND name ILIKE $1 LIMIT 1`,
+		loc,
+	).Scan(&canonical)
+	if err != nil {
+		return "", fmt.Errorf("unknown locality")
+	}
+	if _, err := r.write.Exec(ctx,
+		`UPDATE helpers SET locality = $2 WHERE id = $1::uuid`, workerID, canonical,
+	); err != nil {
+		return "", fmt.Errorf("write locality: %w", err)
+	}
+	return canonical, nil
 }

@@ -24,7 +24,7 @@ type CartItem struct {
 
 // AddItemRequest is the body for POST /cart/add.
 type AddItemRequest struct {
-	ServiceID       string `json:"service_id"       validate:"required"`
+	ServiceID       string `json:"service_id"       validate:"required,uuid_format"`
 	DurationMinutes int    `json:"duration_minutes" validate:"required,min=1,max=480"`
 }
 

@@ -6,57 +6,59 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  Dimensions,
   Modal,
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
+  
   Animated,
-  Switch,
+  Easing,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { LoadingBars } from '../../components/ui/LoadingBars';
+import { SkeletonBox } from '../../components/SkeletonBox';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import Svg, {
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  RadialGradient as SvgRadialGradient,
+  Stop,
+  Rect,
+} from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
+import { FontFamily } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
-import { useTheme, useColors } from '../../context/ThemeContext';
 import { getMe, updateMe, deleteMe } from '../../api/users';
+import { haptics } from '../../utils/haptics';
+import { showError, showInfo } from '../../utils/toast';
+import ZopFace from '../../../assets/zop/zop-face.svg';
+import { Bloom } from '../../components/home/Bloom';
 
-type C = typeof lightColors;
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const H_PAD = 20;
 const APP_VERSION = '1.0.0';
+const H_PAD = 20;
 
-// ── Static data ───────────────────────────────────────────────────────────────
-
-const ACTION_RAIL = [
-  { id: 'bookings', label: 'Bookings', icon: 'calendar-outline' },
-  { id: 'wallet',   label: 'Wallet',   icon: 'wallet-outline' },
-  { id: 'offers',   label: 'Offers',   icon: 'pricetag-outline' },
-  { id: 'support',  label: 'Help',     icon: 'help-buoy-outline' },
-] as const;
-
-const ACCOUNT_ITEMS = [
-  { id: 'addresses', label: 'Saved Addresses', icon: 'location-outline' },
-  { id: 'roomies',   label: 'Roomies',         icon: 'home-outline' },
-  { id: 'experts',   label: 'Your Experts',    icon: 'people-outline' },
-  { id: 'payments',  label: 'Payment Methods', icon: 'card-outline' },
-  { id: 'notifs',    label: 'Notifications',   icon: 'notifications-outline' },
-] as const;
-
-const LEGAL_ITEMS = [
-  { id: 'about',   label: 'About ZopMop',     icon: 'information-circle-outline' },
-  { id: 'terms',   label: 'Terms of Service', icon: 'document-text-outline' },
-  { id: 'privacy', label: 'Privacy Policy',   icon: 'shield-checkmark-outline' },
-] as const;
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const C = {
+  bg: '#0A0A0A',
+  amber: '#F5A300',
+  amberHi: '#FFC042',
+  amberLo: '#E88F00',
+  ink: '#0D0D0F',
+  white: '#FFFFFF',
+  text: '#FFFFFF',
+  muted: 'rgba(255,255,255,0.45)',
+  meta: 'rgba(255,255,255,0.45)',
+  rowLabel: '#FFFFFF',
+  glassFill: 'rgba(255,255,255,0.06)',
+  glassFill2: 'rgba(255,255,255,0.025)',
+  glassBorder: 'rgba(255,255,255,0.07)',
+  divider: 'rgba(255,255,255,0.04)',
+  active: '#22C55E',
+  danger: '#EF4444',
+};
 
 function getInitials(name?: string | null): string {
   if (!name) return 'ZM';
@@ -67,30 +69,27 @@ function getInitials(name?: string | null): string {
 
 function formatPhone(raw?: string): string {
   if (!raw) return '';
-  const match = raw.match(/^(\+\d{2})(\d{5})(\d{5})$/);
-  if (match) return `${match[1]} ${match[2]} ${match[3]}`;
+  const m = raw.match(/^(\+\d{2})(\d{5})(\d{5})$/);
+  if (m) return `${m[1]} ${m[2]} ${m[3]}`;
   return raw;
 }
 
 function roleLabel(role?: string): string {
-  if (!role) return 'Member';
+  if (!role) return 'MEMBER';
   const r = role.toLowerCase();
-  if (r === 'pro' || r === 'helper') return 'Pro Partner';
-  if (r === 'admin') return 'Admin';
-  return 'Member';
+  if (r === 'pro' || r === 'helper') return 'PRO PARTNER';
+  if (r === 'admin') return 'ADMIN';
+  return 'MEMBER';
 }
-
-// ── Root Component ────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const { token, user, signOut, updateUser } = useAuth();
   const navigation = useNavigation<Nav>();
+  const insets = useSafeAreaInsets();
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
-  const scrollY = useRef(new Animated.Value(0)).current;
+  const [darkOn, setDarkOn] = useState(true);
+  const [remindersOn, setRemindersOn] = useState(true);
 
   useEffect(() => {
     if (!token || token === '__guest__') return;
@@ -102,14 +101,16 @@ export default function ProfileScreen() {
   }, []);
 
   const handleLogout = () => {
+    haptics.warning();
     Alert.alert('Log out of ZopMop?', 'You can sign back in anytime with your phone.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: signOut },
+      { text: 'Log out', style: 'destructive', onPress: () => { haptics.heavy(); signOut(); } },
     ]);
   };
 
-  const handleDeleteAccount = () => {
+  const handleDelete = () => {
     if (!token || token === '__guest__') return;
+    haptics.warning();
     Alert.alert(
       'Delete account',
       'This permanently removes your profile, bookings, addresses and pro data. This cannot be undone.',
@@ -132,10 +133,7 @@ export default function ProfileScreen() {
                       await deleteMe(token);
                       signOut();
                     } catch (err) {
-                      Alert.alert(
-                        'Delete failed',
-                        err instanceof Error ? err.message : 'Please try again.',
-                      );
+                      showError(err instanceof Error ? err.message : 'Please try again.', { title: 'Delete failed' });
                     }
                   },
                 },
@@ -147,89 +145,148 @@ export default function ProfileScreen() {
     );
   };
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [80, 140],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <Animated.View
-        pointerEvents="none"
-        style={[s.stickyBar, { opacity: headerOpacity }]}
-      />
-      <View style={s.topBar}>
-        <TouchableOpacity
-          style={s.iconBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-          hitSlop={10}
+    <View style={s.root}>
+      <Bloom />
+
+      <SafeAreaView style={s.safe} edges={['top']}>
+        <View style={s.topbar}>
+          <TouchableOpacity style={s.iconBtn} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
+            <Feather name="chevron-left" size={18} color={C.white} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.iconBtn}
+            onPress={() => showInfo('Reach support from the Help screen.', { title: 'Help' })}
+            activeOpacity={0.75}
+            hitSlop={10}
+          >
+            <Feather name="help-circle" size={16} color={C.white} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 110 + insets.bottom }}
+          showsVerticalScrollIndicator={false}
         >
-          <Ionicons name="chevron-back" size={22} color={c.text} />
-        </TouchableOpacity>
-        <Animated.Text
-          style={[s.topBarTitle, { opacity: headerOpacity }]}
-          numberOfLines={1}
-        >
-          {user?.name ?? 'Profile'}
-        </Animated.Text>
-        <View style={{ width: 36 }} />
-      </View>
+          <HeroCard
+            name={user?.name}
+            phone={user?.phone}
+            role={user?.role}
+            loading={fetchingProfile && !user?.phone}
+            onEdit={() => setEditVisible(true)}
+          />
 
-      <Animated.ScrollView
-        style={s.scroll}
-        contentContainerStyle={s.content}
-        showsVerticalScrollIndicator={false}
-        bounces
-        scrollEventThrottle={16}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true },
-        )}
-      >
-        <HeroCard
-          name={user?.name}
-          phone={user?.phone}
-          role={user?.role}
-          loading={fetchingProfile && !user?.phone}
-          onEdit={() => setEditVisible(true)}
-        />
+          <ActionRail navigation={navigation} />
 
-        <ActionRail navigation={navigation} />
-
-        <ReferralTicket
-          onPress={() =>
-            Alert.alert(
-              'Refer & earn ₹100',
-              'Share ZopMop with friends — you both earn ₹100 in wallet credit. Coming soon.',
-            )
-          }
-        />
-
-        <AppearanceRow />
-
-        <SectionHeader>Account</SectionHeader>
-        <GroupedList
-          items={ACCOUNT_ITEMS}
-          onPress={(id) => {
-            switch (id) {
-              case 'addresses': navigation.navigate('Addresses'); break;
-              case 'roomies':   navigation.navigate('RoomiesSetup'); break;
-              case 'experts':   Alert.alert('Your Experts', 'Expert history is coming soon.'); break;
-              case 'payments':  navigation.navigate('Payment'); break;
-              case 'notifs':    Alert.alert('Notifications', 'Notification settings are coming soon.'); break;
+          <ReferralTicket
+            onPress={() =>
+              showInfo('Share ZopMop with friends — you both earn ₹100 in wallet credit. Coming soon.', { title: 'Refer & earn ₹100' })
             }
-          }}
-        />
+          />
 
-        <SectionHeader muted>Info & Legal</SectionHeader>
-        <GroupedList items={LEGAL_ITEMS} muted />
+          <SectionHeader>Preferences</SectionHeader>
+          <Card>
+            <Row
+              icon={<Feather name="moon" size={17} color={C.amber} />}
+              label="Appearance"
+              meta={darkOn ? 'Dark mode' : 'Light mode'}
+              right={<Toggle on={darkOn} onChange={setDarkOn} />}
+            />
+            <Row
+              icon={<Feather name="bell" size={17} color={C.amber} />}
+              label="Reminders"
+              meta="30 min before booking"
+              right={<Toggle on={remindersOn} onChange={setRemindersOn} />}
+              last
+            />
+          </Card>
 
-        <DangerZone onLogout={handleLogout} onDelete={handleDeleteAccount} />
+          <SectionHeader>Account</SectionHeader>
+          <Card>
+            <Row
+              icon={<Feather name="map-pin" size={17} color={C.amber} />}
+              label="Saved Addresses"
+              meta="Home · Work · 1 more"
+              chev
+              onPress={() => navigation.navigate('Addresses')}
+            />
+            <Row
+              icon={<Feather name="home" size={17} color={C.amber} />}
+              label="Roomies"
+              meta="3 members · split bills automatically"
+              chev
+              onPress={() => navigation.navigate('RoomiesSetup')}
+            />
+            <Row
+              icon={<Feather name="users" size={17} color={C.amber} />}
+              label="Your Experts"
+              meta="5 favorite pros"
+              chev
+              onPress={() => navigation.navigate('YourExperts')}
+            />
+            <Row
+              icon={<Feather name="credit-card" size={17} color={C.amber} />}
+              label="Payment Methods"
+              meta="UPI · 2 cards"
+              chev
+              onPress={() => navigation.navigate('PaymentMethods')}
+            />
+            <Row
+              icon={<Feather name="bell" size={17} color={C.amber} />}
+              label="Notifications"
+              meta="Push · WhatsApp · Email"
+              chev
+              onPress={() => showInfo('Notification settings are coming soon.', { title: 'Notifications' })}
+              last
+            />
+          </Card>
 
-        <Footer />
-      </Animated.ScrollView>
+          <SectionHeader>Info & Legal</SectionHeader>
+          <Card>
+            <Row
+              muted
+              icon={<Feather name="info" size={17} color="rgba(255,255,255,0.6)" />}
+              label="About ZopMop"
+              chev
+              onPress={() => showInfo('ZopMop · v1.0.0\nHome, handled.', { title: 'About ZopMop' })}
+            />
+            <Row
+              muted
+              icon={<Feather name="file-text" size={17} color="rgba(255,255,255,0.6)" />}
+              label="Terms of Service"
+              chev
+              onPress={() => showInfo('Coming soon.', { title: 'Terms of Service' })}
+            />
+            <Row
+              muted
+              icon={<Feather name="shield" size={17} color="rgba(255,255,255,0.6)" />}
+              label="Privacy Policy"
+              chev
+              onPress={() => showInfo('Coming soon.', { title: 'Privacy Policy' })}
+              last
+            />
+          </Card>
+
+          <View style={s.danger}>
+            <TouchableOpacity style={s.logoutBtn} activeOpacity={0.85} onPress={handleLogout}>
+              <Feather name="log-out" size={16} color={C.danger} />
+              <Text style={s.logoutText}>Log out</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.deleteBtn} activeOpacity={0.7} onPress={handleDelete}>
+              <Text style={s.deleteText}>Delete account</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={s.footer}>
+            <Text style={s.footerVersion}>ZopMop · v{APP_VERSION}</Text>
+            <Text style={s.footerTagline}>Home, handled.</Text>
+            <View style={s.footerZop}>
+              <ZopFace width={32} height={32} opacity={0.4} />
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
 
       <EditProfileModal
         visible={editVisible}
@@ -237,55 +294,75 @@ export default function ProfileScreen() {
         phone={user?.phone}
         token={token}
         onClose={() => setEditVisible(false)}
-        onSaved={(updated) => { updateUser(updated); setEditVisible(false); }}
+        onSaved={(u) => { updateUser(u); setEditVisible(false); }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
-// ── Hero Card ─────────────────────────────────────────────────────────────────
+// Background glow now sourced from the canonical home primitive (Bloom).
 
 function HeroCard({
   name, phone, role, loading, onEdit,
 }: {
-  name?: string | null;
-  phone?: string;
-  role?: string;
-  loading?: boolean;
-  onEdit: () => void;
+  name?: string | null; phone?: string; role?: string; loading?: boolean; onEdit: () => void;
 }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const initials = getInitials(name);
   const displayName = name ?? 'Add your name';
   const displayPhone = formatPhone(phone);
+  const bookingsLabel = '14 bookings';
 
   return (
     <View style={s.heroWrap}>
       <View style={s.hero}>
-        <View style={s.heroStripe} pointerEvents="none" />
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Svg width="100%" height="100%">
+            <Defs>
+              <SvgLinearGradient id="heroBg" x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0%" stopColor="#1A1A1C" />
+                <Stop offset="100%" stopColor="#0D0D0F" />
+              </SvgLinearGradient>
+              <SvgRadialGradient id="heroGlow" cx="80%" cy="30%" rx="100%" ry="80%">
+                <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.4" />
+                <Stop offset="50%" stopColor="#F5A300" stopOpacity="0" />
+              </SvgRadialGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#heroBg)" />
+            <Rect width="100%" height="100%" fill="url(#heroGlow)" />
+          </Svg>
+        </View>
 
-        <View style={s.heroTopRow}>
+        <View style={s.heroAmberLine} pointerEvents="none" />
+
+        <View style={s.heroTop}>
           <Text style={s.heroEyebrow} numberOfLines={1}>
-            ZOPMOP · {roleLabel(role).toUpperCase()}
+            ZOPMOP · {roleLabel(role)}
           </Text>
-          <TouchableOpacity
-            onPress={onEdit}
-            hitSlop={12}
-            activeOpacity={0.75}
-            style={s.heroEditBtn}
-          >
-            <Ionicons name="pencil" size={14} color="#FFFFFF" />
+          <TouchableOpacity onPress={onEdit} activeOpacity={0.75} hitSlop={12} style={s.heroEdit}>
+            <Feather name="edit-2" size={13} color={C.white} />
           </TouchableOpacity>
         </View>
 
         <View style={s.heroBody}>
-          <View style={s.heroMonogram}>
-            <Text style={s.heroMonogramText}>{initials}</Text>
+          <View style={s.monogramWrap}>
+            <Svg width={64} height={64} style={StyleSheet.absoluteFill}>
+              <Defs>
+                <SvgLinearGradient id="monoGrad" x1="0" y1="0" x2="1" y2="1">
+                  <Stop offset="0%" stopColor="#FFC042" />
+                  <Stop offset="100%" stopColor="#F5A300" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="64" height="64" rx="32" fill="url(#monoGrad)" />
+            </Svg>
+            <Text style={s.monogramText}>{initials}</Text>
           </View>
-          <View style={s.heroTextWrap}>
+
+          <View style={{ flex: 1, minWidth: 0 }}>
             {loading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <View style={{ gap: 8 }}>
+                <SkeletonBox width="60%" height={18} borderRadius={6} />
+                <SkeletonBox width="40%" height={11} borderRadius={5} />
+              </View>
             ) : (
               <>
                 <Text style={[s.heroName, !name && { opacity: 0.6 }]} numberOfLines={1}>
@@ -296,6 +373,15 @@ function HeroCard({
                     {displayPhone}
                   </Text>
                 )}
+                <View style={s.heroChips}>
+                  <View style={s.chip}>
+                    <View style={s.chipDot} />
+                    <Text style={s.chipText}>Active member</Text>
+                  </View>
+                  <View style={s.chip}>
+                    <Text style={s.chipText}>{bookingsLabel}</Text>
+                  </View>
+                </View>
               </>
             )}
           </View>
@@ -305,62 +391,80 @@ function HeroCard({
   );
 }
 
-// ── Action Rail (4-up circular) ──────────────────────────────────────────────
-
 function ActionRail({ navigation }: { navigation: Nav }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
-  function go(id: string) {
-    switch (id) {
-      case 'bookings': navigation.navigate('Bookings'); break;
-      case 'wallet':   navigation.navigate('Wallet'); break;
-      case 'offers':   navigation.navigate('Offers'); break;
-      case 'support':  navigation.navigate('HelpSupport'); break;
-    }
-  }
+  const items = [
+    {
+      id: 'bookings',
+      label: 'Bookings',
+      icon: <Feather name="calendar" size={22} color={C.amber} />,
+      pip: 2,
+      go: () => navigation.navigate('Bookings'),
+    },
+    {
+      id: 'wallet',
+      label: 'Wallet',
+      icon: <Feather name="credit-card" size={22} color={C.amber} />,
+      go: () => navigation.navigate('Wallet'),
+    },
+    {
+      id: 'offers',
+      label: 'Offers',
+      icon: <Feather name="tag" size={22} color={C.amber} />,
+      pip: 3,
+      go: () => navigation.navigate('Offers'),
+    },
+    {
+      id: 'help',
+      label: 'Help',
+      icon: <Feather name="help-circle" size={22} color={C.amber} />,
+      go: () => navigation.navigate('HelpSupport'),
+    },
+  ];
 
   return (
     <View style={s.rail}>
-      {ACTION_RAIL.map((a) => (
-        <TouchableOpacity
-          key={a.id}
-          onPress={() => go(a.id)}
-          activeOpacity={0.75}
-          style={s.railItem}
-        >
+      {items.map((it) => (
+        <TouchableOpacity key={it.id} onPress={it.go} activeOpacity={0.75} style={s.railItem}>
           <View style={s.railBubble}>
-            <Ionicons name={a.icon as any} size={22} color={c.primary} />
+            {it.icon}
+            {it.pip != null && (
+              <View style={s.pip}>
+                <Text style={s.pipText}>{it.pip}</Text>
+              </View>
+            )}
           </View>
-          <Text style={s.railLabel} numberOfLines={1}>
-            {a.label}
-          </Text>
+          <Text style={s.railLabel} numberOfLines={1}>{it.label}</Text>
         </TouchableOpacity>
       ))}
     </View>
   );
 }
 
-// ── Referral Ticket ───────────────────────────────────────────────────────────
-
 function ReferralTicket({ onPress }: { onPress: () => void }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.85}
-      style={s.ticket}
-    >
+    <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={s.ticket}>
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Svg width="100%" height="100%">
+          <Defs>
+            <SvgLinearGradient id="ticketGrad" x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0%" stopColor="#FFC042" />
+              <Stop offset="60%" stopColor="#F5A300" />
+              <Stop offset="100%" stopColor="#E88F00" />
+            </SvgLinearGradient>
+          </Defs>
+          <Rect width="100%" height="100%" rx="20" ry="20" fill="url(#ticketGrad)" />
+        </Svg>
+      </View>
+
       <View style={s.ticketLeft}>
         <Text style={s.ticketEyebrow}>INVITE A FRIEND</Text>
         <Text style={s.ticketTitle}>Earn ₹100</Text>
-        <Text style={s.ticketSub}>per friend who joins</Text>
+        <Text style={s.ticketSub}>per friend who joins ZopMop</Text>
       </View>
 
       <View style={s.ticketRight}>
         <View style={s.ticketCta}>
-          <Ionicons name="gift-outline" size={20} color="#FFFFFF" />
+          <Feather name="share-2" size={20} color={C.amberHi} />
         </View>
         <Text style={s.ticketCtaLabel}>SHARE</Text>
       </View>
@@ -368,174 +472,78 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
   );
 }
 
-// ── Appearance Row (own card so layout is bullet-proof) ──────────────────────
-
-function AppearanceRow() {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  const { isDark, toggleTheme } = useTheme();
-
-  return (
-    <>
-      <SectionHeader>Preferences</SectionHeader>
-      <View style={s.card}>
-        <View style={s.row}>
-          <View style={s.rowIcon}>
-            <Ionicons
-              name={isDark ? 'moon' : 'sunny-outline'}
-              size={18}
-              color={c.primary}
-            />
-          </View>
-          <View style={s.rowTextWrap}>
-            <Text style={s.rowLabel} numberOfLines={1}>Appearance</Text>
-            <Text style={s.rowMeta} numberOfLines={1}>{isDark ? 'Dark' : 'Light'}</Text>
-          </View>
-          <Switch
-            value={isDark}
-            onValueChange={toggleTheme}
-            trackColor={{ false: c.border, true: c.primary }}
-            thumbColor="#FFFFFF"
-            ios_backgroundColor={c.border}
-          />
-        </View>
-      </View>
-    </>
-  );
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return <Text style={s.sectionHeader}>{children}</Text>;
 }
 
-// ── Section Header ────────────────────────────────────────────────────────────
-
-function SectionHeader({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <Text style={[s.sectionLabel, muted && { color: c.textMuted }]}>
-      {children}
-    </Text>
-  );
+function Card({ children }: { children: React.ReactNode }) {
+  return <View style={s.card}>{children}</View>;
 }
 
-// ── Grouped List ──────────────────────────────────────────────────────────────
-
-type ListItem = { id: string; label: string; icon: string };
-
-function GroupedList({
-  items, onPress, muted = false,
+function Row({
+  icon, label, meta, right, chev, onPress, muted, last,
 }: {
-  items: readonly ListItem[];
-  onPress?: (id: string) => void;
+  icon: React.ReactNode;
+  label: string;
+  meta?: string;
+  right?: React.ReactNode;
+  chev?: boolean;
+  onPress?: () => void;
   muted?: boolean;
+  last?: boolean;
 }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const Comp: any = onPress ? TouchableOpacity : View;
   return (
-    <View style={s.card}>
-      {items.map((item, i) => (
-        <React.Fragment key={item.id}>
-          <TouchableOpacity
-            style={s.row}
-            activeOpacity={0.7}
-            onPress={() => onPress?.(item.id)}
-          >
-            <View style={[s.rowIcon, muted && s.rowIconMuted]}>
-              <Ionicons
-                name={item.icon as any}
-                size={18}
-                color={muted ? c.textSecondary : c.primary}
-              />
-            </View>
-            <View style={s.rowTextWrap}>
-              <Text
-                style={[s.rowLabel, muted && { color: c.textSecondary }]}
-                numberOfLines={1}
-              >
-                {item.label}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
-          </TouchableOpacity>
-          {i < items.length - 1 && <View style={s.divider} />}
-        </React.Fragment>
-      ))}
-    </View>
-  );
-}
-
-// ── Danger Zone ───────────────────────────────────────────────────────────────
-
-function DangerZone({
-  onLogout, onDelete,
-}: {
-  onLogout: () => void;
-  onDelete: () => void;
-}) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  return (
-    <>
-      <Text style={[s.sectionLabel, { color: c.danger }]}>Danger Zone</Text>
-      <View style={[s.card, s.cardDanger]}>
-        <TouchableOpacity
-          style={s.row}
-          activeOpacity={0.7}
-          onPress={onLogout}
-        >
-          <View style={[s.rowIcon, s.rowIconDanger]}>
-            <Ionicons name="log-out-outline" size={18} color={c.danger} />
-          </View>
-          <View style={s.rowTextWrap}>
-            <Text style={[s.rowLabel, { color: c.danger }]} numberOfLines={1}>
-              Log Out
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={16}
-            color={c.danger}
-            style={{ opacity: 0.5 }}
-          />
-        </TouchableOpacity>
-        <View style={[s.divider, { backgroundColor: c.dangerBg }]} />
-        <TouchableOpacity
-          style={s.row}
-          activeOpacity={0.7}
-          onPress={onDelete}
-        >
-          <View style={[s.rowIcon, s.rowIconDanger]}>
-            <Ionicons name="trash-outline" size={18} color={c.danger} />
-          </View>
-          <View style={s.rowTextWrap}>
-            <Text style={[s.rowLabel, { color: c.danger }]} numberOfLines={1}>
-              Delete Account
-            </Text>
-          </View>
-          <Ionicons
-            name="chevron-forward"
-            size={16}
-            color={c.danger}
-            style={{ opacity: 0.5 }}
-          />
-        </TouchableOpacity>
+    <Comp
+      style={[s.row, !last && s.rowDivider]}
+      activeOpacity={0.7}
+      onPress={onPress}
+    >
+      <View style={[s.rowIcon, muted && s.rowIconMuted]}>{icon}</View>
+      <View style={s.rowText}>
+        <Text style={[s.rowLabel, muted && s.rowLabelMuted]} numberOfLines={1}>{label}</Text>
+        {!!meta && <Text style={s.rowMeta} numberOfLines={1}>{meta}</Text>}
       </View>
-    </>
+      {right}
+      {chev && <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.4)" />}
+    </Comp>
   );
 }
 
-// ── Footer ────────────────────────────────────────────────────────────────────
+function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: on ? 1 : 0,
+      duration: 220,
+      easing: Easing.bezier(0.37, 1.95, 0.66, 0.56),
+      useNativeDriver: false,
+    }).start();
+  }, [on]);
 
-function Footer() {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const left = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 20] });
+
   return (
-    <View style={s.footer}>
-      <Text style={s.footerBrand}>ZOPMOP</Text>
-      <Text style={s.footerMeta}>v{APP_VERSION}  ·  Made in India</Text>
-    </View>
+    <TouchableOpacity activeOpacity={0.85} onPress={() => onChange(!on)} style={s.toggleHit}>
+      <View style={[s.toggleTrack, on ? s.toggleOn : s.toggleOff]}>
+        {on && (
+          <View style={StyleSheet.absoluteFill}>
+            <Svg width="46" height="28">
+              <Defs>
+                <SvgLinearGradient id="togGrad" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0%" stopColor="#FFC042" />
+                  <Stop offset="100%" stopColor="#F5A300" />
+                </SvgLinearGradient>
+              </Defs>
+              <Rect width="46" height="28" rx="14" fill="url(#togGrad)" />
+            </Svg>
+          </View>
+        )}
+        <Animated.View style={[s.toggleThumb, { left }]} />
+      </View>
+    </TouchableOpacity>
   );
 }
-
-// ── Edit Profile Modal ────────────────────────────────────────────────────────
 
 function EditProfileModal({
   visible, currentName, phone, token, onClose, onSaved,
@@ -547,8 +555,6 @@ function EditProfileModal({
   onClose: () => void;
   onSaved: (user: any) => void;
 }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -559,31 +565,17 @@ function EditProfileModal({
     if (visible) {
       setName(currentName ?? '');
       setError('');
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 22,
-        stiffness: 220,
-      }).start(() => nameRef.current?.focus());
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 22, stiffness: 220 })
+        .start(() => nameRef.current?.focus());
     } else {
-      Animated.timing(slideAnim, {
-        toValue: 400,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
+      Animated.timing(slideAnim, { toValue: 400, duration: 220, useNativeDriver: true }).start();
     }
   }, [visible]);
 
   async function handleSave() {
     const trimmed = name.trim();
-    if (trimmed.length < 2) {
-      setError('Name must be at least 2 characters.');
-      return;
-    }
-    if (!token || token === '__guest__') {
-      setError('Not authenticated.');
-      return;
-    }
+    if (trimmed.length < 2) { setError('Name must be at least 2 characters.'); return; }
+    if (!token || token === '__guest__') { setError('Not authenticated.'); return; }
     setError('');
     setSaving(true);
     try {
@@ -599,86 +591,67 @@ function EditProfileModal({
   const hasChanges = name.trim() !== (currentName ?? '').trim();
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={s.backdrop} activeOpacity={1} onPress={onClose} />
-
         <Animated.View style={[s.sheet, { transform: [{ translateY: slideAnim }] }]}>
           <View style={s.sheetHandle} />
-
           <View style={s.sheetHeader}>
             <Text style={s.sheetTitle}>Edit profile</Text>
-            <TouchableOpacity
-              style={s.sheetClose}
-              onPress={onClose}
-              hitSlop={10}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="close" size={18} color={c.textSecondary} />
+            <TouchableOpacity style={s.sheetClose} onPress={onClose} hitSlop={10} activeOpacity={0.7}>
+              <Feather name="x" size={18} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
           </View>
 
-          <View style={s.formFields}>
-            <View style={s.fieldGroup}>
+          <View style={{ marginBottom: 24 }}>
+            <View style={{ marginBottom: 16 }}>
               <Text style={s.fieldLabel}>Full name</Text>
               <TouchableOpacity
                 style={[s.fieldCard, error ? s.fieldCardError : null]}
                 activeOpacity={1}
                 onPress={() => nameRef.current?.focus()}
               >
-                <Ionicons name="person-outline" size={18} color={c.textMuted} />
+                <Feather name="user" size={18} color="rgba(255,255,255,0.5)" />
                 <TextInput
                   ref={nameRef}
                   style={s.fieldInput}
                   value={name}
                   onChangeText={(t) => { setName(t); if (error) setError(''); }}
                   placeholder="Your full name"
-                  placeholderTextColor={c.textMuted}
+                  placeholderTextColor="rgba(255,255,255,0.4)"
                   autoCapitalize="words"
                   maxLength={60}
                   returnKeyType="done"
                   onSubmitEditing={handleSave}
                 />
                 {name.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => setName('')}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="close-circle" size={18} color={c.textMuted} />
+                  <TouchableOpacity onPress={() => setName('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Feather name="x-circle" size={18} color="rgba(255,255,255,0.5)" />
                   </TouchableOpacity>
                 )}
               </TouchableOpacity>
               {error ? <Text style={s.fieldError}>{error}</Text> : null}
             </View>
 
-            <View style={s.fieldGroup}>
+            <View style={{ marginBottom: 16 }}>
               <Text style={s.fieldLabel}>Mobile</Text>
               <View style={[s.fieldCard, s.fieldCardLocked]}>
-                <Ionicons name="call-outline" size={18} color={c.textMuted} />
+                <Feather name="phone" size={18} color="rgba(255,255,255,0.4)" />
                 <Text style={s.fieldInputLocked}>{formatPhone(phone)}</Text>
-                <Ionicons name="lock-closed-outline" size={14} color={c.textMuted} />
+                <Feather name="lock" size={14} color="rgba(255,255,255,0.4)" />
               </View>
               <Text style={s.fieldHint}>Phone number can't be changed.</Text>
             </View>
           </View>
 
           <TouchableOpacity
-            style={[s.saveBtn, (!hasChanges || saving) && s.saveBtnDisabled]}
+            style={[s.saveBtn, (!hasChanges || saving) && { opacity: 0.4 }]}
             onPress={handleSave}
             disabled={!hasChanges || saving}
             activeOpacity={0.85}
           >
             {saving
-              ? <ActivityIndicator color="#FFFFFF" size="small" />
+              ? <LoadingBars color={C.ink} size="small" />
               : <Text style={s.saveBtnText}>Save changes</Text>}
           </TouchableOpacity>
         </Animated.View>
@@ -687,399 +660,386 @@ function EditProfileModal({
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.bg },
+  safe: { flex: 1 },
 
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { paddingBottom: 48 },
+  topbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  iconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)',
+  },
 
-    // Top bar
-    stickyBar: {
-      position: 'absolute',
-      top: 0, left: 0, right: 0,
-      height: 92,
-      backgroundColor: c.background,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: c.border,
-      zIndex: 1,
-    },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: H_PAD,
-      paddingTop: 8,
-      paddingBottom: 12,
-      zIndex: 2,
-    },
-    iconBtn: {
-      width: 36, height: 36,
-      borderRadius: 18,
-      backgroundColor: c.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: c.border,
-    },
-    topBarTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.md,
-      color: c.text,
-      letterSpacing: -0.2,
-      maxWidth: SCREEN_WIDTH - 160,
-    },
+  // Hero
+  heroWrap: { paddingHorizontal: H_PAD, paddingTop: 14 },
+  hero: {
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  heroAmberLine: {
+    position: 'absolute', bottom: 0, left: '20%', right: '20%', height: 1,
+    backgroundColor: 'rgba(245,163,0,0.4)',
+  },
+  heroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  heroEyebrow: {
+    fontFamily: FontFamily.bold,
+    fontSize: 10,
+    letterSpacing: 1.8,
+    color: 'rgba(245,163,0,0.95)',
+  },
+  heroEdit: {
+    width: 30, height: 30, borderRadius: 15,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  heroBody: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  monogramWrap: {
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+    shadowColor: '#F5A300',
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  monogramText: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: 22,
+    color: C.ink,
+    letterSpacing: -0.4,
+  },
+  heroName: {
+    fontFamily: FontFamily.bold,
+    fontSize: 22,
+    color: C.white,
+    letterSpacing: -0.4,
+    lineHeight: 24,
+  },
+  heroPhone: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.55)',
+    marginTop: 4,
+  },
+  heroChips: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  chip: {
+    paddingVertical: 3, paddingHorizontal: 8, borderRadius: 99,
+    backgroundColor: 'rgba(245,163,0,0.18)',
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+  },
+  chipDot: {
+    width: 5, height: 5, borderRadius: 3,
+    backgroundColor: C.active,
+    shadowColor: C.active, shadowOpacity: 0.8, shadowRadius: 4,
+  },
+  chipText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 10,
+    color: C.amberHi,
+    letterSpacing: 0.2,
+  },
 
-    // Hero
-    heroWrap: {
-      paddingHorizontal: H_PAD,
-      marginTop: 8,
-      marginBottom: 24,
-    },
-    hero: {
-      backgroundColor: c.primary,
-      borderRadius: 28,
-      paddingHorizontal: 22,
-      paddingTop: 22,
-      paddingBottom: 26,
-      overflow: 'hidden',
-      ...Shadow.lg,
-    },
-    heroStripe: {
-      position: 'absolute',
-      bottom: 0, left: 0, right: 0,
-      height: 4,
-      backgroundColor: c.accentLight,
-    },
-    heroTopRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 24,
-    },
-    heroEyebrow: {
-      flex: 1,
-      fontFamily: FontFamily.bold,
-      fontSize: 10,
-      letterSpacing: 1.6,
-      color: 'rgba(255,255,255,0.7)',
-    },
-    heroEditBtn: {
-      width: 32, height: 32,
-      borderRadius: 16,
-      backgroundColor: 'rgba(255,255,255,0.16)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.25)',
-    },
-    heroBody: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-    heroMonogram: {
-      width: 64, height: 64,
-      borderRadius: 32,
-      backgroundColor: 'rgba(255,255,255,0.14)',
-      borderWidth: 1.5,
-      borderColor: 'rgba(255,255,255,0.4)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 16,
-    },
-    heroMonogramText: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize.xl,
-      color: '#FFFFFF',
-      letterSpacing: 0.5,
-    },
-    heroTextWrap: { flex: 1 },
-    heroName: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['3xl'],
-      color: '#FFFFFF',
-      letterSpacing: -0.6,
-      lineHeight: FontSize['3xl'] + 4,
-    },
-    heroPhone: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.sm,
-      color: 'rgba(255,255,255,0.78)',
-      marginTop: 4,
-      letterSpacing: 0.2,
-    },
+  // Action rail
+  rail: {
+    flexDirection: 'row',
+    paddingHorizontal: 14,
+    paddingTop: 18,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  railItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 14,
+    gap: 6,
+  },
+  railBubble: {
+    width: 54, height: 54, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.07)',
+    position: 'relative',
+  },
+  pip: {
+    position: 'absolute', top: -2, right: -2,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: C.amber,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: C.bg,
+  },
+  pipText: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: 9,
+    color: C.ink,
+    lineHeight: 10,
+  },
+  railLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.85)',
+  },
 
-    // Action rail (4-up)
-    rail: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingHorizontal: H_PAD,
-      marginBottom: 28,
-    },
-    railItem: {
-      flex: 1,
-      alignItems: 'center',
-    },
-    railBubble: {
-      width: 56, height: 56,
-      borderRadius: 28,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: c.border,
-      marginBottom: 8,
-    },
-    railLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.text,
-      letterSpacing: -0.1,
-      textAlign: 'center',
-    },
+  // Ticket
+  ticket: {
+    marginHorizontal: H_PAD,
+    marginTop: 18,
+    padding: 18,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    shadowColor: '#F5A300',
+    shadowOpacity: 0.4,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  ticketLeft: { flex: 1 },
+  ticketEyebrow: {
+    fontFamily: FontFamily.bold,
+    fontSize: 10,
+    letterSpacing: 1.8,
+    color: 'rgba(13,13,15,0.6)',
+  },
+  ticketTitle: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: 24,
+    color: C.ink,
+    letterSpacing: -0.4,
+    marginTop: 4,
+    lineHeight: 26,
+  },
+  ticketSub: {
+    fontFamily: FontFamily.medium,
+    fontSize: 12,
+    color: 'rgba(13,13,15,0.7)',
+    marginTop: 4,
+  },
+  ticketRight: { alignItems: 'center', gap: 6 },
+  ticketCta: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: C.ink,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+  },
+  ticketCtaLabel: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: 10,
+    color: C.ink,
+    letterSpacing: 1.2,
+  },
 
-    // Referral ticket
-    ticket: {
-      marginHorizontal: H_PAD,
-      marginBottom: 28,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.accent,
-      borderRadius: 22,
-      paddingVertical: 20,
-      paddingHorizontal: 22,
-      ...Shadow.md,
-    },
-    ticketLeft: {
-      flex: 1,
-    },
-    ticketEyebrow: {
-      fontFamily: FontFamily.bold,
-      fontSize: 10,
-      letterSpacing: 1.4,
-      color: 'rgba(255,255,255,0.78)',
-      marginBottom: 6,
-    },
-    ticketTitle: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['2xl'],
-      color: '#FFFFFF',
-      letterSpacing: -0.5,
-    },
-    ticketSub: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.sm,
-      color: 'rgba(255,255,255,0.85)',
-      marginTop: 2,
-    },
-    ticketRight: {
-      alignItems: 'center',
-      marginLeft: 16,
-    },
-    ticketCta: {
-      width: 44, height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(255,255,255,0.18)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.3)',
-      marginBottom: 6,
-    },
-    ticketCtaLabel: {
-      fontFamily: FontFamily.bold,
-      fontSize: 10,
-      color: '#FFFFFF',
-      letterSpacing: 1.4,
-    },
+  // Section header
+  sectionHeader: {
+    fontFamily: FontFamily.bold,
+    fontSize: 11,
+    letterSpacing: 1.3,
+    color: 'rgba(255,255,255,0.45)',
+    paddingHorizontal: 24,
+    paddingTop: 22,
+    paddingBottom: 8,
+    textTransform: 'uppercase',
+  },
 
-    // Section header
-    sectionLabel: {
-      fontFamily: FontFamily.bold,
-      fontSize: 11,
-      letterSpacing: 1.4,
-      color: c.textSecondary,
-      textTransform: 'uppercase',
-      marginHorizontal: H_PAD,
-      marginBottom: 10,
-      marginTop: 4,
-    },
+  // Card
+  card: {
+    marginHorizontal: H_PAD,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  rowDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  rowIcon: {
+    width: 32, height: 32, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(245,163,0,0.12)',
+  },
+  rowIconMuted: { backgroundColor: 'rgba(255,255,255,0.06)' },
+  rowText: { flex: 1, minWidth: 0 },
+  rowLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 14,
+    color: C.white,
+    letterSpacing: -0.1,
+    lineHeight: 17,
+  },
+  rowLabelMuted: {
+    fontFamily: FontFamily.medium,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.78)',
+  },
+  rowMeta: {
+    fontFamily: FontFamily.medium,
+    fontSize: 11.5,
+    color: 'rgba(255,255,255,0.45)',
+    marginTop: 2,
+  },
 
-    // Card / list
-    card: {
-      backgroundColor: c.white,
-      marginHorizontal: H_PAD,
-      borderRadius: 18,
-      borderWidth: 1,
-      borderColor: c.border,
-      overflow: 'hidden',
-      marginBottom: 24,
-    },
-    cardDanger: {
-      borderColor: c.dangerBg,
-    },
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-    },
-    rowIcon: {
-      width: 36, height: 36,
-      borderRadius: 12,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 14,
-    },
-    rowIconMuted: { backgroundColor: c.surface },
-    rowIconDanger: { backgroundColor: c.dangerBg },
-    rowTextWrap: { flex: 1 },
-    rowLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: c.text,
-      letterSpacing: -0.1,
-    },
-    rowMeta: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      marginTop: 2,
-    },
-    divider: {
-      height: StyleSheet.hairlineWidth,
-      backgroundColor: c.border,
-      marginLeft: 16 + 36 + 14,
-    },
+  // Toggle
+  toggleHit: { padding: 2 },
+  toggleTrack: {
+    width: 46, height: 28, borderRadius: 14,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  toggleOff: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  toggleOn: {},
+  toggleThumb: {
+    position: 'absolute',
+    top: 2,
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+    zIndex: 1,
+  },
 
-    // Footer
-    footer: {
-      alignItems: 'center',
-      paddingTop: 16,
-      paddingBottom: 8,
-    },
-    footerBrand: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize.sm,
-      letterSpacing: 4,
-      color: c.textMuted,
-    },
-    footerMeta: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      marginTop: 6,
-      letterSpacing: 0.4,
-    },
+  // Danger
+  danger: { marginHorizontal: H_PAD, marginTop: 24, gap: 8 },
+  logoutBtn: {
+    height: 46, borderRadius: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: 'rgba(239,68,68,0.08)',
+    borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)',
+  },
+  logoutText: {
+    fontFamily: FontFamily.bold,
+    fontSize: 14,
+    color: C.danger,
+    letterSpacing: -0.1,
+  },
+  deleteBtn: {
+    height: 46, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  deleteText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 12,
+    color: 'rgba(239,68,68,0.75)',
+  },
 
-    // Edit modal
-    backdrop: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(0,0,0,0.5)',
-    },
-    sheet: {
-      position: 'absolute',
-      bottom: 0, left: 0, right: 0,
-      backgroundColor: c.white,
-      borderTopLeftRadius: 28,
-      borderTopRightRadius: 28,
-      paddingBottom: Platform.OS === 'ios' ? 36 : 24,
-      paddingHorizontal: 20,
-      paddingTop: 12,
-      ...Shadow.lg,
-    },
-    sheetHandle: {
-      width: 36, height: 4,
-      borderRadius: 2,
-      backgroundColor: c.border,
-      alignSelf: 'center',
-      marginBottom: 16,
-    },
-    sheetHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 24,
-    },
-    sheetTitle: {
-      flex: 1,
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize.xl,
-      color: c.text,
-      letterSpacing: -0.4,
-    },
-    sheetClose: {
-      width: 32, height: 32,
-      borderRadius: Radius.full,
-      backgroundColor: c.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    formFields: { marginBottom: 24 },
-    fieldGroup: { marginBottom: 16 },
-    fieldLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      marginLeft: 2,
-      marginBottom: 6,
-    },
-    fieldCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.white,
-      borderRadius: 16,
-      borderWidth: 1.5,
-      borderColor: c.border,
-      height: 56,
-      paddingHorizontal: 16,
-    },
-    fieldCardError: { borderColor: c.danger },
-    fieldCardLocked: { backgroundColor: c.surface, borderColor: c.border },
-    fieldInput: {
-      flex: 1,
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.md,
-      color: c.text,
-      paddingVertical: 0,
-      marginLeft: 10,
-    },
-    fieldInputLocked: {
-      flex: 1,
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.md,
-      color: c.textMuted,
-      marginLeft: 10,
-    },
-    fieldError: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.danger,
-      marginLeft: 2,
-      marginTop: 4,
-    },
-    fieldHint: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      marginLeft: 2,
-      marginTop: 4,
-    },
-    saveBtn: {
-      height: 54,
-      backgroundColor: c.primary,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      ...Shadow.md,
-    },
-    saveBtnDisabled: { opacity: 0.4 },
-    saveBtnText: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.md,
-      color: '#FFFFFF',
-      letterSpacing: 0.2,
-    },
-  });
-}
+  // Footer
+  footer: { paddingTop: 24, paddingBottom: 16, alignItems: 'center' },
+  footerVersion: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.35)',
+    letterSpacing: 0.4,
+  },
+  footerTagline: {
+    fontFamily: FontFamily.medium,
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.25)',
+    marginTop: 4,
+    letterSpacing: 0.5,
+  },
+  footerZop: { marginTop: 14, alignItems: 'center' },
+
+  // Edit modal
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  sheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#101012',
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    paddingHorizontal: 20, paddingTop: 12,
+    borderTopWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  sheetHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
+  sheetTitle: {
+    flex: 1,
+    fontFamily: FontFamily.extrabold,
+    fontSize: 20, color: C.white,
+    letterSpacing: -0.4,
+  },
+  sheetClose: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  fieldLabel: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 13, color: 'rgba(255,255,255,0.65)',
+    marginLeft: 2, marginBottom: 6,
+  },
+  fieldCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    height: 56, paddingHorizontal: 16,
+  },
+  fieldCardError: { borderColor: C.danger },
+  fieldCardLocked: { backgroundColor: 'rgba(255,255,255,0.03)' },
+  fieldInput: {
+    flex: 1,
+    fontFamily: FontFamily.semibold,
+    fontSize: 16, color: C.white, paddingVertical: 0,
+  },
+  fieldInputLocked: {
+    flex: 1, fontFamily: FontFamily.medium, fontSize: 16,
+    color: 'rgba(255,255,255,0.5)',
+  },
+  fieldError: {
+    fontFamily: FontFamily.regular, fontSize: 11,
+    color: C.danger, marginLeft: 2, marginTop: 4,
+  },
+  fieldHint: {
+    fontFamily: FontFamily.regular, fontSize: 11,
+    color: 'rgba(255,255,255,0.4)', marginLeft: 2, marginTop: 4,
+  },
+  saveBtn: {
+    height: 54, borderRadius: 18,
+    backgroundColor: C.amber,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#F5A300', shadowOpacity: 0.4,
+    shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+  },
+  saveBtnText: {
+    fontFamily: FontFamily.extrabold, fontSize: 16,
+    color: C.ink, letterSpacing: 0.2,
+  },
+});

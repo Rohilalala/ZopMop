@@ -1,0 +1,491 @@
+{
+    "metrics": {
+        "http_req_receiving": {
+            "p(95)": 0.09979999999999911,
+            "avg": 0.04243434492968126,
+            "min": 0,
+            "med": 0.028,
+            "max": 10.164,
+            "p(90)": 0.079
+        },
+        "http_req_failed": {
+            "passes": 11708,
+            "fails": 8557,
+            "value": 0.5777448803355539
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "iteration_duration": {
+            "avg": 199.38772214431054,
+            "min": 0.335792,
+            "med": 201.18033350000002,
+            "max": 568.123125,
+            "p(90)": 284.3151503,
+            "p(95)": 294.21973155
+        },
+        "http_req_sending": {
+            "med": 0.012,
+            "max": 11.98,
+            "p(90)": 0.032,
+            "p(95)": 0.04,
+            "avg": 0.019934122871945372,
+            "min": 0
+        },
+        "data_sent": {
+            "count": 36185085,
+            "rate": 141524.31652305048
+        },
+        "http_req_waiting": {
+            "min": 0,
+            "med": 1.272,
+            "max": 563.942,
+            "p(90)": 7.9036,
+            "p(95)": 14.033999999999983,
+            "avg": 4.167460695780904
+        },
+        "vus_max": {
+            "value": 55,
+            "min": 55,
+            "max": 55
+        },
+        "http_req_duration{name:sdui_home}": {
+            "avg": 2.5168541617263442,
+            "min": 0.078,
+            "med": 0.308,
+            "max": 73.923,
+            "p(90)": 1.1908,
+            "p(95)": 18.132199999999976,
+            "thresholds": {
+                "p(95)<800": false
+            }
+        },
+        "http_req_duration{name:services}": {
+            "avg": 2.2174556886227514,
+            "min": 0.077,
+            "med": 0.297,
+            "max": 65.353,
+            "p(90)": 1.1306000000000003,
+            "p(95)": 11.796699999999966,
+            "thresholds": {
+                "p(95)<400": false
+            }
+        },
+        "http_req_duration{name:zones_check}": {
+            "p(90)": 6.911,
+            "p(95)": 6.911,
+            "avg": 6.911,
+            "min": 6.911,
+            "med": 6.911,
+            "max": 6.911,
+            "thresholds": {
+                "p(95)<300": false
+            }
+        },
+        "iterations": {
+            "count": 17310,
+            "rate": 67.70153832757347
+        },
+        "booking_create_2xx": {
+            "passes": 945,
+            "fails": 2154,
+            "thresholds": {
+                "rate>0.6": true
+            },
+            "value": 0.30493707647628265
+        },
+        "http_reqs": {
+            "count": 20265,
+            "rate": 79.25890665559078
+        },
+        "thundering_herd_latency_ms": {
+            "p(95)": 267.09999999999997,
+            "avg": 45.704,
+            "min": 0,
+            "med": 14,
+            "max": 568,
+            "p(90)": 74.60000000000007
+        },
+        "http_req_duration": {
+            "p(90)": 7.996,
+            "p(95)": 14.095,
+            "avg": 4.229829163582508,
+            "min": 0,
+            "med": 1.322,
+            "max": 564.571
+        },
+        "http_req_duration{name:bookings_create}": {
+            "med": 6.889,
+            "max": 564.571,
+            "p(90)": 21.250200000000003,
+            "p(95)": 38.714199999999934,
+            "avg": 13.906815747015157,
+            "min": 0.299,
+            "thresholds": {
+                "p(95)<1500": false
+            }
+        },
+        "idempotent_retries": {
+            "count": 939,
+            "rate": 3.67254445347149
+        },
+        "group_duration": {
+            "min": 0.09025,
+            "med": 1.026375,
+            "max": 79.247208,
+            "p(90)": 51.104925,
+            "p(95)": 55.6398375,
+            "avg": 8.526254419354842
+        },
+        "checks": {
+            "passes": 7549,
+            "fails": 7520,
+            "value": 0.500962240361006
+        },
+        "dedup_conflicts_409": {
+            "rate": 3.9854342897629906,
+            "count": 1019
+        },
+        "data_received": {
+            "count": 17876038,
+            "rate": 69915.38254200808
+        },
+        "http_req_duration{name:helper_loc_put}": {
+            "med": 2.917,
+            "max": 87.662,
+            "p(90)": 6.754400000000001,
+            "p(95)": 8.369399999999999,
+            "avg": 3.860696491919587,
+            "min": 0.891,
+            "thresholds": {
+                "p(95)<400": false
+            }
+        },
+        "http_req_blocked": {
+            "p(90)": 0.008,
+            "p(95)": 0.01,
+            "avg": 0.011089760671107745,
+            "min": 0,
+            "med": 0.003,
+            "max": 25.66
+        },
+        "vus": {
+            "value": 0,
+            "min": 0,
+            "max": 49
+        },
+        "http_req_duration{name:health}": {
+            "avg": 1.773,
+            "min": 1.773,
+            "med": 1.773,
+            "max": 1.773,
+            "p(90)": 1.773,
+            "p(95)": 1.773,
+            "thresholds": {
+                "p(95)<200": false
+            }
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.004168517147791756,
+            "min": 0,
+            "med": 0,
+            "max": 3.295
+        },
+        "http_req_duration{name:me}": {
+            "med": 1.699,
+            "max": 59.91,
+            "p(90)": 3.9413,
+            "p(95)": 5.184949999999999,
+            "avg": 2.264355921855918,
+            "min": 0.498,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_failed{tag:expected_failure}": {
+            "passes": 0,
+            "fails": 0,
+            "thresholds": {
+                "rate<1.01": false
+            },
+            "value": 0
+        },
+        "errors_5xx": {
+            "count": 0,
+            "rate": 0,
+            "thresholds": {
+                "count<5": false
+            }
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(95)": 12.015199999999977,
+            "avg": 4.109348603482541,
+            "min": 0.498,
+            "med": 2.323,
+            "max": 560.23,
+            "p(90)": 8.5548
+        },
+        "expected_auth_fails": {
+            "count": 150,
+            "rate": 0.5866684430465638
+        }
+    },
+    "root_group": {
+        "checks": {
+            "services 200": {
+                "name": "services 200",
+                "path": "::services 200",
+                "id": "92ea877a9fee8534139eded940e3f9f0",
+                "passes": 37,
+                "fails": 3302
+            },
+            "list 2xx": {
+                "id": "2eb426b2bf6c52288c8c79b5f0b0b7e3",
+                "passes": 2433,
+                "fails": 0,
+                "name": "list 2xx",
+                "path": "::list 2xx"
+            },
+            "loc 200": {
+                "fails": 0,
+                "name": "loc 200",
+                "path": "::loc 200",
+                "id": "5d6774a2f8922693dd2773db9046bbe7",
+                "passes": 2536
+            },
+            "me 200": {
+                "path": "::me 200",
+                "id": "30e7556edf82eff0e3762598c402eb40",
+                "passes": 1637,
+                "fails": 0,
+                "name": "me 200"
+            },
+            "sdui 200": {
+                "fails": 4193,
+                "name": "sdui 200",
+                "path": "::sdui 200",
+                "id": "680b80154d6991a5abb525ac57d321ca",
+                "passes": 23
+            },
+            "herd 2xx | 409 | 429": {
+                "name": "herd 2xx | 409 | 429",
+                "path": "::herd 2xx | 409 | 429",
+                "id": "e1648abbb40fa8781113fe2334ab9405",
+                "passes": 500,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "public surface": {
+                "name": "public surface",
+                "path": "::public surface",
+                "id": "58a0b0e3a2e7d4341407e559a48bda76",
+                "groups": {},
+                "checks": {
+                        "health 200": {
+                            "name": "health 200",
+                            "path": "::public surface::health 200",
+                            "id": "25498a3afddb318ab3ee47e0335edcc3",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "services 200": {
+                            "name": "services 200",
+                            "path": "::public surface::services 200",
+                            "id": "edf52ed6acef3d30b520fd06ce66224d",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "sdui 200": {
+                            "name": "sdui 200",
+                            "path": "::public surface::sdui 200",
+                            "id": "555554cb6b55d72c6074082436509b96",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "zones 200": {
+                            "id": "38c61fcca170125e4ffd1d7c3d0ed8bb",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "zones 200",
+                            "path": "::public surface::zones 200"
+                        }
+                    }
+            },
+            "auth surface": {
+                "path": "::auth surface",
+                "id": "9fee91327977fb4bb1d3bcf86298fd65",
+                "groups": {},
+                "checks": {
+                        "me 200": {
+                            "id": "0c53619b08b4bbb8925125de52975428",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "me 200",
+                            "path": "::auth surface::me 200"
+                        },
+                        "helper profile 200": {
+                            "fails": 0,
+                            "name": "helper profile 200",
+                            "path": "::auth surface::helper profile 200",
+                            "id": "f855f7c29dbc762de3c8ee4feec7677a",
+                            "passes": 1
+                        },
+                        "helper loc 200": {
+                            "name": "helper loc 200",
+                            "path": "::auth surface::helper loc 200",
+                            "id": "b0cc22e80ee58d4fd4ae2b7cfa9a9dd6",
+                            "passes": 1,
+                            "fails": 0
+                        }
+                    },
+                "name": "auth surface"
+            },
+            "bookings golden path": {
+                "path": "::bookings golden path",
+                "id": "975e423507b680050cab72a524950411",
+                "groups": {},
+                "checks": {
+                        "create 2xx or 409": {
+                            "id": "45958ae6dd44e2de601940ac7ac81adb",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "create 2xx or 409",
+                            "path": "::bookings golden path::create 2xx or 409"
+                        }
+                    },
+                "name": "bookings golden path"
+            },
+            "invalid JWT": {
+                "path": "::invalid JWT",
+                "id": "9ec4793b277739979c857b3f6b966520",
+                "groups": {},
+                "checks": {
+                        "401 on garbage token": {
+                            "name": "401 on garbage token",
+                            "path": "::invalid JWT::401 on garbage token",
+                            "id": "67615083e490d476d38bf7d5ddf7c8cf",
+                            "passes": 50,
+                            "fails": 0
+                        }
+                    },
+                "name": "invalid JWT"
+            },
+            "forged-but-malformed JWT": {
+                "id": "235f750e6247b1ac4910fe5bc8c3acc6",
+                "groups": {},
+                "checks": {
+                        "401 on tampered token": {
+                            "name": "401 on tampered token",
+                            "path": "::forged-but-malformed JWT::401 on tampered token",
+                            "id": "cc3cfa49c8481e29fb2fa24f3e6daa66",
+                            "passes": 50,
+                            "fails": 0
+                        }
+                    },
+                "name": "forged-but-malformed JWT",
+                "path": "::forged-but-malformed JWT"
+            },
+            "wrong role on pro-only endpoint": {
+                "checks": {
+                    "403 on wrong role": {
+                        "id": "202653fb488da619eaecf9cdca318e6a",
+                        "passes": 50,
+                        "fails": 0,
+                        "name": "403 on wrong role",
+                        "path": "::wrong role on pro-only endpoint::403 on wrong role"
+                    }
+                },
+                "name": "wrong role on pro-only endpoint",
+                "path": "::wrong role on pro-only endpoint",
+                "id": "404b0c39b02232a1476144913f31870e",
+                "groups": {}
+            },
+            "missing required field on booking create": {
+                "checks": {
+                    "400 on missing field": {
+                        "fails": 0,
+                        "name": "400 on missing field",
+                        "path": "::missing required field on booking create::400 on missing field",
+                        "id": "54bab98e53c8a13613d558f14718dbe7",
+                        "passes": 50
+                    }
+                },
+                "name": "missing required field on booking create",
+                "path": "::missing required field on booking create",
+                "id": "aebb19c0a39a1dc6089bdf5a9a007873",
+                "groups": {}
+            },
+            "out-of-range coordinates": {
+                "checks": {
+                    "400 on bad coords": {
+                        "name": "400 on bad coords",
+                        "path": "::out-of-range coordinates::400 on bad coords",
+                        "id": "c0540776590546774992202d954824e1",
+                        "passes": 50,
+                        "fails": 0
+                    }
+                },
+                "name": "out-of-range coordinates",
+                "path": "::out-of-range coordinates",
+                "id": "5be6bae4465f6dc39bf23a65fdd6594d",
+                "groups": {}
+            },
+            "tampered booking id": {
+                "checks": {
+                    "400 on bad uuid": {
+                        "id": "3178d1cf9227dfd6a2d1deb6d17266a2",
+                        "passes": 50,
+                        "fails": 0,
+                        "name": "400 on bad uuid",
+                        "path": "::tampered booking id::400 on bad uuid"
+                    }
+                },
+                "name": "tampered booking id",
+                "path": "::tampered booking id",
+                "id": "4d926f3272b8503539c0ced48e0d2739",
+                "groups": {}
+            },
+            "cancel a booking that is not yours": {
+                "checks": {
+                    "404 on unknown booking": {
+                        "fails": 0,
+                        "name": "404 on unknown booking",
+                        "path": "::cancel a booking that is not yours::404 on unknown booking",
+                        "id": "97370c9f0e62b4ff147bf11588e51c27",
+                        "passes": 50
+                    }
+                },
+                "name": "cancel a booking that is not yours",
+                "path": "::cancel a booking that is not yours",
+                "id": "a73e7ff9c1e0ccf9ccbb6f451bd26b7f",
+                "groups": {}
+            },
+            "oversized body": {
+                "name": "oversized body",
+                "path": "::oversized body",
+                "id": "86c66adc6178f880f648c397f2bf2899",
+                "groups": {},
+                "checks": {
+                        "413 or 400 on oversize": {
+                            "name": "413 or 400 on oversize",
+                            "path": "::oversized body::413 or 400 on oversize",
+                            "id": "7621a81432ee14f9e1dcce1646562495",
+                            "passes": 25,
+                            "fails": 25
+                        }
+                    }
+            }
+        }
+    }
+}

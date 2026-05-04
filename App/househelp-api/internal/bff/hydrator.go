@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/adityarohilla/househelp-api/pkg/database"
 )
 
 // hydrationBudget bounds total time spent fetching all $ref sources for one
@@ -363,13 +366,18 @@ func (h *Hydrator) suffixFor(rc RequestContext, userScoped bool) string {
 }
 
 // cacheGet reads + JSON-decodes a single hydra cache entry. Treats any error
-// (including key-miss) as a miss and never propagates.
+// (including key-miss) as a miss and never propagates. A real Redis failure
+// (not redis.Nil) is logged at warn level so operators can see when the L1 is
+// degraded; the request still proceeds via the underlying source fetch.
 func (h *Hydrator) cacheGet(ctx context.Context, key string) (any, bool) {
 	if h.rdb == nil {
 		return nil, false
 	}
 	v, err := h.rdb.Get(ctx, key).Bytes()
 	if err != nil {
+		if database.IsRedisDown(err) {
+			log.Warn().Err(err).Str("key", key).Msg("hydra cache GET failed; falling through to source")
+		}
 		return nil, false
 	}
 	var out any

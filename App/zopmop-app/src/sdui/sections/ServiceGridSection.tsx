@@ -5,13 +5,13 @@
 
 import React, { useCallback } from 'react';
 import {
-  Image,
   Text,
   View,
   StyleSheet,
   Dimensions,
   type TextStyle,
 } from 'react-native';
+import { Image } from 'expo-image';
 
 import { Feather } from '@expo/vector-icons';
 
@@ -20,6 +20,7 @@ import { GlassCard } from '../../components/home/GlassCard';
 import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { useCart } from '../../context/CartContext';
+import { haptics } from '../../utils/haptics';
 import type { ApiService } from '../../api/services';
 import type { SduiAction, ServiceGridData } from '../types';
 
@@ -44,6 +45,7 @@ export function ServiceGridSection({ data, onAction }: Props) {
 
   const handlePress = useCallback(
     (svc: ApiService) => {
+      haptics.light();
       onAction({
         trigger: 'tap',
         type:    'navigate',
@@ -177,7 +179,7 @@ function ServiceCard({
                 return (
                   <Image
                     source={src}
-                    resizeMode="contain"
+                    contentFit="contain"
                     style={{
                       width:  featured ? '62%' : '78%',
                       height: featured ? '84%' : '78%',

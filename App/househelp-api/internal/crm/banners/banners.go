@@ -17,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 var ErrNotFound = errors.New("banner not found")
@@ -201,15 +202,15 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/banners")
 	g.Get("/",          h.List)
-	g.Post("/",         h.Create)
-	g.Post("/reorder",  h.Reorder)
+	g.Post("/",         middleware.RequirePermission("banners.create"), h.Create)
+	g.Post("/reorder",  middleware.RequirePermission("banners.reorder"), h.Reorder)
 	g.Get("/:id",       h.Get)
-	g.Put("/:id",       h.Update)
-	g.Delete("/:id",    h.Delete)
+	g.Put("/:id",       middleware.RequirePermission("banners.update"), h.Update)
+	g.Delete("/:id",    middleware.RequirePermission("banners.delete"), h.Delete)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	out, err := h.repo.List(c.Context())
+	out, err := h.repo.List(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.banners] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -218,7 +219,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	out, err := h.repo.Get(c.Context(), c.Params("id"))
+	out, err := h.repo.Get(c.UserContext(), c.Params("id"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "banner not found"})
@@ -234,7 +235,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	out, err := h.repo.Create(c.Context(), req, adminID)
+	out, err := h.repo.Create(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -248,7 +249,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
 	id := c.Params("id")
-	if err := h.repo.Update(c.Context(), id, req); err != nil {
+	if err := h.repo.Update(c.UserContext(), id, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "banner.update", id, nil, req)
@@ -257,7 +258,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 
 func (h *Handler) Delete(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.Delete(c.Context(), id); err != nil {
+	if err := h.repo.Delete(c.UserContext(), id); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "banner.delete", id, nil, nil)
@@ -271,7 +272,7 @@ func (h *Handler) Reorder(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
-	if err := h.repo.Reorder(c.Context(), body.IDs); err != nil {
+	if err := h.repo.Reorder(c.UserContext(), body.IDs); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "banner.reorder", "", nil, body.IDs)
@@ -284,7 +285,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "banners",
 		TargetType: "banner", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

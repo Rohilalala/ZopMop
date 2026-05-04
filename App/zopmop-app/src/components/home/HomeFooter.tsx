@@ -206,7 +206,7 @@ function Signoff() {
           },
         ]}
       >
-        Built in Bengaluru · For homes everywhere
+        Built in India · One home at a time
       </Text>
     </View>
   );

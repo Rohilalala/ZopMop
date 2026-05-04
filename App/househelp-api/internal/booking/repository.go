@@ -51,13 +51,17 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	b := &Booking{}
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		        lat, lng, price_cents, promo_code, discount_cents,
+		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
+		        created_at, updated_at
 		 FROM bookings WHERE id = $1`,
 		bookingID,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
 		&b.Address, &b.Lat, &b.Lng, &b.PriceCents, &b.PromoCode,
-		&b.DiscountCents, &b.CreatedAt, &b.UpdatedAt,
+		&b.DiscountCents,
+		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
+		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -141,6 +145,79 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 	return nil
 }
 
+// CancelBookingWithFee transitions a booking to cancelled and atomically
+// stamps the cancellation fee fields. cancelledBy is "customer" | "helper" |
+// "system". feeCents is 0 when the cancellation is inside the free window.
+//
+// If the booking was already paid through a non-COD method, this also inserts
+// a pending_refunds row for (price - discount - fee), all in the same
+// transaction. The CRM refund worker drains the table; we no longer rely on
+// an async event consumer to create the row, so a crash between cancel and
+// refund-event publish can no longer leave the customer un-reimbursed.
+func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancelledBy string, feeCents int) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin cancel tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	feeApplied := feeCents > 0
+	var (
+		customerID     string
+		priceCents     int64
+		discountCents  int64
+		paymentMethod  *string
+		paymentID      *string
+		paymentStatus  *string
+	)
+	err = tx.QueryRow(queryCtx,
+		`UPDATE bookings
+		    SET status = $2, updated_at = NOW(), cancelled_at = NOW(),
+		        cancelled_by = $3,
+		        cancellation_fee_applied = $4, cancellation_fee_cents = $5
+		  WHERE id = $1
+		    AND status IN ('pending', 'accepted')
+		  RETURNING customer_id::text, price_cents, COALESCE(discount_cents, 0),
+		            payment_method, payment_id, payment_status`,
+		bookingID, StatusCancelled, cancelledBy, feeApplied, feeCents,
+	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("booking cannot be cancelled in current status")
+		}
+		return fmt.Errorf("failed to cancel booking: %w", err)
+	}
+
+	// Only create a refund row when money was actually collected.
+	// COD + unpaid bookings have nothing to refund.
+	paid := paymentStatus != nil && *paymentStatus == "paid"
+	nonCod := paymentMethod != nil && *paymentMethod != "" && *paymentMethod != "cod"
+	refundAmount := priceCents - discountCents - int64(feeCents)
+	if paid && nonCod && refundAmount > 0 {
+		if _, err := tx.Exec(queryCtx,
+			`INSERT INTO pending_refunds
+			   (user_id, amount_cents, source, source_ref,
+			    booking_id, payment_method, payment_id, status)
+			 VALUES ($1::uuid, $2, 'booking_cancellation', $3,
+			         $3::uuid, $4, $5, 'pending')
+			 ON CONFLICT (booking_id) WHERE booking_id IS NOT NULL
+			   AND status IN ('pending','approved','processed','processed_manual')
+			 DO NOTHING`,
+			customerID, refundAmount, bookingID, paymentMethod, paymentID,
+		); err != nil {
+			return fmt.Errorf("failed to create refund record: %w", err)
+		}
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit cancel tx: %w", err)
+	}
+	return nil
+}
+
 // isValidTransition checks if a booking status transition is valid.
 func isValidTransition(from, to BookingStatus) bool {
 	validTransitions := map[BookingStatus][]BookingStatus{
@@ -208,22 +285,78 @@ func (r *Repository) IsBookingArrived(ctx context.Context, bookingID string) (bo
 	return arrivedAt != nil, nil
 }
 
-// AcceptBooking assigns a helper to a pending booking and sets status to accepted.
-func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID string) error {
+// ErrBookingNotPending is returned when AcceptBooking races against another
+// helper that already accepted (or against a customer cancellation).
+var ErrBookingNotPending = fmt.Errorf("booking not found or not in pending status")
+
+// ErrAlreadyAccepted is the spec-named alias for the booking-side race loser.
+// Same semantics as ErrBookingNotPending — kept distinct so call sites can
+// surface a more user-friendly message.
+var ErrAlreadyAccepted = fmt.Errorf("booking already accepted")
+
+// ErrHelperAtMaxActive is returned when the helper already holds the
+// configured maximum number of active bookings.
+var ErrHelperAtMaxActive = fmt.Errorf("helper already has maximum active bookings")
+
+// AcceptBooking atomically assigns a helper to a pending booking.
+//
+// Booking-side race: a single UPDATE … WHERE status='pending' RETURNING id
+// claims the row in one round-trip. If RowsAffected == 0 the loser returns
+// ErrAlreadyAccepted — no SELECT FOR UPDATE, no read-then-write window.
+//
+// Helper-side race (one helper accepting two bookings while at max-active):
+// pg_advisory_xact_lock(helper_id) serialises accept attempts for a given
+// helper across the cluster so the COUNT(*) → UPDATE pair is consistent.
+func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID string, maxActive int) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	result, err := r.db.Exec(queryCtx,
-		`UPDATE bookings SET helper_id = $2, status = $3, updated_at = now(), accepted_at = NOW() WHERE id = $1 AND status = $4`,
+	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	if _, err := tx.Exec(queryCtx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		helperID,
+	); err != nil {
+		return fmt.Errorf("failed to acquire helper lock: %w", err)
+	}
+
+	var activeCount int
+	if err := tx.QueryRow(queryCtx,
+		`SELECT COUNT(*) FROM bookings
+		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')`,
+		helperID,
+	).Scan(&activeCount); err != nil {
+		return fmt.Errorf("failed to count helper active bookings: %w", err)
+	}
+	if activeCount >= maxActive {
+		return ErrHelperAtMaxActive
+	}
+
+	tag, err := tx.Exec(queryCtx,
+		`UPDATE bookings
+		    SET helper_id = $2,
+		        status = $3,
+		        updated_at = now(),
+		        accepted_at = now(),
+		        matched_at = COALESCE(matched_at, now())
+		  WHERE id = $1
+		    AND status = $4`,
 		bookingID, helperID, StatusAccepted, StatusPending,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to accept booking: %w", err)
 	}
-	if result.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found or not in pending status")
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyAccepted
 	}
 
+	if err := tx.Commit(queryCtx); err != nil {
+		return fmt.Errorf("failed to commit accept: %w", err)
+	}
 	return nil
 }
 
@@ -265,24 +398,6 @@ func (r *Repository) GetActiveBookingsCount(ctx context.Context, customerID stri
 	).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count active bookings: %w", err)
-	}
-
-	return count, nil
-}
-
-// GetActiveBookingsCountForHelper returns the number of active bookings assigned to a helper.
-func (r *Repository) GetActiveBookingsCountForHelper(ctx context.Context, helperID string) (int, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var count int
-	err := r.db.QueryRow(queryCtx,
-		`SELECT COUNT(*) FROM bookings
-		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')`,
-		helperID,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count helper active bookings: %w", err)
 	}
 
 	return count, nil
@@ -405,6 +520,11 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 // CreateScheduledBooking creates a booking from cart items using the new scheduling flow.
 // It inserts the booking row, booking_services rows, and returns the full ScheduledBooking.
 // The caller must have already validated the cart, time slot, and address.
+//
+// Stealth-instant params (set by the service layer when the customer books
+// after the 8pm IST cutoff): isStealthInstant=true + a non-nil fireAt point
+// the dispatch crons at the right path. locality is the snapshot derived from
+// the address, used by the invite chain to filter pros.
 func (r *Repository) CreateScheduledBooking(
 	ctx context.Context,
 	customerID, addressID, timeSlotID string,
@@ -412,6 +532,9 @@ func (r *Repository) CreateScheduledBooking(
 	items []BookingServiceItem,
 	totalPriceCents, discountCents int,
 	promoCode *string,
+	isStealthInstant bool,
+	fireAt *time.Time,
+	locality *string,
 ) (*ScheduledBooking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -421,6 +544,37 @@ func (r *Repository) CreateScheduledBooking(
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(queryCtx)
+
+	// Lock the slot row first — prevents two concurrent bookings from racing
+	// past the capacity check. Pessimistic FOR UPDATE serializes inserts on
+	// the same time_slot_id; other slots stay unaffected.
+	var currentBookings, maxBookings int
+	var isActive bool
+	err = tx.QueryRow(queryCtx,
+		`SELECT current_bookings, max_bookings, is_active
+		 FROM time_slots
+		 WHERE id = $1
+		 FOR UPDATE`,
+		timeSlotID,
+	).Scan(&currentBookings, &maxBookings, &isActive)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrSlotUnavailable
+		}
+		return nil, fmt.Errorf("failed to lock time slot: %w", err)
+	}
+	if !isActive || currentBookings >= maxBookings {
+		return nil, ErrSlotUnavailable
+	}
+
+	// Reserve capacity inside the same tx — committed atomically with the
+	// booking insert below.
+	if _, err := tx.Exec(queryCtx,
+		`UPDATE time_slots SET current_bookings = current_bookings + 1 WHERE id = $1`,
+		timeSlotID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to reserve slot capacity: %w", err)
+	}
 
 	// Calculate total duration.
 	totalDuration := 0
@@ -436,14 +590,16 @@ func (r *Repository) CreateScheduledBooking(
 		`INSERT INTO bookings
 		   (customer_id, service_category_id, status, address, lat, lng,
 		    price_cents, discount_cents, promo_code,
-		    address_id, time_slot_id, scheduled_time, total_duration_minutes)
-		 VALUES ($1, $2, $3, '', 0, 0, $4, $5, $6, $7, $8, $9, $10)
+		    address_id, time_slot_id, scheduled_time, total_duration_minutes,
+		    is_stealth_instant, fire_at, locality)
+		 VALUES ($1, $2, $3, '', 0, 0, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING id, customer_id, address_id, time_slot_id,
 		           to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		           total_duration_minutes, status, price_cents, discount_cents, promo_code, created_at`,
 		customerID, legacyServiceID, StatusPending,
 		totalPriceCents, discountCents, promoCode,
 		addressID, timeSlotID, scheduledTime, totalDuration,
+		isStealthInstant, fireAt, locality,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
 		&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
@@ -493,7 +649,7 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 
 	rows, err := r.db.Query(queryCtx, `
 		SELECT
-			b.id, b.customer_id, b.address_id, b.time_slot_id,
+			b.id, b.customer_id, b.address_id, ua.tag, ua.title, b.time_slot_id,
 			to_char(b.scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_time,
 			b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at,
 			COALESCE(
@@ -511,9 +667,10 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		FROM bookings b
 		LEFT JOIN booking_services bs ON bs.booking_id = b.id
 		LEFT JOIN service_categories sc ON sc.id = bs.service_id
+		LEFT JOIN user_addresses ua ON ua.id = b.address_id
 		WHERE b.customer_id = $1
 		  AND `+statusFilter+`
-		GROUP BY b.id, b.customer_id, b.address_id, b.time_slot_id, b.scheduled_time,
+		GROUP BY b.id, b.customer_id, b.address_id, ua.tag, ua.title, b.time_slot_id, b.scheduled_time,
 		         b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at
 		ORDER BY COALESCE(b.scheduled_time, b.created_at) DESC
 		LIMIT $2 OFFSET $3`,
@@ -528,7 +685,7 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		var b ScheduledBooking
 		var servicesJSON []byte
 		if err := rows.Scan(
-			&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
+			&b.ID, &b.CustomerID, &b.AddressID, &b.AddressTag, &b.AddressTitle, &b.TimeSlotID, &b.ScheduledTime,
 			&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
 			&b.PromoCode, &b.CreatedAt, &servicesJSON,
 		); err != nil {

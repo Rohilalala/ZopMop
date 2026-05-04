@@ -5,8 +5,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
+  
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -22,6 +23,8 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getBookingTracking, type TrackingResponse } from '../../api/matching';
 import { apiFetch } from '../../api/client';
+import { cancelBooking } from '../../api/bookings';
+import { haptics } from '../../utils/haptics';
 
 import { BASE_URL } from '../../api/config';
 
@@ -62,6 +65,9 @@ export default function ActiveBookingScreen({ route }: Props) {
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
   const [routeCoords, setRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
   const [bookingStatus, setBookingStatus] = useState<BookingStatus>('accepted');
+  const [canCancelFree, setCanCancelFree] = useState<boolean | null>(null);
+  const [freeCancelUntil, setFreeCancelUntil] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [loading, setLoading] = useState(true);
   const [markerCoord, setMarkerCoord] = useState({
     latitude: initialHelperLat ?? 0,
@@ -147,6 +153,8 @@ export default function ActiveBookingScreen({ route }: Props) {
       if (res.ok) {
         const data = await res.json();
         setBookingStatus(data.status as BookingStatus);
+        setCanCancelFree(typeof data.can_cancel_free === 'boolean' ? data.can_cancel_free : null);
+        setFreeCancelUntil(typeof data.free_cancel_until === 'string' ? data.free_cancel_until : null);
         if (data.status === 'completed' || data.status === 'cancelled') {
           if (pollRef.current) clearInterval(pollRef.current);
         }
@@ -167,27 +175,58 @@ export default function ActiveBookingScreen({ route }: Props) {
     };
   }, [fetchTracking, fetchStatus]);
 
+  const formatFreeCancelDeadline = useCallback((iso: string | null): string => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }, []);
+
   function handleCancel() {
-    Alert.alert(
-      'Cancel Booking?',
-      'Are you sure you want to cancel? Cancellation fees may apply.',
-      [
-        { text: 'Keep Booking', style: 'cancel' },
-        {
-          text: 'Cancel Booking',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await apiFetch(`${BASE_URL}/bookings/${bookingId}/cancel`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-              });
-            } catch { /* best effort */ }
-            navigation.goBack();
-          },
+    if (!token || token === '__guest__') return;
+    const isFree = canCancelFree === true;
+    const deadlineText = formatFreeCancelDeadline(freeCancelUntil);
+    const title = isFree ? 'Cancel for free?' : 'Cancel booking?';
+    const message = isFree
+      ? deadlineText
+        ? `You can cancel for free until ${deadlineText}. Continue?`
+        : 'You can cancel for free. Continue?'
+      : 'A cancellation fee will apply. Continue?';
+
+    if (!isFree) haptics.warning();
+    Alert.alert(title, message, [
+      { text: 'Keep Booking', style: 'cancel' },
+      {
+        text: 'Cancel Booking',
+        style: 'destructive',
+        onPress: async () => {
+          if (cancelling) return;
+          setCancelling(true);
+          try {
+            const result = await cancelBooking(token, bookingId);
+            if (result.cancellation_fee_applied) {
+              const rupees = (result.cancellation_fee_cents / 100).toFixed(2);
+              Alert.alert(
+                'Booking cancelled',
+                `A cancellation fee of ₹${rupees} was charged.`,
+                [{ text: 'OK', onPress: () => navigation.goBack() }],
+              );
+            } else {
+              Alert.alert(
+                'Booking cancelled',
+                'No cancellation fee was charged.',
+                [{ text: 'OK', onPress: () => navigation.goBack() }],
+              );
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'Failed to cancel booking';
+            Alert.alert('Could not cancel', msg);
+          } finally {
+            setCancelling(false);
+          }
         },
-      ],
-    );
+      },
+    ]);
   }
 
   const helperLat = tracking?.helper_lat ?? initialHelperLat ?? 0;
@@ -249,7 +288,7 @@ export default function ActiveBookingScreen({ route }: Props) {
       {/* Loading overlay */}
       {loading && (
         <View style={s.loadingOverlay}>
-          <ActivityIndicator size="large" color={c.primary} />
+          <LoadingBars size="large" color={c.primary} />
         </View>
       )}
 
@@ -305,8 +344,21 @@ export default function ActiveBookingScreen({ route }: Props) {
 
         {/* Cancel button — only while still accepted */}
         {bookingStatus === 'accepted' && (
-          <TouchableOpacity style={s.cancelBtn} activeOpacity={0.75} onPress={handleCancel}>
-            <Text style={s.cancelBtnText}>Cancel Booking</Text>
+          <TouchableOpacity
+            style={s.cancelBtn}
+            activeOpacity={0.75}
+            onPress={handleCancel}
+            disabled={cancelling}
+          >
+            <Text style={s.cancelBtnText}>
+              {cancelling
+                ? 'Cancelling…'
+                : canCancelFree === true
+                  ? freeCancelUntil
+                    ? `Cancel for free (before ${formatFreeCancelDeadline(freeCancelUntil)})`
+                    : 'Cancel for free'
+                  : 'Cancel booking — cancellation fee applies'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>

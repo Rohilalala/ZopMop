@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { registerSignOutCallback, apiFetch } from '../api/client';
-import { updateFCMToken } from '../api/users';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
 import { BASE_URL } from '../api/config';
@@ -12,6 +11,71 @@ import { pendingAuthStore } from '../utils/pendingAuthStore';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+
+// Silent-restore window. If Firebase reports a sign-in newer than this, we'll
+// try to silently re-issue the backend session via getIdToken(true) → POST
+// /auth/firebase. Older sessions force the user back through PhoneEntry so
+// stale device installs can't roll forward indefinitely.
+const FIREBASE_SILENT_REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Silently exchange a fresh Firebase ID token for a backend JWT. Returns the
+// session on success. Returns null when:
+//   - @react-native-firebase/auth is unavailable (Expo Go, web, missing native)
+//   - no current Firebase user
+//   - last sign-in is older than the window
+//   - token refresh throws
+//   - backend exchange returns non-2xx
+async function tryFirebaseSilentRefresh(): Promise<{ token: string; user?: AuthUser } | null> {
+  let mod: typeof import('@react-native-firebase/auth') | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mod = require('@react-native-firebase/auth');
+  } catch {
+    return null;
+  }
+  if (!mod) return null;
+
+  try {
+    const fbAuth = mod.getAuth();
+    const current = fbAuth.currentUser;
+    if (!current) return null;
+
+    // metadata.lastSignInTime is an ISO string per Firebase types.
+    const lastSignInIso = current.metadata?.lastSignInTime;
+    const lastSignInMs = lastSignInIso ? Date.parse(lastSignInIso) : NaN;
+    if (!Number.isFinite(lastSignInMs)) return null;
+    if (Date.now() - lastSignInMs > FIREBASE_SILENT_REFRESH_WINDOW_MS) {
+      console.info('[Auth] Firebase session older than window — skipping silent refresh');
+      return null;
+    }
+
+    const idToken = await mod.getIdToken(current, true);
+    if (!idToken) return null;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(`${BASE_URL}/auth/firebase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firebase_token: idToken }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn('[Auth] Firebase silent refresh: backend returned', res.status);
+        return null;
+      }
+      const data = await res.json();
+      if (!data?.token) return null;
+      return { token: data.token as string, user: data.user as AuthUser | undefined };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    console.info('[Auth] Firebase silent refresh failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 export interface AuthUser {
   id: string;
@@ -39,7 +103,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const { expoPushToken } = usePushNotifications();
+  // Side-effect-only hook: requests notification permission, fetches the FCM
+  // token, and registers it with the backend whenever the user is signed in.
+  // Pass auth state directly — this runs inside AuthProvider so useAuth is unavailable.
+  usePushNotifications(token, token !== null && token !== '__guest__');
 
   // Register the global signOut callback so apiFetch can sign out on 401.
   useEffect(() => {
@@ -48,7 +115,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Restore session from SecureStore on app launch, then validate the token
   // against the backend. Signs out if the user no longer exists in the DB.
+  // Falls back to a Firebase silent refresh when no stored token is present
+  // or the stored token is rejected — this lets returning users skip
+  // PhoneEntry as long as their Firebase session is < 30 days old.
   useEffect(() => {
+    async function trySilentFirebase(): Promise<boolean> {
+      const session = await tryFirebaseSilentRefresh();
+      if (!session) return false;
+      setToken(session.token);
+      if (session.user) setUser(session.user);
+      try {
+        await SecureStore.setItemAsync(TOKEN_KEY, session.token);
+        if (session.user) {
+          await SecureStore.setItemAsync(USER_KEY, JSON.stringify(session.user));
+        }
+      } catch {}
+      console.info('[Auth] session restored via Firebase silent refresh');
+      return true;
+    }
+
     async function restore() {
       try {
         const [storedToken, storedUser] = await Promise.all([
@@ -56,7 +141,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           SecureStore.getItemAsync(USER_KEY),
         ]);
 
-        if (!storedToken) return;
+        if (!storedToken) {
+          await trySilentFirebase();
+          return;
+        }
 
         // Validate the stored token — catches deleted users and expired tokens.
         // 5s timeout prevents splash screen hang if backend is unreachable.
@@ -74,12 +162,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           if (res.status === 401 || res.status === 403 || res.status === 404) {
-            // User deleted or token invalid — wipe the session.
+            // User deleted or token invalid — wipe the session and try a
+            // Firebase silent refresh before falling back to PhoneEntry.
             console.warn('[Auth] token rejected by server — clearing session');
             await Promise.all([
               SecureStore.deleteItemAsync(TOKEN_KEY),
               SecureStore.deleteItemAsync(USER_KEY),
             ]);
+            await trySilentFirebase();
             return;
           }
 
@@ -142,13 +232,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     return () => sub.remove();
   }, []);
-
-  // Sync FCM token to backend when logged in and token is available
-  useEffect(() => {
-    if (token && token !== '__guest__' && expoPushToken) {
-      updateFCMToken(token, expoPushToken).catch(() => {});
-    }
-  }, [token, expoPushToken]);
 
   function signIn(jwt: string, authUser?: AuthUser) {
     // Security: reject sentinel/placeholder tokens — they must never be stored

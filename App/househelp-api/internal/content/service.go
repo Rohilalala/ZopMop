@@ -8,6 +8,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/pkg/database"
 )
 
 const (
@@ -29,7 +31,8 @@ func NewService(repo *Repository, rdb *redis.Client) *Service {
 // GetAppHomeContent returns banners + service categories + home screen copy in one response.
 // Cached in Redis for 60 seconds.
 func (s *Service) GetAppHomeContent(ctx context.Context) (*HomeContentResponse, error) {
-	// Try cache first.
+	// Try cache first. redis.Nil is a benign miss; other errors mean Redis is
+	// down — log a warning and fall through to Postgres so the page still loads.
 	cached, err := s.rdb.Get(ctx, cacheKeyHome).Result()
 	if err == nil {
 		var resp HomeContentResponse
@@ -37,6 +40,10 @@ func (s *Service) GetAppHomeContent(ctx context.Context) (*HomeContentResponse, 
 			return &resp, nil
 		}
 		log.Warn().Msg("failed to unmarshal cached home content")
+	} else if database.IsRedisDown(err) {
+		log.Warn().Err(err).Msg("redis GET failed for home content; falling through to database")
+		// Skip the SetNX dance — Redis is down. Go straight to DB without caching.
+		return s.fetchAndCacheHomeContent(ctx)
 	}
 
 	// Cache miss — use distributed lock to prevent stampede.
@@ -120,7 +127,7 @@ func (s *Service) fetchAndCacheHomeContent(ctx context.Context) (*HomeContentRes
 func (s *Service) GetScreenContent(ctx context.Context, key string) (*AppScreen, error) {
 	cacheKey := fmt.Sprintf("content:screen:%s", key)
 
-	// Try cache.
+	// Try cache. redis.Nil is a benign miss; other errors mean Redis is down.
 	cached, err := s.rdb.Get(ctx, cacheKey).Result()
 	if err == nil {
 		var screen AppScreen
@@ -128,6 +135,8 @@ func (s *Service) GetScreenContent(ctx context.Context, key string) (*AppScreen,
 			return &screen, nil
 		}
 		log.Warn().Str("key", key).Msg("failed to unmarshal cached screen content")
+	} else if database.IsRedisDown(err) {
+		log.Warn().Err(err).Str("key", key).Msg("redis GET failed for screen content; falling through to database")
 	}
 
 	// Cache miss.

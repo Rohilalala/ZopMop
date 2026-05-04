@@ -6,6 +6,8 @@ import { bannersApi, type Banner } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import { Can } from '@/auth/Can';
+import { usePermission } from '@/auth/usePermission';
 
 export function BannersPage() {
   const qc = useQueryClient();
@@ -13,6 +15,9 @@ export function BannersPage() {
   const [editing, setEditing] = useState<Banner | null>(null);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const canReorder = usePermission('banners.reorder');
+  const canDelete  = usePermission('banners.delete');
 
   const reorder = useMutation({
     mutationFn: (ids: string[]) => bannersApi.reorder(ids),
@@ -39,7 +44,9 @@ export function BannersPage() {
           <h1 className="text-2xl font-semibold">Home Banners</h1>
           <p className="text-sm text-text-secondary mt-1">Drag-friendly arrows reorder. Image hosted externally — paste URL.</p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New banner</button>
+        <Can perm="banners.create">
+          <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New banner</button>
+        </Can>
       </div>
 
       {q.isLoading ? <Skeleton className="h-40" /> :
@@ -61,10 +68,43 @@ export function BannersPage() {
                     <div className="text-[11px] text-text-muted mt-1">audience: {b.audience} · order: {b.display_order}</div>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <button className="btn-ghost !py-1 !px-2" onClick={() => move(i, -1)} disabled={i === 0}><ArrowUp className="w-4 h-4" /></button>
-                    <button className="btn-ghost !py-1 !px-2" onClick={() => move(i, 1)} disabled={i === (q.data!.length - 1)}><ArrowDown className="w-4 h-4" /></button>
+                    <button
+                      className="btn-ghost !py-1 !px-2"
+                      onClick={() => {
+                        if (!canReorder) {
+                          showToast({ kind: 'error', message: 'Insufficient permissions' });
+                          return;
+                        }
+                        move(i, -1);
+                      }}
+                      disabled={i === 0 || !canReorder}
+                      title={!canReorder ? 'Insufficient permissions' : undefined}
+                    ><ArrowUp className="w-4 h-4" /></button>
+                    <button
+                      className="btn-ghost !py-1 !px-2"
+                      onClick={() => {
+                        if (!canReorder) {
+                          showToast({ kind: 'error', message: 'Insufficient permissions' });
+                          return;
+                        }
+                        move(i, 1);
+                      }}
+                      disabled={i === (q.data!.length - 1) || !canReorder}
+                      title={!canReorder ? 'Insufficient permissions' : undefined}
+                    ><ArrowDown className="w-4 h-4" /></button>
                     <button className="btn-ghost !py-1 !px-2" onClick={() => setEditing(b)}>Edit</button>
-                    <button className="btn-ghost text-danger !py-1 !px-2" onClick={() => setDeletingId(b.id)}><Trash2 className="w-4 h-4" /></button>
+                    <button
+                      className="btn-ghost text-danger !py-1 !px-2"
+                      disabled={!canDelete}
+                      title={!canDelete ? 'Insufficient permissions' : undefined}
+                      onClick={() => {
+                        if (!canDelete) {
+                          showToast({ kind: 'error', message: 'Insufficient permissions' });
+                          return;
+                        }
+                        setDeletingId(b.id);
+                      }}
+                    ><Trash2 className="w-4 h-4" /></button>
                   </div>
                 </div>
               </Card>
@@ -117,6 +157,9 @@ function BannerEditor({ banner, onClose }: { banner: Banner | null; onClose: () 
   const qc = useQueryClient();
   const [f, setF] = useState<Form>(emptyForm(banner));
   const [confirm, setConfirm] = useState(false);
+  const canCreate = usePermission('banners.create');
+  const canUpdate = usePermission('banners.update');
+  const canSave = banner ? canUpdate : canCreate;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -176,7 +219,18 @@ function BannerEditor({ banner, onClose }: { banner: Banner | null; onClose: () 
 
       <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-border">
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn-primary" onClick={() => setConfirm(true)} disabled={!f.title || !f.image_url}>Save</button>
+        <button
+          className="btn-primary"
+          onClick={() => {
+            if (!canSave) {
+              showToast({ kind: 'error', message: 'Insufficient permissions' });
+              return;
+            }
+            setConfirm(true);
+          }}
+          disabled={!f.title || !f.image_url || !canSave}
+          title={!canSave ? 'Insufficient permissions' : undefined}
+        >Save</button>
       </div>
 
       <ConfirmModal

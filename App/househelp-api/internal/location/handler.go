@@ -200,7 +200,7 @@ func (h *Handler) GetHelperLocation(c *fiber.Ctx) error {
 	if !allowed {
 		// Active booking check: caller must be the customer on a live booking
 		// with this helper.
-		ctx, cancel := context.WithTimeout(c.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(c.UserContext(), 3*time.Second)
 		defer cancel()
 		var exists bool
 		err := h.db.QueryRow(ctx,
@@ -223,7 +223,7 @@ func (h *Handler) GetHelperLocation(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
 	}
 
-	location, err := h.service.GetHelperLocation(c.Context(), helperID)
+	location, err := h.service.GetHelperLocation(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper location")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{

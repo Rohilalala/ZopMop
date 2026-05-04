@@ -14,10 +14,9 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  
   Alert,
   Dimensions,
-  Image,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -26,6 +25,9 @@ import {
   View,
   type TextStyle,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
+import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
+import { Image } from 'expo-image';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -47,13 +49,14 @@ import { getNearbyStats } from '../../api/insights';
 import { useCart } from '../../context/CartContext';
 
 import { Bloom } from '../../components/home/Bloom';
-import { BottomTabBar } from '../../components/home/BottomTabBar';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
 import { GlassCard } from '../../components/home/GlassCard';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
 import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { PressFx } from '../../components/ui/PressFx';
+import { showError } from '../../utils/toast';
+import { haptics } from '../../utils/haptics';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const H_PAD     = 20;
@@ -114,16 +117,24 @@ function isNightTime(d = new Date()): boolean {
 type Filter = 'all' | string;
 type Mode   = 'schedule' | 'instant';
 
+// Module-level cache so re-entering AllServices renders the grid synchronously
+// from the previous fetch instead of flashing the skeleton again. Background
+// refresh still runs via useFocusEffect to keep counts and listings fresh.
+const servicesMemCache: {
+  list: ApiService[];
+  nearbyCount: number | null;
+} = { list: [], nearbyCount: null };
+
 export default function AllServicesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const insets = useSafeAreaInsets();
 
-  const [services, setServices] = useState<ApiService[]>([]);
-  const [loading, setLoading]   = useState(true);
+  const [services, setServices] = useState<ApiService[]>(servicesMemCache.list);
+  const [loading, setLoading]   = useState(servicesMemCache.list.length === 0);
   const [filter, setFilter]     = useState<Filter>('all');
   const [mode, setMode]         = useState<Mode>(route.params?.instant ? 'instant' : 'schedule');
-  const [nearbyCount, setNearbyCount] = useState<number | null>(null);
+  const [nearbyCount, setNearbyCount] = useState<number | null>(servicesMemCache.nearbyCount);
   // Two-phase refresh state:
   //   holdScreen — drives RefreshControl (keeps the scroll pulled down).
   //   zopActive  — drives ZopRefresh (true = spinning, false = play smile).
@@ -146,8 +157,14 @@ export default function AllServicesScreen() {
         listServices().catch(() => [] as ApiService[]),
         getNearbyStats(lat, lon).catch(() => null),
       ]);
-      if (list.length > 0) setServices(list);
-      if (stats) setNearbyCount(stats.nearby_count);
+      if (list.length > 0) {
+        setServices(list);
+        servicesMemCache.list = list;
+      }
+      if (stats) {
+        setNearbyCount(stats.nearby_count);
+        servicesMemCache.nearbyCount = stats.nearby_count;
+      }
     } finally {
       setLoading(false);
     }
@@ -291,9 +308,7 @@ export default function AllServicesScreen() {
 
         {/* Body */}
         {loading ? (
-          <View style={styles.loadWrap}>
-            <ActivityIndicator color="#F5A300" />
-          </View>
+          <LoadingSkeleton variant="list-grid" rows={6} />
         ) : instantMode && isNightTime() ? (
           <NightClosed />
         ) : (
@@ -329,7 +344,6 @@ export default function AllServicesScreen() {
       </ScrollView>
 
       {!instantMode && <HomeCartBar />}
-      <BottomTabBar active="services" />
       <ZopRefresh refreshing={zopActive} />
     </View>
   );
@@ -494,6 +508,7 @@ function ServiceCard({
   const showReviews = service.review_count >= 1000;
 
   const handleCardPress = () => {
+    haptics.light();
     if (instantMode) {
       navigation.navigate('InstantMatching', {
         serviceId: service.id,
@@ -511,7 +526,7 @@ function ServiceCard({
       await addItem(service.id, service.min_duration_minutes);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Please try again.';
-      Alert.alert('Could not add to cart', msg);
+      showError(msg, { title: 'Could not add to cart' });
     } finally {
       setBusy(false);
     }
@@ -529,7 +544,7 @@ function ServiceCard({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Please try again.';
-      Alert.alert('Error', msg);
+      showError(msg);
     } finally {
       setBusy(false);
     }
@@ -574,7 +589,7 @@ function ServiceCard({
             {iconSrc ? (
               <Image
                 source={iconSrc}
-                resizeMode="contain"
+                contentFit="contain"
                 style={{
                   width: '78%',
                   height: '78%',
@@ -611,7 +626,7 @@ function ServiceCard({
                   disabled={busy}
                 >
                   {busy
-                    ? <ActivityIndicator size="small" color="#F5A300" />
+                    ? <LoadingBars size="small" color="#F5A300" />
                     : <Feather name="minus" size={16} color="#F5A300" />
                   }
                 </PressFx>
@@ -657,7 +672,7 @@ function ServiceCard({
                 style={styles.addFab}
               >
                 {busy
-                  ? <ActivityIndicator size="small" color="#F5A300" />
+                  ? <LoadingBars size="small" color="#F5A300" />
                   : <Feather name="plus" size={16} color="#F5A300" />
                 }
               </PressFx>

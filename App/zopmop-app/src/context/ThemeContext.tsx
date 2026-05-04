@@ -13,17 +13,17 @@ interface ThemeContextValue {
 const STORAGE_KEY = 'zopmop_dark_mode';
 
 const ThemeContext = createContext<ThemeContextValue>({
-  isDark: false,
-  colors: lightColors,
+  isDark: true,
+  colors: darkColors as unknown as ColorScheme,
   toggleTheme: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
     SecureStore.getItemAsync(STORAGE_KEY).then(val => {
-      if (val === 'true') setIsDark(true);
+      if (val === 'false') setIsDark(false);
     });
   }, []);
 

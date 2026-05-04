@@ -11,6 +11,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/pkg/database"
 )
 
 // DirectionsResult holds the parsed response from the Directions API.
@@ -60,11 +62,16 @@ func (c *Client) GetTravelMinutes(ctx context.Context, oLat, oLng, dLat, dLng fl
 	dLat = roundCoord(dLat)
 	dLng = roundCoord(dLng)
 
-	// Redis cache check.
+	// Redis cache check. redis.Nil = miss, anything else = Redis down → warn
+	// and fall through to the live API.
 	if c.rdb != nil {
 		key := cacheKey("gmaps:dt", oLat, oLng, dLat, dLng)
-		if cached, err := c.rdb.Get(ctx, key).Int(); err == nil {
+		cached, err := c.rdb.Get(ctx, key).Int()
+		if err == nil {
 			return cached, nil
+		}
+		if database.IsRedisDown(err) {
+			log.Warn().Err(err).Str("key", key).Msg("[gmaps] cache GET failed; falling through to API")
 		}
 	}
 
@@ -137,14 +144,18 @@ func (c *Client) GetDirections(ctx context.Context, oLat, oLng, dLat, dLng float
 	dLat = roundCoord(dLat)
 	dLng = roundCoord(dLng)
 
-	// Redis cache check.
+	// Redis cache check. redis.Nil = miss, anything else = Redis down → warn
+	// and fall through to the live API.
 	if c.rdb != nil {
 		key := cacheKey("gmaps:dir", oLat, oLng, dLat, dLng)
-		if cached, err := c.rdb.Get(ctx, key).Bytes(); err == nil {
+		cached, err := c.rdb.Get(ctx, key).Bytes()
+		if err == nil {
 			var result DirectionsResult
 			if json.Unmarshal(cached, &result) == nil {
 				return &result, nil
 			}
+		} else if database.IsRedisDown(err) {
+			log.Warn().Err(err).Str("key", key).Msg("[gmaps] cache GET failed; falling through to API")
 		}
 	}
 

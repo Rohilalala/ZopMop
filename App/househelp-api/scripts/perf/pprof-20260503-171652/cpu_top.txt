@@ -1,0 +1,28 @@
+File: api
+Type: cpu
+Time: 2026-05-03 17:16:53 IST
+Duration: 15.11s, Total samples = 11.68s (77.30%)
+Showing nodes accounting for 5.82s, 49.83% of 11.68s total
+Dropped 270 nodes (cum <= 0.06s)
+Showing top 20 nodes out of 132
+      flat  flat%   sum%        cum   cum%
+     5.82s 49.83% 49.83%      5.83s 49.91%  syscall.rawsyscalln
+         0     0% 49.83%      5.83s 49.91%  syscall.syscall
+         0     0% 49.83%      5.83s 49.91%  syscall.syscalln
+         0     0% 49.83%      5.53s 47.35%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0% 49.83%      5.32s 45.55%  main.main.RequestLogger.func11
+         0     0% 49.83%      5.32s 45.55%  main.main.Timeout.func10.1
+         0     0% 49.83%      4.26s 36.47%  runtime.mcall
+         0     0% 49.83%      4.25s 36.39%  runtime.schedule
+         0     0% 49.83%      4.24s 36.30%  runtime.park_m
+         0     0% 49.83%      4.13s 35.36%  runtime.findRunnable
+         0     0% 49.83%      3.57s 30.57%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 49.83%      2.86s 24.49%  github.com/gofiber/fiber/v2.(*App).next
+         0     0% 49.83%      2.68s 22.95%  github.com/rs/zerolog.(*Event).Msg
+         0     0% 49.83%      2.68s 22.95%  github.com/rs/zerolog.(*Event).msg
+         0     0% 49.83%      2.65s 22.69%  github.com/rs/zerolog.(*Event).write
+         0     0% 49.83%      2.65s 22.69%  github.com/rs/zerolog.ConsoleWriter.Write
+         0     0% 49.83%      2.65s 22.69%  github.com/rs/zerolog.LevelWriterAdapter.WriteLevel
+         0     0% 49.83%      2.62s 22.43%  github.com/gofiber/fiber/v2/middleware/compress.New.func3
+         0     0% 49.83%      2.62s 22.43%  main.main.RateLimiter.NamedRateLimiter.func20
+         0     0% 49.83%      2.50s 21.40%  github.com/redis/go-redis/v9.(*Client).Process

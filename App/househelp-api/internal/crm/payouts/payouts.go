@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 type Payout struct {
@@ -137,15 +138,15 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/payouts")
 	g.Get("/",            h.List)
-	g.Post("/",           h.Create)
-	g.Post("/:id/paid",   h.MarkPaid)
-	g.Post("/:id/failed", h.MarkFailed)
+	g.Post("/",           middleware.RequirePermission("payouts.create"), h.Create)
+	g.Post("/:id/paid",   middleware.RequirePermission("payouts.mark_paid"), h.MarkPaid)
+	g.Post("/:id/failed", middleware.RequirePermission("payouts.mark_failed"), h.MarkFailed)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
-	items, total, err := h.repo.List(c.Context(), c.Query("status"), limit, offset)
+	items, total, err := h.repo.List(c.UserContext(), c.Query("status"), limit, offset)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.payouts] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -158,7 +159,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-	id, err := h.repo.Create(c.Context(), req)
+	id, err := h.repo.Create(c.UserContext(), req)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -170,7 +171,7 @@ func (h *Handler) MarkPaid(c *fiber.Ctx) error {
 	var body struct{ ExternalRef string `json:"external_ref"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.repo.MarkPaid(c.Context(), id, body.ExternalRef); err != nil {
+	if err := h.repo.MarkPaid(c.UserContext(), id, body.ExternalRef); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "payout.paid", id, nil, body.ExternalRef)
@@ -181,7 +182,7 @@ func (h *Handler) MarkFailed(c *fiber.Ctx) error {
 	var body struct{ Notes string `json:"notes"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.repo.MarkFailed(c.Context(), id, body.Notes); err != nil {
+	if err := h.repo.MarkFailed(c.UserContext(), id, body.Notes); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "payout.failed", id, nil, body.Notes)
@@ -194,7 +195,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "payouts",
 		TargetType: "payout", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

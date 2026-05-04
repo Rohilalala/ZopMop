@@ -38,6 +38,7 @@ type Config struct {
 	AllowedOrigins       []string
 	LockoutThreshold     int            // Failed attempts before lockout.
 	LockoutDuration      time.Duration
+	AppAPIURL            string         // Base URL of user-facing API for health probe (e.g. https://api.zopmop.com). Empty → probe returns "unknown".
 }
 
 // IsDevelopment reports whether the service is running in dev mode.
@@ -73,6 +74,7 @@ func Load() (*Config, error) {
 		RefreshCookieSecure: getEnvBool("CRM_REFRESH_COOKIE_SECURE", true),
 		LockoutThreshold:    getEnvInt("CRM_LOCKOUT_THRESHOLD", 5),
 		LockoutDuration:     time.Duration(getEnvInt("CRM_LOCKOUT_DURATION_MINUTES", 15)) * time.Minute,
+		AppAPIURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("APP_API_URL")), "/"),
 	}
 
 	if origins := strings.TrimSpace(os.Getenv("CRM_ALLOWED_ORIGINS")); origins != "" {

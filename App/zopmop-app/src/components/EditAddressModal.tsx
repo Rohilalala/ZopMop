@@ -5,7 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
+  
   Animated,
   Modal,
   TextInput,
@@ -14,6 +14,7 @@ import {
   Alert,
   Dimensions,
 } from 'react-native';
+import { LoadingBars } from './ui/LoadingBars';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../theme';
 import {
@@ -208,7 +209,7 @@ export default function EditAddressModal({ address, token, onClose, onSaved, onD
               activeOpacity={0.85}
             >
               {saving
-                ? <ActivityIndicator color={Colors.white} size="small" />
+                ? <LoadingBars color={Colors.white} size="small" />
                 : <Text style={s.saveBtnText}>Save Changes</Text>
               }
             </TouchableOpacity>
@@ -220,7 +221,7 @@ export default function EditAddressModal({ address, token, onClose, onSaved, onD
               activeOpacity={0.85}
             >
               {deleting
-                ? <ActivityIndicator color={Colors.danger} size="small" />
+                ? <LoadingBars color={Colors.danger} size="small" />
                 : (
                   <>
                     <Ionicons name="trash-outline" size={16} color={Colors.danger} />

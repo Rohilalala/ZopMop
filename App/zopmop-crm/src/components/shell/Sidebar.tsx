@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Briefcase, Users, UserCog, Megaphone,
   CircleDollarSign, Settings as SettingsIcon, Sliders,
   Map as MapIcon, FlaskConical, BarChart3, Image as ImageIcon,
-  Bell, ShieldAlert, ChevronsLeft, ChevronsRight,
+  Bell, ShieldAlert, ChevronsLeft, ChevronsRight, CalendarDays, MapPin,
   type LucideIcon,
 } from 'lucide-react';
 import { useProMode } from '@/store/proMode';
@@ -32,6 +32,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
     title: 'Workers',
     items: [
       { to: '/workers', label: 'Workers',  icon: UserCog },
+      { to: '/leaves',  label: 'Leaves',   icon: CalendarDays },
       { to: '/map',     label: 'Live Map', icon: MapIcon },
     ],
   },
@@ -54,9 +55,10 @@ const SECTIONS: { title: string; items: Item[] }[] = [
   {
     title: 'Platform',
     items: [
-      { to: '/flags',    label: 'Feature Flags', icon: Sliders },
-      { to: '/disputes', label: 'Disputes',      icon: ShieldAlert },
-      { to: '/settings', label: 'Settings',      icon: SettingsIcon },
+      { to: '/flags',      label: 'Feature Flags', icon: Sliders },
+      { to: '/localities', label: 'Localities',    icon: MapPin },
+      { to: '/disputes',   label: 'Disputes',      icon: ShieldAlert },
+      { to: '/settings',   label: 'Settings',      icon: SettingsIcon },
     ],
   },
 ];

@@ -5,10 +5,12 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ActivityIndicator,
+  
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
@@ -21,7 +23,17 @@ import { otpStore } from '../../utils/otpStore';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
+import { haptics } from '../../utils/haptics';
 import LottieView from 'lottie-react-native';
+import Feather from '@expo/vector-icons/Feather';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Public-facing policy URLs. Kept inline rather than from env because they're
+// the same across builds — the Privacy Policy link in the new-user consent
+// must always point at the published policy regardless of API host.
+const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
+const TERMS_URL = 'https://zopmop.com/terms';
+const PRIVACY_ACCEPTED_KEY = 'auth.has_accepted_privacy_policy';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'OTPVerification'>;
@@ -32,7 +44,7 @@ const OTP_LENGTH = 6;
 const RESEND_SECONDS = 60;
 
 export default function OTPVerificationScreen({ navigation, route }: Props) {
-  const { phone } = route.params;
+  const { phone, isNewUser = false } = route.params;
   const confirmation = otpStore.get();
   const { signIn } = useAuth();
   const c = useColors();
@@ -43,6 +55,8 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(RESEND_SECONDS);
   const [resending, setResending] = useState(false);
+  // Only enforced when isNewUser — returning users skip the checkbox entirely.
+  const [policyAccepted, setPolicyAccepted] = useState(false);
 
   const inputRefs = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
   const lookAwayRef = useRef<LottieView>(null);
@@ -61,13 +75,16 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
     return () => clearTimeout(t);
   }, [countdown]);
 
-  // Auto-verify when all 6 digits are filled
+  // Auto-verify when all 6 digits are filled. For new users, also wait until
+  // they tick the privacy-policy checkbox — otherwise we'd verify before
+  // capturing consent.
   useEffect(() => {
     const code = otp.join('');
-    if (code.length === OTP_LENGTH && !loading) {
+    if (code.length === OTP_LENGTH && !loading && (!isNewUser || policyAccepted)) {
+      haptics.medium();
       handleVerify(code);
     }
-  }, [otp]);
+  }, [otp, policyAccepted, loading, isNewUser]);
 
   async function handleVerify(code?: string) {
     const fullCode = code ?? otp.join('');
@@ -89,12 +106,24 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         const res = await fetch(`${BASE_URL}/auth/firebase`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ firebase_token: idToken }),
+          body: JSON.stringify({
+            firebase_token: idToken,
+            // Only send true when we actually captured consent on this screen
+            // (new user + checkbox ticked). Returning users send false and the
+            // backend leaves their existing acceptance flag untouched.
+            has_accepted_privacy_policy: isNewUser ? policyAccepted : false,
+          }),
         });
         if (res.ok) {
           const data = await res.json();
           backendToken = data.token as string;
           backendUser = data.user;
+          // Mirror acceptance to AsyncStorage so the client can render
+          // privacy-aware UI (e.g. a "you accepted on…" line) without an
+          // extra /me round-trip.
+          if (isNewUser && policyAccepted) {
+            AsyncStorage.setItem(PRIVACY_ACCEPTED_KEY, 'true').catch(() => {});
+          }
         }
       } catch (backendErr: any) {
         // Backend unavailable — token will be undefined.
@@ -105,6 +134,8 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
       if (backendToken) {
         pendingAuthStore.set(backendToken, backendUser);
       }
+
+      haptics.success();
 
       // Returning pro/helper — sign in directly, skip onboarding.
       if (backendToken && (backendUser?.role === 'helper' || backendUser?.role === 'pro')) {
@@ -128,6 +159,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             ? 'Code expired. Please request a new one.'
             : 'Verification failed. Please try again.';
       setError(msg);
+      haptics.error();
       setOtp(Array(OTP_LENGTH).fill(''));
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } finally {
@@ -249,12 +281,46 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
                   caretHidden
                   autoFocus={i === 0}
                   onFocus={triggerLookAway}
+                  textContentType="oneTimeCode"
+                  autoComplete="one-time-code"
                 />
               ))}
           </View>
 
           {/* Error */}
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          {/* Privacy / Terms consent — only for new users. Returning users
+              already accepted on first sign-up. */}
+          {isNewUser ? (
+            <TouchableOpacity
+              style={styles.consentRow}
+              onPress={() => { haptics.light(); setPolicyAccepted((v) => !v); }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkbox, policyAccepted && styles.checkboxChecked]}>
+                {policyAccepted ? (
+                  <Feather name="check" size={14} color="#FFFFFF" />
+                ) : null}
+              </View>
+              <Text style={styles.consentText}>
+                I agree to the{' '}
+                <Text
+                  style={styles.consentLink}
+                  onPress={() => Linking.openURL(TERMS_URL)}
+                >
+                  Terms of Service
+                </Text>
+                {' '}and{' '}
+                <Text
+                  style={styles.consentLink}
+                  onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+                >
+                  Privacy Policy
+                </Text>
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Resend */}
           <View style={styles.resendRow}>
@@ -266,7 +332,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             ) : (
               <TouchableOpacity onPress={handleResend} disabled={resending}>
                 {resending ? (
-                  <ActivityIndicator size="small" color={c.primary} />
+                  <LoadingBars size="small" color={c.primary} />
                 ) : (
                   <Text style={styles.resendLink}>Resend OTP</Text>
                 )}
@@ -280,14 +346,14 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
           <TouchableOpacity
             style={[
               styles.verifyButton,
-              (otp.join('').length < OTP_LENGTH || loading) && styles.verifyButtonDisabled,
+              (otp.join('').length < OTP_LENGTH || loading || (isNewUser && !policyAccepted)) && styles.verifyButtonDisabled,
             ]}
             onPress={() => handleVerify()}
-            disabled={otp.join('').length < OTP_LENGTH || loading}
+            disabled={otp.join('').length < OTP_LENGTH || loading || (isNewUser && !policyAccepted)}
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
+              <LoadingBars color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.verifyButtonText}>Verify & Continue</Text>
             )}
@@ -337,6 +403,37 @@ function createStyles(c: typeof lightColors) {
     otpBoxFilled: { borderColor: c.primary, backgroundColor: c.primaryBg },
     otpBoxError: { borderColor: c.danger, backgroundColor: c.dangerBg },
     errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, textAlign: 'center', marginTop: Spacing.md },
+    consentRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: Spacing.sm,
+      marginTop: Spacing.xl,
+      paddingHorizontal: Spacing.xs,
+    },
+    checkbox: {
+      width: 20,
+      height: 20,
+      borderRadius: Radius.sm,
+      borderWidth: 1.5,
+      borderColor: c.border,
+      backgroundColor: c.white,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 2,
+    },
+    checkboxChecked: { backgroundColor: c.primary, borderColor: c.primary },
+    consentText: {
+      flex: 1,
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      lineHeight: FontSize.sm * 1.5,
+      color: c.textSecondary,
+    },
+    consentLink: {
+      fontFamily: FontFamily.medium,
+      color: c.primary,
+      textDecorationLine: 'underline',
+    },
     resendRow: { alignItems: 'center', marginTop: Spacing.xl },
     resendCountdown: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
     resendCountdownNum: { fontFamily: FontFamily.semibold, color: c.text },

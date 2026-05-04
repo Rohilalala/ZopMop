@@ -21,6 +21,7 @@ import type { RouteProp } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
+import { showSuccess } from '../../utils/toast';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -77,11 +78,11 @@ export default function TipScreen() {
   const thumbX = ratio * TRACK_WIDTH;
 
   const onConfirm = () => {
-    Alert.alert(
-      'Tip added',
+    showSuccess(
       `₹${amount} will be added to ${helperName ?? 'your pro'}'s payout when the service ends.`,
-      [{ text: 'OK', onPress: () => navigation.goBack() }],
+      { title: 'Tip added' },
     );
+    navigation.goBack();
   };
 
   return (

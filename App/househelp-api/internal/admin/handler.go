@@ -61,7 +61,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 
 // GetDashboard handles GET /admin/dashboard — stats overview.
 func (h *Handler) GetDashboard(c *fiber.Ctx) error {
-	stats, err := h.service.GetDashboardStats(c.Context())
+	stats, err := h.service.GetDashboardStats(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get dashboard stats")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -78,7 +78,7 @@ func (h *Handler) GetUsers(c *fiber.Ctx) error {
 	role := c.Query("role")
 	search := c.Query("search")
 
-	result, err := h.service.GetAllUsers(c.Context(), page, limit, role, search)
+	result, err := h.service.GetAllUsers(c.UserContext(), page, limit, role, search)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get users list")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -96,7 +96,7 @@ func (h *Handler) SuspendUser(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	if err := h.service.SuspendUser(c.Context(), adminID, targetUserID, c.IP()); err != nil {
+	if err := h.service.SuspendUser(c.UserContext(), adminID, targetUserID, c.IP()); err != nil {
 		log.Error().Err(err).Str("target_user_id", targetUserID).Msg("failed to suspend user")
 		// Return 404 if user was not found.
 		if err.Error() == "user not found" {
@@ -120,7 +120,7 @@ func (h *Handler) UnsuspendUser(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	if err := h.service.UnsuspendUser(c.Context(), adminID, targetUserID, c.IP()); err != nil {
+	if err := h.service.UnsuspendUser(c.UserContext(), adminID, targetUserID, c.IP()); err != nil {
 		log.Error().Err(err).Str("target_user_id", targetUserID).Msg("failed to unsuspend user")
 		// Return 404 if user was not found.
 		if err.Error() == "user not found" {
@@ -148,7 +148,7 @@ func (h *Handler) GetHelpers(c *fiber.Ctx) error {
 		available = &b
 	}
 
-	result, err := h.service.GetAllHelpers(c.Context(), page, limit, available, minRating)
+	result, err := h.service.GetAllHelpers(c.UserContext(), page, limit, available, minRating)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get helpers list")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -163,7 +163,7 @@ func (h *Handler) GetPendingHelpers(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	result, err := h.service.ListPendingHelpers(c.Context(), page, limit)
+	result, err := h.service.ListPendingHelpers(c.UserContext(), page, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get pending helpers")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -181,7 +181,7 @@ func (h *Handler) ApproveHelper(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	if err := h.service.ApproveHelper(c.Context(), helperID, adminID, c.IP()); err != nil {
+	if err := h.service.ApproveHelper(c.UserContext(), helperID, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to approve helper")
 		if err.Error() == "helper not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper not found"})
@@ -199,7 +199,7 @@ func (h *Handler) RejectHelper(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	if err := h.service.RejectHelper(c.Context(), helperID, adminID, c.IP()); err != nil {
+	if err := h.service.RejectHelper(c.UserContext(), helperID, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to reject helper")
 		if err.Error() == "helper not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper not found"})
@@ -219,7 +219,7 @@ func (h *Handler) ListPendingRefunds(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid status filter"})
 	}
 
-	result, err := h.service.ListPendingRefunds(c.Context(), status, page, limit)
+	result, err := h.service.ListPendingRefunds(c.UserContext(), status, page, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to list pending refunds")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load refunds"})
@@ -235,7 +235,7 @@ func (h *Handler) SettleRefund(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	pr, err := h.service.SettleRefund(c.Context(), refundID, adminID, c.IP())
+	pr, err := h.service.SettleRefund(c.UserContext(), refundID, adminID, c.IP())
 	if err != nil {
 		log.Error().Err(err).Str("refund_id", refundID).Msg("failed to settle refund")
 		if err.Error() == "refund not found or already settled" {
@@ -260,7 +260,7 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
-	if err := h.service.CancelBooking(c.Context(), adminID, bookingID, c.IP()); err != nil {
+	if err := h.service.CancelBooking(c.UserContext(), adminID, bookingID, c.IP()); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("admin cancel booking failed")
 		status := fiber.StatusInternalServerError
 		message := "failed to cancel booking"
@@ -284,7 +284,7 @@ func (h *Handler) GetBookings(c *fiber.Ctx) error {
 	status := c.Query("status")
 	search := c.Query("search")
 
-	result, err := h.service.GetBookingsList(c.Context(), page, limit, status, search)
+	result, err := h.service.GetBookingsList(c.UserContext(), page, limit, status, search)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get bookings list")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -300,7 +300,7 @@ func (h *Handler) GetAuditLog(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	targetType := c.Query("target_type")
 
-	result, err := h.service.GetAuditLog(c.Context(), page, limit, targetType)
+	result, err := h.service.GetAuditLog(c.UserContext(), page, limit, targetType)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get audit log")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -315,7 +315,7 @@ func (h *Handler) GetPromotions(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 
-	result, err := h.service.GetAllPromotions(c.Context(), page, limit)
+	result, err := h.service.GetAllPromotions(c.UserContext(), page, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to get promotions")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -342,7 +342,7 @@ func (h *Handler) CreatePromotion(c *fiber.Ctx) error {
 
 	promo := req.ToPromotion()
 	adminID, _ := c.Locals("adminID").(string)
-	if err := h.service.CreatePromotion(c.Context(), &promo, adminID, c.IP()); err != nil {
+	if err := h.service.CreatePromotion(c.UserContext(), &promo, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Msg("failed to create promotion")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to create promotion",
@@ -376,7 +376,7 @@ func (h *Handler) UpdatePromotion(c *fiber.Ctx) error {
 	promo.ID = promoID
 
 	adminID, _ := c.Locals("adminID").(string)
-	if err := h.service.UpdatePromotion(c.Context(), &promo, adminID, c.IP()); err != nil {
+	if err := h.service.UpdatePromotion(c.UserContext(), &promo, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Msg("failed to update promotion")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update promotion",
@@ -394,7 +394,7 @@ func (h *Handler) DisablePromotion(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("adminID").(string)
 
-	if err := h.service.DisablePromotion(c.Context(), promoID, adminID, c.IP()); err != nil {
+	if err := h.service.DisablePromotion(c.UserContext(), promoID, adminID, c.IP()); err != nil {
 		log.Error().Err(err).Msg("failed to disable promotion")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to disable promotion",
@@ -423,7 +423,7 @@ func (h *Handler) BroadcastNotification(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.Broadcast(c.Context(), req.Title, req.Body, req.Target); err != nil {
+	if err := h.service.Broadcast(c.UserContext(), req.Title, req.Body, req.Target); err != nil {
 		log.Error().Err(err).Str("target", req.Target).Msg("failed to broadcast notification")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to broadcast notification"})
 	}

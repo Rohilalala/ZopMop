@@ -14,6 +14,9 @@ import {
   type KPIs,
 } from '@/api/dashboard';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { HealthStrip } from '@/components/dashboard/HealthStrip';
+import { QuickActions } from '@/components/dashboard/QuickActions';
+import { MiniWorkerMap } from '@/components/dashboard/MiniWorkerMap';
 
 // Dashboard: top-row KPIs, mid-row revenue + category-share charts, bottom
 // row live-orders feed + alerts feed. Auto-refreshes every 10s without
@@ -26,10 +29,14 @@ export function DashboardPage() {
   const kpis = useQuery({ queryKey: ['kpis'], queryFn: fetchKpis, refetchInterval: 10_000 });
   return (
     <div className="p-6 space-y-6">
+      <HealthStrip />
+
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-text-secondary mt-1">Live operations overview.</p>
       </div>
+
+      <QuickActions />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <KpiCard label="Active orders"      icon={Briefcase}     loading={kpis.isLoading} value={kpis.data?.active_orders} />
@@ -49,6 +56,8 @@ export function DashboardPage() {
         <LiveOrdersFeed />
         <AlertsFeed />
       </div>
+
+      <MiniWorkerMap />
     </div>
   );
 }

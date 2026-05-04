@@ -89,7 +89,7 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 		},
 		{
 			"pending_applications",
-			`SELECT COUNT(*) FROM helpers WHERE pending_status = 'pending'`,
+			`SELECT COUNT(*) FROM helpers WHERE approval_status = 'pending'`,
 			&out.PendingApplications,
 		},
 		{
@@ -118,13 +118,14 @@ func (s *Service) LiveOrders(ctx context.Context, limit int) ([]LiveOrder, error
 	rows, err := s.db.Query(ctx, `
 		SELECT b.id::text,
 		       COALESCE(u.name, u.phone, '—'),
-		       COALESCE(b.service_category, '—'),
+		       COALESCE(sc.category, sc.name, '—'),
 		       h.name,
 		       b.status,
 		       b.created_at
 		FROM bookings b
 		LEFT JOIN users u ON u.id = b.customer_id
 		LEFT JOIN users h ON h.id = b.helper_id
+		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		ORDER BY b.created_at DESC
 		LIMIT $1
 	`, limit)
@@ -182,10 +183,11 @@ func (s *Service) Revenue7d(ctx context.Context) ([]RevenuePoint, error) {
 // CategoryShareToday returns the order count per service category for today.
 func (s *Service) CategoryShareToday(ctx context.Context) ([]CategoryShare, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT COALESCE(service_category, 'unknown'), COUNT(*)
-		FROM bookings
-		WHERE created_at >= date_trunc('day', now())
-		GROUP BY service_category
+		SELECT COALESCE(sc.category, 'unknown'), COUNT(*)
+		FROM bookings b
+		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
+		WHERE b.created_at >= date_trunc('day', now())
+		GROUP BY sc.category
 		ORDER BY COUNT(*) DESC
 	`)
 	if err != nil {
@@ -221,7 +223,7 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 
 // KPIs returns dashboard top-row metrics.
 func (h *Handler) KPIs(c *fiber.Ctx) error {
-	out, err := h.svc.KPIs(c.Context())
+	out, err := h.svc.KPIs(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.dashboard] kpis failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -231,7 +233,7 @@ func (h *Handler) KPIs(c *fiber.Ctx) error {
 
 // LiveOrders returns the live order feed.
 func (h *Handler) LiveOrders(c *fiber.Ctx) error {
-	out, err := h.svc.LiveOrders(c.Context(), 20)
+	out, err := h.svc.LiveOrders(c.UserContext(), 20)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.dashboard] live orders failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -241,7 +243,7 @@ func (h *Handler) LiveOrders(c *fiber.Ctx) error {
 
 // Revenue7d returns the 7-day revenue chart data.
 func (h *Handler) Revenue7d(c *fiber.Ctx) error {
-	out, err := h.svc.Revenue7d(c.Context())
+	out, err := h.svc.Revenue7d(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.dashboard] revenue 7d failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -251,7 +253,7 @@ func (h *Handler) Revenue7d(c *fiber.Ctx) error {
 
 // CategoryShareToday returns today's orders-by-category split.
 func (h *Handler) CategoryShareToday(c *fiber.Ctx) error {
-	out, err := h.svc.CategoryShareToday(c.Context())
+	out, err := h.svc.CategoryShareToday(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.dashboard] category share failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})

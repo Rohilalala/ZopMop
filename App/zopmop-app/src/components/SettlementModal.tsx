@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
+  
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { LoadingBars } from './ui/LoadingBars';
 import { useRoomies } from '../context/RoomiesContext';
 import { useColors } from '../context/ThemeContext';
 import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../theme';
@@ -243,7 +244,7 @@ export default function SettlementModal({
                 disabled={loading}
               >
                 {loading ? (
-                  <ActivityIndicator color="#FFF" />
+                  <LoadingBars color="#FFF" />
                 ) : (
                   <Text style={s.btnText}>Add to Wallet</Text>
                 )}

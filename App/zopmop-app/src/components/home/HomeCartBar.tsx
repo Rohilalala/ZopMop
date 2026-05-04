@@ -55,7 +55,10 @@ export function HomeCartBar({ selectedAddressId }: Props) {
         animStyle,
         {
           position: 'absolute',
-          bottom: 88,
+          // Clear the BottomTabBar pill (94 from screen bottom) AND the
+          // Zop mascot that overhangs ~32px above the pill. 134 = 22 (pill
+          // bottom inset) + 72 (pill height) + 32 (Zop overhang) + 8 (gap).
+          bottom: 134,
           left: 16,
           right: 16,
           zIndex: 45,

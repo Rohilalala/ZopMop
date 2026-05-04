@@ -13,6 +13,10 @@ const (
 	EventMatchingTimeout  = "matching.timeout"
 	EventHelperOnline     = "helper.went_online"
 	EventHelperOffline    = "helper.went_offline"
+	EventPaymentInitiated = "payment.initiated"
+	EventPaymentSuccess   = "payment.success"
+	EventPaymentFailed    = "payment.failed"
+	EventRated            = "rated_pro"
 )
 
 // ── Client-side funnel event names ───────────────────────────────────────────

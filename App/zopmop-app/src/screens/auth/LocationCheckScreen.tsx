@@ -4,13 +4,14 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
+  
   TextInput,
   FlatList,
   Platform,
   KeyboardAvoidingView,
   Animated,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -248,7 +249,7 @@ export default function LocationCheckScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             {isGpsLoading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
+              <LoadingBars color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>
                 {gpsState === 'denied' || gpsState === 'error' ? 'Try again' : 'Allow location access'}

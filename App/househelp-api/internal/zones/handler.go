@@ -54,7 +54,7 @@ func (h *Handler) Check(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid lon"})
 	}
 
-	result, err := h.service.Check(c.Context(), lat, lon)
+	result, err := h.service.Check(c.UserContext(), lat, lon)
 	if err != nil {
 		log.Error().Err(err).Float64("lat", roundCoord(lat)).Float64("lon", roundCoord(lon)).Msg("zone check failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "zone check failed"})
@@ -64,7 +64,7 @@ func (h *Handler) Check(c *fiber.Ctx) error {
 
 // ListZones handles GET /admin/zones
 func (h *Handler) ListZones(c *fiber.Ctx) error {
-	zones, err := h.service.ListZones(c.Context())
+	zones, err := h.service.ListZones(c.UserContext())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to list zones")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list zones"})

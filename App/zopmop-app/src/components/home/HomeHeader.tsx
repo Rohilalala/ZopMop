@@ -15,6 +15,9 @@ type Props = {
   locationName: string;
   onLocationPress: () => void;
   selectedAddressId?: string;
+  /** Saved-address tag (e.g. "Home", "Office", "Mom's"). Falls back to a
+   *  generic label when the user hasn't saved this place. */
+  addressTag?: string | null;
 };
 
 function initialsOf(name?: string | null): string {
@@ -23,7 +26,7 @@ function initialsOf(name?: string | null): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || 'You';
 }
 
-export function HomeHeader({ locationName, onLocationPress, selectedAddressId }: Props) {
+export function HomeHeader({ locationName, onLocationPress, selectedAddressId, addressTag }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user } = useAuth();
   const { myGroup } = useRoomies();
@@ -54,8 +57,9 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId }:
                 textTransform: 'uppercase',
               },
             ]}
+            numberOfLines={1}
           >
-            Home · 12 min
+            {addressTag && addressTag.trim() ? addressTag : 'Current location'}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>

@@ -8,27 +8,61 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  ActivityIndicator,
+  
   Animated,
   PanResponder,
   Dimensions,
   Platform,
   Keyboard,
   Alert,
+  type TextStyle,
 } from 'react-native';
+import { LoadingBars } from './ui/LoadingBars';
 import * as Location from 'expo-location';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
-import { Colors, FontFamily, FontSize, Spacing, Radius, Shadow } from '../theme';
+import { Feather } from '@expo/vector-icons';
+import Svg, {
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  RadialGradient as SvgRadialGradient,
+  Rect,
+  Stop,
+} from 'react-native-svg';
 import { useAuth } from '../context/AuthContext';
 import { listAddresses, createAddress, deleteAddress, type ApiAddress } from '../api/addresses';
 import { searchPlaces, type PlaceResult } from '../api/places';
 import EditAddressModal from './EditAddressModal';
+import { showError } from '../utils/toast';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PANEL_WIDTH = SCREEN_WIDTH * 0.92;
 const PANEL_HEIGHT = SCREEN_HEIGHT * 0.82;
 const PANEL_BOTTOM = Platform.OS === 'ios' ? 36 : 16;
+
+const fontReg:   TextStyle = { fontFamily: 'PlusJakartaSans_400Regular' };
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+const C = {
+  bg: '#0A0A0A',
+  amber: '#F5A300',
+  amberHi: '#FFC042',
+  text: '#FFFFFF',
+  sub: 'rgba(255,255,255,0.62)',
+  muted: 'rgba(255,255,255,0.45)',
+  faint: 'rgba(255,255,255,0.28)',
+  glassFill: 'rgba(255,255,255,0.05)',
+  glassFillStrong: 'rgba(255,255,255,0.08)',
+  glassBorder: 'rgba(255,255,255,0.08)',
+  glassBorderStrong: 'rgba(255,255,255,0.14)',
+  divider: 'rgba(255,255,255,0.06)',
+  amberFill: 'rgba(245,163,0,0.14)',
+  amberBorder: 'rgba(245,163,0,0.32)',
+  danger: '#EF4444',
+};
 
 const DEFAULT_REGION: Region = {
   latitude: 28.4595,
@@ -37,30 +71,29 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.001,
 };
 
+// Dark map style matching the home aesthetic.
 const MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
+  { elementType: 'geometry', stylers: [{ color: '#141414' }] },
   { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#6b7280' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#0A0A0A' }] },
   { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#111827' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#cfcfcf' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#d1fae5' }, { visibility: 'on' }] },
-  { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e5e7eb' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#9ca3af' }] },
-  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#f3f4f6' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#eef2ff' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#818cf8' }] },
-  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#4f46e5' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1a2a1a' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1f1f1f' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#262626' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6f6f6f' }] },
+  { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#262626' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a2a05' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#5a3f08' }] },
+  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#F5A300' }] },
   { featureType: 'road.local', elementType: 'labels', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#ccfbf1' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#0d9488' }] },
-  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#f3f4f6' }] },
-  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#f0fdf4' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d1f2a' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3a6a8a' }] },
+  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#181818' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#152015' }] },
 ];
 
 type Step = 'search' | 'details';
@@ -91,6 +124,12 @@ interface Props {
   onLocationSelect: (name: string, lat: number, lon: number, addressId?: string) => void;
 }
 
+const TAG_ICONS: Record<AddressTag, keyof typeof Feather.glyphMap> = {
+  Home: 'home',
+  Work: 'briefcase',
+  Other: 'map-pin',
+};
+
 export default function LocationSelectorModal({ visible, onClose, onLocationSelect }: Props) {
   const { token } = useAuth();
 
@@ -106,6 +145,17 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
   const [editTarget, setEditTarget] = useState<ApiAddress | null>(null);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  // react-native-maps: SVG markers only render if tracksViewChanges is true
+  // long enough to capture. Flip to false after mount to avoid per-frame redraw.
+  const [trackZop, setTrackZop] = useState(true);
+
+  useEffect(() => {
+    if (!userCoords) return;
+    setTrackZop(true);
+    const t = setTimeout(() => setTrackZop(false), 800);
+    return () => clearTimeout(t);
+  }, [userCoords]);
 
   // ── Step 2: address form state ───────────────────────────────────────────────
   const [addressTag, setAddressTag] = useState<AddressTag>('Home');
@@ -139,8 +189,20 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
           .then(setSavedAddresses)
           .catch(() => { /* backend unavailable — keep empty list */ });
       }
+      // Center map on user's current GPS without selecting it.
+      centerMapOnCurrent();
     }
   }, [visible]);
+
+  async function centerMapOnCurrent() {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      panMapTo(pos.coords.latitude, pos.coords.longitude);
+    } catch { /* permission denied or GPS unavailable — keep default region */ }
+  }
 
   function resetFormState() {
     setStep('search');
@@ -233,6 +295,7 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
       if (status !== 'granted') { setGpsState('denied'); return; }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const { latitude, longitude } = pos.coords;
+      setUserCoords({ lat: latitude, lon: longitude });
       // expo-location's on-device reverse geocoder — no API key required.
       const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
       const address = place
@@ -246,7 +309,6 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
   }
 
   function handleSavedSelect(addr: ApiAddress) {
-    // Directly select the saved address and close
     onLocationSelect(addr.full_address, addr.lat, addr.lon, addr.id);
     dismissModal();
   }
@@ -307,6 +369,41 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
       <View style={s.panelContainer} pointerEvents="box-none">
         <Animated.View style={[s.panel, { transform: [{ translateY: slideAnim }] }]}>
 
+          {/* Glass background layer — vertical fill + diagonal sheen + amber
+              top-right bloom. Matches the home GlassCard hero recipe so the
+              location surface reads as part of the same design language. */}
+          <Svg
+            width="100%"
+            height="100%"
+            preserveAspectRatio="none"
+            viewBox="0 0 100 100"
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          >
+            <Defs>
+              <SvgLinearGradient id="locGlassFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0%"   stopColor="#1C1C22" stopOpacity="0.96" />
+                <Stop offset="100%" stopColor="#101015" stopOpacity="0.96" />
+              </SvgLinearGradient>
+              <SvgLinearGradient id="locGlassSheen" x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.10" />
+                <Stop offset="35%"  stopColor="#FFFFFF" stopOpacity="0.02" />
+                <Stop offset="60%"  stopColor="#FFFFFF" stopOpacity="0" />
+              </SvgLinearGradient>
+              <SvgRadialGradient
+                id="locGlassBloom"
+                cx="80" cy="0" rx="60" ry="60"
+                gradientUnits="userSpaceOnUse"
+              >
+                <Stop offset="0%"   stopColor="#F5A300" stopOpacity="0.10" />
+                <Stop offset="100%" stopColor="#F5A300" stopOpacity="0" />
+              </SvgRadialGradient>
+            </Defs>
+            <Rect width="100" height="100" fill="url(#locGlassFill)" />
+            <Rect width="100" height="100" fill="url(#locGlassSheen)" />
+            <Rect width="100" height="100" fill="url(#locGlassBloom)" />
+          </Svg>
+
           {/* ── Drag handle (search step only) ── */}
           {step === 'search' && (
             <View {...panResponder.panHandlers} style={s.dragArea}>
@@ -321,8 +418,8 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
             <>
               {/* Header */}
               <View style={s.header}>
-                <TouchableOpacity style={s.closeBtn} onPress={dismissModal} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                  <Text style={s.closeBtnText}>✕</Text>
+                <TouchableOpacity style={s.iconBtn} onPress={dismissModal} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Feather name="x" size={16} color={C.text} />
                 </TouchableOpacity>
                 <Text style={s.headerTitle}>Search your location</Text>
               </View>
@@ -333,23 +430,24 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
               <View style={s.searchWrap}>
                 <View style={[s.searchBar, selectedPlace ? s.searchBarConfirmed : null]}>
                   {searchState === 'loading'
-                    ? <ActivityIndicator size="small" color={Colors.primary} style={s.searchIconPlaceholder} />
-                    : <View style={s.searchIconBox}><View style={s.searchCircle} /><View style={s.searchHandle} /></View>
+                    ? <LoadingBars size="small" color={C.amber} style={{ width: 18 }} />
+                    : <Feather name="search" size={16} color={selectedPlace ? C.amber : C.muted} />
                   }
                   <TextInput
                     ref={searchInputRef}
                     style={s.searchInput}
                     placeholder="Search locality, sector, area"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor={C.muted}
                     value={searchQuery}
                     onChangeText={handleSearchChange}
                     autoCorrect={false}
                     autoCapitalize="none"
                     returnKeyType="search"
+                    keyboardAppearance="dark"
                   />
                   {searchQuery.length > 0 && (
                     <TouchableOpacity style={s.clearBtn} onPress={() => handleSearchChange('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                      <Text style={s.clearBtnText}>✕</Text>
+                      <Feather name="x" size={11} color={C.text} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -369,7 +467,17 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     pitch: 0,
                   }}
                   onRegionChangeComplete={handleMapRegionChangeComplete}
-                />
+                >
+                  {userCoords && (
+                    <Marker
+                      coordinate={{ latitude: userCoords.lat, longitude: userCoords.lon }}
+                      anchor={{ x: 0.5, y: 0.5 }}
+                      tracksViewChanges={trackZop}
+                    >
+                      <View style={s.zopMarker} collapsable={false} />
+                    </Marker>
+                  )}
+                </MapView>
                 {selectedPlace && (
                   <View style={s.centerPinContainer} pointerEvents="none">
                     <View style={s.centerPinHead} />
@@ -401,16 +509,17 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
               {showIdle && (
                 <View style={s.primaryActions}>
                   <TouchableOpacity style={s.actionRow} onPress={handleGps} disabled={gpsState === 'loading'} activeOpacity={0.7}>
-                    <View style={[s.actionIconBox, { backgroundColor: Colors.primaryBg }]}>
+                    <View style={[s.actionIconBox, { backgroundColor: C.amberFill, borderColor: C.amberBorder }]}>
                       {gpsState === 'loading'
-                        ? <ActivityIndicator size="small" color={Colors.primary} />
-                        : <View style={s.gpsOuter}><View style={s.gpsInner} /></View>
+                        ? <LoadingBars size="small" color={C.amber} />
+                        : <Feather name="navigation" size={16} color={C.amber} />
                       }
                     </View>
                     <View style={s.actionTextCol}>
                       <Text style={s.actionTitle}>{gpsState === 'loading' ? 'Detecting location…' : 'Use current location'}</Text>
                       {gpsState === 'denied' && <Text style={s.actionError}>Permission denied — tap to retry</Text>}
                     </View>
+                    <Feather name="chevron-right" size={14} color={C.faint} />
                   </TouchableOpacity>
                   <View style={s.actionDivider} />
                   <TouchableOpacity
@@ -418,13 +527,14 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     onPress={() => searchInputRef.current?.focus()}
                     activeOpacity={0.7}
                   >
-                    <View style={[s.actionIconBox, { backgroundColor: '#F0FDF4' }]}>
-                      <Text style={s.addText}>+</Text>
+                    <View style={[s.actionIconBox, { backgroundColor: C.glassFillStrong, borderColor: C.glassBorderStrong }]}>
+                      <Feather name="plus" size={16} color={C.text} />
                     </View>
                     <View style={s.actionTextCol}>
                       <Text style={s.actionTitle}>Add new address</Text>
-                      <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 }}>Search your area in the bar above</Text>
+                      <Text style={s.actionSub}>Search your area in the bar above</Text>
                     </View>
+                    <Feather name="chevron-right" size={14} color={C.faint} />
                   </TouchableOpacity>
                 </View>
               )}
@@ -436,12 +546,12 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     <React.Fragment key={`${result.lat}-${result.lon}`}>
                       <TouchableOpacity style={s.resultRow} onPress={() => handleResultSelect(result)} activeOpacity={0.7}>
                         <View style={s.resultIconBox}>
-                          <><View style={s.resultPinHead} /><View style={s.resultPinTail} /></>
+                          <Feather name="map-pin" size={16} color={C.amber} />
                         </View>
                         <View style={s.resultTextCol}>
                           <Text style={s.resultPrimary} numberOfLines={1}>{result.main_text}</Text>
                           {result.secondary_text ? (
-                            <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 }} numberOfLines={1}>{result.secondary_text}</Text>
+                            <Text style={s.resultSecondary} numberOfLines={1}>{result.secondary_text}</Text>
                           ) : null}
                         </View>
                       </TouchableOpacity>
@@ -451,7 +561,9 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
 
                   {searchState === 'no_results' && (
                     <View style={s.emptyState}>
-                      <Text style={s.emptyEmoji}>🗺️</Text>
+                      <View style={s.emptyIconWrap}>
+                        <Feather name="map" size={22} color={C.amber} />
+                      </View>
                       <Text style={s.emptyTitle}>No results found</Text>
                       <Text style={s.emptySubtitle}>Try a different area or locality</Text>
                     </View>
@@ -459,7 +571,9 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
 
                   {searchState === 'error' && (
                     <View style={s.emptyState}>
-                      <Text style={s.emptyEmoji}>⚠️</Text>
+                      <View style={s.emptyIconWrap}>
+                        <Feather name="alert-triangle" size={22} color={C.amber} />
+                      </View>
                       <Text style={s.emptyTitle}>Couldn't fetch results</Text>
                       <TouchableOpacity onPress={() => fetchSearch(searchQuery)} activeOpacity={0.7}>
                         <Text style={s.retryText}>Tap to retry</Text>
@@ -494,8 +608,8 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
             <View style={s.detailsRoot}>
               {/* Header */}
               <View style={s.detailsHeader}>
-                <TouchableOpacity style={s.backBtn} onPress={() => setStep('search')} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                  <Text style={s.backBtnText}>←</Text>
+                <TouchableOpacity style={s.iconBtn} onPress={() => setStep('search')} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Feather name="chevron-left" size={18} color={C.text} />
                 </TouchableOpacity>
                 <Text style={s.detailsHeaderTitle}>Add address details</Text>
               </View>
@@ -511,16 +625,20 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                   {/* Save as tag */}
                   <Text style={s.formLabel}>Save address as</Text>
                   <View style={s.tagRow}>
-                    {(['Home', 'Work', 'Other'] as AddressTag[]).map(tag => (
-                      <TouchableOpacity
-                        key={tag}
-                        style={[s.tagBtn, addressTag === tag && s.tagBtnActive]}
-                        onPress={() => setAddressTag(tag)}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={[s.tagBtnText, addressTag === tag && s.tagBtnTextActive]}>{tag}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {(['Home', 'Work', 'Other'] as AddressTag[]).map(tag => {
+                      const active = addressTag === tag;
+                      return (
+                        <TouchableOpacity
+                          key={tag}
+                          style={[s.tagBtn, active && s.tagBtnActive]}
+                          onPress={() => setAddressTag(tag)}
+                          activeOpacity={0.75}
+                        >
+                          <Feather name={TAG_ICONS[tag]} size={13} color={active ? C.amber : C.muted} />
+                          <Text style={[s.tagBtnText, active && s.tagBtnTextActive]}>{tag}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
 
                   {/* Flat + Floor row */}
@@ -528,18 +646,20 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     <TextInput
                       style={[s.field, s.fieldHalf]}
                       placeholder="Flat / House No.*"
-                      placeholderTextColor={Colors.textMuted}
+                      placeholderTextColor={C.muted}
                       value={flatNo}
                       onChangeText={setFlatNo}
                       returnKeyType="next"
+                      keyboardAppearance="dark"
                     />
                     <TextInput
                       style={[s.field, s.fieldHalf]}
                       placeholder="Floor (Optional)"
-                      placeholderTextColor={Colors.textMuted}
+                      placeholderTextColor={C.muted}
                       value={floor}
                       onChangeText={setFloor}
                       returnKeyType="next"
+                      keyboardAppearance="dark"
                     />
                   </View>
 
@@ -547,20 +667,20 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                   <TextInput
                     style={s.field}
                     placeholder="Apartment / Building name*"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor={C.muted}
                     value={buildingName}
                     onChangeText={setBuildingName}
-
+                    keyboardAppearance="dark"
                   />
 
                   {/* Landmark */}
                   <TextInput
                     style={[s.field, s.fieldLast]}
                     placeholder="Nearby Landmark (Optional)"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor={C.muted}
                     value={landmark}
                     onChangeText={setLandmark}
-
+                    keyboardAppearance="dark"
                   />
                 </View>
 
@@ -589,11 +709,12 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                     <TextInput
                       style={s.phoneInput}
                       placeholder="Phone number*"
-                      placeholderTextColor={Colors.textMuted}
+                      placeholderTextColor={C.muted}
                       value={receiverPhone}
                       onChangeText={setReceiverPhone}
                       keyboardType="phone-pad"
                       maxLength={10}
+                      keyboardAppearance="dark"
                     />
                   </View>
 
@@ -601,10 +722,10 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
                   <TextInput
                     style={[s.field, s.fieldLast]}
                     placeholder="Receiver's name*"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor={C.muted}
                     value={receiverName}
                     onChangeText={setReceiverName}
-
+                    keyboardAppearance="dark"
                   />
                 </View>
 
@@ -645,7 +766,7 @@ export default function LocationSelectorModal({ visible, onClose, onLocationSele
 
 // ── Swipeable saved-address row ───────────────────────────────────────────────
 
-const SWIPE_W = 72;
+const SWIPE_W = 76;
 
 function SwipeSavedRow({
   addr, token, onSelect, onEdit, onDeleted,
@@ -690,7 +811,7 @@ function SwipeSavedRow({
         text: 'Delete', style: 'destructive', onPress: async () => {
           if (!token) return;
           try { await deleteAddress(token, addr.id); onDeleted(addr.id); }
-          catch (err: any) { Alert.alert('Cannot delete', err?.message ?? 'Could not delete. Try again.'); snap(0); }
+          catch (err: any) { showError(err?.message ?? 'Could not delete. Try again.', { title: 'Cannot delete' }); snap(0); }
         },
       },
     ]);
@@ -698,31 +819,33 @@ function SwipeSavedRow({
 
   return (
     <View style={ss.wrap}>
-      {/* Delete — swipe right */}
+      {/* Delete — swipe right reveals on left */}
       <View style={[ss.action, ss.actionLeft]}>
         <TouchableOpacity style={ss.deleteBtn} onPress={handleDelete} activeOpacity={0.85}>
-          <Text style={ss.actionText}>🗑</Text>
+          <Feather name="trash-2" size={16} color="#FFFFFF" />
+          <Text style={ss.actionText}>Delete</Text>
         </TouchableOpacity>
       </View>
-      {/* Edit — swipe left */}
+      {/* Edit — swipe left reveals on right */}
       <View style={[ss.action, ss.actionRight]}>
         <TouchableOpacity style={ss.editBtn} onPress={() => { snap(0); onEdit(); }} activeOpacity={0.85}>
-          <Text style={ss.actionText}>✏️</Text>
+          <Feather name="edit-2" size={16} color="#0A0A0A" />
+          <Text style={[ss.actionText, { color: '#0A0A0A' }]}>Edit</Text>
         </TouchableOpacity>
       </View>
       <Animated.View style={[ss.row, { transform: [{ translateX }] }]} {...pan.panHandlers}>
         <TouchableOpacity style={ss.rowInner} onPress={onSelect} activeOpacity={0.7}>
           <View style={ss.iconBox}>
-            <View style={[s.resultPinHead, { width: 10, height: 10 }]} />
-            <View style={[s.resultPinTail, { borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 7 }]} />
+            <Feather name={TAG_ICONS[addr.tag]} size={15} color={C.amber} />
           </View>
           <View style={ss.textCol}>
             <View style={ss.titleRow}>
-              <Text style={ss.title}>{addr.title}</Text>
-              <View style={s.tagPill}><Text style={s.tagText}>{addr.tag}</Text></View>
+              <Text style={ss.title} numberOfLines={1}>{addr.title}</Text>
+              <View style={ss.tagPill}><Text style={ss.tagText}>{addr.tag}</Text></View>
             </View>
             <Text style={ss.sub} numberOfLines={1}>{addr.full_address}</Text>
           </View>
+          <Feather name="chevron-right" size={13} color={C.faint} />
         </TouchableOpacity>
       </Animated.View>
     </View>
@@ -730,26 +853,42 @@ function SwipeSavedRow({
 }
 
 const ss = StyleSheet.create({
-  wrap: { height: 60, marginBottom: 2, borderRadius: Radius.lg, overflow: 'hidden' },
+  wrap: { height: 64, marginBottom: 8, borderRadius: 14, overflow: 'hidden' },
   action: { position: 'absolute', top: 0, bottom: 0, width: SWIPE_W },
   actionLeft: { left: 0 },
   actionRight: { right: 0 },
-  deleteBtn: { flex: 1, backgroundColor: Colors.danger, alignItems: 'center', justifyContent: 'center', borderTopLeftRadius: Radius.lg, borderBottomLeftRadius: Radius.lg },
-  editBtn: { flex: 1, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', borderTopRightRadius: Radius.lg, borderBottomRightRadius: Radius.lg },
-  actionText: { fontSize: 18 },
-  row: { backgroundColor: Colors.white, height: 60, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
-  rowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 10 },
-  iconBox: { width: 32, height: 32, borderRadius: Radius.md, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-  textCol: { flex: 1 },
+  deleteBtn: {
+    flex: 1, backgroundColor: C.danger,
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+  },
+  editBtn: {
+    flex: 1, backgroundColor: C.amber,
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+  },
+  actionText: { ...fontBold, fontSize: 11, color: '#FFFFFF', letterSpacing: 0.2 },
+  row: {
+    backgroundColor: 'rgba(20,20,26,0.92)',
+    height: 64, borderRadius: 14,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.10)',
+  },
+  rowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 12 },
+  iconBox: {
+    width: 36, height: 36, borderRadius: 12,
+    backgroundColor: C.amberFill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  textCol: { flex: 1, minWidth: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-  title: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.text },
-  sub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textSecondary },
+  title: { ...fontBold, fontSize: 13.5, color: C.text, letterSpacing: -0.1 },
+  tagPill: { backgroundColor: C.amberFill, borderRadius: 99, paddingHorizontal: 7, paddingVertical: 1 },
+  tagText: { ...fontSemi, fontSize: 9.5, color: C.amberHi, letterSpacing: 0.4 },
+  sub: { ...fontMed, fontSize: 11.5, color: C.sub, lineHeight: 15 },
 });
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  backdrop: { backgroundColor: 'rgba(0,0,0,0.45)' },
+  backdrop: { backgroundColor: 'rgba(0,0,0,0.6)' },
   panelContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'flex-end',
@@ -759,98 +898,149 @@ const s = StyleSheet.create({
   panel: {
     width: PANEL_WIDTH,
     height: PANEL_HEIGHT,
-    backgroundColor: Colors.white,
-    borderRadius: 22,
+    backgroundColor: '#1A1A1F',
+    borderRadius: 26,
     overflow: 'hidden',
-    ...Shadow.lg,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 22 },
+    shadowOpacity: 0.55,
+    shadowRadius: 44,
+    elevation: 16,
   },
 
   // ── Drag handle ──
   dragArea: { alignItems: 'center', paddingVertical: 10 },
-  dragHandle: { width: 36, height: 4, borderRadius: Radius.full, backgroundColor: Colors.border },
+  dragHandle: { width: 40, height: 4, borderRadius: 99, backgroundColor: 'rgba(255,255,255,0.18)' },
 
   // ── Shared header ──
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingBottom: 12, gap: 10 },
-  closeBtn: { width: 30, height: 30, borderRadius: Radius.full, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
-  closeBtnText: { fontSize: 12, color: Colors.textSecondary, fontFamily: FontFamily.medium },
-  headerTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.md, color: Colors.text, letterSpacing: -0.2 },
-  headerDivider: { height: 1, backgroundColor: Colors.border, marginHorizontal: Spacing.base, marginBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
+  iconBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: C.glassFill,
+    borderWidth: 0.5, borderColor: C.glassBorderStrong,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  headerTitle: { ...fontBold, fontSize: 16, color: C.text, letterSpacing: -0.3 },
+  headerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: C.divider, marginHorizontal: 16, marginBottom: 12 },
 
   // ── Search ──
-  searchWrap: { paddingHorizontal: Spacing.base, marginBottom: 12 },
+  searchWrap: { paddingHorizontal: 16, marginBottom: 12 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.xl, paddingHorizontal: Spacing.md,
-    height: 46, gap: Spacing.sm,
-    borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: C.glassFill,
+    borderRadius: 14, paddingHorizontal: 14,
+    height: 46, gap: 10,
+    borderWidth: 0.5, borderColor: C.glassBorder,
   },
-  searchBarConfirmed: { borderColor: Colors.primary, backgroundColor: Colors.primaryBg },
-  searchIconPlaceholder: { width: 20 },
-  searchIconBox: { width: 18, height: 18 },
-  searchCircle: { width: 12, height: 12, borderRadius: Radius.full, borderWidth: 2, borderColor: Colors.textMuted, position: 'absolute', top: 0, left: 0 },
-  searchHandle: { width: 6, height: 2, backgroundColor: Colors.textMuted, position: 'absolute', bottom: 1, right: 0, transform: [{ rotate: '45deg' }], borderRadius: 1 },
-  searchInput: { flex: 1, fontFamily: FontFamily.regular, fontSize: FontSize.base, color: Colors.text, paddingVertical: 0 },
-  clearBtn: { width: 20, height: 20, borderRadius: Radius.full, backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-  clearBtnText: { fontSize: 9, color: Colors.textSecondary, fontFamily: FontFamily.bold },
+  searchBarConfirmed: { borderColor: C.amberBorder, backgroundColor: C.amberFill },
+  searchInput: { flex: 1, ...fontMed, fontSize: 14, color: C.text, paddingVertical: 0 },
+  clearBtn: {
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: C.glassFillStrong,
+    borderWidth: 0.5, borderColor: C.glassBorderStrong,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   // ── Map ──
-  mapWrap: { marginHorizontal: Spacing.base, borderRadius: Radius.xl, overflow: 'hidden', marginBottom: 10, borderWidth: 1, borderColor: Colors.border },
-  map: { height: 160, width: '100%' },
+  mapWrap: {
+    marginHorizontal: 16, borderRadius: 16, overflow: 'hidden',
+    marginBottom: 10,
+    borderWidth: 0.5, borderColor: C.glassBorderStrong,
+  },
+  map: { height: 170, width: '100%' },
+  zopMarker: {
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: '#F5A300',
+    borderWidth: 2.5, borderColor: 'rgba(180,180,180,0.9)',
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 2 },
+    elevation: 5,
+  },
   centerPinContainer: { position: 'absolute', top: '47%', left: '50%', transform: [{ translateX: -12 }, { translateY: -36 }], alignItems: 'center' },
-  centerPinHead: { width: 24, height: 24, borderRadius: 12, backgroundColor: Colors.primary, borderWidth: 3, borderColor: Colors.white, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 10, elevation: 5 },
-  centerPinTail: { width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 18, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: Colors.primary, marginTop: -2 },
-  mapHint: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.textSecondary, marginBottom: 8 },
+  centerPinHead: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: C.amber,
+    borderWidth: 3, borderColor: C.bg,
+    shadowColor: C.amber, shadowOpacity: 0.5, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  centerPinTail: {
+    width: 0, height: 0,
+    borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 18,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+    borderTopColor: C.amber, marginTop: -2,
+  },
+  mapHint: { ...fontReg, fontSize: 11.5, color: C.muted, marginBottom: 8 },
 
   // ── Confirm strip ──
-  confirmWrap: { marginHorizontal: Spacing.base, marginBottom: 8 },
-  confirmAddressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 10 },
-  pinDot: { width: 8, height: 8, borderRadius: Radius.full, backgroundColor: Colors.primary, flexShrink: 0, marginTop: 3 },
-  confirmAddressText: { flex: 1, fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: Colors.text, lineHeight: 20 },
+  confirmWrap: { marginHorizontal: 16, marginBottom: 8 },
+  confirmAddressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 12 },
+  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.amber, flexShrink: 0, marginTop: 5 },
+  confirmAddressText: { flex: 1, ...fontSemi, fontSize: 13, color: C.text, lineHeight: 19 },
   confirmActions: { flexDirection: 'row', gap: 8 },
-  changeBtn: { flex: 1, height: 42, borderRadius: Radius.xl, borderWidth: 1.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-  changeBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.textSecondary },
-  confirmBtn: { flex: 2, height: 42, borderRadius: Radius.xl, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center', ...Shadow.sm },
-  confirmBtnText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.white, letterSpacing: 0.2 },
+  changeBtn: {
+    flex: 1, height: 44, borderRadius: 14,
+    borderWidth: 0.5, borderColor: C.glassBorderStrong,
+    backgroundColor: C.glassFill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  changeBtnText: { ...fontSemi, fontSize: 13, color: C.text },
+  confirmBtn: {
+    flex: 2, height: 44, borderRadius: 14,
+    backgroundColor: C.amber,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: C.amber, shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  confirmBtnText: { ...fontBold, fontSize: 13.5, color: C.bg, letterSpacing: 0.2 },
 
   // ── Primary actions ──
-  primaryActions: { marginHorizontal: Spacing.base, backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, marginBottom: 12, overflow: 'hidden' },
-  actionRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: 12, gap: 12 },
-  actionDivider: { height: 1, backgroundColor: Colors.border, marginLeft: Spacing.md + 40 + 12 },
-  actionIconBox: { width: 40, height: 40, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
-  gpsOuter: { width: 20, height: 20, borderRadius: Radius.full, borderWidth: 2, borderColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  gpsInner: { width: 7, height: 7, borderRadius: Radius.full, backgroundColor: Colors.primary },
-  addText: { fontFamily: FontFamily.bold, fontSize: 22, color: Colors.success, lineHeight: 26, marginTop: -1 },
+  primaryActions: {
+    marginHorizontal: 16,
+    backgroundColor: C.glassFill,
+    borderRadius: 16,
+    borderWidth: 0.5, borderColor: C.glassBorder,
+    marginBottom: 12, overflow: 'hidden',
+  },
+  actionRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 12 },
+  actionDivider: { height: StyleSheet.hairlineWidth, backgroundColor: C.divider, marginLeft: 14 + 40 + 12 },
+  actionIconBox: {
+    width: 40, height: 40, borderRadius: 12,
+    borderWidth: 0.5,
+    alignItems: 'center', justifyContent: 'center',
+  },
   actionTextCol: { flex: 1 },
-  actionTitle: { fontFamily: FontFamily.medium, fontSize: FontSize.base, color: Colors.text },
-  actionError: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: Colors.danger, marginTop: 2 },
+  actionTitle: { ...fontSemi, fontSize: 13.5, color: C.text, letterSpacing: -0.1 },
+  actionSub: { ...fontMed, fontSize: 11, color: C.muted, marginTop: 2 },
+  actionError: { ...fontMed, fontSize: 11, color: C.danger, marginTop: 2 },
 
   // ── Results scroll ──
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.base },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 24 },
   resultRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
-  resultIconBox: { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.primaryBg, alignItems: 'center', justifyContent: 'center' },
-  resultPinHead: { width: 12, height: 12, borderRadius: Radius.full, backgroundColor: Colors.primary, marginBottom: -2 },
-  resultPinTail: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 9, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: Colors.primary },
-  resultTextCol: { flex: 1 },
-  resultPrimary: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.text, marginBottom: 2 },
-  resultSecondary: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  rowDivider: { height: 1, backgroundColor: Colors.border, marginLeft: 36 + 12 },
-  sectionLabel: { fontFamily: FontFamily.bold, fontSize: FontSize.xs, color: Colors.textMuted, letterSpacing: 0.6, marginBottom: 8, marginTop: 4 },
-  savedRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
-  savedIconBox: { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-  savedTextCol: { flex: 1 },
-  savedTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-  savedTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: Colors.text },
-  tagPill: { backgroundColor: Colors.primaryBg, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 2 },
-  tagText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: Colors.primary },
-  savedSubtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  savedMeta: { fontFamily: FontFamily.regular, fontSize: 10, color: Colors.textMuted, marginLeft: 6 },
-  emptyState: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
-  emptyEmoji: { fontSize: 32, marginBottom: 4 },
-  emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: Colors.text },
-  emptySubtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: Colors.textSecondary },
-  retryText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: Colors.primary, textDecorationLine: 'underline', marginTop: 4 },
+  resultIconBox: {
+    width: 36, height: 36, borderRadius: 12,
+    backgroundColor: C.amberFill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  resultTextCol: { flex: 1, minWidth: 0 },
+  resultPrimary: { ...fontSemi, fontSize: 13.5, color: C.text, marginBottom: 2 },
+  resultSecondary: { ...fontMed, fontSize: 11.5, color: C.muted },
+  rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: C.divider, marginLeft: 36 + 12 },
+  sectionLabel: { ...fontBold, fontSize: 10, color: C.muted, letterSpacing: 1.0, marginBottom: 10, marginTop: 6, textTransform: 'uppercase' },
+
+  emptyState: { alignItems: 'center', paddingVertical: 32, gap: 8 },
+  emptyIconWrap: {
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: C.amberFill,
+    borderWidth: 1, borderColor: C.amberBorder,
+    marginBottom: 6,
+  },
+  emptyTitle: { ...fontBold, fontSize: 15, color: C.text, letterSpacing: -0.2 },
+  emptySubtitle: { ...fontMed, fontSize: 12.5, color: C.muted },
+  retryText: { ...fontSemi, fontSize: 13, color: C.amber, textDecorationLine: 'underline', marginTop: 4 },
 
   // ══════════════════════════════════════════════
   // Step 2 — Address details form
@@ -861,97 +1051,57 @@ const s = StyleSheet.create({
   detailsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.base,
+    paddingHorizontal: 16,
     paddingTop: 18,
     paddingBottom: 12,
     gap: 12,
   },
-  backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backBtnText: { fontSize: 18, color: Colors.text, lineHeight: 22 },
-  detailsHeaderTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: Colors.text, letterSpacing: -0.3 },
+  detailsHeaderTitle: { ...fontBold, fontSize: 18, color: C.text, letterSpacing: -0.3 },
 
   detailsScroll: { flex: 1 },
-  detailsScrollContent: { paddingHorizontal: Spacing.base, paddingTop: 4 },
+  detailsScrollContent: { paddingHorizontal: 16, paddingTop: 4 },
 
   // ── Form card ──
   formCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.base,
+    backgroundColor: C.glassFill,
+    borderRadius: 16,
+    borderWidth: 0.5, borderColor: C.glassBorder,
+    padding: 16,
     marginBottom: 12,
-    ...Shadow.sm,
   },
-  formCardTitle: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.md,
-    color: Colors.text,
-    marginBottom: 4,
-    letterSpacing: -0.2,
-  },
-  formCardSubtitle: {
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  formLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    marginBottom: 10,
-    marginTop: 12,
-  },
+  formCardTitle: { ...fontBold, fontSize: 14.5, color: C.text, marginBottom: 4, letterSpacing: -0.2 },
+  formCardSubtitle: { ...fontReg, fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 17 },
+  formLabel: { ...fontMed, fontSize: 12, color: C.muted, marginBottom: 10, marginTop: 10, letterSpacing: 0.2 },
 
   // ── Tag selector ──
-  tagRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  tagRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   tagBtn: {
     flex: 1,
-    height: 40,
-    borderRadius: Radius.lg,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.white,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 0.5, borderColor: C.glassBorderStrong,
+    backgroundColor: C.glassFill,
   },
-  tagBtnActive: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primaryBg,
-  },
-  tagBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-  },
-  tagBtnTextActive: {
-    color: Colors.primary,
-  },
+  tagBtnActive: { borderColor: C.amberBorder, backgroundColor: C.amberFill },
+  tagBtnText: { ...fontSemi, fontSize: 12.5, color: C.muted },
+  tagBtnTextActive: { color: C.amberHi },
 
   // ── Input fields ──
-  fieldRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  fieldRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   fieldHalf: { flex: 1, marginBottom: 0 },
   field: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 12,
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
+    backgroundColor: C.glassFill,
+    borderRadius: 12,
+    borderWidth: 0.5, borderColor: C.glassBorder,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 11,
+    ...fontMed,
+    fontSize: 13.5,
+    color: C.text,
     marginBottom: 10,
   },
   fieldLast: { marginBottom: 0 },
@@ -964,108 +1114,59 @@ const s = StyleSheet.create({
     paddingVertical: 0,
     overflow: 'hidden',
   },
-  phonePrefix: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: Spacing.md,
-    paddingRight: 0,
-    height: '100%',
-  },
-  phonePrefixText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-  },
-  phonePrefixDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: Colors.border,
-    marginLeft: 10,
-    marginRight: 2,
-  },
+  phonePrefix: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, height: '100%' },
+  phonePrefixText: { ...fontSemi, fontSize: 13.5, color: C.text },
+  phonePrefixDivider: { width: StyleSheet.hairlineWidth, height: 20, backgroundColor: C.glassBorderStrong, marginLeft: 10 },
   phoneInput: {
     flex: 1,
-    fontFamily: FontFamily.regular,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 12,
+    ...fontMed, fontSize: 13.5, color: C.text,
+    paddingHorizontal: 10,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 11,
   },
 
   // ── Area card ──
   areaCard: {
-    backgroundColor: Colors.white,
-    borderRadius: Radius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.base,
+    backgroundColor: C.glassFill,
+    borderRadius: 16,
+    borderWidth: 0.5, borderColor: C.glassBorder,
+    padding: 16,
     marginBottom: 12,
-    ...Shadow.sm,
   },
-  areaLabel: {
-    fontFamily: FontFamily.medium,
-    fontSize: FontSize.sm,
-    color: Colors.textSecondary,
-    marginBottom: 8,
-  },
-  areaRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  areaAddress: {
-    flex: 1,
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.text,
-    lineHeight: 22,
-  },
+  areaLabel: { ...fontMed, fontSize: 12, color: C.muted, marginBottom: 8, letterSpacing: 0.2 },
+  areaRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  areaAddress: { flex: 1, ...fontBold, fontSize: 13.5, color: C.text, lineHeight: 19 },
   areaChangeBtn: {
-    backgroundColor: `${Colors.accent}18`,
-    borderRadius: Radius.lg,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: `${Colors.accent}40`,
+    backgroundColor: C.amberFill,
+    borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 0.5, borderColor: C.amberBorder,
   },
-  areaChangeBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: FontSize.sm,
-    color: Colors.accent,
-  },
+  areaChangeBtnText: { ...fontBold, fontSize: 11.5, color: C.amberHi, letterSpacing: 0.2 },
 
   // ── Save button ──
   saveWrap: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: Spacing.base,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 16,
+    bottom: 0, left: 0, right: 0,
+    paddingHorizontal: 16,
+    paddingBottom: Platform.OS === 'ios' ? 22 : 16,
     paddingTop: 12,
-    backgroundColor: Colors.white,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    backgroundColor: 'rgba(15,15,20,0.88)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.10)',
   },
   saveBtn: {
     height: 52,
-    borderRadius: Radius.xl,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadow.sm,
+    borderRadius: 14,
+    backgroundColor: C.amber,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: C.amber, shadowOpacity: 0.35, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
   saveBtnDisabled: {
-    backgroundColor: Colors.border,
+    backgroundColor: C.glassFillStrong,
+    shadowOpacity: 0,
+    elevation: 0,
   },
-  saveBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: FontSize.base,
-    color: Colors.white,
-    letterSpacing: 0.3,
-  },
-  saveBtnTextDisabled: {
-    color: Colors.textMuted,
-  },
+  saveBtnText: { ...fontBold, fontSize: 14, color: C.bg, letterSpacing: 0.3 },
+  saveBtnTextDisabled: { color: C.muted },
 });

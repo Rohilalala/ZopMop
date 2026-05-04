@@ -74,6 +74,14 @@ func (h *Handler) RegisterMeRoutes(router fiber.Router) {
 	router.Put("/fcm-token", h.UpdateFCMToken)
 }
 
+// RegisterDeviceRoutes mounts authenticated device-scoped routes
+// (requires JWT middleware applied by caller). This is the new
+// multi-device push-token surface; the legacy single-token PUT
+// /me/fcm-token continues to work via RegisterMeRoutes.
+func (h *Handler) RegisterDeviceRoutes(router fiber.Router) {
+	router.Post("/register", h.RegisterDevice)
+}
+
 // DeleteMe handles DELETE /me — permanently (soft) deletes the caller's
 // account. Required by App Store Guideline 5.1.1(v). Body is optional:
 // { "reason": "..." } may capture a short user-supplied reason. Clears the
@@ -96,7 +104,7 @@ func (h *Handler) DeleteMe(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.DeleteAccount(c.Context(), userID, req.Reason); err != nil {
+	if err := h.service.DeleteAccount(c.UserContext(), userID, req.Reason); err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
 		}
@@ -130,13 +138,16 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	otp, err := h.service.SendOTP(c.Context(), req.Phone)
+	otp, isNewUser, err := h.service.SendOTP(c.UserContext(), req.Phone)
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("failed to send OTP")
 		return mapSendOTPError(c, err)
 	}
 
-	response := fiber.Map{"message": "OTP sent successfully"}
+	response := fiber.Map{
+		"message":     "OTP sent successfully",
+		"is_new_user": isNewUser,
+	}
 	if otp != "" {
 		response["otp"] = otp
 		response["note"] = "OTP included in response for development only"
@@ -155,7 +166,7 @@ func (h *Handler) VerifyFirebase(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": "firebase_token is required"})
 	}
 
-	loginResp, err := h.service.VerifyFirebaseToken(c.Context(), req.FirebaseToken)
+	loginResp, err := h.service.VerifyFirebaseToken(c.UserContext(), req.FirebaseToken, req.HasAcceptedPrivacyPolicy)
 	if err != nil {
 		log.Error().Err(err).Msg("firebase auth failed")
 		return mapVerifyFirebaseError(c, err)
@@ -179,7 +190,7 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	loginResp, err := h.service.VerifyOTP(c.Context(), req.Phone, req.Code)
+	loginResp, err := h.service.VerifyOTP(c.UserContext(), req.Phone, req.Code, req.HasAcceptedPrivacyPolicy)
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("OTP verification failed")
 		return mapVerifyOTPError(c, err)
@@ -196,7 +207,7 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
-	user, err := h.service.GetMe(c.Context(), userID)
+	user, err := h.service.GetMe(c.UserContext(), userID)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
@@ -227,7 +238,7 @@ func (h *Handler) UpdateMe(c *fiber.Ctx) error {
 		})
 	}
 
-	user, err := h.service.UpdateProfile(c.Context(), userID, req)
+	user, err := h.service.UpdateProfile(c.UserContext(), userID, req)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to update profile")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update profile"})
@@ -255,7 +266,7 @@ func (h *Handler) OnboardPro(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.service.OnboardPro(c.Context(), userID, req)
+	resp, err := h.service.OnboardPro(c.UserContext(), userID, req)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to onboard pro")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to onboard pro"})
@@ -285,12 +296,43 @@ func (h *Handler) UpdateFCMToken(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.UpdateFCMToken(c.Context(), userID, req.Token); err != nil {
+	if err := h.service.UpdateFCMToken(c.UserContext(), userID, req.Token); err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to update FCM token")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update FCM token"})
 	}
 
 	return c.JSON(fiber.Map{"message": "token updated"})
+}
+
+// RegisterDevice handles POST /devices/register — upserts a per-device FCM
+// token row keyed by (device_id, platform). Customers land in
+// device_tokens.user_id, pros in device_tokens.worker_id; the auth
+// middleware's role claim picks the column.
+func (h *Handler) RegisterDevice(c *fiber.Ctx) error {
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+	role, _ := c.Locals("role").(string)
+
+	var req RegisterDeviceRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	if err := h.service.RegisterDevice(c.UserContext(), userID, role, req.FCMToken, req.Platform, req.DeviceID); err != nil {
+		log.Error().Err(err).Str("user_id", userID).Str("platform", req.Platform).Msg("failed to register device token")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to register device"})
+	}
+
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 func mapSendOTPError(c *fiber.Ctx, err error) error {

@@ -15,6 +15,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
 var ErrNotFound = errors.New("zone not found")
@@ -174,28 +176,39 @@ func (r *Repository) DeleteSurge(ctx context.Context, id string) error {
 }
 
 type Handler struct {
-	repo     *Repository
-	recorder *audit.Recorder
+	repo       *Repository
+	recorder   *audit.Recorder
+	dispatcher *webhooks.Dispatcher
 }
 
 func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 	return &Handler{repo: repo, recorder: recorder}
 }
 
+// SetDispatcher wires the outbound webhook dispatcher.
+func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
+
+func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
+	if h.dispatcher == nil {
+		return
+	}
+	h.dispatcher.Dispatch(ctx, event, payload)
+}
+
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/zones")
 	g.Get("/",       h.ListZones)
-	g.Post("/",      h.CreateZone)
-	g.Put("/:id",    h.UpdateZone)
-	g.Post("/:id/toggle", h.ToggleZone)
+	g.Post("/",      middleware.RequirePermission("zones.create"), h.CreateZone)
+	g.Put("/:id",    middleware.RequirePermission("zones.update"), h.UpdateZone)
+	g.Post("/:id/toggle", middleware.RequirePermission("zones.toggle"), h.ToggleZone)
 
 	g.Get("/surge",       h.ListSurge)
-	g.Post("/surge",      h.CreateSurge)
-	g.Delete("/surge/:id", h.DeleteSurge)
+	g.Post("/surge",      middleware.RequirePermission("surge.create"), h.CreateSurge)
+	g.Delete("/surge/:id", middleware.RequirePermission("surge.delete"), h.DeleteSurge)
 }
 
 func (h *Handler) ListZones(c *fiber.Ctx) error {
-	out, err := h.repo.ListZones(c.Context())
+	out, err := h.repo.ListZones(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -204,7 +217,7 @@ func (h *Handler) CreateZone(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
-	id, err := h.repo.CreateZone(c.Context(), req)
+	id, err := h.repo.CreateZone(c.UserContext(), req)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -218,7 +231,7 @@ func (h *Handler) UpdateZone(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	id := c.Params("id")
-	if err := h.repo.UpdateZone(c.Context(), id, req); err != nil {
+	if err := h.repo.UpdateZone(c.UserContext(), id, req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "zone.update", id, nil, req)
@@ -229,7 +242,7 @@ func (h *Handler) ToggleZone(c *fiber.Ctx) error {
 	var body struct{ Active bool `json:"active"` }
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.repo.SetZoneActive(c.Context(), id, body.Active); err != nil {
+	if err := h.repo.SetZoneActive(c.UserContext(), id, body.Active); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "zone.toggle", id, nil, body.Active)
@@ -237,7 +250,7 @@ func (h *Handler) ToggleZone(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListSurge(c *fiber.Ctx) error {
-	out, err := h.repo.ListSurge(c.Context())
+	out, err := h.repo.ListSurge(c.UserContext())
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
@@ -247,17 +260,24 @@ func (h *Handler) CreateSurge(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
-	id, err := h.repo.CreateSurge(c.Context(), req, adminID)
+	id, err := h.repo.CreateSurge(c.UserContext(), req, adminID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "surge.create", id, nil, req)
+	h.fireWebhook(c.UserContext(), webhooks.EventAdminSurgeActivated, webhooks.AdminSurgeActivatedEvent{
+		SurgeID:    id,
+		Zone:       req.ZoneID,
+		Multiplier: req.Multiplier,
+		AdminID:    adminID,
+		OccurredAt: time.Now().UTC(),
+	})
 	return c.JSON(fiber.Map{"id": id})
 }
 
 func (h *Handler) DeleteSurge(c *fiber.Ctx) error {
 	id := c.Params("id")
-	if err := h.repo.DeleteSurge(c.Context(), id); err != nil {
+	if err := h.repo.DeleteSurge(c.UserContext(), id); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.audit(c, "surge.delete", id, nil, nil)
@@ -270,7 +290,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.Context(), audit.Entry{
+	h.recorder.Log(c.UserContext(), audit.Entry{
 		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "zones",
 		TargetType: "zone", TargetID: target, Before: before, After: after,
 		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),

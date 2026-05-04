@@ -73,7 +73,7 @@ func (h *Handler) CreateGroup(c *fiber.Ctx) error {
 		})
 	}
 
-	group, err := h.service.CreateGroup(c.Context(), userID, req.AddressID, req.Name)
+	group, err := h.service.CreateGroup(c.UserContext(), userID, req.AddressID, req.Name)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -95,7 +95,7 @@ func (h *Handler) JoinGroup(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.service.JoinGroup(c.Context(), req.Code, userID)
+	resp, err := h.service.JoinGroup(c.UserContext(), req.Code, userID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -106,7 +106,7 @@ func (h *Handler) JoinGroup(c *fiber.Ctx) error {
 func (h *Handler) GetMyGroup(c *fiber.Ctx) error {
 	userID, _ := c.Locals("userID").(string)
 
-	resp, err := h.service.GetMyGroup(c.Context(), userID)
+	resp, err := h.service.GetMyGroup(c.UserContext(), userID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -135,7 +135,7 @@ func (h *Handler) LeaveGroup(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "cannot remove another member"})
 	}
 
-	result, err := h.service.LeaveGroup(c.Context(), groupID, callerID, force)
+	result, err := h.service.LeaveGroup(c.UserContext(), groupID, callerID, force)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -161,7 +161,7 @@ func (h *Handler) TransferHost(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.service.TransferHost(c.Context(), groupID, userID, req.ToUserID); err != nil {
+	if err := h.service.TransferHost(c.UserContext(), groupID, userID, req.ToUserID); err != nil {
 		return mapServiceError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "host transferred"})
@@ -177,7 +177,7 @@ func (h *Handler) DeleteGroup(c *fiber.Ctx) error {
 	}
 	force := c.Query("force") == "true"
 
-	result, err := h.service.DeleteGroup(c.Context(), groupID, userID, force)
+	result, err := h.service.DeleteGroup(c.UserContext(), groupID, userID, force)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -203,7 +203,7 @@ func (h *Handler) BookGroupChore(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.service.BookGroupChore(c.Context(), groupID, req, userID)
+	resp, err := h.service.BookGroupChore(c.UserContext(), groupID, req, userID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -236,7 +236,7 @@ func (h *Handler) TopUpPrepaid(c *fiber.Ctx) error {
 
 	// memberID param is informational; actual top-up is keyed by (userID, groupID).
 	_ = memberID
-	if err := h.service.TopUpPrepaid(c.Context(), userID, body.GroupID, body.Amount); err != nil {
+	if err := h.service.TopUpPrepaid(c.UserContext(), userID, body.GroupID, body.Amount); err != nil {
 		return mapServiceError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "top-up successful"})
@@ -250,7 +250,7 @@ func (h *Handler) MarkSettlementExternal(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid debt id"})
 	}
 
-	if err := h.service.MarkSettlementExternal(c.Context(), debtID, userID); err != nil {
+	if err := h.service.MarkSettlementExternal(c.UserContext(), debtID, userID); err != nil {
 		return mapServiceError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "debt marked as pending verification"})
@@ -264,7 +264,7 @@ func (h *Handler) VerifySettlement(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid debt id"})
 	}
 
-	if err := h.service.VerifySettlement(c.Context(), debtID, userID); err != nil {
+	if err := h.service.VerifySettlement(c.UserContext(), debtID, userID); err != nil {
 		return mapServiceError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "debt settled"})
@@ -279,7 +279,7 @@ func (h *Handler) GetLedger(c *fiber.Ctx) error {
 	}
 
 	// SECURITY: only group members may read the ledger.
-	isMember, err := h.service.IsMember(c.Context(), userID, groupID)
+	isMember, err := h.service.IsMember(c.UserContext(), userID, groupID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -287,7 +287,7 @@ func (h *Handler) GetLedger(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "not a group member"})
 	}
 
-	simplified, err := h.service.NetDebts(c.Context(), groupID)
+	simplified, err := h.service.NetDebts(c.UserContext(), groupID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -303,7 +303,7 @@ func (h *Handler) GetVault(c *fiber.Ctx) error {
 	}
 
 	// SECURITY: only group members may read the vault summary.
-	isMember, err := h.service.IsMember(c.Context(), userID, groupID)
+	isMember, err := h.service.IsMember(c.UserContext(), userID, groupID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}
@@ -311,7 +311,7 @@ func (h *Handler) GetVault(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "not a group member"})
 	}
 
-	vault, err := h.service.GetVaultSummary(c.Context(), groupID)
+	vault, err := h.service.GetVaultSummary(c.UserContext(), groupID)
 	if err != nil {
 		return mapServiceError(c, err)
 	}

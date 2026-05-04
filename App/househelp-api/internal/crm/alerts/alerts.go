@@ -138,7 +138,7 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 
 // List returns recent alerts.
 func (h *Handler) List(c *fiber.Ctx) error {
-	out, err := h.svc.List(c.Context(), 100)
+	out, err := h.svc.List(c.UserContext(), 100)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.alerts] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -152,7 +152,7 @@ func (h *Handler) MarkAllRead(c *fiber.Ctx) error {
 	if adminID == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}
-	if err := h.svc.MarkAllRead(c.Context(), adminID); err != nil {
+	if err := h.svc.MarkAllRead(c.UserContext(), adminID); err != nil {
 		log.Error().Err(err).Msg("[crm.alerts] mark all read failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}

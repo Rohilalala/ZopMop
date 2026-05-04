@@ -1,204 +1,49 @@
-import React, { useMemo, useState } from 'react';
+// ManageHouseholdScreen — dark home pattern.
+// Two-tab pane: Vault (total balance + per-member balances) and Ledger
+// (simplified inter-member debts with settle CTAs).
+
+import React, { useState } from 'react';
 import {
-  ActivityIndicator,
+  
   FlatList,
-  Pressable,
   RefreshControl,
+  StatusBar,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
+  type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
-import { useColors } from '../../context/ThemeContext';
-import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
-import { lightColors } from '../../theme/colors';
 import DebtCapWarningBanner from '../../components/DebtCapWarningBanner';
 import SettlementModal from '../../components/SettlementModal';
 import type { SimplifiedDebt, MemberBalance } from '../../api/roomies';
 
-type C = typeof lightColors;
-type Props = NativeStackScreenProps<MainStackParamList, 'ManageHousehold'>;
+import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
+import { PressFx } from '../../components/ui/PressFx';
 
-function createStyles(c: C) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 16,
-      gap: 4,
-    },
-    backBtn: { padding: 4, marginLeft: -4 },
-    headerTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-      flex: 1,
-    },
-    tabRow: {
-      flexDirection: 'row',
-      marginHorizontal: Spacing.base,
-      borderRadius: Radius.lg,
-      backgroundColor: c.surface,
-      padding: 4,
-      marginBottom: Spacing.md,
-    },
-    tab: {
-      flex: 1,
-      paddingVertical: Spacing.sm,
-      alignItems: 'center',
-      borderRadius: Radius.md,
-    },
-    tabActive: { backgroundColor: c.white, ...Shadow.sm },
-    tabText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-    },
-    tabTextActive: { color: c.primary },
-    content: { flex: 1 },
-    // Vault tab
-    totalCard: {
-      marginHorizontal: Spacing.base,
-      marginBottom: Spacing.md,
-      backgroundColor: c.primary,
-      borderRadius: Radius.xl,
-      padding: Spacing.base,
-    },
-    totalLabel: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.sm,
-      color: 'rgba(255,255,255,0.75)',
-      marginBottom: 4,
-    },
-    totalAmount: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['4xl'],
-      color: '#FFFFFF',
-      marginBottom: Spacing.md,
-    },
-    addBalanceBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      alignSelf: 'flex-start',
-      backgroundColor: 'rgba(255,255,255,0.2)',
-      borderRadius: Radius.lg,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-    },
-    addBalanceBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: '#FFF',
-    },
-    memberCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.white,
-      marginHorizontal: Spacing.base,
-      marginBottom: Spacing.sm,
-      borderRadius: Radius.xl,
-      padding: Spacing.md,
-      borderWidth: 1,
-      borderColor: c.border,
-      ...Shadow.sm,
-    },
-    memberAvatar: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: Spacing.md,
-    },
-    memberAvatarText: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.base,
-      color: c.primary,
-    },
-    memberName: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: c.text,
-      flex: 1,
-    },
-    memberBalance: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.base,
-      color: c.primary,
-    },
-    // Ledger tab
-    debtCard: {
-      marginHorizontal: Spacing.base,
-      marginBottom: Spacing.sm,
-      backgroundColor: c.white,
-      borderRadius: Radius.xl,
-      padding: Spacing.md,
-      borderWidth: 1,
-      borderColor: c.border,
-      ...Shadow.sm,
-    },
-    debtRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: Spacing.sm,
-    },
-    debtText: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      flex: 1,
-    },
-    debtUser: {
-      fontFamily: FontFamily.semibold,
-      color: c.text,
-    },
-    debtAmount: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: c.danger,
-    },
-    settleBtn: {
-      backgroundColor: c.primaryBg,
-      borderRadius: Radius.md,
-      paddingVertical: Spacing.sm,
-      paddingHorizontal: Spacing.md,
-      alignItems: 'center',
-    },
-    settleBtnText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.sm,
-      color: c.primary,
-    },
-    emptyWrap: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingTop: Spacing['3xl'],
-    },
-    emptyText: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.base,
-      color: c.textMuted,
-      textAlign: 'center',
-    },
-  });
-}
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+const H_PAD = 20;
+
+type Props = NativeStackScreenProps<MainStackParamList, 'ManageHousehold'>;
 
 export default function ManageHouseholdScreen({ route }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const insets = useSafeAreaInsets();
   const { groupId } = route.params;
   const { user } = useAuth();
   const {
@@ -213,24 +58,23 @@ export default function ManageHouseholdScreen({ route }: Props) {
     dismissDebtCapWarning,
   } = useRoomies();
 
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-
   const [activeTab, setActiveTab] = useState<'vault' | 'ledger'>('vault');
   const [refreshing, setRefreshing] = useState(false);
   const [settlementDebt, setSettlementDebt] = useState<SimplifiedDebt | null>(null);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([refreshVault(), refreshLedger()]);
-    setRefreshing(false);
+    try {
+      await Promise.all([refreshVault(), refreshLedger()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleAddBalance = () => {
     if (!user || !myGroup) return;
-    const myMember = myGroup.members.find(m => m.user_id === user.id);
+    const myMember = myGroup.members.find((m) => m.user_id === user.id);
     if (!myMember) return;
-    // Top-up ₹500 (50000 units) as a demo amount — replace with an input modal as needed.
     topUpPrepaid(myMember.id, groupId, 50_000).then(refreshVault);
   };
 
@@ -252,61 +96,86 @@ export default function ManageHouseholdScreen({ route }: Props) {
       <View style={s.debtCard}>
         <View style={s.debtRow}>
           <Text style={s.debtText}>
-            <Text style={s.debtUser}>{isMyDebt ? 'You' : item.from.slice(0, 8)}</Text>
+            <Text style={s.debtUser}>
+              {isMyDebt ? 'You' : item.from.slice(0, 8)}
+            </Text>
             {' owes '}
-            <Text style={s.debtUser}>{item.to === user?.id ? 'you' : item.to.slice(0, 8)}</Text>
+            <Text style={s.debtUser}>
+              {item.to === user?.id ? 'you' : item.to.slice(0, 8)}
+            </Text>
           </Text>
           <Text style={s.debtAmount}>₹{(item.amount / 100).toFixed(0)}</Text>
         </View>
         {isMyDebt && (
-          <Pressable style={s.settleBtn} onPress={() => setSettlementDebt(item)}>
+          <PressFx style={s.settleBtn} onPress={() => setSettlementDebt(item)}>
             <Text style={s.settleBtnText}>Settle</Text>
-          </Pressable>
+          </PressFx>
         )}
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="chevron-back" size={24} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>{myGroup?.group.name ?? 'Manage Household'}</Text>
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
+
+      <View style={[s.head, { paddingTop: insets.top + 10 }]}>
+        <View style={s.headRow}>
+          <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
+            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+          </PressFx>
+          <View style={{ flex: 1 }}>
+            <Text style={s.title} numberOfLines={1}>
+              {myGroup?.group.name ?? 'Household'}
+            </Text>
+            <Text style={s.sub}>Vault & ledger.</Text>
+          </View>
+        </View>
       </View>
 
       {debtCapWarning && <DebtCapWarningBanner onDismiss={dismissDebtCapWarning} />}
 
-      {/* Tab switcher */}
       <View style={s.tabRow}>
-        <Pressable style={[s.tab, activeTab === 'vault' && s.tabActive]} onPress={() => setActiveTab('vault')}>
+        <PressFx
+          style={[s.tab, activeTab === 'vault' && s.tabActive]}
+          onPress={() => setActiveTab('vault')}
+        >
           <Text style={[s.tabText, activeTab === 'vault' && s.tabTextActive]}>Vault</Text>
-        </Pressable>
-        <Pressable style={[s.tab, activeTab === 'ledger' && s.tabActive]} onPress={() => setActiveTab('ledger')}>
+        </PressFx>
+        <PressFx
+          style={[s.tab, activeTab === 'ledger' && s.tabActive]}
+          onPress={() => setActiveTab('ledger')}
+        >
           <Text style={[s.tabText, activeTab === 'ledger' && s.tabTextActive]}>Ledger</Text>
-        </Pressable>
+        </PressFx>
       </View>
 
       {loading && !refreshing ? (
-        <ActivityIndicator style={{ marginTop: Spacing.xl }} color={c.primary} />
+        <LoadingSkeleton variant="list" rows={4} />
       ) : activeTab === 'vault' ? (
         <FlatList
           style={s.content}
           data={vault?.members ?? []}
-          keyExtractor={item => item.user_id}
+          keyExtractor={(item) => item.user_id}
           renderItem={renderMember}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#F5A300"
+            />
+          }
           ListHeaderComponent={
             vault ? (
-              <View style={s.totalCard}>
-                <Text style={s.totalLabel}>Total Household Balance</Text>
+              <GlassCard radius={22} hero style={s.totalCard}>
+                <Text style={s.totalLabel}>Total household balance</Text>
                 <Text style={s.totalAmount}>₹{(vault.total_balance / 100).toFixed(0)}</Text>
-                <TouchableOpacity style={s.addBalanceBtn} onPress={handleAddBalance} activeOpacity={0.7}>
-                  <Ionicons name="add" size={14} color="#FFF" />
-                  <Text style={s.addBalanceBtnText}>Add Balance</Text>
-                </TouchableOpacity>
-              </View>
+                <PressFx style={s.addBalanceBtn} onPress={handleAddBalance}>
+                  <Feather name="plus" size={13} color="#0A0A0A" />
+                  <Text style={s.addBalanceBtnText}>Add balance</Text>
+                </PressFx>
+              </GlassCard>
             ) : null
           }
           ListEmptyComponent={
@@ -314,7 +183,7 @@ export default function ManageHouseholdScreen({ route }: Props) {
               <Text style={s.emptyText}>No members yet</Text>
             </View>
           }
-          contentContainerStyle={{ paddingBottom: Spacing['2xl'] }}
+          contentContainerStyle={{ paddingBottom: 40 + insets.bottom, paddingHorizontal: H_PAD }}
         />
       ) : (
         <FlatList
@@ -322,13 +191,20 @@ export default function ManageHouseholdScreen({ route }: Props) {
           data={ledger}
           keyExtractor={(item, idx) => `${item.from}-${item.to}-${idx}`}
           renderItem={renderDebt}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#F5A300"
+            />
+          }
           ListEmptyComponent={
             <View style={s.emptyWrap}>
-              <Text style={s.emptyText}>All settled up!</Text>
+              <Feather name="check-circle" size={28} color="rgba(34,197,94,0.55)" />
+              <Text style={[s.emptyText, { marginTop: 10 }]}>All settled up</Text>
             </View>
           }
-          contentContainerStyle={{ paddingBottom: Spacing['2xl'] }}
+          contentContainerStyle={{ paddingBottom: 40 + insets.bottom, paddingHorizontal: H_PAD }}
         />
       )}
 
@@ -342,6 +218,193 @@ export default function ManageHouseholdScreen({ route }: Props) {
           onClose={() => setSettlementDebt(null)}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0A0A0A' },
+
+  head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  title: {
+    ...fontExtra,
+    fontSize: 24, color: '#FFFFFF',
+    letterSpacing: -0.6, lineHeight: 28,
+  },
+  sub: {
+    ...fontMed,
+    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    marginTop: 2,
+  },
+
+  // Tab switcher
+  tabRow: {
+    flexDirection: 'row',
+    marginHorizontal: H_PAD,
+    marginTop: 6,
+    marginBottom: 14,
+    padding: 4,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 10,
+  },
+  tabActive: {
+    backgroundColor: 'rgba(245,163,0,0.16)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(245,163,0,0.32)',
+  },
+  tabText: {
+    ...fontSemi,
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.55)',
+  },
+  tabTextActive: { color: '#F5A300' },
+
+  content: { flex: 1 },
+
+  // Vault total hero
+  totalCard: {
+    padding: 18,
+    marginBottom: 14,
+  },
+  totalLabel: {
+    ...fontBold,
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.55)',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  totalAmount: {
+    ...fontExtra,
+    fontSize: 36,
+    color: '#FFFFFF',
+    letterSpacing: -1,
+    marginBottom: 14,
+  },
+  addBalanceBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#F5A300',
+    borderRadius: 99,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  addBalanceBtnText: {
+    ...fontBold,
+    fontSize: 12.5,
+    color: '#0A0A0A',
+    letterSpacing: 0.1,
+  },
+
+  memberCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.07)',
+    marginBottom: 8,
+  },
+  memberAvatar: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(245,163,0,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberAvatarText: {
+    ...fontBold,
+    fontSize: 13,
+    color: '#F5A300',
+  },
+  memberName: {
+    ...fontSemi,
+    fontSize: 14,
+    color: '#FFFFFF',
+    flex: 1,
+  },
+  memberBalance: {
+    ...fontBold,
+    fontSize: 15,
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+  },
+
+  // Ledger
+  debtCard: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.07)',
+    marginBottom: 8,
+  },
+  debtRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  debtText: {
+    ...fontMed,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.7)',
+    flex: 1,
+  },
+  debtUser: {
+    ...fontSemi,
+    color: '#FFFFFF',
+  },
+  debtAmount: {
+    ...fontExtra,
+    fontSize: 16,
+    color: '#EF4444',
+    letterSpacing: -0.3,
+  },
+  settleBtn: {
+    marginTop: 10,
+    backgroundColor: 'rgba(245,163,0,0.16)',
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: 'rgba(245,163,0,0.3)',
+  },
+  settleBtnText: {
+    ...fontBold,
+    fontSize: 12.5,
+    color: '#F5A300',
+  },
+
+  emptyWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+  },
+  emptyText: {
+    ...fontMed,
+    fontSize: 13.5,
+    color: 'rgba(255,255,255,0.5)',
+    textAlign: 'center',
+  },
+});

@@ -9,6 +9,7 @@ export type WorkerListItem = {
   avatar_url?: string | null;
   status: Status;
   is_available: boolean;
+  is_online: boolean;
   is_vip: boolean;
   rating: number;
   total_jobs: number;
@@ -26,6 +27,8 @@ export type WorkerDetail = WorkerListItem & {
   completed_jobs_30d: number;
   earnings_30d_cents: number;
   cancellation_rate: number;
+  /** Operational area; managed via PATCH /admin/workers/:id/locality. */
+  locality?: string | null;
 };
 
 export type Job = {
@@ -94,4 +97,15 @@ export async function unsuspendWorker(id: string) { await api.post(`/admin/worke
 export async function forceOffline(id: string) { await api.post(`/admin/workers/${id}/force-offline`); }
 export async function setWorkerCategories(id: string, categories: string[]) {
   await api.put(`/admin/workers/${id}/categories`, { categories });
+}
+
+// PATCH /admin/workers/:id/locality — admin-only (workers.suspend perm).
+// Empty string clears the locality. Returns the canonical (case-corrected)
+// name from the localities table.
+export async function setWorkerLocality(id: string, locality: string): Promise<string> {
+  const res = await api.patch<{ ok: boolean; locality: string }>(
+    `/admin/workers/${id}/locality`,
+    { locality },
+  );
+  return res.data.locality ?? '';
 }

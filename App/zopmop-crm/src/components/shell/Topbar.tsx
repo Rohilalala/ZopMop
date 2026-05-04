@@ -1,8 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, ChevronDown, LogOut, Monitor, User } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { logout } from '@/api/auth';
+import {
+  listNotifications,
+  markAllRead,
+  markRead,
+  resolveNotificationLink,
+  unreadCount,
+  type CrmNotification,
+  type NotificationSeverity,
+} from '@/api/notifications';
 
 // Topbar: breadcrumb left, alerts bell + admin avatar right.
 // Crumb labels are derived from the URL path; for fully-custom labels per
@@ -15,6 +25,7 @@ const CRUMB_LABELS: Record<string, string> = {
   refunds: 'Refunds',
   users: 'Users',
   workers: 'Workers',
+  leaves: 'Leaves',
   map: 'Live Map',
   promos: 'Promos',
   banners: 'Banners',
@@ -57,13 +68,147 @@ export function Topbar() {
 }
 
 function AlertsBell() {
-  // Wired up by the Dashboard module's alerts feed; this stub is the topbar
-  // affordance only — actual list lives on the dashboard.
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const nav = useNavigate();
+  const qc = useQueryClient();
+
+  // Unread badge polled every 30s. Keeps the bell up-to-date without
+  // pulling the whole feed when the dropdown is closed.
+  const unreadQ = useQuery({
+    queryKey: ['notifications', 'unread'],
+    queryFn: unreadCount,
+    refetchInterval: 30_000,
+  });
+
+  // Feed only loads on open — avoids hammering the API for a list nobody is reading.
+  const listQ = useQuery({
+    queryKey: ['notifications', 'list'],
+    queryFn: () => listNotifications({ limit: 50 }),
+    enabled: open,
+    refetchInterval: open ? 30_000 : false,
+  });
+
+  // Click-outside to dismiss.
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  async function onClickItem(n: CrmNotification) {
+    if (!n.read_at) {
+      try { await markRead(n.id); } catch { /* swallow — UI optimism */ }
+      void qc.invalidateQueries({ queryKey: ['notifications'] });
+    }
+    const link = resolveNotificationLink(n);
+    if (link) {
+      setOpen(false);
+      nav(link);
+    }
+  }
+
+  async function onMarkAll() {
+    try { await markAllRead(); } finally {
+      void qc.invalidateQueries({ queryKey: ['notifications'] });
+    }
+  }
+
+  const unread = unreadQ.data ?? 0;
+
   return (
-    <button className="relative w-9 h-9 rounded-xl border border-border hover:bg-surface-elevated transition flex items-center justify-center">
-      <Bell className="w-4 h-4 text-text-secondary" />
-    </button>
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="relative w-9 h-9 rounded-xl border border-border hover:bg-surface-elevated transition flex items-center justify-center"
+        aria-label="Notifications"
+      >
+        <Bell className="w-4 h-4 text-text-secondary" />
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-danger text-white text-[10px] font-semibold flex items-center justify-center">
+            {unread > 99 ? '99+' : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-11 w-[380px] max-h-[520px] flex flex-col card-elevated p-0 z-30 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div>
+              <div className="text-sm font-semibold">Notifications</div>
+              <div className="text-[11px] text-text-muted">
+                {unread > 0 ? `${unread} unread` : 'All caught up'}
+              </div>
+            </div>
+            <button
+              onClick={() => void onMarkAll()}
+              disabled={unread === 0}
+              className="text-xs text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-default"
+            >
+              Mark all read
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {listQ.isLoading ? (
+              <div className="p-6 text-sm text-text-muted text-center">Loading…</div>
+            ) : (listQ.data?.length ?? 0) === 0 ? (
+              <div className="p-8 text-sm text-text-muted text-center">No notifications</div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {listQ.data!.map((n) => (
+                  <NotificationRow key={n.id} n={n} onClick={() => void onClickItem(n)} />
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
+}
+
+const SEVERITY_STYLES: Record<NotificationSeverity, { label: string; pill: string; rowBg: string }> = {
+  info:    { label: 'Info',    pill: 'border-primary/30 text-primary/90 bg-primary/10', rowBg: '' },
+  warning: { label: 'Warning', pill: 'border-warning/30 text-warning/90 bg-warning/10', rowBg: '' },
+  // urgent rows render with a red wash + red border so they don't blend in;
+  // they also stay sticky regardless of read state until clicked.
+  urgent:  { label: 'Urgent',  pill: 'border-danger/40 text-danger bg-danger/15',       rowBg: 'bg-danger/10 border-l-2 border-danger' },
+};
+
+function NotificationRow({ n, onClick }: { n: CrmNotification; onClick: () => void }) {
+  const sev = SEVERITY_STYLES[n.severity] ?? SEVERITY_STYLES.info;
+  const unread = !n.read_at;
+  return (
+    <li>
+      <button
+        onClick={onClick}
+        className={`w-full text-left px-4 py-3 transition hover:bg-surface ${sev.rowBg} ${unread ? 'bg-surface-elevated/50' : ''}`}
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`pill text-[10px] ${sev.pill}`}>{sev.label}</span>
+          {unread && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+          <span className="ml-auto text-[10px] text-text-muted">{formatRelativeTime(n.created_at)}</span>
+        </div>
+        <div className="text-sm font-medium text-text-primary">{n.title}</div>
+        {n.body && <div className="text-xs text-text-secondary mt-0.5 line-clamp-2">{n.body}</div>}
+      </button>
+    </li>
+  );
+}
+
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const m = Math.floor(diffMs / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
 }
 
 function AdminMenu() {

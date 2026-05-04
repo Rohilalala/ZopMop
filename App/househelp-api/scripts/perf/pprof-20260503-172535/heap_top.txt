@@ -1,0 +1,26 @@
+File: api
+Type: inuse_space
+Time: 2026-05-03 17:26:05 IST
+Showing nodes accounting for 10267.84kB, 68.15% of 15065.60kB total
+Showing top 20 nodes out of 70
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%  7192.08kB 47.74%  github.com/valyala/fasthttp.(*Server).serveConn
+         0     0%     0%  7192.08kB 47.74%  github.com/valyala/fasthttp.(*workerPool).getCh.func1
+         0     0%     0%  7192.08kB 47.74%  github.com/valyala/fasthttp.(*workerPool).workerFunc
+ 3596.06kB 23.87% 23.87%  3596.06kB 23.87%  bufio.NewReaderSize (inline)
+         0     0% 23.87%  3596.06kB 23.87%  github.com/valyala/fasthttp.acquireReader
+ 3084.01kB 20.47% 44.34%  3084.01kB 20.47%  bufio.NewWriterSize (inline)
+         0     0% 44.34%  3084.01kB 20.47%  github.com/valyala/fasthttp.acquireWriter
+ 3075.53kB 20.41% 64.75%  3075.53kB 20.41%  runtime.mallocgc
+         0     0% 64.75%  3075.53kB 20.41%  runtime.newobject
+         0     0% 64.75%  2576.26kB 17.10%  runtime.doInit (inline)
+         0     0% 64.75%  2576.26kB 17.10%  runtime.doInit1
+         0     0% 64.75%  2576.26kB 17.10%  runtime.main
+         0     0% 64.75%     1539kB 10.22%  runtime.allocm
+         0     0% 64.75%     1539kB 10.22%  runtime.newm
+         0     0% 64.75%     1539kB 10.22%  runtime.resetspinning
+         0     0% 64.75%     1539kB 10.22%  runtime.schedule
+         0     0% 64.75%     1539kB 10.22%  runtime.startm
+         0     0% 64.75%     1539kB 10.22%  runtime.wakep
+         0     0% 64.75%  1538.27kB 10.21%  google.golang.org/protobuf/internal/filedesc.Builder.Build
+  512.23kB  3.40% 68.15%  1538.27kB 10.21%  google.golang.org/protobuf/internal/filedesc.newRawFile

@@ -1,0 +1,28 @@
+File: api
+Type: cpu
+Time: 2026-05-03 17:41:41 IST
+Duration: 30.16s, Total samples = 96.21s (318.97%)
+Showing nodes accounting for 58.83s, 61.15% of 96.21s total
+Dropped 532 nodes (cum <= 0.48s)
+Showing top 20 nodes out of 78
+      flat  flat%   sum%        cum   cum%
+     0.02s 0.021% 0.021%     58.69s 61.00%  syscall.syscalln
+         0     0% 0.021%     58.68s 60.99%  syscall.syscall
+     0.01s  0.01% 0.031%     58.67s 60.98%  internal/poll.ignoringEINTRIO (inline)
+    58.58s 60.89% 60.92%     58.59s 60.90%  syscall.rawsyscalln
+     0.01s  0.01% 60.93%     42.11s 43.77%  internal/poll.(*FD).Write
+         0     0% 60.93%     41.62s 43.26%  syscall.Write (inline)
+         0     0% 60.93%     41.62s 43.26%  syscall.write
+         0     0% 60.93%     36.78s 38.23%  github.com/valyala/fasthttp.(*workerPool).getCh.func1
+         0     0% 60.93%     36.78s 38.23%  github.com/valyala/fasthttp.(*workerPool).workerFunc
+     0.07s 0.073% 61.00%     36.77s 38.22%  github.com/valyala/fasthttp.(*Server).serveConn
+         0     0% 61.00%     30.52s 31.72%  runtime.mcall
+     0.03s 0.031% 61.03%     30.35s 31.55%  runtime.park_m
+     0.04s 0.042% 61.07%     30.31s 31.50%  runtime.schedule
+     0.02s 0.021% 61.10%     28.93s 30.07%  runtime.findRunnable
+     0.03s 0.031% 61.13%     27.70s 28.79%  github.com/gofiber/fiber/v2.(*Ctx).Next
+     0.01s  0.01% 61.14%     26.72s 27.77%  main.main.Timeout.func10.1
+         0     0% 61.14%     26.67s 27.72%  main.main.RequestLogger.func11
+         0     0% 61.14%     24.87s 25.85%  github.com/rs/zerolog.(*Event).Msg
+     0.01s  0.01% 61.15%     24.87s 25.85%  github.com/rs/zerolog.(*Event).msg
+         0     0% 61.15%     24.72s 25.69%  github.com/rs/zerolog.(*Event).write

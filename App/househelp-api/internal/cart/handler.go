@@ -32,7 +32,7 @@ func (h *Handler) GetCart(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
-	cart, err := h.service.GetCart(c.Context(), userID)
+	cart, err := h.service.GetCart(c.UserContext(), userID)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to get cart")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch cart"})
@@ -58,7 +58,7 @@ func (h *Handler) AddItem(c *fiber.Ctx) error {
 		})
 	}
 
-	cart, err := h.service.AddItem(c.Context(), userID, req)
+	cart, err := h.service.AddItem(c.UserContext(), userID, req)
 	if err != nil {
 		if err.Error() == "invalid service: service not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "service not found"})
@@ -84,7 +84,7 @@ func (h *Handler) RemoveItem(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid item id"})
 	}
 
-	cart, err := h.service.RemoveItem(c.Context(), userID, itemID)
+	cart, err := h.service.RemoveItem(c.UserContext(), userID, itemID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "item not found"})
@@ -102,7 +102,7 @@ func (h *Handler) ClearCart(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
-	if err := h.service.Clear(c.Context(), userID); err != nil {
+	if err := h.service.Clear(c.UserContext(), userID); err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to clear cart")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to clear cart"})
 	}

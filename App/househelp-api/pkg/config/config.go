@@ -60,7 +60,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Port:               getEnvOrDefault("PORT", "8080"),
-		Env:                getEnvOrDefault("ENV", "production"),
+		Env:                getEnvOrDefault("APP_ENV", getEnvOrDefault("ENV", "production")),
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		RedisURL:           os.Getenv("REDIS_URL"),
 		DBPoolMinConns:     int32(getEnvIntOrDefault("DB_POOL_MIN_CONNS", 20)),
@@ -120,7 +120,14 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid JWT_SECRET_ID: %w", err)
 	}
 	if err := validateJWTSecret("JWT_SECRET", c.JWTSecret); err != nil {
-		return err
+		// In development, weak/blocked secrets are a warning so local dev
+		// workflows aren't broken by the placeholder values shipped in
+		// .env.example. Production keeps fail-closed semantics.
+		if c.IsDevelopment() {
+			log.Warn().Err(err).Msg("weak JWT_SECRET accepted in development; production will reject this value")
+		} else {
+			return err
+		}
 	}
 
 	seenIDs := map[string]struct{}{c.JWTSecretID: {}}
@@ -130,7 +137,11 @@ func (c *Config) validate() error {
 			return fmt.Errorf("invalid JWT_PREVIOUS_SECRETS key ID %q: %w", entry.ID, err)
 		}
 		if err := validateJWTSecret("JWT_PREVIOUS_SECRETS", entry.Secret); err != nil {
-			return err
+			if c.IsDevelopment() {
+				log.Warn().Err(err).Msg("weak JWT_PREVIOUS_SECRETS entry accepted in development")
+			} else {
+				return err
+			}
 		}
 		if _, exists := seenIDs[entry.ID]; exists {
 			return fmt.Errorf("duplicate JWT key ID in rotation set: %q", entry.ID)
@@ -184,16 +195,18 @@ func (c *Config) JWTVerificationSecrets() []JWTSecretEntry {
 
 var jwtSecretIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-var blockedJWTSecrets = map[string]struct{}{
-	"change-this-to-a-random-64-char-string-in-production": {},
-	"changeme":       {},
-	"change-me":      {},
-	"default":        {},
-	"default-secret": {},
-	"jwtsecret":      {},
-	"mysecret":       {},
-	"password":       {},
-	"secret":         {},
+// blockedJWTSecretSubstrings is matched as a substring (case-insensitive)
+// against the candidate secret. Substring (not exact) matching is required so
+// that placeholder values like the .env example
+//   "change-this-to-a-random-64-char-string-in-production-XXXXXXXXXXXX"
+// are rejected even when a developer pads them to clear the 64-char floor.
+var blockedJWTSecretSubstrings = []string{
+	"change-this-to-a-random-64-char-string-in-production",
+	"changeme",
+	"change-me",
+	"default-secret",
+	"jwtsecret",
+	"mysecret",
 }
 
 func validateJWTSecretID(id string) error {
@@ -212,8 +225,11 @@ func validateJWTSecret(fieldName, secret string) error {
 		return fmt.Errorf("%s must be at least 64 characters", fieldName)
 	}
 
-	if _, blocked := blockedJWTSecrets[strings.ToLower(secret)]; blocked {
-		return fmt.Errorf("%s uses a blocked default/insecure value", fieldName)
+	lower := strings.ToLower(secret)
+	for _, sub := range blockedJWTSecretSubstrings {
+		if strings.Contains(lower, sub) {
+			return fmt.Errorf("%s uses a blocked default/insecure value", fieldName)
+		}
 	}
 
 	uniqueChars := make(map[rune]struct{}, len(secret))

@@ -5,13 +5,14 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ActivityIndicator,
+  
   Platform,
   InputAccessoryView,
   Animated,
   Easing,
   Keyboard,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth, signInWithPhoneNumber } from '@react-native-firebase/auth';
 import LottieView from 'lottie-react-native';
@@ -21,6 +22,9 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { otpStore } from '../../utils/otpStore';
+import { haptics } from '../../utils/haptics';
+import { BASE_URL } from '../../api/config';
+import { IndiaFlag } from '../../components/ui/IndiaFlag';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'PhoneEntry'>;
@@ -84,13 +88,33 @@ export default function PhoneEntryScreen({ navigation }: Props) {
   const isValid = phone.replace(/\s/g, '').length === 10;
 
   async function handleSendOTP() {
-    if (!isValid) return;
+    if (!isValid) { haptics.error(); return; }
+    haptics.medium();
     setError('');
     setLoading(true);
 
     const fullPhone = `${COUNTRY_CODE}${phone.replace(/\s/g, '')}`;
 
     try {
+      // Ask the backend whether this phone is new — drives the privacy-policy
+      // checkbox on the OTP screen. Run in parallel with Firebase OTP send.
+      // Failure (offline, cooldown 429, etc.) defaults isNewUser=false; the
+      // verify-otp call still tolerates either branch.
+      const isNewUserPromise = (async () => {
+        try {
+          const res = await fetch(`${BASE_URL}/auth/send-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: fullPhone }),
+          });
+          if (!res.ok) return false;
+          const data = await res.json();
+          return Boolean(data?.is_new_user);
+        } catch {
+          return false;
+        }
+      })();
+
       const firebaseAuth = getAuth();
       if (__DEV__) {
         firebaseAuth.settings.appVerificationDisabledForTesting = true;
@@ -98,7 +122,8 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       // @ts-ignore
       const confirmation = await signInWithPhoneNumber(firebaseAuth, fullPhone);
       otpStore.set(confirmation);
-      navigation.navigate('OTPVerification', { phone: fullPhone });
+      const isNewUser = await isNewUserPromise;
+      navigation.navigate('OTPVerification', { phone: fullPhone, isNewUser });
     } catch (err: any) {
       const msg =
         err?.code === 'auth/invalid-phone-number'
@@ -106,6 +131,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
           : err?.code === 'auth/too-many-requests'
             ? 'Too many attempts. Please try again later.'
             : `Failed to send verification code. (${err?.code ?? err?.message ?? 'unknown'})`;
+      haptics.error();
       setError(msg);
     } finally {
       setLoading(false);
@@ -153,7 +179,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
             activeOpacity={1}
           >
             <View style={styles.countryCode}>
-              <Text style={styles.flag}>🇮🇳</Text>
+              <IndiaFlag size={18} />
               <Text style={styles.countryCodeText}>{COUNTRY_CODE}</Text>
               <View style={styles.dividerVertical} />
             </View>
@@ -169,6 +195,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
               returnKeyType="done"
               onSubmitEditing={handleSendOTP}
               inputAccessoryViewID="phone-input"
+              autoFocus
             />
           </TouchableOpacity>
 
@@ -202,7 +229,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
+              <LoadingBars color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Send OTP</Text>
             )}
@@ -263,7 +290,6 @@ function createStyles(c: typeof lightColors) {
     },
     inputCardError: { borderColor: c.danger },
     countryCode: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    flag: { fontSize: 20 },
     countryCodeText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: c.text },
     dividerVertical: { width: 1, height: 24, backgroundColor: c.border, marginLeft: 4 },
     phoneInput: {

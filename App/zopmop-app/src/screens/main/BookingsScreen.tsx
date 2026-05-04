@@ -14,9 +14,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
+  
   Alert,
-  Image,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -25,6 +24,8 @@ import {
   View,
   type TextStyle,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -43,11 +44,16 @@ import { useAuth } from '../../context/AuthContext';
 import { getBookings, cancelBooking, type ApiBooking } from '../../api/bookings';
 
 import { Bloom } from '../../components/home/Bloom';
-import { BottomTabBar } from '../../components/home/BottomTabBar';
 import { GlassCard } from '../../components/home/GlassCard';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
 import { PressFx } from '../../components/ui/PressFx';
 import { serviceIcon } from '../../components/home/serviceIcon';
+import { showError } from '../../utils/toast';
+import { haptics } from '../../utils/haptics';
+import { EmptyState } from '../../components/EmptyState';
+import { isBookingRated } from '../../utils/ratedBookingsStore';
+import ZopSadSvg from '../../../assets/zop/zop-sad.svg';
+import { BookingsScreenSkeleton } from '../../components/skeletons/BookingsScreenSkeleton';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -106,15 +112,22 @@ function formatINR(cents: number): string {
 
 type Tab = 'upcoming' | 'past';
 
+// In-memory snapshot so re-entering Bookings shows the last-seen lists
+// instantly while we silently refetch on focus.
+const bookingsMemCache: { upcoming: ApiBooking[] | null; past: ApiBooking[] | null } = {
+  upcoming: null,
+  past:     null,
+};
+
 export default function BookingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
 
   const [tab, setTab]           = useState<Tab>('upcoming');
-  const [upcoming, setUpcoming] = useState<ApiBooking[]>([]);
-  const [past,     setPast]     = useState<ApiBooking[]>([]);
-  const [loading,  setLoading]  = useState(true);
+  const [upcoming, setUpcoming] = useState<ApiBooking[]>(bookingsMemCache.upcoming ?? []);
+  const [past,     setPast]     = useState<ApiBooking[]>(bookingsMemCache.past ?? []);
+  const [loading,  setLoading]  = useState(bookingsMemCache.upcoming == null);
   const [pastPage, setPastPage] = useState(1);
   const [pastHasMore, setPastHasMore] = useState(true);
   const [pastVisibleLimit, setPastVisibleLimit] = useState(10);
@@ -136,6 +149,8 @@ export default function BookingsScreen() {
       ]);
       setUpcoming(up);
       setPast(pa);
+      bookingsMemCache.upcoming = up;
+      bookingsMemCache.past = pa;
       setPastPage(1);
       setPastVisibleLimit(10);
       setPastHasMore(pa.length >= 20);
@@ -148,10 +163,35 @@ export default function BookingsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
+      // Skeleton only on the very first load; later focuses revalidate silently.
+      if (bookingsMemCache.upcoming == null) setLoading(true);
       fetchAll();
     }, [fetchAll]),
   );
+
+  // Auto-show the rating screen for the most recent completed booking that
+  // the customer hasn't rated yet. Guarded by ratedBookingsStore so the
+  // prompt only fires once per booking, even across cold starts.
+  useEffect(() => {
+    if (loading || past.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const candidate = past.find(
+        (b) =>
+          b.status === 'completed' &&
+          (b.helper_rating == null || b.helper_rating === 0),
+      );
+      if (!candidate) return;
+      const already = await isBookingRated(candidate.id);
+      if (already || cancelled) return;
+      navigation.navigate('BookingRate', {
+        bookingId: candidate.id,
+        helperId: candidate.helper_id ?? undefined,
+        helperName: candidate.helper_name ?? undefined,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [loading, past, navigation]);
 
   const onRefresh = useCallback(async () => {
     setHoldScreen(true);
@@ -201,7 +241,7 @@ export default function BookingsScreen() {
       await cancelBooking(token, id);
       setUpcoming((prev) => prev.filter((b) => b.id !== id));
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not cancel.');
+      showError(err instanceof Error ? err.message : 'Could not cancel.');
     }
   };
 
@@ -254,9 +294,7 @@ export default function BookingsScreen() {
         </View>
 
         {loading ? (
-          <View style={styles.loadWrap}>
-            <ActivityIndicator color="#F5A300" />
-          </View>
+          <BookingsScreenSkeleton />
         ) : tab === 'upcoming' ? (
           <>
             {live.length > 0 && (
@@ -284,7 +322,7 @@ export default function BookingsScreen() {
               <>
                 <Text style={styles.secH}>This week</Text>
                 <View style={styles.body}>
-                  {thisWeek.map((b) => <PastCard key={b.id} booking={b} />)}
+                  {thisWeek.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} />)}
                 </View>
               </>
             )}
@@ -292,7 +330,7 @@ export default function BookingsScreen() {
               <>
                 <Text style={styles.secH}>Earlier</Text>
                 <View style={styles.body}>
-                  {earlier.map((b) => <PastCard key={b.id} booking={b} />)}
+                  {earlier.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} />)}
                 </View>
               </>
             )}
@@ -304,7 +342,7 @@ export default function BookingsScreen() {
                   style={styles.loadMoreBtn}
                 >
                   {loadingMorePast ? (
-                    <ActivityIndicator size="small" color="#F5A300" />
+                    <LoadingBars size="small" color="#F5A300" />
                   ) : (
                     <>
                       <Feather name="chevron-down" size={14} color="#F5A300" />
@@ -324,7 +362,6 @@ export default function BookingsScreen() {
         )}
       </ScrollView>
 
-      <BottomTabBar active="bookings" />
       <ZopRefresh refreshing={zopActive} />
     </View>
   );
@@ -446,7 +483,7 @@ function ScheduledCard({
         <Stop
           iconName="map-pin"
           keyLabel="Where"
-          value={booking.address_id ? 'Saved address' : 'Address pending'}
+          value={booking.address_tag || booking.address_title || (booking.address_id ? 'Saved address' : 'Address pending')}
         />
         <Stop
           iconName="user"
@@ -461,12 +498,13 @@ function ScheduledCard({
           <Text style={[fontBold, { color: 'rgba(255,255,255,0.85)', fontSize: 13 }]}>Add service</Text>
         </PressFx>
         <PressFx
-          onPress={() =>
+          onPress={() => {
+            haptics.warning();
             Alert.alert('Cancel booking?', 'You may incur a small fee for late cancellations.', [
               { text: 'Keep', style: 'cancel' },
               { text: 'Cancel', style: 'destructive', onPress: onCancel },
-            ])
-          }
+            ]);
+          }}
           style={[styles.act, styles.actDanger, { flex: 1 }]}
         >
           <Text style={[fontBold, { color: '#EF4444', fontSize: 13 }]}>Cancel</Text>
@@ -478,7 +516,7 @@ function ScheduledCard({
 
 // ── Past card ───────────────────────────────────────────────────────────────
 
-function PastCard({ booking }: { booking: ApiBooking }) {
+function PastCard({ booking, onRate }: { booking: ApiBooking; onRate?: (b: ApiBooking) => void }) {
   const svc = booking.services[0];
   const stamp = booking.scheduled_time || booking.created_at;
   const date = shortDate(stamp);
@@ -522,7 +560,7 @@ function PastCard({ booking }: { booking: ApiBooking }) {
       />
 
       {!isCancelled && !rated && (
-        <View style={styles.pastFoot}>
+        <PressFx onPress={() => onRate?.(booking)} style={styles.pastFoot}>
           <Text style={[fontMed, styles.pastLbl]}>Rate this service</Text>
           <View style={styles.starsRow}>
             {[1, 2, 3, 4].map((i) => (
@@ -531,7 +569,7 @@ function PastCard({ booking }: { booking: ApiBooking }) {
             <Feather name="star" size={12} color="rgba(245,163,0,0.4)" />
             <Text style={[fontBold, { color: '#F5A300', fontSize: 11.5, marginLeft: 6 }]}>Tap to rate</Text>
           </View>
-        </View>
+        </PressFx>
       )}
 
       {!isCancelled && rated && (
@@ -633,7 +671,7 @@ function SvcRow({
           style={styles.svcIconAmber}
         />
         {src ? (
-          <Image source={src} resizeMode="contain" style={styles.svcIconImg} />
+          <Image source={src} contentFit="contain" style={styles.svcIconImg} />
         ) : (
           <View
             style={{
@@ -807,25 +845,17 @@ function Tabs({
 
 function Empty({ tab, onCta }: { tab: Tab; onCta: () => void }) {
   return (
-    <View style={styles.empty}>
-      <View style={styles.emptyIcon}>
-        <Feather name="check-circle" size={40} color="#F5A300" />
-      </View>
-      <Text style={[fontBold, styles.emptyH3]}>
-        {tab === 'upcoming' ? 'No bookings yet' : 'Nothing here yet'}
-      </Text>
-      <Text style={[fontMed, styles.emptyP]}>
-        {tab === 'upcoming'
+    <EmptyState
+      illustration={<ZopSadSvg width={180} height={180} />}
+      title={tab === 'upcoming' ? 'No bookings yet' : 'Nothing here yet'}
+      subtitle={
+        tab === 'upcoming'
           ? "Let's fix that. Pick a service and your helper will be on the way."
-          : 'Your completed bookings will show up here.'}
-      </Text>
-      {tab === 'upcoming' && (
-        <PressFx onPress={onCta} style={styles.emptyCta}>
-          <Feather name="plus" size={14} color="#0D0D0F" />
-          <Text style={[fontBold, { color: '#0D0D0F', fontSize: 13 }]}>Browse services</Text>
-        </PressFx>
-      )}
-    </View>
+          : 'Your completed bookings will show up here.'
+      }
+      ctaLabel={tab === 'upcoming' ? 'Browse services' : undefined}
+      onCtaPress={tab === 'upcoming' ? onCta : undefined}
+    />
   );
 }
 

@@ -6,6 +6,8 @@ import { experimentsApi, type Experiment, type Variant } from '@/api/all';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import { Can } from '@/auth/Can';
+import { usePermission } from '@/auth/usePermission';
 
 export function ExperimentsPage() {
   const q = useQuery({ queryKey: ['experiments'], queryFn: experimentsApi.list });
@@ -17,7 +19,9 @@ export function ExperimentsPage() {
           <h1 className="text-2xl font-semibold">A/B Tests</h1>
           <p className="text-sm text-text-secondary mt-1">Variants, traffic split, lifecycle.</p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New experiment</button>
+        <Can perm="experiments.create">
+          <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New experiment</button>
+        </Can>
       </div>
 
       {q.isLoading ? <Skeleton className="h-32" /> :
@@ -35,6 +39,19 @@ function ExpCard({ exp }: { exp: Experiment }) {
   const qc = useQueryClient();
   const [pending, setPending] = useState<null | 'start' | 'pause' | 'stop' | 'rollout'>(null);
   const [winner, setWinner] = useState('');
+
+  const canStart   = usePermission('experiments.start');
+  const canPause   = usePermission('experiments.pause');
+  const canStop    = usePermission('experiments.stop');
+  const canRollout = usePermission('experiments.rollout');
+
+  const guard = (can: boolean, action: () => void) => () => {
+    if (!can) {
+      showToast({ kind: 'error', message: 'Insufficient permissions' });
+      return;
+    }
+    action();
+  };
 
   const m = useMutation({
     mutationFn: async () => {
@@ -71,11 +88,11 @@ function ExpCard({ exp }: { exp: Experiment }) {
         ))}
       </div>
       <div className="mt-3 pt-3 border-t border-border flex flex-wrap gap-2">
-        {exp.status === 'draft'    && <button className="btn-ghost text-success !py-1" onClick={() => setPending('start')}><Play className="w-3.5 h-3.5" />Start</button>}
-        {exp.status === 'running'  && <button className="btn-ghost text-warning !py-1" onClick={() => setPending('pause')}><Pause className="w-3.5 h-3.5" />Pause</button>}
-        {exp.status === 'paused'   && <button className="btn-ghost text-success !py-1" onClick={() => setPending('start')}><Play className="w-3.5 h-3.5" />Resume</button>}
-        {(exp.status === 'running' || exp.status === 'paused') && <button className="btn-ghost text-danger !py-1" onClick={() => setPending('stop')}><Square className="w-3.5 h-3.5" />Stop</button>}
-        {exp.status === 'completed' && <button className="btn-ghost text-primary !py-1" onClick={() => setPending('rollout')}><Trophy className="w-3.5 h-3.5" />Roll out winner</button>}
+        {exp.status === 'draft'    && <button className="btn-ghost text-success !py-1" disabled={!canStart} title={!canStart ? 'Insufficient permissions' : undefined} onClick={guard(canStart, () => setPending('start'))}><Play className="w-3.5 h-3.5" />Start</button>}
+        {exp.status === 'running'  && <button className="btn-ghost text-warning !py-1" disabled={!canPause} title={!canPause ? 'Insufficient permissions' : undefined} onClick={guard(canPause, () => setPending('pause'))}><Pause className="w-3.5 h-3.5" />Pause</button>}
+        {exp.status === 'paused'   && <button className="btn-ghost text-success !py-1" disabled={!canStart} title={!canStart ? 'Insufficient permissions' : undefined} onClick={guard(canStart, () => setPending('start'))}><Play className="w-3.5 h-3.5" />Resume</button>}
+        {(exp.status === 'running' || exp.status === 'paused') && <button className="btn-ghost text-danger !py-1" disabled={!canStop} title={!canStop ? 'Insufficient permissions' : undefined} onClick={guard(canStop, () => setPending('stop'))}><Square className="w-3.5 h-3.5" />Stop</button>}
+        {exp.status === 'completed' && <button className="btn-ghost text-primary !py-1" disabled={!canRollout} title={!canRollout ? 'Insufficient permissions' : undefined} onClick={guard(canRollout, () => setPending('rollout'))}><Trophy className="w-3.5 h-3.5" />Roll out winner</button>}
       </div>
 
       <ConfirmModal
@@ -125,7 +142,8 @@ function ExpEditor({ onClose }: { onClose: () => void }) {
   const [confirm, setConfirm] = useState(false);
 
   const trafficSum = variants.reduce((s, v) => s + v.traffic_pct, 0);
-  const valid = name && targetKey && trafficSum === 100 && variants.length >= 2;
+  const canCreate = usePermission('experiments.create');
+  const valid = name && targetKey && trafficSum === 100 && variants.length >= 2 && canCreate;
 
   const create = useMutation({
     mutationFn: () => experimentsApi.create({ name, hypothesis, kind, target_key: targetKey, metric, audience, variants }),
@@ -164,7 +182,18 @@ function ExpEditor({ onClose }: { onClose: () => void }) {
 
         <div className="flex justify-end gap-2 pt-3 border-t border-border">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={!valid} onClick={() => setConfirm(true)}>Create</button>
+          <button
+            className="btn-primary"
+            disabled={!valid}
+            title={!canCreate ? 'Insufficient permissions' : undefined}
+            onClick={() => {
+              if (!canCreate) {
+                showToast({ kind: 'error', message: 'Insufficient permissions' });
+                return;
+              }
+              setConfirm(true);
+            }}
+          >Create</button>
         </div>
       </div>
 

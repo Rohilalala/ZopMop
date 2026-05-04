@@ -1,99 +1,131 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+// AddressesScreen — dark home pattern.
+// Swipeable rows: drag right reveals delete (red), drag left reveals edit
+// (amber). Row foreground is opaque #0A0A0A so the actions slide behind.
+
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
+  
+  Alert,
   Animated,
   PanResponder,
-  Alert,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { listAddresses, type ApiAddress } from '../../api/addresses';
+import { listAddresses, deleteAddress, type ApiAddress } from '../../api/addresses';
 import EditAddressModal from '../../components/EditAddressModal';
+
+import { Bloom } from '../../components/home/Bloom';
+import { PressFx } from '../../components/ui/PressFx';
+
+const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+
+const H_PAD = 20;
+const ACTION_WIDTH = 80;
 
 type Props = { navigation: NativeStackNavigationProp<MainStackParamList, 'Addresses'> };
 
-const TAG_ICONS: Record<ApiAddress['tag'], string> = {
-  Home: 'home-outline',
-  Work: 'briefcase-outline',
-  Other: 'location-outline',
+const TAG_ICONS: Record<ApiAddress['tag'], keyof typeof Feather.glyphMap> = {
+  Home: 'home',
+  Work: 'briefcase',
+  Other: 'map-pin',
 };
-const ACTION_WIDTH = 80;
 
-// ── Root ──────────────────────────────────────────────────────────────────────
+// In-memory cache of the last-fetched address list. Re-entering Addresses
+// renders synchronously from this snapshot; refetch runs silently underneath.
+const addressesMemCache: { list: ApiAddress[] | null } = { list: null };
 
 export default function AddressesScreen({ navigation }: Props) {
   const { token } = useAuth();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
-  const [addresses, setAddresses] = useState<ApiAddress[]>([]);
-  const [loading, setLoading] = useState(true);
+  const insets = useSafeAreaInsets();
+  const [addresses, setAddresses] = useState<ApiAddress[]>(addressesMemCache.list ?? []);
+  const [loading, setLoading] = useState(addressesMemCache.list == null);
   const [editTarget, setEditTarget] = useState<ApiAddress | null>(null);
 
   useEffect(() => {
     if (!token || token === '__guest__') return;
     listAddresses(token)
-      .then(setAddresses)
+      .then((list) => {
+        setAddresses(list);
+        addressesMemCache.list = list;
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   function handleEdited(updated: ApiAddress) {
-    setAddresses(prev => prev.map(a => (a.id === updated.id ? updated : a)));
+    setAddresses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     setEditTarget(null);
   }
 
   function handleDeleted(id: string) {
-    setAddresses(prev => prev.filter(a => a.id !== id));
+    setAddresses((prev) => prev.filter((a) => a.id !== id));
     setEditTarget(null);
   }
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
-      <View style={s.header}>
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={20} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Saved Addresses</Text>
-        <View style={{ width: 36 }} />
+    <View style={s.root}>
+      <StatusBar barStyle="light-content" />
+      <Bloom />
+
+      <View style={[s.head, { paddingTop: insets.top + 10 }]}>
+        <View style={s.headRow}>
+          <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
+            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+          </PressFx>
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>Saved addresses</Text>
+            <Text style={s.sub}>
+              {addresses.length > 0
+                ? `${addresses.length} saved · swipe to manage`
+                : 'Add a place from the home screen.'}
+            </Text>
+          </View>
+        </View>
       </View>
 
       {loading ? (
-        <View style={s.center}>
-          <ActivityIndicator size="large" color={c.primary} />
-        </View>
+        <LoadingSkeleton variant="list" rows={4} />
       ) : addresses.length === 0 ? (
-        <View style={s.center}>
-          <Ionicons name="location-outline" size={48} color={c.textMuted} />
+        <View style={s.empty}>
+          <View style={s.emptyIconWrap}>
+            <Feather name="map-pin" size={26} color="#F5A300" />
+          </View>
           <Text style={s.emptyTitle}>No saved addresses</Text>
-          <Text style={s.emptySub}>Addresses you save will appear here</Text>
+          <Text style={s.emptySub}>Add a place from the home screen and it'll appear here.</Text>
+          <PressFx style={s.emptyCta} onPress={() => navigation.navigate('Home')}>
+            <Text style={s.emptyCtaText}>Go home</Text>
+          </PressFx>
         </View>
       ) : (
         <ScrollView
-          style={s.scroll}
-          contentContainerStyle={s.content}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={s.hint}>Swipe left to edit  ·  Swipe right to delete</Text>
-          {addresses.map(addr => (
-            <SwipeableRow
-              key={addr.id}
-              address={addr}
-              onEdit={() => setEditTarget(addr)}
-              onDeleted={handleDeleted}
-            />
-          ))}
-          <View style={{ height: 32 }} />
+          <View style={s.list}>
+            {addresses.map((addr) => (
+              <SwipeableRow
+                key={addr.id}
+                address={addr}
+                token={token}
+                onEdit={() => setEditTarget(addr)}
+                onDeleted={handleDeleted}
+              />
+            ))}
+          </View>
         </ScrollView>
       )}
 
@@ -104,25 +136,25 @@ export default function AddressesScreen({ navigation }: Props) {
         onSaved={handleEdited}
         onDeleted={handleDeleted}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
-// ── Swipeable Row ─────────────────────────────────────────────────────────────
-
 function SwipeableRow({
-  address,
-  onEdit,
-  onDeleted,
+  address, token, onEdit, onDeleted,
 }: {
   address: ApiAddress;
+  token: string | null;
   onEdit: () => void;
   onDeleted: (id: string) => void;
 }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeState = useRef<'closed' | 'left' | 'right'>('closed');
+
+  const close = () => {
+    Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
+    swipeState.current = 'closed';
+  };
 
   const panResponder = useRef(
     PanResponder.create({
@@ -164,179 +196,199 @@ function SwipeableRow({
     }),
   ).current;
 
-  function close() {
-    Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
-    swipeState.current = 'closed';
-  }
-
   function confirmDelete() {
-    Alert.alert('Delete Address', 'Are you sure you want to delete this address?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive',
-        onPress: () => { close(); onDeleted(address.id); },
-      },
-    ]);
+    Alert.alert(
+      'Delete address?',
+      'This address will be removed from your account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            close();
+            if (!token) return;
+            try {
+              await deleteAddress(token, address.id);
+              onDeleted(address.id);
+            } catch (err: any) {
+              Alert.alert('Cannot delete', err?.message ?? 'Try again.');
+            }
+          },
+        },
+      ],
+    );
   }
 
   return (
     <View style={s.rowWrap}>
-      {/* Delete — revealed on swipe right */}
+      {/* Right swipe → reveals delete on the left side. */}
       <View style={[s.actionSlot, s.actionLeft]}>
-        <TouchableOpacity style={s.deleteAction} activeOpacity={0.85} onPress={confirmDelete}>
-          <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
+        <PressFx style={s.deleteAction} onPress={confirmDelete}>
+          <Feather name="trash-2" size={17} color="#FFFFFF" />
           <Text style={s.actionText}>Delete</Text>
-        </TouchableOpacity>
+        </PressFx>
       </View>
 
-      {/* Edit — revealed on swipe left */}
+      {/* Left swipe → reveals edit on the right side. */}
       <View style={[s.actionSlot, s.actionRight]}>
-        <TouchableOpacity style={s.editAction} activeOpacity={0.85} onPress={() => { close(); onEdit(); }}>
-          <Ionicons name="create-outline" size={20} color="#FFFFFF" />
-          <Text style={s.actionText}>Edit</Text>
-        </TouchableOpacity>
+        <PressFx
+          style={s.editAction}
+          onPress={() => { close(); onEdit(); }}
+        >
+          <Feather name="edit-2" size={17} color="#0A0A0A" />
+          <Text style={[s.actionText, { color: '#0A0A0A' }]}>Edit</Text>
+        </PressFx>
       </View>
 
-      <Animated.View style={[s.row, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
-        <View style={s.tagIconBox}>
-          <Ionicons name={TAG_ICONS[address.tag] as any} size={20} color={c.primary} />
+      <Animated.View
+        style={[s.row, { transform: [{ translateX }] }]}
+        {...panResponder.panHandlers}
+      >
+        <View style={s.tagIcon}>
+          <Feather name={TAG_ICONS[address.tag]} size={16} color="#F5A300" />
         </View>
         <View style={s.rowInfo}>
           <View style={s.rowTopLine}>
             <Text style={s.rowTag}>{address.tag}</Text>
-            {address.receiver_name ? (
-              <Text style={s.rowReceiver} numberOfLines={1}>For {address.receiver_name}</Text>
-            ) : null}
+            {!!address.receiver_name && (
+              <Text style={s.rowReceiver} numberOfLines={1}>
+                For {address.receiver_name}
+              </Text>
+            )}
           </View>
-          <Text style={s.rowAddress} numberOfLines={2}>{address.full_address}</Text>
+          <Text style={s.rowAddress} numberOfLines={2}>
+            {address.full_address}
+          </Text>
           {(address.flat_no || address.floor || address.building_name) ? (
             <Text style={s.rowDetail} numberOfLines={1}>
               {[address.flat_no, address.floor, address.building_name].filter(Boolean).join(', ')}
             </Text>
           ) : null}
         </View>
+        <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.18)" />
       </Animated.View>
     </View>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0A0A0A' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-const H_PAD = 16;
+  // Sticky head
+  head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  iconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  title: {
+    ...fontExtra,
+    fontSize: 24, color: '#FFFFFF',
+    letterSpacing: -0.6, lineHeight: 28,
+  },
+  sub: {
+    ...fontMed,
+    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    marginTop: 2,
+  },
 
-function createStyles(c: typeof lightColors) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    scroll: { flex: 1 },
-    content: { paddingTop: 4 },
+  // Empty
+  empty: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, gap: 12,
+  },
+  emptyIconWrap: {
+    width: 76, height: 76, borderRadius: 38,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(245,163,0,0.14)',
+    borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
+    marginBottom: 8,
+  },
+  emptyTitle: {
+    ...fontExtra,
+    fontSize: 20, color: '#FFFFFF',
+    letterSpacing: -0.4,
+  },
+  emptySub: {
+    ...fontMed,
+    fontSize: 13, color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center', lineHeight: 19,
+    marginBottom: 6,
+  },
+  emptyCta: {
+    backgroundColor: '#F5A300',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+  },
+  emptyCtaText: {
+    ...fontBold,
+    fontSize: 13.5, color: '#0A0A0A', letterSpacing: 0.1,
+  },
 
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: H_PAD,
-      paddingTop: 8,
-      paddingBottom: 14,
-    },
-    backBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: Radius.full,
-      backgroundColor: c.surface,
-      borderWidth: 1,
-      borderColor: c.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    headerTitle: {
-      flex: 1,
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: c.text,
-      textAlign: 'center',
-      letterSpacing: -0.3,
-    },
+  // List
+  list: { paddingHorizontal: H_PAD, gap: 10, paddingTop: 4 },
 
-    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-    emptyTitle: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-      marginTop: 8,
-    },
-    emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+  rowWrap: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    height: 84,
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  actionSlot: { position: 'absolute', top: 0, bottom: 0, width: ACTION_WIDTH },
+  actionLeft: { left: 0 },
+  actionRight: { right: 0 },
+  deleteAction: {
+    flex: 1, backgroundColor: '#EF4444',
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+  },
+  editAction: {
+    flex: 1, backgroundColor: '#F5A300',
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+  },
+  actionText: {
+    ...fontBold,
+    fontSize: 11, color: '#FFFFFF', letterSpacing: 0.2,
+  },
 
-    hint: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      textAlign: 'center',
-      paddingVertical: 10,
-    },
-
-    // Swipeable row
-    rowWrap: {
-      marginHorizontal: H_PAD,
-      marginBottom: 10,
-      borderRadius: Radius.xl,
-      overflow: 'hidden',
-      height: 76,
-      ...Shadow.sm,
-    },
-    actionSlot: { position: 'absolute', top: 0, bottom: 0, width: ACTION_WIDTH },
-    actionLeft: { left: 0 },
-    actionRight: { right: 0 },
-    deleteAction: {
-      flex: 1,
-      backgroundColor: c.danger,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      borderTopLeftRadius: Radius.xl,
-      borderBottomLeftRadius: Radius.xl,
-    },
-    editAction: {
-      flex: 1,
-      backgroundColor: c.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      borderTopRightRadius: Radius.xl,
-      borderBottomRightRadius: Radius.xl,
-    },
-    actionText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: '#FFFFFF' },
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: c.white,
-      paddingHorizontal: Spacing.base,
-      paddingVertical: 14,
-      gap: 14,
-      borderRadius: Radius.xl,
-      height: 76,
-    },
-    tagIconBox: {
-      width: 44,
-      height: 44,
-      borderRadius: Radius.lg,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    rowInfo: { flex: 1 },
-    rowTopLine: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-    rowTag: { fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: c.text },
-    rowReceiver: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.xs,
-      color: c.textMuted,
-      flex: 1,
-    },
-    rowAddress: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textSecondary,
-      lineHeight: 18,
-    },
-    rowDetail: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, marginTop: 2 },
-  });
-}
+  row: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#0A0A0A',
+  },
+  tagIcon: {
+    width: 38, height: 38, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(245,163,0,0.12)',
+  },
+  rowInfo: { flex: 1, minWidth: 0 },
+  rowTopLine: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  rowTag: {
+    ...fontBold,
+    fontSize: 13.5, color: '#FFFFFF', letterSpacing: -0.1,
+  },
+  rowReceiver: {
+    flex: 1,
+    ...fontMed,
+    fontSize: 11, color: 'rgba(255,255,255,0.45)',
+  },
+  rowAddress: {
+    ...fontMed,
+    fontSize: 12, color: 'rgba(255,255,255,0.62)',
+    lineHeight: 16,
+  },
+  rowDetail: {
+    ...fontMed,
+    fontSize: 11, color: 'rgba(255,255,255,0.42)',
+    marginTop: 1,
+  },
+});

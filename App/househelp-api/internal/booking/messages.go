@@ -140,7 +140,7 @@ func (h *Handler) ListMessages(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	msgs, err := h.service.ListMessages(c.Context(), bookingID, userID)
+	msgs, err := h.service.ListMessages(c.UserContext(), bookingID, userID)
 	if err != nil {
 		if err.Error() == "forbidden" {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
@@ -174,7 +174,7 @@ func (h *Handler) SendMessage(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message too long"})
 	}
 
-	msg, err := h.service.SendMessage(c.Context(), bookingID, userID, body)
+	msg, err := h.service.SendMessage(c.UserContext(), bookingID, userID, body)
 	if err != nil {
 		if err.Error() == "forbidden" {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,27 +21,35 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/bff"
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
+	"github.com/adityarohilla/househelp-api/internal/crm/localities"
+	"github.com/adityarohilla/househelp-api/internal/experts"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/content"
+	"github.com/adityarohilla/househelp-api/internal/crm/notifications"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	helpermod "github.com/adityarohilla/househelp-api/internal/helper"
 	"github.com/adityarohilla/househelp-api/internal/insights"
+	"github.com/adityarohilla/househelp-api/internal/leave"
 	"github.com/adityarohilla/househelp-api/internal/location"
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/internal/places"
 	"github.com/adityarohilla/househelp-api/internal/reengagement"
+	"github.com/adityarohilla/househelp-api/internal/reviews"
 	"github.com/adityarohilla/househelp-api/internal/roomies"
+	"github.com/adityarohilla/househelp-api/internal/segments"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
+	"github.com/adityarohilla/househelp-api/internal/zop"
 	zonesmod "github.com/adityarohilla/househelp-api/internal/zones"
 	"github.com/adityarohilla/househelp-api/pkg/config"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/rs/zerolog/log"
 )
 
@@ -100,6 +110,18 @@ func main() {
 	logger.Init(cfg.Env)
 	log.Info().Str("env", cfg.Env).Msg("starting househelp-api")
 
+	// Optional pprof endpoint, bound to localhost so it's never reachable from
+	// outside the host. Enable with ENABLE_PPROF=1 (dev or perf-test runs only).
+	if os.Getenv("ENABLE_PPROF") == "1" {
+		pprofAddr := "127.0.0.1:6060"
+		go func() {
+			log.Info().Str("addr", pprofAddr).Msg("pprof listening")
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				log.Warn().Err(err).Msg("pprof server exited")
+			}
+		}()
+	}
+
 	// Connect to PostgreSQL.
 	ctx := context.Background()
 	dbPool, err := database.NewPostgresPool(ctx, cfg.DatabaseURL, database.PostgresPoolConfig{
@@ -149,7 +171,16 @@ func main() {
 	app.Use(mw.SecurityHeaders(cfg.IsProduction()))
 	app.Use(mw.CORS(cfg.AllowedOrigins))
 	app.Use(mw.CSRF(cfg.IsProduction()))
+	// Zop AI chat is exempt from the global 12s budget — DeepSeek + multi-iter
+	// agent loops can legitimately take 30-60s. The Zop group installs its
+	// own longer Timeout below.
+	app.Use(mw.TimeoutWithSkip(mw.DefaultRequestTimeout, func(c *fiber.Ctx) bool {
+		return strings.HasPrefix(c.Path(), "/api/v1/zop")
+	}))
 	app.Use(mw.RequestLogger())
+	// Gzip responses only when worth it — body >= 1KB and client supports it.
+	// Avoids burning CPU compressing tiny error envelopes (429s, health pings).
+	app.Use(mw.CompressIfLarge())
 
 	// Public rate limiter.
 	publicLimiter := mw.RateLimiter(rdb, mw.PublicRateLimit, "ip")
@@ -198,6 +229,11 @@ func main() {
 	// Notification.
 	notificationService := notification.NewService(context.Background(), dbPool)
 
+	// Outbound webhook dispatcher (shared with cmd/crm-api). Domain services
+	// call webhookDispatcher.Dispatch(ctx, event, payload) for fan-out;
+	// individual services receive it via SetWebhooks below.
+	webhookDispatcher := webhooks.New(dbPool)
+
 	// Admin.
 	adminRepo := admin.NewRepository(dbPool)
 	adminService := admin.NewService(adminRepo, notificationService)
@@ -243,11 +279,19 @@ func main() {
 	reengagementWorker.Start()
 	defer reengagementWorker.Stop()
 
+	// Segment worker — recomputes users.segment (NEW/RETURNING/AT_RISK/CHURNED)
+	// once per day. Cheap single-statement UPDATE; safe to run on the main pool.
+	segmentWorker := segments.NewWorker(segments.NewService(dbPool), 24*time.Hour)
+	segmentWorker.Start()
+	defer segmentWorker.Stop()
+
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
 	bookingService.SetMapsClient(mapsClient)
 	bookingService.SetAnalytics(analyticsSvc)
+	bookingService.SetWebhooks(webhookDispatcher)
+	bookingService.SetPaymentsLedger(payments.NewLedger(dbPool))
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
@@ -273,6 +317,8 @@ func main() {
 	// Helper (pro-side profile, invites, location, status).
 	helperRepo := helpermod.NewRepository(dbPool)
 	helperService := helpermod.NewService(helperRepo, locationService, matchEngine, rdb)
+	helperService.SetWebhooks(webhookDispatcher)
+	helperService.SetAnalytics(analyticsSvc)
 	helperHandler := helpermod.NewHandler(helperService)
 
 	// Time slots.
@@ -304,7 +350,16 @@ func main() {
 	// Booking routes (requires JWT).
 	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
 	bookingIdem := mw.Idempotency(rdb, 10*time.Minute)
-	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem)
+	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
+	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter)
+	reviews.NewHandler(reviews.NewService(dbPool, analyticsSvc)).RegisterRoutes(bookingGroup)
+
+	// Tracking WebSocket — replaces the 5s REST poll on the customer side.
+	// Auth is enforced inside the WS via {"type":"auth","token":...} so no
+	// JWT header middleware here; we only need the public limiter to soak up
+	// pre-upgrade abuse.
+	bookingTrackWS := booking.NewTrackingWSHandler(bookingService, jwtVerificationKeys)
+	bookingTrackWS.RegisterTrackingWS(api.Group("/bookings", publicLimiter))
 
 	// Location routes (requires JWT).
 	locationGroup := api.Group("/location", authMiddleware, authLimiter, dbBoundLimiter)
@@ -326,14 +381,37 @@ func main() {
 	slotsGroup := api.Group("/slots", authMiddleware, authLimiter, dbBoundLimiter)
 	slotsHandler.RegisterRoutes(slotsGroup)
 
+	// Zop AI assistant — natural-language booking surface for the customer
+	// app. Uses OpenRouter (Gemma for cleaning + Llama for chat). Requires
+	// OPENROUTER_API_KEY; if unset Zop still mounts but falls open on cleans
+	// and the chat loop will surface an error reply.
+	zopService := zop.NewService(rdb, bookingService, addressService, slotsService, cartService, servicesCatalog, authService, os.Getenv("OPENROUTER_API_KEY"))
+	zopHandler := zop.NewHandler(zopService)
+	// Wipe Zop state (history, rate limit, session set) on account deletion.
+	authService.RegisterPostDeleteHook(zopService.DeleteUserData)
+	zopGroup := api.Group("/zop", mw.Timeout(90*time.Second), authMiddleware, authLimiter, dbBoundLimiter)
+	zopHandler.RegisterRoutes(zopGroup)
+
 	// Places autocomplete proxy (requires JWT — key must not be public).
 	placesHandler := places.NewHandler(mapsClient)
 	placesGroup := api.Group("/places", authMiddleware, authLimiter)
 	placesHandler.RegisterRoutes(placesGroup)
 
+	// Payment helpers — VPA validation today, more later. Razorpay key is
+	// server-side only; the client never sees it.
+	paymentsHandler := payments.NewHandler()
+	paymentsGroup := api.Group("/payments", authMiddleware, authLimiter)
+	paymentsHandler.RegisterRoutes(paymentsGroup)
+
 	// Zones routes (public check).
 	zonesGroup := api.Group("/zones", publicLimiter)
 	zonesHandler.RegisterPublicRoutes(zonesGroup)
+
+	// Localities — public read for the pro-app onboarding + My Area dropdown.
+	// Auth-free so onboarding (pre-login) can fetch the list.
+	localitiesRepoPub := localities.NewRepository(dbPool)
+	localitiesHandlerPub := localities.NewHandler(localitiesRepoPub, nil)
+	localitiesHandlerPub.RegisterPublicRoutes(api.Group("/localities", publicLimiter))
 
 	// Insights — public stats for the home pill (nearby pros, avg rating, ETA).
 	insightsRepo := insights.NewRepository(dbPool)
@@ -347,9 +425,50 @@ func main() {
 	authHandler.RegisterMeRoutes(meGroup)
 	insightsHandler.RegisterMeRoutes(meGroup)
 
+	// Your Experts — preferred-helpers list backing the scheduled-dispatch
+	// invite chain (Phase 1).
+	expertsRepo := experts.NewRepository(dbPool)
+	expertsService := experts.NewService(expertsRepo)
+	expertsHandler := experts.NewHandler(expertsService)
+	expertsHandler.RegisterRoutes(meGroup)
+
+	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
+	//   - ScheduledDispatcher: nightly 22:00 IST batch
+	//   - StealthDispatcher:   per-minute after-8pm bookings
+	//   - RebookScanner:       per-5-minute "pros are back" nudge
+	cronCtx, cancelCrons := context.WithCancel(context.Background())
+	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
+	go matching.NewScheduledDispatcher(dispatcher).Start(cronCtx)
+	go matching.NewStealthDispatcher(dispatcher).Start(cronCtx)
+	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
+	defer cancelCrons()
+
+	// Device-token routes (requires JWT). New per-device push registration —
+	// the legacy single-token PUT /me/fcm-token continues to work alongside
+	// this surface and now mirrors writes into device_tokens too.
+	devicesGroup := api.Group("/devices", authMiddleware, authLimiter, dbBoundLimiter)
+	authHandler.RegisterDeviceRoutes(devicesGroup)
+
 	// Helper routes (requires JWT + pro role).
 	helpersGroup := api.Group("/helpers", authMiddleware, authLimiter, dbBoundLimiter)
 	helperHandler.RegisterRoutes(helpersGroup)
+
+	// Pro leave routes (requires JWT). Pro role guard not strictly needed —
+	// non-pros calling these endpoints get a 0 balance / no leaves rather
+	// than an error, since the helpers row simply won't exist for them.
+	leaveRepo := leave.NewRepository(dbPool)
+	leaveCustNotifier := &leave.CustomerNotifierAdapter{Sender: notificationService}
+	// Route per-cancellation alerts through the CRM notification centre so the
+	// admin bell-icon feed lights up immediately when a booking auto-cancels.
+	crmNotifRecorder := notifications.NewRecorder(dbPool)
+	leaveCRMNotifier := &leave.RecorderCRMNotifier{Recorder: crmNotifRecorder}
+	leaveSvc := leave.NewService(leaveRepo, leaveCRMNotifier, leaveCustNotifier)
+	leaveSvc.SetWebhooks(webhookDispatcher)
+	leaveHandler := leave.NewHandler(leaveSvc)
+	leaveGroup := api.Group("/pro/leave", authMiddleware, authLimiter, dbBoundLimiter)
+	leaveHandler.RegisterRoutes(leaveGroup)
+	// Hourly cron — idempotent monthly balance refill for every helper.
+	leave.StartMonthlyResetCron(leaveRepo)
 
 	// Admin routes (requires JWT + admin role + specific permissions).
 	adminMiddleware := mw.AdminMiddleware(dbPool, rdb)
@@ -438,7 +557,8 @@ func main() {
 
 	// Public SDUI routes: mounted under /api/v1 to match the rest of the public
 	// surface. The handler does its own optional auth via c.Locals("userID").
-	bffHandler.RegisterRoutes(api.Group("/sdui", compress.New(), publicLimiter))
+	// Gzip is applied globally above; no per-group compress middleware needed.
+	bffHandler.RegisterRoutes(api.Group("/sdui", publicLimiter))
 
 	// Admin SDUI routes: nested under /api/v1/admin so they inherit JWT,
 	// admin-role, and the standard admin limiter. The SDUI-specific 60req/min
@@ -482,6 +602,12 @@ func main() {
 
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("server shutdown error")
+	}
+
+	dispatcherCtx, dispatcherCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dispatcherCancel()
+	if err := webhookDispatcher.Close(dispatcherCtx); err != nil {
+		log.Error().Err(err).Msg("webhook dispatcher drain error")
 	}
 
 	log.Info().Msg("server stopped")

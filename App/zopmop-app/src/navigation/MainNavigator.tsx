@@ -1,23 +1,29 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../types/navigation';
-import HomeScreen from '../screens/main/HomeScreen';
-import BookingsScreen from '../screens/main/BookingsScreen';
-import ProfileScreen from '../screens/main/ProfileScreen';
+import { BottomTabBar } from '../components/home/BottomTabBar';
+import { navigationRef } from './navigationRef';
+import TabsNavigator from './TabsNavigator';
 import AddressesScreen from '../screens/main/AddressesScreen';
 import ServiceAboutScreen from '../screens/main/ServiceAboutScreen';
 import CartScreen from '../screens/main/CartScreen';
-import AllServicesScreen from '../screens/main/AllServicesScreen';
 import WalletScreen from '../screens/main/WalletScreen';
 import OffersScreen from '../screens/main/OffersScreen';
 import HelpSupportScreen from '../screens/main/HelpSupportScreen';
+import YourExpertsScreen from '../screens/main/YourExpertsScreen';
+import BookingRateScreen from '../screens/main/BookingRateScreen';
 import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
 // Legacy ActiveBookingScreen replaced by TrackLiveScreen — both routes now
 // render the new design.
 // import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
+import ProScheduledInviteScreen from '../screens/pro/ProScheduledInviteScreen';
 import ProActiveScreen from '../screens/pro/ProActiveScreen';
+import ProDeclareLeaveScreen from '../screens/pro/ProDeclareLeaveScreen';
+import ProProfileScreen from '../screens/pro/ProProfileScreen';
+import ProLeaveHistoryScreen from '../screens/pro/ProLeaveHistoryScreen';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
 import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
@@ -32,25 +38,57 @@ import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
+// Routes that show the BottomTabBar. Detail / modal / pro / booking-flow
+// screens are intentionally absent — the bar disappears there.
+const TAB_FOR_ROUTE: Record<string, 'home' | 'services' | 'bookings' | 'profile'> = {
+  Home:        'home',
+  AllServices: 'services',
+  Bookings:    'bookings',
+  Profile:     'profile',
+};
+
+// Persistent tab bar — mounted once at the navigator root so it survives
+// stack pushes/pops. Sits OUTSIDE the Stack.Navigator (no navigator context),
+// so we read the current route through `navigationRef` instead of the
+// `useNavigationState` hook (which requires a navigator parent).
+function PersistentTabBar() {
+  const [routeName, setRouteName] = useState<string | undefined>(
+    () => navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name : undefined,
+  );
+  useEffect(() => {
+    const sync = () => {
+      if (navigationRef.isReady()) {
+        setRouteName(navigationRef.getCurrentRoute()?.name);
+      }
+    };
+    sync();
+    const unsub = navigationRef.addListener('state', sync);
+    return unsub;
+  }, []);
+  if (!routeName) return null;
+  const active = TAB_FOR_ROUTE[routeName];
+  if (!active) return null;
+  return <BottomTabBar active={active} />;
+}
+
 export default function MainNavigator() {
   const { user } = useAuth();
   
   return (
     <CartProvider>
-      <Stack.Navigator 
-        screenOptions={{ headerShown: false }}
-        initialRouteName={user?.role === 'pro' || user?.role === 'helper' ? 'ProDashboard' : 'Home'}
+      <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <Stack.Navigator
+        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0A' } }}
+        initialRouteName={user?.role === 'pro' || user?.role === 'helper' ? 'ProDashboard' : 'Tabs'}
       >
-        <Stack.Screen name="Home" component={HomeScreen} />
+        {/* The four bottom-bar destinations live inside TabsNavigator so
+            switching between them is instant (parallel-mounted tabs, no
+            stack push animation, no remount). Detail screens (Cart,
+            ServiceAbout, etc.) keep pushing on top of this Tabs screen. */}
         <Stack.Screen
-          name="Bookings"
-          component={BookingsScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="Profile"
-          component={ProfileScreen}
-          options={{ animation: 'slide_from_right' }}
+          name="Tabs"
+          component={TabsNavigator}
+          options={{ animation: 'none' }}
         />
         <Stack.Screen
           name="Addresses"
@@ -61,11 +99,6 @@ export default function MainNavigator() {
           name="ServiceAbout"
           component={ServiceAboutScreen}
           options={{ animation: 'slide_from_bottom' }}
-        />
-        <Stack.Screen
-          name="AllServices"
-          component={AllServicesScreen}
-          options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
           name="Cart"
@@ -83,6 +116,11 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
+          name="PaymentMethods"
+          getComponent={() => require('../screens/main/PaymentMethodsScreen').default}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
           name="Offers"
           component={OffersScreen}
           options={{ animation: 'slide_from_right' }}
@@ -91,6 +129,16 @@ export default function MainNavigator() {
           name="HelpSupport"
           component={HelpSupportScreen}
           options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="YourExperts"
+          component={YourExpertsScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="BookingRate"
+          component={BookingRateScreen}
+          options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
         />
         <Stack.Screen
           name="InstantMatching"
@@ -113,9 +161,29 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_bottom' }}
         />
         <Stack.Screen
+          name="ProScheduledInvite"
+          component={ProScheduledInviteScreen}
+          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
+        />
+        <Stack.Screen
           name="ProActive"
           component={ProActiveScreen}
           options={{ animation: 'fade', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="ProProfile"
+          component={ProProfileScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ProDeclareLeave"
+          component={ProDeclareLeaveScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="ProLeaveHistory"
+          component={ProLeaveHistoryScreen}
+          options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
           name="RoomiesSetup"
@@ -163,6 +231,8 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
+      <PersistentTabBar />
+      </View>
     </CartProvider>
   );
 }

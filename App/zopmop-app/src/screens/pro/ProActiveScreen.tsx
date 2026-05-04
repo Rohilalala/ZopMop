@@ -5,10 +5,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
+  
   Linking,
   AppState,
 } from 'react-native';
+import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
@@ -32,6 +33,8 @@ import {
 } from '../../api/matching';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
+import { haptics } from '../../utils/haptics';
+import { showError, showInfo } from '../../utils/toast';
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
@@ -173,12 +176,8 @@ export default function ProActiveScreen({ route }: Props) {
         if (data.status === 'cancelled' && !cancelledAlertShownRef.current) {
           cancelledAlertShownRef.current = true;
           if (statusPollRef.current) clearInterval(statusPollRef.current);
-          Alert.alert(
-            'Booking Cancelled',
-            'The customer has cancelled this booking.',
-            [{ text: 'OK', onPress: () => navigation.replace('ProDashboard') }],
-            { cancelable: false },
-          );
+          showInfo('The customer has cancelled this booking.', { title: 'Booking Cancelled' });
+          navigation.replace('ProDashboard');
         } else {
           setBookingStatus(data.status as BookingStatus);
         }
@@ -266,12 +265,14 @@ export default function ProActiveScreen({ route }: Props) {
   // while the actual service starts only when handleStart is tapped next.
   async function handleArrive() {
     if (!token) return;
+    haptics.medium();
     setActionLoading(true);
     try {
       await arrivedBooking(token, bookingId);
+      haptics.success();
       setHasArrived(true);
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Could not mark arrival. Try again.');
+      showError(err?.message ?? 'Could not mark arrival. Try again.');
     } finally {
       setActionLoading(false);
     }
@@ -279,12 +280,14 @@ export default function ProActiveScreen({ route }: Props) {
 
   async function handleStart() {
     if (!token) return;
+    haptics.medium();
     setActionLoading(true);
     try {
       await startBooking(token, bookingId);
+      haptics.success();
       setBookingStatus('in_progress');
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Could not start service. Try again.');
+      showError(err?.message ?? 'Could not start service. Try again.');
     } finally {
       setActionLoading(false);
     }
@@ -292,17 +295,20 @@ export default function ProActiveScreen({ route }: Props) {
 
   async function handleComplete() {
     if (!token) return;
+    haptics.warning();
     Alert.alert('Complete Service?', 'This will mark the service as done and end the booking.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Complete',
         onPress: async () => {
+          haptics.heavy();
           setActionLoading(true);
           try {
             await completeBooking(token, bookingId);
+            haptics.success();
             navigation.replace('ProDashboard');
           } catch (err: any) {
-            Alert.alert('Error', err?.message ?? 'Could not complete booking. Try again.');
+            showError(err?.message ?? 'Could not complete booking. Try again.');
             setActionLoading(false);
           }
         },
@@ -313,7 +319,7 @@ export default function ProActiveScreen({ route }: Props) {
   function openNavigation() {
     const url = `https://maps.google.com/?saddr=&daddr=${customerLat},${customerLng}`;
     Linking.openURL(url).catch(() =>
-      Alert.alert('Could not open Maps', 'Please install Google Maps.'),
+      showError('Please install Google Maps.', { title: 'Could not open Maps' }),
     );
   }
 
@@ -381,7 +387,7 @@ export default function ProActiveScreen({ route }: Props) {
 
       {loading && (
         <View style={s.loadingOverlay}>
-          <ActivityIndicator size="large" color={c.primary} />
+          <LoadingBars size="large" color={c.primary} />
         </View>
       )}
 
@@ -413,7 +419,7 @@ export default function ProActiveScreen({ route }: Props) {
             disabled={actionLoading}
           >
             {actionLoading
-              ? <ActivityIndicator color="#FFFFFF" />
+              ? <LoadingBars color="#FFFFFF" />
               : <Text style={s.actionBtnText}>✅  I've Arrived</Text>
             }
           </TouchableOpacity>
@@ -427,7 +433,7 @@ export default function ProActiveScreen({ route }: Props) {
             disabled={actionLoading}
           >
             {actionLoading
-              ? <ActivityIndicator color="#FFFFFF" />
+              ? <LoadingBars color="#FFFFFF" />
               : <Text style={s.actionBtnText}>▶️  Start Service</Text>
             }
           </TouchableOpacity>
@@ -441,7 +447,7 @@ export default function ProActiveScreen({ route }: Props) {
             disabled={actionLoading}
           >
             {actionLoading
-              ? <ActivityIndicator color="#FFFFFF" />
+              ? <LoadingBars color="#FFFFFF" />
               : <Text style={s.actionBtnText}>🏁  Complete Service</Text>
             }
           </TouchableOpacity>

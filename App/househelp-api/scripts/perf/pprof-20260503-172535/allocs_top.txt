@@ -1,0 +1,27 @@
+File: api
+Type: alloc_objects
+Time: 2026-05-03 17:26:05 IST
+Showing nodes accounting for 19086301, 55.88% of 34156533 total
+Dropped 113 nodes (cum <= 170782)
+Showing top 20 nodes out of 114
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%   33585782 98.33%  github.com/gofiber/fiber/v2.(*Ctx).Next
+         0     0%     0%   31515020 92.27%  main.main.RequestLogger.func11
+         0     0%     0%   31515020 92.27%  main.main.Timeout.func10.1
+         0     0%     0%   21429486 62.74%  github.com/rs/zerolog.(*Event).Msg
+         0     0%     0%   21429486 62.74%  github.com/rs/zerolog.(*Event).msg
+         0     0%     0%   20744553 60.73%  github.com/rs/zerolog.(*Event).write
+    532494  1.56%  1.56%   20744553 60.73%  github.com/rs/zerolog.ConsoleWriter.Write
+         0     0%  1.56%   20744553 60.73%  github.com/rs/zerolog.LevelWriterAdapter.WriteLevel
+         0     0%  1.56%   12516753 36.65%  github.com/gofiber/fiber/v2.(*App).next
+         0     0%  1.56%    9921692 29.05%  github.com/gofiber/fiber/v2/middleware/compress.New.func3
+   1759565  5.15%  6.71%    9921692 29.05%  main.main.RateLimiter.NamedRateLimiter.func20
+         0     0%  6.71%    9624943 28.18%  encoding/json.(*Decoder).Decode
+         0     0%  6.71%    9176614 26.87%  encoding/json.(*decodeState).unmarshal
+    950286  2.78%  9.49%    9045540 26.48%  encoding/json.(*decodeState).object
+         0     0%  9.49%    9045540 26.48%  encoding/json.(*decodeState).value
+   2654279  7.77% 17.26%    6881420 20.15%  github.com/rs/zerolog.ConsoleWriter.writeFields
+   4336394 12.70% 29.96%    4336394 12.70%  fmt.Sprintf
+   3512020 10.28% 40.24%    4101853 12.01%  encoding/json.(*decodeState).literalStore
+   3932218 11.51% 51.75%    3932218 11.51%  reflect.unsafe_New
+   1409045  4.13% 55.88%    3451616 10.11%  github.com/rs/zerolog.ConsoleWriter.writeFields.consoleDefaultFormatFieldName.func4

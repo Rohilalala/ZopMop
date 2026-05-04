@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +26,64 @@ import (
 // ErrAddressNotOwned is returned when a caller attempts to create a booking
 // against an address_id that does not belong to them.
 var ErrAddressNotOwned = errors.New("address does not belong to caller")
+
+// ErrTooFarAway is returned when the Google Maps walking ETA between the
+// helper's last known location and the booking address exceeds
+// acceptMaxWalkingMinutes. Fail-open: a Maps API error or missing client
+// allows the accept so helpers aren't blocked by upstream downtime.
+var ErrTooFarAway = errors.New("helper too far from booking")
+
+// acceptMaxWalkingMinutes is the upper bound on helper→pickup walking time
+// at accept-time. Above this we block the accept.
+const acceptMaxWalkingMinutes = 25
+
+// ErrSlotUnavailable is returned when the requested time slot is full or
+// already taken — surfaced as 409 Conflict to the client.
+var ErrSlotUnavailable = errors.New("slot already booked")
+
+// ErrSlotTooFar is returned when the requested slot is more than two days
+// out from "now" (in India local time). The customer is told to pick a
+// slot within the next two days.
+var ErrSlotTooFar = errors.New("bookings can only be made up to 2 days in advance")
+
+// ErrSlotInPast is returned when the requested slot is already past — covers
+// stale slot IDs and slots that lapsed while the customer was on the screen.
+var ErrSlotInPast = errors.New("requested time slot is in the past")
+
+// schedulingCutoffHourIST is the hour-of-day (India local time) at which a
+// scheduled booking switches into "stealth instant" mode: the customer can
+// still place it but the dispatch cron treats it as a near-instant request
+// instead of waiting for the nightly batch.
+const schedulingCutoffHourIST = 20 // 8pm IST
+
+// stealthFireLeadTime is how far before scheduled_time the stealth dispatch
+// cron fires its invite chain. Spec calls for 15 minutes.
+const stealthFireLeadTime = 15 * time.Minute
+
+// scheduledBookingMaxLeadDays caps how far ahead a customer can book.
+const scheduledBookingMaxLeadDays = 2
+
+// haversineKm returns great-circle distance in kilometres between two
+// lat/lng points. Used for ETA estimation when no routing API is wired up.
+func haversineKm(lat1, lng1, lat2, lng2 float64) float64 {
+	const earthRadiusKm = 6371.0
+	rad := func(d float64) float64 { return d * math.Pi / 180.0 }
+	dLat := rad(lat2 - lat1)
+	dLng := rad(lng2 - lng1)
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(rad(lat1))*math.Cos(rad(lat2))*math.Sin(dLng/2)*math.Sin(dLng/2)
+	return 2 * earthRadiusKm * math.Asin(math.Sqrt(a))
+}
+
+// indiaLocation returns the IST tz, falling back to a fixed +05:30 zone if
+// the system tzdata can't load Asia/Kolkata (e.g. inside a stripped Alpine
+// container that wasn't built with tzdata).
+func indiaLocation() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Kolkata"); err == nil {
+		return loc
+	}
+	return time.FixedZone("IST", 5*3600+30*60)
+}
 
 // Service handles booking business logic.
 type Service struct {
@@ -35,6 +96,32 @@ type Service struct {
 	matchEngine  *matching.Engine     // nil-safe; used for status queries
 	maps         *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
 	analytics    *analytics.Service   // nil-safe; fire-and-forget event tracking
+	webhooks     *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
+	ledger       *payments.Ledger     // nil-safe; charge-row writer
+}
+
+// SetPaymentsLedger wires the payments ledger so booking confirmation can
+// open a pending charge row. nil-safe — leaving it unset disables ledger
+// writes (used by unit tests that don't care about the payments table).
+func (s *Service) SetPaymentsLedger(l *payments.Ledger) { s.ledger = l }
+
+// recordPaymentIntent inserts a pending payment row for a freshly created
+// booking and emits payment.initiated. Errors are logged, never propagated —
+// a ledger glitch must not unwind a booking the customer already saw confirmed.
+func (s *Service) recordPaymentIntent(ctx context.Context, bookingID, customerID string, amountCents int) {
+	if s.ledger == nil {
+		return
+	}
+	if _, err := s.ledger.CreatePayment(ctx, bookingID, customerID, int64(amountCents), "cod", nil); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("payments ledger insert failed")
+		return
+	}
+	if s.analytics != nil {
+		s.analytics.Track(ctx, analytics.EventPaymentInitiated, customerID, bookingID, map[string]string{
+			"amount_paise": fmt.Sprintf("%d", amountCents),
+			"gateway":      "cod",
+		})
+	}
 }
 
 // SetMapsClient attaches a Google Maps client for tracking and ETA.
@@ -42,6 +129,18 @@ func (s *Service) SetMapsClient(c *googlemaps.Client) { s.maps = c }
 
 // SetAnalytics attaches the analytics service for event tracking.
 func (s *Service) SetAnalytics(svc *analytics.Service) { s.analytics = svc }
+
+// SetWebhooks attaches the outbound webhook dispatcher (nil-safe — leaving it
+// unset is the correct default in unit tests).
+func (s *Service) SetWebhooks(d *webhooks.Dispatcher) { s.webhooks = d }
+
+// fireWebhook is a nil-safe wrapper so unit tests don't need a real dispatcher.
+func (s *Service) fireWebhook(ctx context.Context, event string, payload any) {
+	if s.webhooks == nil {
+		return
+	}
+	s.webhooks.Dispatch(ctx, event, payload)
+}
 
 // NewService creates a new booking service.
 func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service, batcher *matching.Batcher) *Service {
@@ -173,6 +272,17 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		"has_promo":           fmt.Sprintf("%v", promoCode != nil),
 	})
 
+	s.recordPaymentIntent(ctx, booking.ID, customerID, totalPriceCents-discountCents)
+
+	s.fireWebhook(ctx, webhooks.EventOrderCreated, webhooks.OrderEvent{
+		OrderID:           booking.ID,
+		Status:            string(StatusPending),
+		CustomerID:        customerID,
+		ServiceCategoryID: req.ServiceCategoryID,
+		PriceCents:        int64(totalPriceCents),
+		OccurredAt:        time.Now().UTC(),
+	})
+
 	// ── Matching (instant bookings only) ──────────────────────────────────────
 	// Track demand for the heatmap and enqueue into the batch matcher.
 	// Scheduled bookings are NOT enqueued here — they are matched closer to
@@ -192,52 +302,68 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 	return booking, nil
 }
 
-// GetBooking retrieves a booking with IDOR protection.
+// GetBooking retrieves a booking with IDOR protection. For active bookings
+// (pending/accepted) it also computes the can_cancel_free / free_cancel_until
+// fields the customer-app needs to render the cancel CTA copy.
 func (s *Service) GetBooking(ctx context.Context, bookingID, requestingUserID string) (*Booking, error) {
-	return s.repo.GetBookingByID(ctx, bookingID, requestingUserID)
+	b, err := s.repo.GetBookingByID(ctx, bookingID, requestingUserID)
+	if err != nil {
+		return nil, err
+	}
+	if b.Status == StatusPending || b.Status == StatusAccepted {
+		start := CancellationStartTime(b)
+		deadline := FreeCancelDeadline(start).UTC()
+		canFree := IsFreeCancellation(start, time.Now())
+		b.CanCancelFree = &canFree
+		b.FreeCancelUntil = &deadline
+	}
+	return b, nil
 }
 
-// CancelBooking cancels a booking after checking the cancellation window from config_manager.
-func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) error {
-	// Get the booking (with IDOR check).
+// CancelBooking cancels a booking. Free if requested more than 30m before
+// the scheduled start time; otherwise stamps a cancellation fee. Returns the
+// outcome so the caller can echo the fee back to the user.
+func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (*CancelBookingResponse, error) {
 	booking, err := s.repo.GetBookingByID(ctx, bookingID, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Only pending or accepted bookings can be cancelled.
 	if booking.Status != StatusPending && booking.Status != StatusAccepted {
-		return fmt.Errorf("booking cannot be cancelled in current status")
+		return nil, fmt.Errorf("booking cannot be cancelled in current status")
 	}
 
-	// Check cancellation window from config.
-	windowStr, cfgErr := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingCancellationWindowMinutes)
-	if cfgErr != nil {
-		log.Warn().Err(cfgErr).Msg("failed to get cancellation window config, using default")
-		windowStr = "5"
-	}
-	windowMinutes, parseErr := strconv.Atoi(windowStr)
-	if parseErr != nil {
-		windowMinutes = 5
-	}
-
-	// Check if still within free cancellation window.
-	deadline := booking.CreatedAt.Add(time.Duration(windowMinutes) * time.Minute)
-	if time.Now().After(deadline) {
-		// TODO: In production, charge a cancellation fee here using the payment service.
-		log.Warn().
+	start := CancellationStartTime(booking)
+	feeCents := 0
+	if !IsFreeCancellation(start, time.Now()) {
+		feeCents = DefaultCancellationFeeCents
+		log.Info().
 			Str("booking_id", bookingID).
 			Str("user_id", userID).
-			Msg("booking cancelled outside free cancellation window; fee should be charged")
+			Int("fee_cents", feeCents).
+			Msg("booking cancelled outside free window; fee applied")
 	}
 
-	if err := s.repo.UpdateBookingStatus(ctx, bookingID, StatusCancelled, "customer"); err != nil {
-		return fmt.Errorf("failed to cancel booking: %w", err)
+	if err := s.repo.CancelBookingWithFee(ctx, bookingID, "customer", feeCents); err != nil {
+		return nil, err
 	}
 
 	s.analytics.Track(ctx, analytics.EventBookingCancelled, userID, bookingID, map[string]string{
 		"cancelled_by": "customer",
 		"status_was":   string(booking.Status),
+	})
+
+	s.fireWebhook(ctx, webhooks.EventOrderCancelled, webhooks.OrderCancelledEvent{
+		OrderEvent: webhooks.OrderEvent{
+			OrderID:           bookingID,
+			Status:            string(StatusCancelled),
+			CustomerID:        booking.CustomerID,
+			HelperID:          booking.HelperID,
+			ServiceCategoryID: booking.ServiceCategoryID,
+			PriceCents:        int64(booking.PriceCents),
+			OccurredAt:        time.Now().UTC(),
+		},
+		CancelledBy: "customer",
 	})
 
 	// Clear Redis match keys so helpers immediately stop seeing this invite.
@@ -258,7 +384,11 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) e
 	}
 
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
-	return nil
+	return &CancelBookingResponse{
+		Message:                "booking cancelled",
+		CancellationFeeApplied: feeCents > 0,
+		CancellationFeeCents:   feeCents,
+	}, nil
 }
 
 // AcceptBooking allows a helper to accept a pending booking.
@@ -269,7 +399,6 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		return err
 	}
 
-	// Check helper's active booking limit.
 	maxActiveStr, err := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerHelper)
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to get max helper active bookings config, using default")
@@ -280,15 +409,6 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		maxActive = 3
 	}
 
-	activeCount, err := s.repo.GetActiveBookingsCountForHelper(ctx, helperID)
-	if err != nil {
-		return fmt.Errorf("failed to check helper active bookings: %w", err)
-	}
-	if activeCount >= maxActive {
-		return fmt.Errorf("helper already has maximum active bookings")
-	}
-
-	// Look up helper name for notification.
 	helperName := ""
 	helperRow := s.db.QueryRow(ctx, "SELECT COALESCE(name, '') FROM users WHERE id = $1", helperID)
 	if err := helperRow.Scan(&helperName); err != nil {
@@ -296,12 +416,70 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		helperName = "a helper"
 	}
 
-	if err := s.repo.AcceptBooking(ctx, bookingID, helperID); err != nil {
-		return fmt.Errorf("failed to accept booking: %w", err)
+	// Walking-ETA guard. Reuse the same Google Maps walking-time call the
+	// matching engine uses (filterByWalkingTime). Fail-open on every error
+	// path — Maps outage must not block helpers from accepting.
+	if s.maps != nil {
+		var helperLat, helperLng float64
+		gotCoords := false
+		if s.rdb != nil {
+			geoPos, geoErr := s.rdb.GeoPos(ctx, "helpers:locations", helperID).Result()
+			if geoErr == nil && len(geoPos) > 0 && geoPos[0] != nil {
+				helperLat = geoPos[0].Latitude
+				helperLng = geoPos[0].Longitude
+				gotCoords = true
+			}
+		}
+		if !gotCoords {
+			coordCtx, coordCancel := context.WithTimeout(ctx, 2*time.Second)
+			var lat, lng *float64
+			if err := s.db.QueryRow(coordCtx,
+				`SELECT current_lat, current_lng FROM helpers WHERE id = $1`,
+				helperID,
+			).Scan(&lat, &lng); err == nil && lat != nil && lng != nil {
+				helperLat = *lat
+				helperLng = *lng
+				gotCoords = true
+			}
+			coordCancel()
+		}
+
+		if gotCoords {
+			etaCtx, etaCancel := context.WithTimeout(ctx, 5*time.Second)
+			mins, mapsErr := s.maps.GetTravelMinutes(etaCtx, helperLat, helperLng, booking.Lat, booking.Lng)
+			etaCancel()
+			switch {
+			case mapsErr != nil || mins == 0:
+				// Fail-open: Maps unavailable or returned a sentinel zero.
+				log.Warn().Err(mapsErr).Str("helper_id", helperID).
+					Str("booking_id", bookingID).
+					Msg("[booking] walking-ETA guard skipped — Maps unavailable")
+			case mins > acceptMaxWalkingMinutes:
+				log.Info().Str("helper_id", helperID).Str("booking_id", bookingID).
+					Int("walking_minutes", mins).
+					Msg("[booking] accept blocked — too far away")
+				return ErrTooFarAway
+			}
+		}
+	}
+
+	if err := s.repo.AcceptBooking(ctx, bookingID, helperID, maxActive); err != nil {
+		return err
 	}
 
 	s.analytics.Track(ctx, analytics.EventBookingAccepted, helperID, bookingID, map[string]string{
 		"customer_id": booking.CustomerID,
+	})
+
+	helperRef := helperID
+	s.fireWebhook(ctx, webhooks.EventOrderAssigned, webhooks.OrderEvent{
+		OrderID:           bookingID,
+		Status:            string(StatusAccepted),
+		CustomerID:        booking.CustomerID,
+		HelperID:          &helperRef,
+		ServiceCategoryID: booking.ServiceCategoryID,
+		PriceCents:        int64(booking.PriceCents),
+		OccurredAt:        time.Now().UTC(),
 	})
 
 	// Notify customer that their helper is on the way.
@@ -379,9 +557,190 @@ func (s *Service) ClearUserCart(ctx context.Context, userID string) {
 	}
 }
 
+// classifyScheduling decides whether a scheduled booking is "normal" (sits in
+// the nightly 10pm cron's queue) or "stealth instant" (the customer placed
+// it after the 8pm IST cutoff and the stealth dispatch cron handles it
+// closer to fire time). Also enforces the 2-day lead-time cap.
+//
+// Returns isStealth, fireAt (non-nil only when isStealth=true), or an error
+// matching ErrSlotInPast / ErrSlotTooFar. scheduledTime must be a parsable
+// RFC3339 timestamp.
+func (s *Service) classifyScheduling(scheduledTimeRFC3339 string) (bool, *time.Time, error) {
+	scheduled, err := time.Parse(time.RFC3339, scheduledTimeRFC3339)
+	if err != nil {
+		return false, nil, fmt.Errorf("invalid scheduled time: %w", err)
+	}
+	loc := indiaLocation()
+	scheduled = scheduled.In(loc)
+	now := time.Now().In(loc)
+
+	if scheduled.Before(now) {
+		return false, nil, ErrSlotInPast
+	}
+
+	// Cap = midnight at end of (today + maxLeadDays). 2 days from "today"
+	// means the customer can pick today, tomorrow, or day-after-tomorrow.
+	maxDay := time.Date(
+		now.Year(), now.Month(), now.Day()+scheduledBookingMaxLeadDays, 23, 59, 59, 0, loc,
+	)
+	if scheduled.After(maxDay) {
+		return false, nil, ErrSlotTooFar
+	}
+
+	if now.Hour() >= schedulingCutoffHourIST {
+		// Past 8pm IST — customer is allowed to book (Cutoff Rule §2 of the
+		// spec) but the booking goes into the stealth path. fire_at fires
+		// the invite chain a bit before the slot starts.
+		fire := scheduled.Add(-stealthFireLeadTime).UTC()
+		return true, &fire, nil
+	}
+	return false, nil, nil
+}
+
+// resolveLocality looks up the customer's chosen address and tries to pin it
+// to one of the active localities. Match strategy: token-set containment.
+// Each locality.name is split into lowercase alphanumeric tokens, the
+// address text is split the same way, and a locality matches when every one
+// of its tokens appears as an exact element in the address's token set.
+// Longest locality (by character length) wins on ties so "DLF Phase 5" beats
+// "DLF Phase 1" when both could match.
+//
+// Substring matching was the v1 approach but missed real-world addresses
+// like "DLF Cyber City, Phase 2, Gurugram" — "DLF Phase 2" is not a
+// substring there, but the token set {dlf, cyber, city, phase, 2, gurugram}
+// is a superset of {dlf, phase, 2}.
+//
+// Returns nil (not an error) when nothing matches — the dispatch crons will
+// fall back to "any pro" mode.
+func (s *Service) resolveLocality(ctx context.Context, addressID string) (*string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var addressText string
+	err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(full_address, '') FROM user_addresses WHERE id = $1::uuid`,
+		addressID,
+	).Scan(&addressText)
+	if err != nil {
+		return nil, fmt.Errorf("locality lookup: load address: %w", err)
+	}
+	if addressText == "" {
+		return nil, nil
+	}
+
+	addrTokens := tokenizeForLocality(addressText)
+	addrSet := make(map[string]struct{}, len(addrTokens))
+	for _, t := range addrTokens {
+		addrSet[t] = struct{}{}
+	}
+
+	rows, err := s.db.Query(ctx,
+		`SELECT name FROM localities WHERE active = true ORDER BY length(name) DESC`)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("locality lookup: list: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("locality lookup: scan: %w", err)
+		}
+		nameTokens := tokenizeForLocality(name)
+		if len(nameTokens) == 0 {
+			continue
+		}
+		all := true
+		for _, t := range nameTokens {
+			if _, ok := addrSet[t]; !ok {
+				all = false
+				break
+			}
+		}
+		if all {
+			return &name, nil
+		}
+	}
+	return nil, rows.Err()
+}
+
+// tokenizeForLocality splits s into lowercase tokens of [a-z0-9]. Anything
+// else (whitespace, commas, periods, hyphens, etc.) is a separator. Empty
+// tokens are dropped. ASCII-only — addresses come from Google Places + the
+// pro/customer manual entry, which today never round-trip non-ASCII glyphs.
+func tokenizeForLocality(s string) []string {
+	out := make([]string, 0, 8)
+	cur := make([]byte, 0, 16)
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, string(cur))
+			cur = cur[:0]
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'A' && c <= 'Z':
+			cur = append(cur, c+32)
+		case (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'):
+			cur = append(cur, c)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// KeepLookingBooking extends the stealth-search window by another 15 minutes.
+// Only valid when the booking is currently in 'pending_customer_action' and
+// the caller is the customer who placed it.
+//
+// Implementation: bump fire_at to NOW (so the next stealth-dispatch tick
+// picks it up) and reset status to 'pending'. The next cron run will flip
+// it back to 'searching' and rerun the invite chain.
+func (s *Service) KeepLookingBooking(ctx context.Context, bookingID, userID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var customerID string
+	var status string
+	var isStealth bool
+	err := s.db.QueryRow(ctx,
+		`SELECT customer_id::text, status, is_stealth_instant FROM bookings WHERE id = $1::uuid`,
+		bookingID,
+	).Scan(&customerID, &status, &isStealth)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("booking not found")
+		}
+		return err
+	}
+	if customerID != userID {
+		return fmt.Errorf("forbidden")
+	}
+	if status != "pending_customer_action" || !isStealth {
+		return fmt.Errorf("booking not in pending_customer_action")
+	}
+	_, err = s.db.Exec(ctx, `
+		UPDATE bookings
+		SET status     = 'pending',
+		    fire_at    = now(),
+		    updated_at = now()
+		WHERE id = $1::uuid
+	`, bookingID)
+	return err
+}
+
 // CreateScheduledBooking creates a booking using cart items + time slot.
 // The cart must be non-empty. Items are converted to BookingServiceItems and
 // the cart is cleared on success.
+//
+// Cutoff handling — see classifyScheduling. Slots more than 2 days out are
+// rejected; slots placed after 8pm IST get the stealth-instant treatment.
 func (s *Service) CreateScheduledBooking(
 	ctx context.Context,
 	customerID string,
@@ -391,6 +750,26 @@ func (s *Service) CreateScheduledBooking(
 ) (*ScheduledBooking, error) {
 	if len(cartItems) == 0 {
 		return nil, fmt.Errorf("cart is empty")
+	}
+
+	// Hard cap: max simultaneous active bookings per customer. Same gate as
+	// instant CreateBooking — covers Zop, app, and any future entrypoint.
+	maxActiveStr, _ := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerCustomer)
+	maxActive, parseErr := strconv.Atoi(maxActiveStr)
+	if parseErr != nil || maxActive <= 0 {
+		maxActive = 2
+	}
+	activeCount, countErr := s.repo.GetActiveBookingsCount(ctx, customerID)
+	if countErr != nil {
+		return nil, fmt.Errorf("failed to check active bookings: %w", countErr)
+	}
+	if activeCount >= maxActive {
+		return nil, fmt.Errorf("maximum active bookings limit reached")
+	}
+
+	isStealth, fireAt, schedErr := s.classifyScheduling(scheduledTime)
+	if schedErr != nil {
+		return nil, schedErr
 	}
 
 	// SECURITY: ensure the address being booked actually belongs to the caller.
@@ -409,6 +788,14 @@ func (s *Service) CreateScheduledBooking(
 		if !ownsAddress {
 			return nil, ErrAddressNotOwned
 		}
+	}
+
+	locality, locErr := s.resolveLocality(ctx, req.AddressID)
+	if locErr != nil {
+		// Don't fail the booking on a locality lookup hiccup — log and let
+		// the dispatch chain fall back to "no locality" mode.
+		log.Warn().Err(locErr).Str("address_id", req.AddressID).Msg("[booking] locality resolve failed")
+		locality = nil
 	}
 
 	// Calculate total price from items.
@@ -442,6 +829,7 @@ func (s *Service) CreateScheduledBooking(
 		ctx, customerID, req.AddressID, req.TimeSlotID,
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCode,
+		isStealth, fireAt, locality,
 	)
 	if err != nil {
 		return nil, err
@@ -458,6 +846,8 @@ func (s *Service) CreateScheduledBooking(
 		"price_cents": fmt.Sprintf("%d", totalPriceCents),
 		"has_promo":   fmt.Sprintf("%v", promoCode != nil),
 	})
+
+	s.recordPaymentIntent(ctx, booking.ID, customerID, totalPriceCents-discountCents)
 
 	log.Info().
 		Str("booking_id", booking.ID).
@@ -528,12 +918,14 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 		var helper MatchedHelper
 		err := s.db.QueryRow(queryCtx,
 			`SELECT u.id, COALESCE(u.name,''), COALESCE(u.phone,''),
-			        COALESCE(h.rating,5.0)
+			        COALESCE(h.rating,5.0),
+			        COALESCE(u.avatar_url,''),
+			        COALESCE(h.total_jobs,0)
 			 FROM users u
 			 JOIN helpers h ON h.id = u.id
 			 WHERE u.id = $1`,
 			*booking.HelperID,
-		).Scan(&helper.ID, &helper.Name, &helper.Phone, &helper.Rating)
+		).Scan(&helper.ID, &helper.Name, &helper.Phone, &helper.Rating, &helper.PhotoURL, &helper.TotalJobs)
 		if err != nil {
 			log.Warn().Err(err).Str("helper_id", *booking.HelperID).Msg("could not fetch helper details")
 		}
@@ -551,7 +943,19 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 			).Scan(&helper.Lat, &helper.Lng)
 		}
 
-		helper.ETAMinutes = 30 // default ETA; production would compute from routing
+		// ETA = straight-line distance / 25 km/h average Delhi speed, rounded
+		// to nearest integer minute. Helper coords were just populated from
+		// Redis (preferred) or Postgres (fallback) above; if both lookups
+		// failed they're zero-valued and we fall back to a 30-min default.
+		if helper.Lat != 0 || helper.Lng != 0 {
+			distKm := haversineKm(helper.Lat, helper.Lng, booking.Lat, booking.Lng)
+			helper.ETAMinutes = int(math.Round(distKm / 25.0 * 60.0))
+			if helper.ETAMinutes < 1 {
+				helper.ETAMinutes = 1
+			}
+		} else {
+			helper.ETAMinutes = 30
+		}
 
 		arrived, arrErr := s.repo.IsBookingArrived(ctx, bookingID)
 		if arrErr != nil {
@@ -709,8 +1113,187 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) 
 		return fmt.Errorf("booking not found or cannot be started")
 	}
 	s.analytics.Track(ctx, analytics.EventBookingStarted, helperID, bookingID, nil)
+
+	s.fireWebhook(ctx, webhooks.EventOrderStarted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusInProgress)))
+
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
 	return nil
+}
+
+// buildOrderEvent loads the small set of fields needed for an order.* webhook
+// payload. Best-effort: if the lookup fails the payload is still emitted with
+// the IDs we already have.
+func (s *Service) buildOrderEvent(ctx context.Context, bookingID string, helperID *string, status string) webhooks.OrderEvent {
+	ev := webhooks.OrderEvent{
+		OrderID:    bookingID,
+		Status:     status,
+		HelperID:   helperID,
+		OccurredAt: time.Now().UTC(),
+	}
+	qCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var (
+		customerID        string
+		serviceCategoryID string
+		priceCents        int
+	)
+	if err := s.db.QueryRow(qCtx,
+		`SELECT customer_id, service_category_id, price_cents FROM bookings WHERE id = $1`,
+		bookingID,
+	).Scan(&customerID, &serviceCategoryID, &priceCents); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("[webhooks] enrich order event failed")
+		return ev
+	}
+	ev.CustomerID = customerID
+	ev.ServiceCategoryID = serviceCategoryID
+	ev.PriceCents = int64(priceCents)
+	return ev
+}
+
+// GetCustomerScheduledBookings returns paginated bookings in the richer
+// ScheduledBooking shape — includes service items, scheduled_time, and
+// address_id. Used by surfaces (e.g. Zop) that need full booking detail.
+func (s *Service) GetCustomerScheduledBookings(ctx context.Context, customerID, status string, page, limit int) ([]ScheduledBooking, error) {
+	return s.repo.GetCustomerBookingsByStatus(ctx, customerID, status, page, limit)
+}
+
+// GetCustomerBookings returns paginated bookings for a customer. Service-level
+// wrapper around the repo call so callers (e.g. Zop AI) don't reach into the
+// repo directly.
+func (s *Service) GetCustomerBookings(ctx context.Context, customerID string, page, limit int) ([]Booking, error) {
+	return s.repo.GetCustomerBookings(ctx, customerID, page, limit)
+}
+
+// RescheduleBooking moves a booking to a new time slot. Capacity on the new
+// slot is enforced via FOR UPDATE inside a single transaction; the old slot's
+// counter is decremented in the same tx so the swap is atomic.
+//
+// Returns 404-style error for missing bookings, 403-style for IDOR, 400 for
+// terminal-state bookings, and ErrSlotUnavailable when the requested slot is
+// at capacity (handler maps to 409).
+func (s *Service) RescheduleBooking(
+	ctx context.Context,
+	bookingID, customerID, newTimeSlotID, newScheduledTime string,
+) (*Booking, error) {
+	b, err := s.repo.GetBookingByID(ctx, bookingID, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if b.Status == StatusCompleted || b.Status == StatusCancelled {
+		return nil, fmt.Errorf("booking cannot be rescheduled in current status")
+	}
+
+	newScheduled, err := time.Parse(time.RFC3339, newScheduledTime)
+	if err != nil {
+		return nil, fmt.Errorf("invalid scheduled time: %w", err)
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	tx, err := s.db.Begin(queryCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(queryCtx)
+
+	// Look up old slot ID from the booking row inside the tx so we have a
+	// consistent view. nil/empty is allowed — booking may pre-date the
+	// scheduled-flow.
+	var oldSlotID *string
+	if err := tx.QueryRow(queryCtx,
+		`SELECT time_slot_id FROM bookings WHERE id = $1 FOR UPDATE`,
+		bookingID,
+	).Scan(&oldSlotID); err != nil {
+		return nil, fmt.Errorf("failed to load booking row: %w", err)
+	}
+
+	// Lock slot rows in deterministic order (string-sort by ID) so two
+	// concurrent reschedules swapping the same pair of slots can't deadlock.
+	lockOrder := []string{newTimeSlotID}
+	if oldSlotID != nil && *oldSlotID != "" && *oldSlotID != newTimeSlotID {
+		lockOrder = append(lockOrder, *oldSlotID)
+	}
+	if len(lockOrder) == 2 && lockOrder[0] > lockOrder[1] {
+		lockOrder[0], lockOrder[1] = lockOrder[1], lockOrder[0]
+	}
+	for _, sid := range lockOrder {
+		if _, err := tx.Exec(queryCtx,
+			`SELECT 1 FROM time_slots WHERE id = $1 FOR UPDATE`, sid,
+		); err != nil {
+			return nil, fmt.Errorf("failed to lock time slot: %w", err)
+		}
+	}
+
+	// Capacity check on the new slot.
+	var currentBookings, maxBookings int
+	var isActive bool
+	err = tx.QueryRow(queryCtx,
+		`SELECT current_bookings, max_bookings, is_active FROM time_slots WHERE id = $1`,
+		newTimeSlotID,
+	).Scan(&currentBookings, &maxBookings, &isActive)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrSlotUnavailable
+		}
+		return nil, fmt.Errorf("failed to load new time slot: %w", err)
+	}
+	if !isActive || currentBookings >= maxBookings {
+		return nil, fmt.Errorf("requested slot is fully booked")
+	}
+
+	// Decrement old slot only if it differs from the new one — moving a
+	// booking onto its existing slot would otherwise net to zero anyway, but
+	// it'd be wasted writes.
+	if oldSlotID != nil && *oldSlotID != "" && *oldSlotID != newTimeSlotID {
+		if _, err := tx.Exec(queryCtx,
+			`UPDATE time_slots SET current_bookings = GREATEST(current_bookings - 1, 0) WHERE id = $1`,
+			*oldSlotID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to release old slot: %w", err)
+		}
+		if _, err := tx.Exec(queryCtx,
+			`UPDATE time_slots SET current_bookings = current_bookings + 1 WHERE id = $1`,
+			newTimeSlotID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to reserve new slot: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(queryCtx,
+		`UPDATE bookings
+		   SET time_slot_id = $1, scheduled_time = $2, updated_at = NOW()
+		 WHERE id = $3`,
+		newTimeSlotID, newScheduled, bookingID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to update booking: %w", err)
+	}
+
+	if err := tx.Commit(queryCtx); err != nil {
+		return nil, fmt.Errorf("failed to commit reschedule: %w", err)
+	}
+
+	updated, err := s.repo.GetBookingByID(ctx, bookingID, customerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.analytics != nil {
+		s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, bookingID, map[string]string{
+			"event":            "rescheduled",
+			"new_time_slot_id": newTimeSlotID,
+			"new_scheduled_at": newScheduledTime,
+		})
+	}
+
+	log.Info().
+		Str("booking_id", bookingID).
+		Str("customer_id", customerID).
+		Str("new_slot_id", newTimeSlotID).
+		Str("new_time", newScheduledTime).
+		Msg("booking rescheduled")
+
+	return updated, nil
 }
 
 // CompleteBooking transitions a booking from in_progress → completed and
@@ -729,6 +1312,8 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		return fmt.Errorf("booking not found or cannot be completed")
 	}
 	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
+
+	s.fireWebhook(ctx, webhooks.EventOrderCompleted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusCompleted)))
 
 	// Increment total_jobs and notify customer — both best-effort, non-blocking.
 	mw.SafeGo("booking.complete.increment_jobs", func() {

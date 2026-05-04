@@ -8,6 +8,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 )
 
@@ -30,16 +31,22 @@ func validateBookingIDParam(bookingID string) bool {
 // RequireRole("pro") to block customer JWTs from self-assigning as helpers.
 // idem (optional, may be nil) is an idempotency middleware applied only to
 // the booking-creation POST routes to make retries safe.
-func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler) {
+// createLimiter (optional, may be nil) is a per-user rate limiter applied
+// only to the booking-creation POST routes; tighter than the group-wide
+// authLimiter because each create fans out to matching, notifications,
+// and DB writes.
+func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, createLimiter fiber.Handler) {
 	proOnly := middleware.RequireRole("pro")
 
-	if idem != nil {
-		router.Post("/", idem, h.CreateBooking)
-		router.Post("/scheduled", idem, h.CreateScheduledBooking)
-	} else {
-		router.Post("/", h.CreateBooking)
-		router.Post("/scheduled", h.CreateScheduledBooking)
+	createChain := []fiber.Handler{}
+	if createLimiter != nil {
+		createChain = append(createChain, createLimiter)
 	}
+	if idem != nil {
+		createChain = append(createChain, idem)
+	}
+	router.Post("/", append(createChain, h.CreateBooking)...)
+	router.Post("/scheduled", append(createChain, h.CreateScheduledBooking)...)
 	router.Get("/helper/invites", proOnly, h.GetHelperInvites)
 	router.Get("/helper/active", proOnly, h.GetHelperActive)
 	router.Get("/helper/today", proOnly, h.GetHelperToday)
@@ -50,6 +57,9 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler) {
 	router.Post("/:id/messages", h.SendMessage)
 	router.Get("/:id", h.GetBooking)
 	router.Post("/:id/cancel", h.CancelBooking)
+	router.Delete("/:id", h.CancelBooking)
+	router.Post("/:id/reschedule", h.RescheduleBooking)
+	router.Post("/:id/keep-looking", h.KeepLookingBooking)
 	router.Post("/:id/accept", proOnly, h.AcceptBooking)
 	router.Post("/:id/arrived", proOnly, h.MarkArrived)
 	router.Post("/:id/start", proOnly, h.StartBooking)
@@ -75,9 +85,21 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 
 	customerID, _ := c.Locals("userID").(string)
 
-	booking, err := h.service.CreateBooking(c.Context(), &req, customerID)
+	booking, err := h.service.CreateBooking(c.UserContext(), &req, customerID)
 	if err != nil {
 		log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
+
+		// Map Postgres unique-violation (e.g. bookings_dedup constraint
+		// preventing same customer+category within 1 hour) to 409 Conflict
+		// with a stable client-facing code so apps can show a useful prompt
+		// instead of a generic 500.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "duplicate booking for the same customer and category in the last hour",
+				"code":  "DUPLICATE_BOOKING",
+			})
+		}
 
 		status := fiber.StatusInternalServerError
 		message := "failed to create booking"
@@ -105,7 +127,7 @@ func (h *Handler) GetBooking(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	booking, err := h.service.GetBooking(c.Context(), bookingID, userID)
+	booking, err := h.service.GetBooking(c.UserContext(), bookingID, userID)
 	if err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get booking")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -133,7 +155,7 @@ func (h *Handler) GetBookings(c *fiber.Ctx) error {
 	}
 
 	if status == "upcoming" || status == "past" {
-		bookings, err := h.service.repo.GetCustomerBookingsByStatus(c.Context(), userID, status, page, limit)
+		bookings, err := h.service.repo.GetCustomerBookingsByStatus(c.UserContext(), userID, status, page, limit)
 		if err != nil {
 			log.Error().Err(err).Str("user_id", userID).Msg("failed to get bookings by status")
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load bookings"})
@@ -142,7 +164,7 @@ func (h *Handler) GetBookings(c *fiber.Ctx) error {
 	}
 
 	// Legacy path: return all bookings without service details.
-	bookings, err := h.service.repo.GetCustomerBookings(c.Context(), userID, page, limit)
+	bookings, err := h.service.repo.GetCustomerBookings(c.UserContext(), userID, page, limit)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to get bookings")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load bookings"})
@@ -174,7 +196,7 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	}
 
 	// Fetch cart items.
-	items, err := h.service.GetCartItemsForUser(c.Context(), userID)
+	items, err := h.service.GetCartItemsForUser(c.UserContext(), userID)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to fetch cart items")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to read cart"})
@@ -184,7 +206,7 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	}
 
 	// Resolve time slot to a scheduled timestamp.
-	scheduledTime, err := h.service.GetSlotScheduledTime(c.Context(), req.TimeSlotID)
+	scheduledTime, err := h.service.GetSlotScheduledTime(c.UserContext(), req.TimeSlotID)
 	if err != nil {
 		if err.Error() == "time slot not found or unavailable" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "time slot not found or unavailable"})
@@ -193,11 +215,26 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to resolve slot schedule"})
 	}
 
-	booking, err := h.service.CreateScheduledBooking(c.Context(), userID, &req, items, scheduledTime)
+	booking, err := h.service.CreateScheduledBooking(c.UserContext(), userID, &req, items, scheduledTime)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to create scheduled booking")
 		if errors.Is(err, ErrAddressNotOwned) {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
+		}
+		if errors.Is(err, ErrSlotUnavailable) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "this time slot is no longer available — please pick another",
+			})
+		}
+		if errors.Is(err, ErrSlotTooFar) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Bookings can only be made up to 2 days in advance.",
+			})
+		}
+		if errors.Is(err, ErrSlotInPast) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "selected time slot is in the past — please pick another",
+			})
 		}
 		status := fiber.StatusInternalServerError
 		message := "failed to create scheduled booking"
@@ -212,12 +249,41 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	}
 
 	// Clear cart on success (best-effort, don't fail the response).
-	h.service.ClearUserCart(c.Context(), userID)
+	h.service.ClearUserCart(c.UserContext(), userID)
 
 	return c.Status(fiber.StatusCreated).JSON(booking)
 }
 
-// CancelBooking handles POST /bookings/:id/cancel.
+// CancelBooking handles POST /bookings/:id/cancel and DELETE /bookings/:id.
+// Response body echoes whether a cancellation fee was charged so the app can
+// surface it without a follow-up GET.
+// KeepLookingBooking handles POST /bookings/:id/keep-looking. Used when a
+// stealth-instant booking has rolled into 'pending_customer_action' (15 min
+// of searching with no acceptance) and the customer chooses to extend the
+// search window by another 15 minutes instead of cancelling. The
+// stealth-dispatch cron picks the booking back up on its next tick once
+// fire_at moves into the past.
+func (h *Handler) KeepLookingBooking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	userID, _ := c.Locals("userID").(string)
+	if err := h.service.KeepLookingBooking(c.UserContext(), bookingID, userID); err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Str("user_id", userID).Msg("[booking] keep-looking failed")
+		switch err.Error() {
+		case "booking not found":
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "booking not found"})
+		case "booking not in pending_customer_action":
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "booking is not waiting for your decision"})
+		case "forbidden":
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to extend search"})
+	}
+	return c.JSON(fiber.Map{"ok": true, "status": "searching"})
+}
+
 func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
 	if !validateBookingIDParam(bookingID) {
@@ -225,7 +291,8 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	if err := h.service.CancelBooking(c.Context(), bookingID, userID); err != nil {
+	resp, err := h.service.CancelBooking(c.UserContext(), bookingID, userID)
+	if err != nil {
 		log.Error().Err(err).
 			Str("booking_id", bookingID).
 			Str("user_id", userID).
@@ -246,7 +313,69 @@ func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(fiber.Map{"message": "booking cancelled"})
+	return c.JSON(resp)
+}
+
+// RescheduleBookingRequest is the body for POST /bookings/:id/reschedule.
+type RescheduleBookingRequest struct {
+	TimeSlotID    string `json:"time_slot_id" validate:"required,uuid_format"`
+	ScheduledTime string `json:"scheduled_time" validate:"required"`
+}
+
+// RescheduleBooking handles POST /bookings/:id/reschedule. Moves an active
+// booking to a new time slot atomically. Returns 409 if the new slot is full.
+func (h *Handler) RescheduleBooking(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+
+	var req RescheduleBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	userID, _ := c.Locals("userID").(string)
+
+	resp, err := h.service.RescheduleBooking(c.UserContext(), bookingID, userID, req.TimeSlotID, req.ScheduledTime)
+	if err != nil {
+		log.Error().Err(err).
+			Str("booking_id", bookingID).
+			Str("user_id", userID).
+			Msg("failed to reschedule booking")
+
+		status := fiber.StatusInternalServerError
+		message := "failed to reschedule booking"
+		switch err.Error() {
+		case "booking not found":
+			status = fiber.StatusNotFound
+			message = "booking not found"
+		case "booking cannot be rescheduled in current status":
+			status = fiber.StatusBadRequest
+			message = err.Error()
+		case "requested slot is fully booked":
+			status = fiber.StatusConflict
+			message = err.Error()
+		}
+		if errors.Is(err, ErrSlotUnavailable) {
+			status = fiber.StatusConflict
+			message = "requested slot is fully booked"
+		}
+		if strings.HasPrefix(err.Error(), "invalid scheduled time") {
+			status = fiber.StatusBadRequest
+			message = "invalid scheduled time"
+		}
+
+		return c.Status(status).JSON(fiber.Map{"error": message})
+	}
+
+	return c.JSON(resp)
 }
 
 // AcceptBooking handles POST /bookings/:id/accept (helper accepts a booking).
@@ -257,7 +386,7 @@ func (h *Handler) AcceptBooking(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 
-	if err := h.service.AcceptBooking(c.Context(), bookingID, helperID); err != nil {
+	if err := h.service.AcceptBooking(c.UserContext(), bookingID, helperID); err != nil {
 		log.Error().Err(err).
 			Str("booking_id", bookingID).
 			Str("helper_id", helperID).
@@ -272,6 +401,15 @@ func (h *Handler) AcceptBooking(c *fiber.Ctx) error {
 			err.Error() == "helper already has maximum active bookings" {
 			status = fiber.StatusBadRequest
 			message = err.Error()
+		} else if errors.Is(err, ErrTooFarAway) {
+			status = fiber.StatusBadRequest
+			message = "too far from booking location"
+		} else if errors.Is(err, ErrAlreadyAccepted) || errors.Is(err, ErrBookingNotPending) {
+			// Race-loss: another helper grabbed the booking first. Surface as
+			// 409 Conflict so the helper app can quietly drop the invite
+			// instead of treating it as a server-side fault.
+			status = fiber.StatusConflict
+			message = "booking already accepted by another helper"
 		}
 
 		return c.Status(status).JSON(fiber.Map{
@@ -292,7 +430,7 @@ func (h *Handler) GetMatchStatus(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	resp, err := h.service.GetMatchStatus(c.Context(), bookingID, userID)
+	resp, err := h.service.GetMatchStatus(c.UserContext(), bookingID, userID)
 	if err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get match status")
 		status := fiber.StatusInternalServerError
@@ -312,7 +450,7 @@ func (h *Handler) GetMatchStatus(c *fiber.Ctx) error {
 func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
 
-	bookingIDs, err := h.service.GetHelperInvites(c.Context(), helperID)
+	bookingIDs, err := h.service.GetHelperInvites(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper invites")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get invites"})
@@ -327,7 +465,7 @@ func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
 // after an app restart so the pro never loses sight of an in-flight booking.
 func (h *Handler) GetHelperActive(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
-	bookings, err := h.service.repo.GetHelperActiveBookings(c.Context(), helperID)
+	bookings, err := h.service.repo.GetHelperActiveBookings(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper active bookings")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load active bookings"})
@@ -343,7 +481,7 @@ func (h *Handler) GetHelperActive(c *fiber.Ctx) error {
 // plus those completed or cancelled today.
 func (h *Handler) GetHelperToday(c *fiber.Ctx) error {
 	helperID, _ := c.Locals("userID").(string)
-	bookings, err := h.service.repo.GetHelperBookingsToday(c.Context(), helperID)
+	bookings, err := h.service.repo.GetHelperBookingsToday(c.UserContext(), helperID)
 	if err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper today bookings")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load today's bookings"})
@@ -364,7 +502,7 @@ func (h *Handler) GetTracking(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	resp, err := h.service.GetTracking(c.Context(), bookingID, userID)
+	resp, err := h.service.GetTracking(c.UserContext(), bookingID, userID)
 	if err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get tracking")
 		status := fiber.StatusInternalServerError
@@ -395,7 +533,7 @@ func (h *Handler) MarkArrived(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 
-	if err := h.service.MarkArrived(c.Context(), bookingID, helperID); err != nil {
+	if err := h.service.MarkArrived(c.UserContext(), bookingID, helperID); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to mark arrived")
 		status := fiber.StatusInternalServerError
 		message := "failed to mark arrived"
@@ -416,7 +554,7 @@ func (h *Handler) StartBooking(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 
-	if err := h.service.StartBooking(c.Context(), bookingID, helperID); err != nil {
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to start booking")
 		status := fiber.StatusInternalServerError
 		message := "failed to start booking"
@@ -439,7 +577,7 @@ func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 
-	if err := h.service.CompleteBooking(c.Context(), bookingID, helperID); err != nil {
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to complete booking")
 		status := fiber.StatusInternalServerError
 		message := "failed to complete booking"

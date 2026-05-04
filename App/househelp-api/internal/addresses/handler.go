@@ -33,7 +33,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
 	}
 
-	addrs, err := h.service.ListByUser(c.Context(), userID)
+	addrs, err := h.service.ListByUser(c.UserContext(), userID)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to list addresses")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch addresses"})
@@ -61,7 +61,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		})
 	}
 
-	addr, err := h.service.Create(c.Context(), userID, req)
+	addr, err := h.service.Create(c.UserContext(), userID, req)
 	if err != nil {
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to create address")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save address"})
@@ -97,7 +97,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		})
 	}
 
-	addr, err := h.service.Update(c.Context(), userID, addressID, req)
+	addr, err := h.service.Update(c.UserContext(), userID, addressID, req)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "address not found"})
@@ -124,7 +124,7 @@ func (h *Handler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid address id"})
 	}
 
-	if err := h.service.Delete(c.Context(), userID, addressID); err != nil {
+	if err := h.service.Delete(c.UserContext(), userID, addressID); err != nil {
 		if err == pgx.ErrNoRows {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "address not found"})
 		}
