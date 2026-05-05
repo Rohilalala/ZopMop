@@ -45,8 +45,9 @@ export type MainStackParamList = {
   ServiceAbout: { service: ApiService };
   Cart: { selectedAddressId?: string } | undefined;
   Wallet: undefined;
-  Payment: undefined;
-  PaymentMethods: undefined;
+  // Cashfree Drop Checkout entry point. Pushed from CartScreen when the
+  // customer chooses Pay-now (direct) at confirm-booking time.
+  Payment: { booking_id: string; amount_paise: number };
   Offers: undefined;
   HelpSupport: undefined;
   YourExperts: undefined;

@@ -1,6 +1,11 @@
 import { Platform } from 'react-native';
 
-let _rawUrl = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
+// Trim + strip trailing slashes. Stray whitespace or a trailing "/" in the
+// .env value otherwise cascades through every fetch URL and breaks both the
+// /health probe (BackendDown false-positive) and any path concatenation.
+let _rawUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1')
+  .trim()
+  .replace(/\/+$/, '');
 
 // Android emulator cannot reach LAN IPs directly — remap to the emulator's
 // alias for the host machine (10.0.2.2) so both iOS and Android work from

@@ -14,6 +14,7 @@ import Animated, {
   useSharedValue,
   withRepeat,
   withSequence,
+  withSpring,
   withTiming,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -69,26 +70,46 @@ export function ZopRefresh({ refreshing, size = SIZE_DEFAULT }: Props) {
     } else if (wasRefreshing) {
       // Just finished — stop spin, show face, pulse, then fade out.
       cancelAnimation(rotate);
-      // Snap rotation home so the smile lands upright. withTiming(0) was
-      // wrapping around the long way; setValue avoids that.
-      rotate.value = 0;
+      // Bounce home: shoot well past upright, then spring-settle with a
+      // visible wobble. Target the next full 360-multiple so the motion
+      // always finishes on a forward arc — no jarring back-snap.
+      const current = rotate.value;
+      const target = Math.ceil(current / 360) * 360;
+      // First, throw past target by ~55° to load the spring, then let
+      // withSpring do the oscillating settle. Low damping = wobble lives
+      // long enough to read as a bounce.
+      rotate.value = withSequence(
+        withTiming(target + 55, { duration: 280, easing: Easing.out(Easing.cubic) }),
+        withSpring(target, {
+          damping: 4,
+          stiffness: 110,
+          mass: 0.9,
+          overshootClamping: false,
+        }),
+      );
       setShowFace(true);
       scale.value = withSequence(
-        withTiming(1.15, { duration: 220, easing: Easing.out(Easing.cubic) }),
-        withTiming(1.0,  { duration: 220, easing: Easing.inOut(Easing.cubic) }),
+        withTiming(1.18, { duration: 260, easing: Easing.out(Easing.cubic) }),
+        withSpring(1.0, {
+          damping: 5,
+          stiffness: 120,
+          mass: 0.8,
+          overshootClamping: false,
+        }),
       );
-      // After ~700ms, fade out + hide.
+      // Hold long enough for the bounce (~880ms throw + spring) before
+      // fading out. Premature fade clips the wobble and kills the feel.
       const t = setTimeout(() => {
-        opacity.value = withTiming(0, { duration: 240 }, (finished) => {
+        opacity.value = withTiming(0, { duration: 260 }, (finished) => {
           if (finished) {
             // Defer state flips off the UI thread.
           }
         });
-      }, 700);
+      }, 1100);
       const t2 = setTimeout(() => {
         setVisible(false);
         setShowFace(false);
-      }, 1000);
+      }, 1420);
       prevRefreshing.current = refreshing;
       return () => { clearTimeout(t); clearTimeout(t2); };
     } else {

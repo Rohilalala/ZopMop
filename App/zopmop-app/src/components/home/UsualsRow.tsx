@@ -9,7 +9,6 @@
 import React, { useRef } from 'react';
 import { Animated, Image, View, Text, type TextStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import Svg, { Defs, RadialGradient, Stop, Ellipse } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { PressFx } from '../ui/PressFx';
@@ -249,23 +248,6 @@ function PresetCard({
           overflow: 'visible',
         }}
       >
-        {/* Pedestal glow — radial-gradient ellipse anchored under the icon.
-            SVG gives a true smooth falloff (no banding from stacked discs). */}
-        <Svg
-          width={96}
-          height={36}
-          style={{ position: 'absolute', bottom: -2 }}
-          pointerEvents="none"
-        >
-          <Defs>
-            <RadialGradient id={`pedestal-${service.id}`} cx="50%" cy="50%" rx="50%" ry="50%">
-              <Stop offset="0%"   stopColor="#F5A300" stopOpacity={0.55} />
-              <Stop offset="45%"  stopColor="#F5A300" stopOpacity={0.22} />
-              <Stop offset="100%" stopColor="#F5A300" stopOpacity={0} />
-            </RadialGradient>
-          </Defs>
-          <Ellipse cx={48} cy={18} rx={48} ry={18} fill={`url(#pedestal-${service.id})`} />
-        </Svg>
         {src ? (
           <Image
             source={src}

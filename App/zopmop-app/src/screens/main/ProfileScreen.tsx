@@ -226,13 +226,6 @@ export default function ProfileScreen() {
               onPress={() => navigation.navigate('YourExperts')}
             />
             <Row
-              icon={<Feather name="credit-card" size={17} color={C.amber} />}
-              label="Payment Methods"
-              meta="UPI · 2 cards"
-              chev
-              onPress={() => navigation.navigate('PaymentMethods')}
-            />
-            <Row
               icon={<Feather name="bell" size={17} color={C.amber} />}
               label="Notifications"
               meta="Push · WhatsApp · Email"

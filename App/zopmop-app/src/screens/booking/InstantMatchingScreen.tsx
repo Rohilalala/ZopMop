@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,25 +10,25 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
+import { FontFamily } from '../../theme';
+import { C } from '../../theme/screen';
+import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
 import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
 import { apiFetch } from '../../api/client';
-
-const { width: W } = Dimensions.get('window');
 import { BASE_URL } from '../../api/config';
 import { showError } from '../../utils/toast';
 
-// How long the loading bar runs (ms)
+const { width: W } = Dimensions.get('window');
+
 const MATCH_DURATION = 30000;
-// Phase labels
 const PHASES = [
   { at: 0,    label: 'Finding available pros near you…' },
   { at: 0.35, label: 'Checking availability & ratings…' },
@@ -45,21 +45,16 @@ type Props = {
 export default function InstantMatchingScreen({ route }: Props) {
   const { serviceId, serviceName } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const { token, user } = useAuth();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const { token } = useAuth();
 
   const [screenState, setScreenState] = useState<ScreenState>('searching');
   const [phaseIdx, setPhaseIdx] = useState(0);
 
-  // Progress bar animation (0 → 1 over MATCH_DURATION)
   const progress = useRef(new Animated.Value(0)).current;
-  // Dots bounce animation
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
-  // Success flash
-  const flash = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
 
   const bookingIdRef = useRef<string | null>(null);
   const priceCentsRef = useRef<number>(0);
@@ -76,7 +71,6 @@ export default function InstantMatchingScreen({ route }: Props) {
     eta_minutes: number;
   } | null>(null);
 
-  // -- Bounce dots animation
   useEffect(() => {
     function bounce(val: Animated.Value, delay: number) {
       return Animated.loop(
@@ -92,12 +86,21 @@ export default function InstantMatchingScreen({ route }: Props) {
     const a2 = bounce(dot2, 160);
     const a3 = bounce(dot3, 320);
     a1.start(); a2.start(); a3.start();
+
+    const pulseLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    pulseLoop.start();
+
     return () => {
       a1.stop(); a2.stop(); a3.stop();
+      pulseLoop.stop();
     };
   }, []);
 
-  // -- Phase label cycling
   useEffect(() => {
     const timers = PHASES.slice(1).map((p, i) =>
       setTimeout(() => setPhaseIdx(i + 1), p.at * MATCH_DURATION),
@@ -105,8 +108,6 @@ export default function InstantMatchingScreen({ route }: Props) {
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // -- Main effect: start booking + poll for match
-  // Track every setTimeout we create inside this effect so unmount can clear them all.
   const pendingTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +118,6 @@ export default function InstantMatchingScreen({ route }: Props) {
     };
 
     async function run() {
-      // 1. Start progress bar animation
       Animated.timing(progress, {
         toValue: 1,
         duration: MATCH_DURATION,
@@ -125,33 +125,27 @@ export default function InstantMatchingScreen({ route }: Props) {
         useNativeDriver: false,
       }).start();
 
-      // Hard stop at exactly 30 s — kill polling, cancel the booking, show busy.
       timeoutRef.current = safeTimeout(() => {
         if (cancelled || matchedRef.current) return;
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         progress.stopAnimation();
-        // Cancel the booking so the backend stops re-queueing it and
-        // helpers' invite sets are cleaned up immediately.
         const bid = bookingIdRef.current;
         if (bid && token && token !== '__guest__') {
           apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          }).catch(() => { /* best-effort — batcher will auto-expire it anyway */ });
+          }).catch(() => {});
         }
         setScreenState('busy');
       }, MATCH_DURATION);
 
-      // 2. Create the instant booking using real GPS — location is required for matching.
       if (!token || token === '__guest__') {
-        // Not authenticated — simulate as busy after delay
         safeTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
         return;
       }
 
       let bookingId: string | null = null;
       try {
-        // Location permission is mandatory — we cannot match without real GPS coords.
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           if (!cancelled) {
@@ -189,11 +183,9 @@ export default function InstantMatchingScreen({ route }: Props) {
         bookingIdRef.current = bookingId;
         priceCentsRef.current = booking.price_cents ?? 0;
       } catch {
-        // Can't create booking — show busy after progress completes
         return;
       }
 
-      // 3. Poll match-status every 3s
       pollRef.current = setInterval(async () => {
         if (!bookingId || cancelled) return;
         try {
@@ -227,7 +219,7 @@ export default function InstantMatchingScreen({ route }: Props) {
             if (pollRef.current) clearInterval(pollRef.current);
             if (!cancelled) { progress.stopAnimation(); setScreenState('busy'); }
           }
-        } catch { /* network error — keep polling */ }
+        } catch { /* network — keep polling */ }
       }, 3000);
     }
 
@@ -236,11 +228,8 @@ export default function InstantMatchingScreen({ route }: Props) {
       cancelled = true;
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
-      // Clear every tracked setTimeout so no callback can fire after unmount.
       pendingTimers.current.forEach(clearTimeout);
       pendingTimers.current = [];
-      // If the user left the screen before a match, cancel the booking so the
-      // backend stops re-queueing it and pros stop seeing the invite.
       const bid = bookingIdRef.current;
       if (bid && !matchedRef.current && token && token !== '__guest__') {
         apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
@@ -296,9 +285,8 @@ export default function InstantMatchingScreen({ route }: Props) {
   }
 
   const progressWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const progressColor = flash.interpolate({ inputRange: [0, 1], outputRange: [c.primary, c.success] });
-
-  // ── Renders ────────────────────────────────────────────────────────────────
+  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
+  const pulseOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
 
   if (screenState === 'busy') {
     return <BusyScreen onRetry={() => navigation.goBack()} onBack={() => navigation.goBack()} />;
@@ -308,15 +296,23 @@ export default function InstantMatchingScreen({ route }: Props) {
     return <MatchedFlash />;
   }
 
-  // Searching state
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <Bloom />
       <View style={s.container}>
 
-        {/* Animated icon + dots */}
         <View style={s.iconArea}>
-          <View style={s.iconCircle}>
-            <Text style={s.iconEmoji}>⚡</Text>
+          <View style={s.iconWrap}>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                s.pulseRing,
+                { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
+              ]}
+            />
+            <GlassCard radius={64} hero style={s.iconCircle}>
+              <Feather name="zap" size={44} color={C.amber} />
+            </GlassCard>
           </View>
           <View style={s.dotsRow}>
             {[dot1, dot2, dot3].map((d, i) => (
@@ -325,23 +321,19 @@ export default function InstantMatchingScreen({ route }: Props) {
           </View>
         </View>
 
-        {/* Phase label */}
         <Text style={s.title}>Finding your Pro</Text>
         <Text style={s.phaseLabel}>{PHASES[phaseIdx].label}</Text>
 
-        {/* Service chip */}
         <View style={s.serviceChip}>
           <Text style={s.serviceChipText}>{serviceName}</Text>
         </View>
 
-        {/* Progress bar */}
         <View style={s.progressTrack}>
-          <Animated.View style={[s.progressFill, { width: progressWidth, backgroundColor: progressColor }]} />
+          <Animated.View style={[s.progressFill, { width: progressWidth }]} />
         </View>
 
         <Text style={s.progressHint}>Usually takes less than 30 seconds</Text>
 
-        {/* Cancel */}
         <TouchableOpacity style={s.cancelBtn} activeOpacity={0.7} onPress={handleCancel}>
           <Text style={s.cancelText}>Cancel</Text>
         </TouchableOpacity>
@@ -350,10 +342,7 @@ export default function InstantMatchingScreen({ route }: Props) {
   );
 }
 
-// ── Busy Screen ───────────────────────────────────────────────────────────────
 function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -361,9 +350,13 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <Bloom />
       <Animated.View style={[s.container, { opacity: fadeIn }]}>
-        <Text style={s.busyEmoji}>😔</Text>
-        <Text style={s.busyTitle}>All our pros are busy</Text>
+        <GlassCard radius={64} hero style={s.iconCircle}>
+          <Feather name="clock" size={44} color={C.amber} />
+        </GlassCard>
+        <View style={{ height: 28 }} />
+        <Text style={s.title}>All our pros are busy</Text>
         <Text style={s.busySub}>
           Our professionals are all on jobs right now. Please try again in a few minutes.
         </Text>
@@ -378,10 +371,7 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
   );
 }
 
-// ── Matched Flash ─────────────────────────────────────────────────────────────
 function MatchedFlash() {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
   const scale = useRef(new Animated.Value(0.4)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -392,152 +382,146 @@ function MatchedFlash() {
   }, []);
 
   return (
-    <SafeAreaView style={[s.safe, { backgroundColor: c.successBg }]} edges={['top', 'bottom']}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <Bloom />
       <Animated.View style={[s.container, { opacity }]}>
-        <Animated.Text style={[s.successEmoji, { transform: [{ scale }] }]}>✅</Animated.Text>
-        <Text style={[s.busyTitle, { color: c.success }]}>Pro Matched!</Text>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <GlassCard radius={64} hero style={s.iconCircle}>
+            <Feather name="check" size={48} color={C.green} />
+          </GlassCard>
+        </Animated.View>
+        <View style={{ height: 28 }} />
+        <Text style={[s.title, { color: C.green }]}>Pro Matched</Text>
         <Text style={s.busySub}>Heading to your booking…</Text>
       </Animated.View>
     </SafeAreaView>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-function createStyles(c: typeof lightColors) {
-  return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: C.bg },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
 
-    iconArea: { alignItems: 'center', marginBottom: 32 },
-    iconCircle: {
-      width: 110,
-      height: 110,
-      borderRadius: Radius.full,
-      backgroundColor: c.primaryBg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: `${c.primary}33`,
-      marginBottom: 20,
-      ...Shadow.md,
-    },
-    iconEmoji: { fontSize: 52 },
-    dotsRow: { flexDirection: 'row', gap: 10 },
-    dot: {
-      width: 12,
-      height: 12,
-      borderRadius: Radius.full,
-      backgroundColor: c.primary,
-    },
+  iconArea: { alignItems: 'center', marginBottom: 32 },
+  iconWrap: {
+    width: 128, height: 128,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 22,
+  },
+  iconCircle: {
+    width: 128, height: 128,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 128, height: 128, borderRadius: 64,
+    borderWidth: 1.5, borderColor: C.amberLine,
+  },
+  dotsRow: { flexDirection: 'row', gap: 10 },
+  dot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: C.amber,
+  },
 
-    title: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-      marginBottom: 10,
-      textAlign: 'center',
-    },
-    phaseLabel: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-      textAlign: 'center',
-      marginBottom: 24,
-      lineHeight: 24,
-      minHeight: 48,
-    },
-    serviceChip: {
-      backgroundColor: c.primaryBg,
-      borderRadius: Radius.full,
-      paddingHorizontal: 20,
-      paddingVertical: 8,
-      borderWidth: 1,
-      borderColor: `${c.primary}33`,
-      marginBottom: 32,
-    },
-    serviceChipText: {
-      fontFamily: FontFamily.semibold,
-      fontSize: FontSize.base,
-      color: c.primary,
-    },
+  title: {
+    fontFamily: FontFamily.extrabold,
+    fontSize: 26,
+    color: C.white,
+    letterSpacing: -0.6,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  phaseLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: 14.5,
+    color: C.textSecondary,
+    textAlign: 'center',
+    marginBottom: 22,
+    lineHeight: 22,
+    minHeight: 44,
+  },
+  serviceChip: {
+    backgroundColor: C.amberSoft,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: C.amberLine,
+    marginBottom: 30,
+  },
+  serviceChipText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 13.5,
+    color: C.amber,
+    letterSpacing: 0.2,
+  },
 
-    progressTrack: {
-      width: '100%',
-      height: 10,
-      backgroundColor: c.border,
-      borderRadius: Radius.full,
-      overflow: 'hidden',
-      marginBottom: 12,
-    },
-    progressFill: {
-      height: '100%',
-      borderRadius: Radius.full,
-    },
-    progressHint: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.sm,
-      color: c.textMuted,
-      marginBottom: 40,
-    },
+  progressTrack: {
+    width: '100%',
+    height: 8,
+    backgroundColor: C.glass,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginBottom: 12,
+    borderWidth: 0.5,
+    borderColor: C.glassBorder,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: C.amber,
+  },
+  progressHint: {
+    fontFamily: FontFamily.regular,
+    fontSize: 12,
+    color: C.textMuted,
+    marginBottom: 36,
+  },
 
-    cancelBtn: {
-      paddingVertical: 14,
-      paddingHorizontal: 32,
-      borderRadius: Radius.xl,
-      borderWidth: 1,
-      borderColor: c.border,
-      backgroundColor: c.white,
-    },
-    cancelText: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-    },
+  cancelBtn: {
+    paddingVertical: 13,
+    paddingHorizontal: 36,
+    borderRadius: 999,
+    borderWidth: 0.5,
+    borderColor: C.glassBorderHi,
+    backgroundColor: C.glassHi,
+  },
+  cancelText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 14,
+    color: C.white,
+    letterSpacing: 0.2,
+  },
 
-    // Busy state
-    busyEmoji: { fontSize: 72, marginBottom: 24 },
-    busyTitle: {
-      fontFamily: FontFamily.extrabold,
-      fontSize: FontSize['2xl'],
-      color: c.text,
-      letterSpacing: -0.5,
-      marginBottom: 12,
-      textAlign: 'center',
-    },
-    busySub: {
-      fontFamily: FontFamily.regular,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-      textAlign: 'center',
-      lineHeight: 26,
-      marginBottom: 36,
-      maxWidth: 280,
-    },
-    retryBtn: {
-      backgroundColor: c.primary,
-      borderRadius: Radius.xl,
-      paddingVertical: 18,
-      paddingHorizontal: 48,
-      marginBottom: 14,
-      ...Shadow.md,
-    },
-    retryBtnText: {
-      fontFamily: FontFamily.bold,
-      fontSize: FontSize.lg,
-      color: '#FFFFFF',
-    },
-    backBtn: {
-      paddingVertical: 14,
-      paddingHorizontal: 32,
-    },
-    backBtnText: {
-      fontFamily: FontFamily.medium,
-      fontSize: FontSize.base,
-      color: c.textSecondary,
-    },
-
-    // Matched flash
-    successEmoji: { fontSize: 80, marginBottom: 24 },
-  });
-}
+  busySub: {
+    fontFamily: FontFamily.regular,
+    fontSize: 14.5,
+    color: C.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 30,
+    maxWidth: 300,
+  },
+  retryBtn: {
+    backgroundColor: C.amber,
+    borderRadius: 999,
+    paddingVertical: 16,
+    paddingHorizontal: 48,
+    marginBottom: 10,
+  },
+  retryBtnText: {
+    fontFamily: FontFamily.bold,
+    fontSize: 15,
+    color: C.ink,
+    letterSpacing: 0.3,
+  },
+  backBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+  },
+  backBtnText: {
+    fontFamily: FontFamily.medium,
+    fontSize: 14,
+    color: C.textSecondary,
+  },
+});

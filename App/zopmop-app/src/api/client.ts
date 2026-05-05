@@ -88,11 +88,12 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
         continue;
       }
 
-      // Anything that prevented us from getting a response — DNS failure,
-      // connection refused (server not running), socket reset, request timeout
-      // — means we couldn't reach the backend. Flip the global health flag so
-      // the BackendDownScreen renders immediately.
-      reportBackendDown();
+      // Don't flip the global "backend down" flag from here. Pro-side
+      // endpoints can be slow (location PUTs, status toggles, instant-match
+      // polling) and a single timeout shouldn't blank the entire UI with the
+      // dead-Zop screen. The /health poller in useBackendHealth runs every
+      // 5s while down and will catch real outages on its own. Network-error
+      // surfacing remains the caller's responsibility via thrown errors.
       if (isTimeout) {
         throw new Error('Request timed out. Please check your connection and try again.');
       }
