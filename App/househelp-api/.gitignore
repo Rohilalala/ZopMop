@@ -14,6 +14,10 @@ househelp-api
 *.dll
 *.so
 *.dylib
+bin/
+sim
+report.json
+report/
 
 # Vendor
 vendor/
