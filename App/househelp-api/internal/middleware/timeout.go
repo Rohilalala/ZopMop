@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -15,27 +14,28 @@ import (
 // worst-case response time the client sees.
 const DefaultRequestTimeout = 12 * time.Second
 
-// Timeout returns a Fiber middleware that:
-//   1. Sets a deadline-bound context.Context on c.UserContext() so downstream
-//      DB queries and external HTTP calls that read c.UserContext() respect
-//      the deadline and cancel themselves.
-//   2. Runs the handler chain in a goroutine and waits with select so that if
-//      the handler exceeds the deadline, we abandon it and return a 503
-//      JSON error to the client immediately.
+// Timeout returns a Fiber middleware that bounds the request's execution
+// time via context cancellation. It does NOT spawn a goroutine — the
+// handler runs in the request's own goroutine and is expected to observe
+// ctx.Done() through DB queries / HTTP calls / explicit selects, returning
+// when the deadline fires.
 //
-// All in-tree handlers were migrated to c.UserContext() so they propagate
-// this deadline to DB queries and external HTTP calls. New handlers MUST use
-// c.UserContext() (not c.Context(), which returns the longer-lived
-// fasthttp.RequestCtx) for downstream context — otherwise this middleware
-// will return 503 to the client but the runaway work will keep running in
-// the background.
+// Audit C-4 / B1-2 fix: the previous implementation forked the handler
+// into a goroutine and sent the 503 from the parent. fasthttp pools the
+// underlying RequestCtx between connections, so a still-running handler
+// goroutine writing to that ctx after the parent returned could land on
+// a different user's response — a cross-user data leak. This rewrite
+// eliminates the goroutine and the race entirely.
 //
-// Concurrency note: if the handler goroutine is still running when the
-// timeout fires, we send the 503 from the request goroutine and let the
-// handler goroutine finish on its own (its writes to c are dropped because
-// the response has already been written). This avoids racing on the response
-// writer at the cost of leaking goroutine work for the duration of the
-// runaway handler.
+// Late-completion handling: if the handler ignores ctx and runs past the
+// deadline, we observe ctx.Err() == context.DeadlineExceeded after c.Next()
+// returns. If the handler still wrote a response, we DO NOT overwrite it —
+// just log a warn so ops can spot ctx-ignorant code. If the handler
+// returned without writing (typical: it propagated ctx.Err()), we send the
+// 503 JSON.
+//
+// Backstop: a handler that completely ignores ctx and never returns is
+// bounded at the connection layer by Fiber's WriteTimeout in fiber.Config.
 func Timeout(d time.Duration) fiber.Handler {
 	return TimeoutWithSkip(d, nil)
 }
@@ -52,48 +52,56 @@ func TimeoutWithSkip(d time.Duration, skip func(c *fiber.Ctx) bool) fiber.Handle
 		if skip != nil && skip(c) {
 			return c.Next()
 		}
+
 		parent := c.UserContext()
 		ctx, cancel := context.WithTimeout(parent, d)
 		defer cancel()
 		c.SetUserContext(ctx)
 
-		var handlerErr error
-		var once sync.Once
-		done := make(chan struct{})
+		// Snapshot the response state pre-handler so we can tell whether a
+		// late-completing handler actually wrote anything. fasthttp defaults
+		// StatusCode to 200 even before any write, so "status != 200" alone
+		// is a poor signal — diff against the snapshot instead.
+		beforeStatus := c.Response().StatusCode()
+		beforeBodyLen := len(c.Response().Body())
 
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					once.Do(func() {
-						handlerErr = errPanicked
-					})
-					log.Error().Interface("panic", r).Str("path", c.Path()).Msg("handler panic in timeout-wrapped route")
-				}
-				close(done)
-			}()
-			err := c.Next()
-			once.Do(func() { handlerErr = err })
-		}()
+		start := time.Now()
+		err := c.Next()
 
-		select {
-		case <-done:
-			return handlerErr
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			afterStatus := c.Response().StatusCode()
+			afterBodyLen := len(c.Response().Body())
+			wroteResponse := afterStatus != beforeStatus || afterBodyLen != beforeBodyLen
+
+			if wroteResponse {
+				// Handler ran past the deadline AND wrote a response. Don't
+				// overwrite — that would be the very ctx-after-release race
+				// this rewrite exists to prevent. Log so ops can flag the
+				// ctx-ignorant call site.
 				log.Warn().
 					Str("method", c.Method()).
 					Str("path", c.Path()).
 					Dur("budget", d).
-					Msg("request timeout — handler exceeded deadline")
-				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-					"error":   "request timeout",
-					"code":    "TIMEOUT",
-					"timeout": d.String(),
-				})
+					Dur("over_by", time.Since(start)-d).
+					Msg("[timeout] handler completed past deadline (ignored ctx); response preserved")
+				return err
 			}
-			return ctx.Err()
+
+			// Handler returned without writing — typically it observed
+			// ctx.Done() and propagated ctx.Err(). Safe to send the 503 from
+			// here because no concurrent writer exists.
+			log.Warn().
+				Str("method", c.Method()).
+				Str("path", c.Path()).
+				Dur("budget", d).
+				Msg("request timeout — handler exceeded deadline")
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error":   "request timeout",
+				"code":    "TIMEOUT",
+				"timeout": d.String(),
+			})
 		}
+
+		return err
 	}
 }
-
-var errPanicked = errors.New("handler panicked")

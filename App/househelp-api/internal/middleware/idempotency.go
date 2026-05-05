@@ -120,7 +120,14 @@ func idemAwaitOrConflict(c *fiber.Ctx, rdb *redis.Client, cacheKey, headerKey st
 				"error": "duplicate request in flight",
 			})
 		}
-		time.Sleep(idemPollInterval)
+		// Yield with ctx-awareness: if the request deadline fires mid-poll,
+		// abandon immediately rather than sleep through the cancellation
+		// (audit C-4 / B1-2).
+		select {
+		case <-time.After(idemPollInterval):
+		case <-ctx.Done():
+			return c.Next()
+		}
 	}
 }
 

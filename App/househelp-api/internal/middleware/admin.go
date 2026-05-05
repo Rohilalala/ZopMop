@@ -38,9 +38,11 @@ func AdminMiddleware(db *pgxpool.Pool, rdb *redis.Client) fiber.Handler {
 			})
 		}
 
-		// Try to load permissions from Redis cache.
+		// Try to load permissions from Redis cache. Honour the request's
+		// deadline so the lookup cancels with the timeout middleware
+		// (audit C-4 / B1-2).
 		cacheKey := fmt.Sprintf("admin:perms:%s", userID)
-		ctx := context.Background()
+		ctx := c.UserContext()
 
 		cachedPerms, err := rdb.Get(ctx, cacheKey).Result()
 		if err == nil {

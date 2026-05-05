@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -237,7 +236,9 @@ func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket
 		} else {
 			key = fmt.Sprintf("ratelimit:%s:%s", keyType, identifier)
 		}
-		ctx := context.Background()
+		// Honour the request's deadline so ratelimit lookups are cancelled
+		// when the timeout middleware fires (audit C-4 / B1-2).
+		ctx := c.UserContext()
 		now := time.Now()
 		windowStart := now.Add(-config.Window).UnixMilli()
 		nowMilli := now.UnixMilli()
