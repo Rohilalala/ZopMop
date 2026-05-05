@@ -1,7 +1,7 @@
 // Package refunds wraps the existing pending_refunds table for the CRM.
 // Approval / partial / rejection are admin-driven; T1.6 wires this package
 // to the payment gateway abstraction (internal/payments) so an Approve call
-// either fires a real gateway refund (Razorpay) or marks the row as
+// either fires a real gateway refund (Cashfree) or marks the row as
 // processed_manual when no gateway is configured / the original payment was
 // COD.
 package refunds
@@ -27,7 +27,14 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 )
 
-var ErrNotFound = errors.New("refund not found")
+var (
+	ErrNotFound = errors.New("refund not found")
+	// ErrAlreadyClaimed is returned by lockForApproval when the row is no
+	// longer in the expected prior status. Surfaces as HTTP 409 — another
+	// concurrent caller already owns the gateway call. The caller MUST NOT
+	// proceed to the gateway when this is returned (audit B1-1).
+	ErrAlreadyClaimed = errors.New("refund already claimed by another caller")
+)
 
 type Item struct {
 	ID          string     `json:"id"`
@@ -245,6 +252,46 @@ func (r *Repository) Reject(ctx context.Context, id string) error {
 	return nil
 }
 
+// lockForApproval atomically flips a refund row from one of the allowed
+// prior statuses (e.g. "pending" for Approve, "gateway_error" for Retry) to
+// the in-flight lock status "approved". Only one concurrent caller wins
+// this UPDATE; the rest see RowsAffected=0 and receive ErrAlreadyClaimed.
+//
+// 'approved' is repurposed here as the in-flight lock state. The schema's
+// CHECK constraint already allows it (migration 046); no existing code
+// writes it. After the gateway returns, the row transitions:
+//   - 'approved' → 'processed' / 'processed_manual'   (success)
+//   - 'approved' → 'gateway_error'                    (failure, retryable)
+//
+// MUST be called BEFORE the gateway invocation. Calling the gateway before
+// this CAS is exactly the TOCTOU race that audit B1-1 flagged: two parallel
+// Approve clicks both pass a status read and both fire the gateway, double-
+// refunding the customer.
+func (r *Repository) lockForApproval(ctx context.Context, id string, allowedPriorStatuses []string) error {
+	if len(allowedPriorStatuses) == 0 {
+		return fmt.Errorf("lockForApproval: missing allowed prior statuses")
+	}
+	placeholders := make([]string, len(allowedPriorStatuses))
+	args := []any{id}
+	for i, s := range allowedPriorStatuses {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, s)
+	}
+	sql := fmt.Sprintf(`
+		UPDATE pending_refunds
+		SET status = 'approved'
+		WHERE id = $1::uuid AND status IN (%s)
+	`, strings.Join(placeholders, ", "))
+	res, err := r.write.Exec(ctx, sql, args...)
+	if err != nil {
+		return fmt.Errorf("lock refund for approval: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrAlreadyClaimed
+	}
+	return nil
+}
+
 // approveUpdate writes the result of a gateway call back to pending_refunds.
 // finalAmount mirrors the (possibly partial) amount the admin approved.
 // adminID may be empty for system-driven flows.
@@ -267,7 +314,14 @@ func (r *Repository) approveUpdate(
 		"partial_amount_cents = $5",
 		"payment_method = COALESCE(NULLIF($6, ''), payment_method)",
 		"payment_id = COALESCE(NULLIF($7, ''), payment_id)",
-		"settled_at = CASE WHEN $2 IN ('processed','processed_manual','rejected','cancelled') THEN now() ELSE settled_at END",
+		// pgx5 deduces a single Postgres type per parameter across the whole
+		// statement. $2 is used both as the column-typed assignment for
+		// status (varchar) and inside this IN-clause against text literals;
+		// without an explicit cast pgx5 fails with SQLSTATE 42P08
+		// "inconsistent types deduced for parameter $2". The ::varchar pin
+		// matches the pending_refunds.status column type and resolves the
+		// ambiguity.
+		"settled_at = CASE WHEN $2::varchar IN ('processed','processed_manual','rejected','cancelled') THEN now() ELSE settled_at END",
 	}
 	nextArg := 8
 	if adminID != "" {
@@ -310,12 +364,28 @@ func (r *Repository) approveUpdate(
 	return nil
 }
 
+// WalletCrediter is the slice of wallet.Service this package needs to credit
+// refunds back to a closed-loop wallet. Defined as an interface to keep
+// internal/wallet from being imported here (avoids the cycle and lets the
+// adapter live in main).
+type WalletCrediter interface {
+	Credit(
+		ctx context.Context,
+		userID string,
+		amountPaise int64,
+		kind string,
+		paymentID, bookingID *string,
+		note string,
+	) error
+}
+
 type Handler struct {
 	repo       *Repository
 	recorder   *audit.Recorder
 	dispatcher *webhooks.Dispatcher
 	gateway    payments.Gateway
 	notif      *notification.Service
+	wallet     WalletCrediter
 }
 
 func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
@@ -328,7 +398,7 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
 
 // SetGateway swaps the active payment gateway. Called from cmd/crm-api/main.go
-// after env detection picks Razorpay vs the manual fallback.
+// after config detection picks Cashfree vs the manual fallback.
 func (h *Handler) SetGateway(g payments.Gateway) {
 	if g != nil {
 		h.gateway = g
@@ -338,6 +408,12 @@ func (h *Handler) SetGateway(g payments.Gateway) {
 // SetNotification wires the FCM notification service for refund-processed
 // customer pings. Optional — refund processing succeeds without it.
 func (h *Handler) SetNotification(n *notification.Service) { h.notif = n }
+
+// SetWallet wires the wallet service so refunds against wallet-paid bookings
+// are credited back to the user's closed-loop wallet instead of being routed
+// to the Cashfree refund API. Optional — without it, wallet-paid refunds
+// fall back to manual.
+func (h *Handler) SetWallet(w WalletCrediter) { h.wallet = w }
 
 func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 	if h.dispatcher == nil {
@@ -441,13 +517,27 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 	}
 
 	adminID, _ := c.Locals("crmAdminID").(string)
-	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), meta, refundAmount)
+
+	// Atomic flip 'pending' → 'approved'. The CAS is the lock: only one
+	// concurrent caller wins and proceeds to the gateway. See lockForApproval
+	// for the audit-B1-1 background.
+	if err := h.repo.lockForApproval(c.UserContext(), id, []string{"pending"}); err != nil {
+		if errors.Is(err, ErrAlreadyClaimed) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "refund already in progress or settled"})
+		}
+		log.Error().Err(err).Str("refund_id", id).Msg("[crm.refunds] lock for approval failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+
+	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), id, meta, refundAmount, current.UserID, req.Reason)
 	if httpErr != nil {
-		// Persist the gateway-error state so /retry can recover.
+		// Roll the lock forward to gateway_error so /retry can recover. The
+		// row is now in 'approved' (the lock state), so allowedPrior is
+		// ["approved"] — not ["pending"] as it was before the lock fix.
 		now := time.Now().UTC()
 		_ = h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
 			meta.PaymentMethod, meta.PaymentID, refundAmount, &now,
-			[]string{"pending"})
+			[]string{"approved"})
 		h.audit(c, "refund.gateway_error", id, nil, map[string]any{
 			"amount_cents": refundAmount, "reason": req.Reason, "error": errMsg, "gateway": h.gateway.Name(),
 		})
@@ -461,8 +551,18 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 	}
 	if err := h.repo.approveUpdate(c.UserContext(), id, status, gatewayRefundID, "", adminID,
 		meta.PaymentMethod, meta.PaymentID, refundAmount, processedAt,
-		[]string{"pending"}); err != nil {
-		log.Error().Err(err).Str("refund_id", id).Msg("[crm.refunds] approve update failed")
+		[]string{"approved"}); err != nil {
+		// CRITICAL: the gateway has already moved money but our DB row is
+		// still in the 'approved' lock state. Distinguishable log for ops
+		// reconciliation — generic "approve update failed" is not enough
+		// (audit B2-02). 'phase' is the grep handle.
+		log.Error().
+			Err(err).
+			Str("refund_id", id).
+			Str("gateway_ref", gatewayRefundID).
+			Str("status", status).
+			Str("phase", "post_gateway_db_write").
+			Msg("CRITICAL: refund succeeded at gateway but DB row write to final status failed — manual reconciliation required, money has moved")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
@@ -524,12 +624,23 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 	adminID, _ := c.Locals("crmAdminID").(string)
 	refundAmount := current.AmountCents
 
-	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), meta, refundAmount)
+	// Atomic flip 'gateway_error' → 'approved'. Same lock-before-call pattern
+	// as Approve — two concurrent Retry clicks would otherwise both fire the
+	// gateway against a row Cashfree may already be processing (audit B1-1).
+	if err := h.repo.lockForApproval(c.UserContext(), id, []string{"gateway_error"}); err != nil {
+		if errors.Is(err, ErrAlreadyClaimed) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "refund already in progress or settled"})
+		}
+		log.Error().Err(err).Str("refund_id", id).Msg("[crm.refunds] lock for retry failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+
+	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), id, meta, refundAmount, current.UserID, "retry")
 	if httpErr != nil {
 		now := time.Now().UTC()
 		_ = h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
 			meta.PaymentMethod, meta.PaymentID, refundAmount, &now,
-			[]string{"gateway_error"})
+			[]string{"approved"})
 		h.audit(c, "refund.retry_failed", id, nil, map[string]any{"error": errMsg, "gateway": h.gateway.Name()})
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "gateway_error", "message": errMsg})
 	}
@@ -541,7 +652,14 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 	}
 	if err := h.repo.approveUpdate(c.UserContext(), id, status, gatewayRefundID, "", adminID,
 		meta.PaymentMethod, meta.PaymentID, refundAmount, processedAt,
-		[]string{"gateway_error"}); err != nil {
+		[]string{"approved"}); err != nil {
+		log.Error().
+			Err(err).
+			Str("refund_id", id).
+			Str("gateway_ref", gatewayRefundID).
+			Str("status", status).
+			Str("phase", "post_gateway_db_write").
+			Msg("CRITICAL: refund retry succeeded at gateway but DB row write to final status failed — manual reconciliation required, money has moved")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
@@ -577,11 +695,49 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 //	gatewayRefundID— gateway-side reference (empty for manual)
 //	errMsg         — populated when httpErr != nil
 //	httpErr        — non-nil when the caller should respond 502
-func (h *Handler) runGateway(ctx context.Context, meta bookingMeta, amount int64) (bool, string, string, string, error) {
+//
+// refundID is the merchant refund row UUID, plumbed through to the gateway
+// as its idempotency key — Cashfree uses it as the body's refund_id, so a
+// resubmission of the same refundID returns the existing refund record
+// rather than triggering a second money movement (audit B5-D4 / D4-N8).
+// Callers MUST hold the row-level CAS lock from lockForApproval before
+// invoking this; the gateway-side dedup is defense in depth, not the
+// primary protection against TOCTOU.
+func (h *Handler) runGateway(ctx context.Context, refundID string, meta bookingMeta, amount int64, userID, reason string) (bool, string, string, string, error) {
 	// COD always goes manual regardless of which gateway is configured —
 	// there's nothing to refund through a digital channel.
 	if meta.PaymentMethod == string(payments.MethodCOD) {
 		return true, "processed_manual", "", "", nil
+	}
+
+	// Wallet-paid bookings refund back to the closed-loop wallet. We do NOT
+	// walk back to the original Cashfree top-up here. Wallet-paid refunds
+	// stay in wallet by design (closed-loop) — the alternative would require
+	// PPI licensing for "withdraw to bank" flows.
+	if meta.PaymentMethod == "wallet" {
+		if h.wallet == nil {
+			log.Warn().Str("booking_id", meta.BookingID).Msg("[crm.refunds] wallet refund needs wallet service; falling back to manual")
+			return true, "processed_manual", "", "", nil
+		}
+		if userID == "" {
+			return false, "gateway_error", "", "wallet refund: missing user_id", fmt.Errorf("wallet refund: missing user_id")
+		}
+		bookingID := meta.BookingID
+		var bookingPtr *string
+		if bookingID != "" {
+			bookingPtr = &bookingID
+		}
+		note := "Refund"
+		if reason != "" {
+			note = "Refund: " + reason
+		}
+		if err := h.wallet.Credit(ctx, userID, amount, "refund_credit", nil, bookingPtr, note); err != nil {
+			return false, "gateway_error", "", err.Error(), err
+		}
+		// "wallet" gateway-refund-id keeps the audit trail honest — there's
+		// no external reference, but the column should not be empty since
+		// processed_manual is reserved for ops-settled paths.
+		return true, "processed", "wallet:" + meta.BookingID, "", nil
 	}
 
 	// No payment_id means we have no gateway anchor; the only thing we can
@@ -594,7 +750,7 @@ func (h *Handler) runGateway(ctx context.Context, meta bookingMeta, amount int64
 	if gw == nil {
 		gw = &payments.ManualGateway{}
 	}
-	result, err := gw.Refund(ctx, meta.PaymentID, amount, payments.PaymentMethod(meta.PaymentMethod))
+	result, err := gw.Refund(ctx, meta.PaymentID, amount, payments.PaymentMethod(meta.PaymentMethod), refundID)
 	if errors.Is(err, payments.ErrUnsupportedMethod) {
 		return true, "processed_manual", "", "", nil
 	}
@@ -655,7 +811,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 // pending_refunds row from an order id.
 type bookingForRefund struct {
 	UserID        string
-	PriceCents    int64
+	AmountPaise   int64
 	PaymentMethod string
 	PaymentID     string
 }
@@ -670,7 +826,7 @@ func (r *Repository) loadBookingForRefund(ctx context.Context, bookingID string)
 		payID   *string
 	)
 	err := r.read.QueryRow(ctx, `
-		SELECT customer_id::text, price_cents, payment_method, payment_id
+		SELECT customer_id::text, amount_paise, payment_method, payment_id
 		FROM bookings WHERE id = $1::uuid
 	`, bookingID).Scan(&userID, &price, &method, &payID)
 	if err != nil {
@@ -679,7 +835,7 @@ func (r *Repository) loadBookingForRefund(ctx context.Context, bookingID string)
 		}
 		return nil, err
 	}
-	out := &bookingForRefund{UserID: userID, PriceCents: price}
+	out := &bookingForRefund{UserID: userID, AmountPaise: price}
 	if method != nil {
 		out.PaymentMethod = *method
 	}
@@ -742,12 +898,12 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 		log.Error().Err(err).Str("order_id", orderID).Msg("[crm.refunds] load booking failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	if amount > booking.PriceCents {
+	if amount > booking.AmountPaise {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount exceeds order total"})
 	}
 
 	// Partial-refund permission gate (matches Approve).
-	if amount < booking.PriceCents {
+	if amount < booking.AmountPaise {
 		role, _ := c.Locals("crmAdminRole").(string)
 		if !auth.HasPermission(role, "refunds.approve_partial") {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
@@ -782,7 +938,7 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 	}
 	adminID, _ := c.Locals("crmAdminID").(string)
 
-	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), meta, amount)
+	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), refundID, meta, amount, booking.UserID, req.Reason)
 	if httpErr != nil {
 		now := time.Now().UTC()
 		_ = h.repo.approveUpdate(c.UserContext(), refundID, "gateway_error", "", errMsg, adminID,

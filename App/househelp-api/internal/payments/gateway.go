@@ -1,7 +1,7 @@
 // Package payments provides a pluggable abstraction over payment gateways
 // for refund processing. The CRM refunds module calls Gateway.Refund without
 // caring whether the active implementation is the manual fallback or a real
-// gateway like Razorpay.
+// gateway like Cashfree.
 package payments
 
 import (
@@ -42,7 +42,14 @@ type Gateway interface {
 	// amountCents == originalAmount means a full refund; smaller is partial.
 	// For COD payments, return ErrUnsupportedMethod — caller will mark as
 	// processed_manual.
-	Refund(ctx context.Context, paymentID string, amountCents int64, method PaymentMethod) (*RefundResult, error)
+	//
+	// idempotencyKey is the merchant-side dedup token: the same key
+	// resubmitted to the gateway must return the same refund record. Pass
+	// the refund row's UUID. CashfreeGateway uses this as the body's
+	// refund_id (which is Cashfree's natural idempotency key per their
+	// v2025-01-01 contract); ManualGateway ignores it. Empty key disables
+	// gateway-side idempotency — only safe for the manual fallback path.
+	Refund(ctx context.Context, paymentID string, amountCents int64, method PaymentMethod, idempotencyKey string) (*RefundResult, error)
 
 	// Name identifies the active gateway in logs/audit.
 	Name() string
