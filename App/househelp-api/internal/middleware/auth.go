@@ -13,12 +13,40 @@ import (
 // parallel so the mobile SecureStore implementation does not need to change.
 const AuthCookieName = "auth_token"
 
+// IsUnauthenticatedPath reports whether the given request path must bypass
+// the JWT auth + user-keyed rate limiter. These are server-to-server
+// endpoints (gateway webhooks) that authenticate via HMAC signatures on the
+// request body — there is no JWT to validate.
+//
+// Background: Fiber's Group(prefix, handlers...) is implemented as
+// app.Use(prefix, handlers...), which registers the handlers as
+// Use-middleware on the prefix path itself. A second Group() with the same
+// prefix but no handlers does NOT undo that Use registration. So the
+// webhook route /api/v1/payments/cashfree/webhook still picks up the
+// authMiddleware that was attached to /api/v1/payments by the
+// auth-protected paymentsGroup. We bypass at the middleware level instead
+// of restructuring the Fiber routes (least invasive — same approach as
+// the CSRF Next func skip).
+func IsUnauthenticatedPath(path string) bool {
+	switch path {
+	case "/api/v1/payments/cashfree/webhook":
+		return true
+	}
+	return false
+}
+
 // AuthMiddleware validates JWT tokens from either the Authorization header
 // (mobile / Bearer flow) or the HttpOnly auth_token cookie (browser flow).
 // On success, stores userID and role in Fiber locals.
 // On failure, returns 401 with a generic error message (never stack traces).
 func AuthMiddleware(jwtKeys []JWTKey) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Server-to-server webhook endpoints authenticate via HMAC signature
+		// on the body — JWT auth is meaningless there. See IsUnauthenticatedPath.
+		if IsUnauthenticatedPath(c.Path()) {
+			return c.Next()
+		}
+
 		tokenString := ""
 
 		if authHeader := c.Get("Authorization"); authHeader != "" {
@@ -66,7 +94,7 @@ func AuthMiddleware(jwtKeys []JWTKey) fiber.Handler {
 		}
 
 		// Store in Fiber locals for downstream handlers.
-		c.Locals("userID", userID)
+		c.Locals(LocalsKeyUserID, userID)
 		c.Locals("role", role)
 
 		return c.Next()

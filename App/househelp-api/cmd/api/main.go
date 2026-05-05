@@ -43,10 +43,12 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/segments"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 	"github.com/adityarohilla/househelp-api/internal/zop"
 	zonesmod "github.com/adityarohilla/househelp-api/internal/zones"
 	"github.com/adityarohilla/househelp-api/pkg/config"
 	"github.com/adityarohilla/househelp-api/pkg/database"
+	"github.com/jackc/pgx/v5"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
@@ -216,7 +218,7 @@ func main() {
 	// Auth.
 	authRepo := auth.NewRepository(dbPool)
 	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment())
-	authHandler := auth.NewHandler(authService, cfg.IsProduction())
+	authHandler := auth.NewHandler(authService, rdb, cfg.IsProduction())
 
 	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+1)
 	for _, key := range cfg.JWTVerificationSecrets() {
@@ -255,14 +257,16 @@ func main() {
 	matchBatcher.Start()
 	defer matchBatcher.Stop()
 
-	// Google Maps client (optional — gracefully skipped if key not set).
-	var mapsClient *googlemaps.Client
-	if mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY"); mapsAPIKey != "" {
-		mapsClient = googlemaps.NewClient(mapsAPIKey, rdb)
-		log.Info().Msg("Google Maps client initialised")
-	} else {
-		log.Warn().Msg("GOOGLE_MAPS_API_KEY not set — walking-time filter and live ETA disabled")
+	// Google Maps client. Required: instant-booking eligibility is decided
+	// purely by the walking-time filter, which calls the Distance Matrix API.
+	// Boot fails loud if the key is missing so we never silently match a pro
+	// who is hours away from the customer.
+	mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
+	if mapsAPIKey == "" {
+		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — instant booking matches on walking-time only")
 	}
+	mapsClient := googlemaps.NewClient(mapsAPIKey, rdb)
+	log.Info().Msg("Google Maps client initialised")
 	matchEngine.SetMapsClient(mapsClient)
 
 	// Analytics.
@@ -291,7 +295,26 @@ func main() {
 	bookingService.SetMapsClient(mapsClient)
 	bookingService.SetAnalytics(analyticsSvc)
 	bookingService.SetWebhooks(webhookDispatcher)
-	bookingService.SetPaymentsLedger(payments.NewLedger(dbPool))
+	paymentsLedger := payments.NewLedger(dbPool)
+	bookingService.SetPaymentsLedger(paymentsLedger)
+
+	// Cashfree PG gateway. Returns nil when CASHFREE_PG_APP_ID is unset, in
+	// which case refunds fall back to ManualGateway and the booking-flow
+	// collection routes (added in a follow-up phase) return 503.
+	cashfreeGW := payments.NewCashfreeGateway(cfg)
+	if cashfreeGW != nil {
+		log.Info().Str("env", cfg.CashfreePGEnv).Msg("[payments] cashfree PG gateway active")
+	} else {
+		log.Info().Msg("[payments] cashfree PG gateway not configured (manual fallback)")
+	}
+
+	// Closed-loop wallet. The service is the canonical entry point for
+	// every wallet mutation (Credit / Debit / *Tx variants); booking +
+	// payments handlers receive narrow interface adapters so the wallet
+	// package stays import-free in those modules.
+	walletRepo := wallet.NewRepository(dbPool)
+	walletSvc := wallet.NewService(walletRepo)
+	bookingService.SetWallet(bookingWalletAdapter{svc: walletSvc})
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
@@ -349,7 +372,7 @@ func main() {
 
 	// Booking routes (requires JWT).
 	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
-	bookingIdem := mw.Idempotency(rdb, 10*time.Minute)
+	bookingIdem := mw.Idempotency(rdb, 60*time.Second, 10*time.Minute)
 	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
 	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter)
 	reviews.NewHandler(reviews.NewService(dbPool, analyticsSvc)).RegisterRoutes(bookingGroup)
@@ -397,11 +420,26 @@ func main() {
 	placesGroup := api.Group("/places", authMiddleware, authLimiter)
 	placesHandler.RegisterRoutes(placesGroup)
 
-	// Payment helpers — VPA validation today, more later. Razorpay key is
-	// server-side only; the client never sees it.
+	// Payment helpers — Cashfree Payouts (VPA validation) shares the handler
+	// with Cashfree PG (collection: order, status, refunds, webhook). Gateway
+	// keys are server-side only; the client never sees them.
 	paymentsHandler := payments.NewHandler()
+	paymentsHandler.SetCollectionDeps(dbPool, paymentsLedger, cashfreeGW, cfg.PublicBaseURL)
+	paymentsHandler.SetWallet(paymentsWalletAdapter{svc: walletSvc})
+
 	paymentsGroup := api.Group("/payments", authMiddleware, authLimiter)
 	paymentsHandler.RegisterRoutes(paymentsGroup)
+
+	// Webhook group — NO auth middleware. Authentication is the
+	// x-webhook-signature header, validated inside CashfreeWebhook.
+	paymentsWebhookGroup := api.Group("/payments")
+	paymentsHandler.RegisterWebhookRoutes(paymentsWebhookGroup)
+
+	// Wallet routes — auth-protected. /wallet/topup delegates to the
+	// payments handler's wallet-topup branch via a small adapter.
+	walletHandler := wallet.NewHandler(walletSvc, walletTopupAdapter{ph: paymentsHandler})
+	walletGroup := api.Group("/wallet", authMiddleware, authLimiter, dbBoundLimiter)
+	walletHandler.RegisterRoutes(walletGroup)
 
 	// Zones routes (public check).
 	zonesGroup := api.Group("/zones", publicLimiter)
@@ -555,10 +593,12 @@ func main() {
 		bffHydrator, bffResolver, safeLayouts,
 	)
 
-	// Public SDUI routes: mounted under /api/v1 to match the rest of the public
-	// surface. The handler does its own optional auth via c.Locals("userID").
-	// Gzip is applied globally above; no per-group compress middleware needed.
-	bffHandler.RegisterRoutes(api.Group("/sdui", publicLimiter))
+	// SDUI routes — JWT required. Was public to match other static catalog
+	// endpoints, but the SDUI page IDs are guessable strings ("home", "cart",
+	// "service:...") and an unauthenticated scraper could enumerate the full
+	// app layout + every backed source. Locking behind authMiddleware prevents
+	// that without breaking the app, which always carries a token by this point.
+	bffHandler.RegisterRoutes(api.Group("/sdui", authMiddleware, authLimiter, dbBoundLimiter))
 
 	// Admin SDUI routes: nested under /api/v1/admin so they inherit JWT,
 	// admin-role, and the standard admin limiter. The SDUI-specific 60req/min
@@ -611,4 +651,46 @@ func main() {
 	}
 
 	log.Info().Msg("server stopped")
+}
+
+// ── Wallet/booking/payments adapters ─────────────────────────────────────
+// These adapters bridge the concrete *wallet.Service against the narrow
+// interfaces declared by the booking and payments packages. The interfaces
+// take `kind string` so neither package needs to import internal/wallet
+// for type definitions; the adapters cast to wallet.Kind here.
+
+type bookingWalletAdapter struct{ svc *wallet.Service }
+
+func (a bookingWalletAdapter) DebitTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	amountPaise int64,
+	kind string,
+	bookingID *string,
+	note string,
+) error {
+	_, err := a.svc.DebitTx(ctx, tx, userID, amountPaise, wallet.Kind(kind), bookingID, note)
+	return err
+}
+
+type paymentsWalletAdapter struct{ svc *wallet.Service }
+
+func (a paymentsWalletAdapter) CreditTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	amountPaise int64,
+	kind string,
+	paymentID, bookingID *string,
+	note string,
+) error {
+	_, err := a.svc.CreditTx(ctx, tx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note)
+	return err
+}
+
+type walletTopupAdapter struct{ ph *payments.Handler }
+
+func (a walletTopupAdapter) HandleWalletTopup(c *fiber.Ctx, userID string, amountPaise int64) error {
+	return a.ph.HandleWalletTopup(c, userID, amountPaise)
 }
