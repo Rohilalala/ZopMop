@@ -2,8 +2,8 @@ export const lightColors = {
   primary: '#4F46E5',      // Electric Indigo
   primaryLight: '#818CF8', // Indigo 400
   primaryBg: '#EEF2FF',   // Indigo 50
-  accent: '#0D9488',       // Teal
-  accentLight: '#5EEAD4',  // Teal 300
+  accent: '#F5A300',       // Zopmop amber
+  accentLight: '#FFC042',  // Zopmop amber-hi
 
   // Neutral
   background: '#FAFAFA',
@@ -39,8 +39,8 @@ export const darkColors = {
   primaryLight: '#A5B4FC', // Indigo 300
   primaryBg: '#1E1B4B',   // Indigo 950
 
-  accent: '#14B8A6',       // Teal 500
-  accentLight: '#5EEAD4',  // Teal 300
+  accent: '#FFC042',       // Zopmop amber-hi (brighter on dark)
+  accentLight: '#FFD980',  // Zopmop amber-glow
 
   // Neutral
   background: '#0F172A',   // Slate 900

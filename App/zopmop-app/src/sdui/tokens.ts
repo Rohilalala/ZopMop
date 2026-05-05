@@ -8,7 +8,7 @@ type ThemeMode = 'light' | 'dark';
 
 const LIGHT_COLORS: Record<ColorToken, string> = {
   'brand-primary':   '#4F46E5',
-  'brand-secondary': '#0D9488',
+  'brand-secondary': '#F5A300',
   'surface':         '#FFFFFF',
   'surface-alt':     '#F9FAFB',
   'text-primary':    '#111827',
@@ -18,7 +18,7 @@ const LIGHT_COLORS: Record<ColorToken, string> = {
 
 const DARK_COLORS: Record<ColorToken, string> = {
   'brand-primary':   '#818CF8',
-  'brand-secondary': '#14B8A6',
+  'brand-secondary': '#FFC042',
   'surface':         '#1E293B',
   'surface-alt':     '#0F172A',
   'text-primary':    '#F1F5F9',
