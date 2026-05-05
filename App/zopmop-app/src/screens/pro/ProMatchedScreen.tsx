@@ -20,6 +20,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { acceptBooking, getHelperInvites } from '../../api/matching';
 import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
@@ -31,6 +32,7 @@ type Props = {
 };
 
 export default function ProMatchedScreen({ route }: Props) {
+  useProRoleGate();
   const { bookingId, serviceName, customerAddress, customerLat, customerLng, distanceKm } =
     route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();

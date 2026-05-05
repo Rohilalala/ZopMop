@@ -106,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Side-effect-only hook: requests notification permission, fetches the FCM
   // token, and registers it with the backend whenever the user is signed in.
   // Pass auth state directly — this runs inside AuthProvider so useAuth is unavailable.
-  usePushNotifications(token, token !== null && token !== '__guest__');
+  usePushNotifications(token, token !== null && token !== '__guest__', user?.role ?? null);
 
   // Register the global signOut callback so apiFetch can sign out on 401.
   useEffect(() => {

@@ -18,9 +18,34 @@ import { showInfo, showSuccess } from './toast';
 
 type FcmMessageData = Record<string, string> | undefined;
 
-export function routeFcmMessage(data: FcmMessageData) {
+// PRO_TARGETED_MESSAGE_TYPES enumerates the FCM data.type values whose
+// handler navigates a customer-app instance into a Pro-only screen.
+// A push of one of these types delivered to a customer-role user is
+// either misrouted or hostile (the customer should not have an FCM
+// token registered as a pro target). We drop those silently and warn —
+// see audit C-9 / CH1D-1.
+//
+// Today only SCHEDULED_INVITE meets that bar (it deep-links into
+// ProScheduledInvite). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
+// REBOOK_AVAILABLE are customer-facing toasts/redirects and stay open.
+// When new Pro-targeted types are added, append them here.
+const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE'];
+
+export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) {
   if (!data || !data.type) return;
   const bookingId = data.booking_id ?? '';
+
+  if (PRO_TARGETED_MESSAGE_TYPES.includes(data.type) && userRole !== 'helper') {
+    // Pro-targeted push delivered to a non-helper. Drop without UI side-
+    // effects: navigating would land them on a Pro screen, toasting would
+    // acknowledge a misrouted message we don't want to surface.
+    // eslint-disable-next-line no-console
+    console.warn('[pushRouter] Pro-targeted push for non-helper user, dropping', {
+      type: data.type,
+      userRole: userRole ?? '<unauthenticated>',
+    });
+    return;
+  }
 
   switch (data.type) {
     case 'SCHEDULED_INVITE': {

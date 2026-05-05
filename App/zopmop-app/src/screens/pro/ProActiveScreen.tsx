@@ -23,6 +23,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import {
   getBookingTracking,
   arrivedBooking,
@@ -57,6 +58,7 @@ type Props = {
 type BookingStatus = 'accepted' | 'in_progress' | 'completed' | 'cancelled';
 
 export default function ProActiveScreen({ route }: Props) {
+  useProRoleGate();
   const { bookingId: bookingIdRaw, customerAddress, customerLat, customerLng } = route.params;
   const bookingId = bookingIdRaw.replace(/\s/g, '');
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();

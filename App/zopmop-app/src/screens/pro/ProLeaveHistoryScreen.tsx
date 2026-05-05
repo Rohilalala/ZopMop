@@ -14,6 +14,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { FontFamily } from '../../theme';
 import { getHistory, type LeaveRow } from '../../api/leave';
 
@@ -33,6 +34,7 @@ function fmtDate(iso: string): string {
 }
 
 export default function ProLeaveHistoryScreen() {
+  useProRoleGate();
   const nav = useNavigation<Nav>();
   const { token } = useAuth();
   const c = useColors();

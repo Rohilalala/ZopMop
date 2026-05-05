@@ -21,6 +21,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { FontFamily } from '../../theme';
 import {
   declare as declareLeave,
@@ -68,6 +69,7 @@ function fmtSlotIST(iso: string): string {
 }
 
 export default function ProDeclareLeaveScreen() {
+  useProRoleGate();
   const nav = useNavigation<Nav>();
   const { token } = useAuth();
   const c = useColors();

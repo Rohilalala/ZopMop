@@ -23,6 +23,7 @@ import type { RouteProp } from '@react-navigation/native';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { acceptBooking } from '../../api/matching';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
@@ -35,6 +36,7 @@ const COUNTDOWN_SECONDS = 25;
 type Props = { route: RouteProp<MainStackParamList, 'ProScheduledInvite'> };
 
 export default function ProScheduledInviteScreen({ route }: Props) {
+  useProRoleGate();
   const {
     bookingId,
     scheduledTime,

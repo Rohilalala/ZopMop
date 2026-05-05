@@ -34,7 +34,7 @@ async function getDeviceID(): Promise<string> {
   }
 }
 
-export function usePushNotifications(authToken: string | null, isAuthenticated: boolean) {
+export function usePushNotifications(authToken: string | null, isAuthenticated: boolean, userRole?: string | null) {
   const [fcmToken, setFcmToken] = useState<string | undefined>(undefined);
   const [notification, setNotification] = useState<unknown>(undefined);
 
@@ -95,7 +95,7 @@ export function usePushNotifications(authToken: string | null, isAuthenticated: 
           // right screen / toast. Foreground delivery only — background
           // taps land in the OS tray and re-open the app via the deep-link
           // handler (TODO: wire in App.tsx if we add tray notifications).
-          routeFcmMessage(m?.data as Record<string, string> | undefined);
+          routeFcmMessage(m?.data as Record<string, string> | undefined, userRole);
         });
       } catch (err) {
         // Permission denied, APNs unavailable, simulator without push, etc.
@@ -109,7 +109,7 @@ export function usePushNotifications(authToken: string | null, isAuthenticated: 
       unsubRefresh?.();
       unsubMessage?.();
     };
-  }, [isAuthenticated, registerToken]);
+  }, [isAuthenticated, registerToken, userRole]);
 
   return { fcmToken, notification };
 }

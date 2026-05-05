@@ -23,6 +23,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { getHelperInvitesWithDetails } from '../../api/matching';
 import { getHelperActive, getHelperToday, type HelperBooking } from '../../api/pro';
 import { getBalance, getAffectedTomorrow, type LeaveBalance, type AffectedBooking } from '../../api/leave';
@@ -38,6 +39,7 @@ const BOOKING_ACTIVE_HEARTBEAT_MS = 30 * 1000;
 const IDLE_HEARTBEAT_MS = 2 * 60 * 1000;
 
 export default function ProDashboardScreen() {
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token, user, signOut } = useAuth();
   const c = useColors();

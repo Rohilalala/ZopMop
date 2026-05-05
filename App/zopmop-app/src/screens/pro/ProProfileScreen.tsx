@@ -11,11 +11,13 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { FontFamily } from '../../theme';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 export default function ProProfileScreen() {
+  useProRoleGate();
   const nav = useNavigation<Nav>();
   const { user } = useAuth();
   const c = useColors();
