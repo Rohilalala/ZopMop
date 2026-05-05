@@ -15,9 +15,9 @@ househelp-api
 *.so
 *.dylib
 bin/
-sim
-report.json
-report/
+/sim
+/report.json
+/report/
 
 # Vendor
 vendor/
