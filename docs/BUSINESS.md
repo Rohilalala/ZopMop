@@ -16,7 +16,7 @@ ZopMop is a mobile marketplace for on-demand household help — cooks, cleaners,
 
 **Two-sided marketplace.**
 
-- **Customers** open the app, pick a service, pick an address + slot, tap *Confirm Booking*. They are billed (currently pay-on-completion; Razorpay is wired but only for test payments today).
+- **Customers** open the app, pick a service, pick an address + slot, tap *Confirm Booking*. They are billed (currently pay-on-completion; Cashfree PG is being wired backend-first, with the RN checkout sheet to follow).
 - **Pros / helpers** sign in to the same app via the *Pro* tab, go online, accept invites the matching engine sends them, complete the job, and earn.
 
 **Service categories** are stored in the `service_categories` table and seeded by migrations 015 + 017. Examples: Cooking, Cleaning, Babysitting. Each category has:
@@ -52,7 +52,7 @@ Each step lists the **screen** and the **backend endpoint** it hits.
 | 11 | Wait for pro (instant only) | `InstantMatchingScreen` | polls `GET /bookings/:id` for status; 30-second window |
 | 12 | Live tracking once accepted | `ActiveBookingScreen` | `GET /bookings/:id`, WebSocket `wss://…/location/helper/:id` |
 | 13 | Service complete | `ActiveBookingScreen` (state changes to *Service Complete*) | helper hits `POST /bookings/:id/complete` |
-| 14 | Payment | (today: pay-on-completion in cash; Razorpay sheet wired but test-only) | `PaymentScreen` exists but not in main funnel |
+| 14 | Payment | (today: pay-on-completion in cash; Cashfree PG hosted checkout in flight backend-side) | `PaymentScreen` will be replaced with the Cashfree React Native SDK (`doWebPayment`) |
 
 **Instant vs scheduled**: the difference is the `time_slot_id`. Instant bookings hit `POST /bookings` and are enqueued into the matching batcher immediately. Scheduled bookings hit `POST /bookings/scheduled`, get a slot row, and are matched by a separate pre-dispatch job near the slot start time. *To confirm: pre-dispatch worker for scheduled bookings is referenced in code comments but not yet a separate worker — currently the same engine handles them on demand.*
 
@@ -281,13 +281,15 @@ Ops can change these from the admin panel without a deploy.
 
 **Today**:
 
-- *Confirm Booking* creates a booking row + a price snapshot. **No money moves.** Payment is collected on completion (cash or app-side Razorpay sheet — the `PaymentScreen` exists but is wired to test mode only).
+- *Confirm Booking* creates a booking row + a price snapshot. **No money moves.** Payment is collected on completion (cash or the legacy app-side `PaymentScreen`, which is being replaced).
 - The CartScreen previously labelled the CTA "Pay Now" + showed a fake `Alert.alert('Booking Confirmed!')`. That was misleading; the recent UX fix renamed the CTA to *Confirm Booking* and replaced the alert with a real `BookingConfirmedScreen`.
 
-**Target state**:
+**Target state (in flight, Phases 2-6 of payments rewrite)**:
 
-- Razorpay pre-auth at *Confirm Booking* (HOLD on the customer's card), capture on completion. `PaymentScreen.tsx` is the integration point. The publishable key already plumbs through `EXPO_PUBLIC_RAZORPAY_KEY_ID`; the server-side capture flow is the missing piece.
-- Roomies vault top-ups go through Razorpay too; refund queue (`pending_refunds`) settles on group force-delete or member exit.
+- Single-gateway architecture on Cashfree: **Cashfree PG** (`api.cashfree.com/pg`) for collection (orders, hosted checkout, webhooks, refunds) and **Cashfree Payouts** (`payout-api.cashfree.com`) for helper disbursement (already wired for `/payments/validate-vpa`).
+- Confirm-Booking flow will create a Cashfree order via `POST /payments/cashfree/order`, return a `payment_session_id` to the RN app, the app drives the Cashfree React Native SDK (`doWebPayment`) for the hosted checkout, and the gateway notifies us at `POST /payments/cashfree/webhook`. Server-side webhook handler is the source of truth; the RN app polls `GET /payments/cashfree/orders/:orderID/status` for up to 60s after the sheet closes.
+- A **closed-loop wallet** (`wallets` + `wallet_transactions` — see migration 067) will hold Cashfree-funded credits spendable only on Zopmop bookings — no P2P, no withdrawal — keeping the product outside RBI PPI licensing.
+- Roomies vault top-ups land in the same wallet via Cashfree PG; refund queue (`pending_refunds`) settles on group force-delete or member exit, optionally crediting the wallet instead of the original card.
 
 **Idempotency on retry**: as covered above — `Idempotency-Key` header on `POST /bookings*` makes retries safe.
 
@@ -417,7 +419,7 @@ Most of the above is changeable via the admin panel — no deploy needed.
 ## 13. Roadmap hooks (what code already hints at)
 
 - **Wallet for Roomies refunds** — `pending_refunds` table is wired; we still need the settlement worker that reads from it and credits a `users.wallet_balance_cents`.
-- **Payment sheet wiring** — Razorpay test integration exists (`PaymentScreen.tsx`); production capture flow + webhook handling missing.
+- **Payment sheet wiring** — Cashfree PG backend (orders, webhooks, refunds) is being wired; `PaymentScreen.tsx` will be replaced by the Cashfree React Native SDK in a follow-up.
 - **Prod telemetry stack** — Sentry SDK wiring, `/metrics` Prometheus endpoint, OpenTelemetry tracing.
 - **KYC flow upgrade** — `helpers.approval_status` exists; admin-side approval UI + ID-doc upload pipeline are next.
 - **Refresh tokens + JWT revocation list** — short access + rotating refresh.
@@ -439,7 +441,7 @@ Most of the above is changeable via the admin panel — no deploy needed.
 | **Invite** | A pending booking offered to a helper. Stored in Redis at `match:h:<helperID>` with a 30 s TTL. |
 | **Batch tick** | The matching engine runs every 5 seconds, processing all newly-enqueued instant bookings together (Uber-style batch matching). |
 | **Roomies vault** | The pooled balance for a roommate group, summed from each member's `prepaid_balance`. |
-| **Prepaid balance** | One member's portion of the vault. Topped up via Razorpay; spent on group chores; shortfalls become tracked debts. |
+| **Prepaid balance** | One member's portion of the vault. Topped up via Cashfree PG into the closed-loop wallet; spent on group chores; shortfalls become tracked debts. |
 | **Idempotency key** | A UUID the client sends with `POST /bookings*` so retries don't create duplicates. |
 | **Supply cell** | An H3 hex bucket. We track helper count per cell to compute the demand/supply ratio for surge. |
 | **Demand bucket** | A 15-minute window keyed by `(cell, time_bucket)`. We `INCRBY` on every booking attempt to drive the surge heatmap. |

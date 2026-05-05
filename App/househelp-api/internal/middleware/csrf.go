@@ -53,7 +53,19 @@ func CSRF(isProduction bool) fiber.Handler {
 			// client has no session yet when it calls them. They are still
 			// safe: auth endpoints are IP-rate-limited (SensitivePublicRateLimit)
 			// and the OTP flow requires knowledge of a phone + one-time code.
-			return strings.HasPrefix(path, "/api/v1/auth/")
+			if strings.HasPrefix(path, "/api/v1/auth/") {
+				return true
+			}
+
+			// Server-to-server webhooks (Cashfree PG) are authenticated via
+			// HMAC-SHA256 signature verification, not session cookies. CSRF
+			// is meaningless here — there is no browser session to forge.
+			if path == "/api/v1/payments/cashfree/webhook" {
+				return true
+			}
+
+			return false
 		},
+		
 	})
 }

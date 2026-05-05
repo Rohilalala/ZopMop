@@ -30,6 +30,23 @@ type Config struct {
 	JWTPreviousSecrets []JWTSecretEntry
 	JWTExpiryHours     int
 	AllowedOrigins     []string
+
+	// Cashfree Payment Gateway (collection). Distinct from Cashfree Payouts
+	// (CASHFREE_CLIENT_ID/SECRET) used for VPA validation in internal/payments.
+	// All four values are required as a set when CashfreePGAppID is set;
+	// leave all empty to disable PG and fall back to the manual gateway.
+	CashfreePGAppID         string
+	CashfreePGSecretKey     string
+	CashfreePGEnv           string // "sandbox" | "production"
+	CashfreePGWebhookSecret string
+
+	// PublicBaseURL is the fully-qualified base URL of this API as reachable
+	// from the public internet — used to build webhook callback URLs that
+	// gateways register with. Examples:
+	//   sandbox/local: https://abc123.ngrok-free.app
+	//   production:    https://api.zopmop.com
+	// Required when CashfreePGAppID is set. Trailing slash stripped on load.
+	PublicBaseURL string
 }
 
 // JWTSecretEntry holds one verification key for JWT validation.
@@ -87,6 +104,19 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid JWT_EXPIRY_HOURS value %q: %w", expiryStr, err)
 	}
 	cfg.JWTExpiryHours = expiry
+
+	cfg.CashfreePGAppID = strings.TrimSpace(os.Getenv("CASHFREE_PG_APP_ID"))
+	cfg.CashfreePGSecretKey = strings.TrimSpace(os.Getenv("CASHFREE_PG_SECRET_KEY"))
+	cfg.CashfreePGEnv = strings.ToLower(strings.TrimSpace(os.Getenv("CASHFREE_PG_ENV")))
+	cfg.CashfreePGWebhookSecret = strings.TrimSpace(os.Getenv("CASHFREE_PG_WEBHOOK_SECRET"))
+	// Default webhook secret to the API secret when not overridden. Cashfree
+	// signs webhooks with the same secret unless a separate one is configured
+	// in the merchant dashboard for rotation.
+	if cfg.CashfreePGAppID != "" && cfg.CashfreePGWebhookSecret == "" {
+		cfg.CashfreePGWebhookSecret = cfg.CashfreePGSecretKey
+	}
+
+	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
 
 	// Parse allowed origins.
 	originsStr := getEnvOrDefault("ALLOWED_ORIGINS", "")
@@ -178,6 +208,43 @@ func (c *Config) validate() error {
 	}
 	if c.DBBoundQueueWaitMS <= 0 {
 		return fmt.Errorf("DB_BOUND_QUEUE_WAIT_MS must be positive")
+	}
+	if err := c.validateCashfreePG(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateCashfreePG enforces all-or-none on the Cashfree PG key set.
+// Empty AppID disables the gateway and skips the rest of the checks.
+func (c *Config) validateCashfreePG() error {
+	if c.CashfreePGAppID == "" &&
+		c.CashfreePGSecretKey == "" &&
+		c.CashfreePGEnv == "" {
+		// Fully unconfigured. Manual fallback path; nothing to validate.
+		return nil
+	}
+	if c.CashfreePGAppID == "" {
+		return fmt.Errorf("CASHFREE_PG_APP_ID is required when any CASHFREE_PG_* key is set")
+	}
+	if c.CashfreePGSecretKey == "" {
+		return fmt.Errorf("CASHFREE_PG_SECRET_KEY is required when CASHFREE_PG_APP_ID is set")
+	}
+	switch c.CashfreePGEnv {
+	case "sandbox", "production":
+	case "":
+		return fmt.Errorf("CASHFREE_PG_ENV is required when CASHFREE_PG_APP_ID is set (sandbox|production)")
+	default:
+		return fmt.Errorf("CASHFREE_PG_ENV must be 'sandbox' or 'production', got %q", c.CashfreePGEnv)
+	}
+	if c.CashfreePGWebhookSecret == "" {
+		return fmt.Errorf("CASHFREE_PG_WEBHOOK_SECRET is required when CASHFREE_PG_APP_ID is set")
+	}
+	if c.PublicBaseURL == "" {
+		return fmt.Errorf("PUBLIC_BASE_URL is required when CASHFREE_PG_APP_ID is set (used to build the webhook callback URL)")
+	}
+	if !strings.HasPrefix(c.PublicBaseURL, "https://") {
+		return fmt.Errorf("PUBLIC_BASE_URL must start with https:// (Cashfree rejects http:// for webhook URLs), got %q", c.PublicBaseURL)
 	}
 	return nil
 }

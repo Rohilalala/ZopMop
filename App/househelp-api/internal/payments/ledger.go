@@ -3,7 +3,9 @@ package payments
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,23 +30,95 @@ type Payment struct {
 	Reconciled    bool
 }
 
-// CreatePayment inserts a pending payment row for a booking. gatewayRef is
-// optional at this point — the gateway issues it later for non-COD methods.
-// Returns the new payment id.
-func (l *Ledger) CreatePayment(ctx context.Context, bookingID, userID string, amountPaise int64, gateway string, gatewayRef *string) (string, error) {
+// CreatePayment inserts a pending payment row. bookingID is now optional
+// (nil = wallet topup, see migration 068); userID is always required.
+// gatewayRef is also optional at this point — the gateway issues it later
+// for non-COD methods. Returns the new payment id.
+func (l *Ledger) CreatePayment(ctx context.Context, bookingID *string, userID string, amountPaise int64, gateway string, gatewayRef *string) (string, error) {
 	if l == nil || l.db == nil {
 		return "", fmt.Errorf("ledger not configured")
 	}
 	var id string
 	err := l.db.QueryRow(ctx, `
 		INSERT INTO payments (booking_id, user_id, amount_paise, gateway, gateway_ref)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+		VALUES (
+			CASE WHEN $1::text IS NULL OR $1::text = '' THEN NULL ELSE $1::uuid END,
+			$2::uuid, $3, $4, $5
+		)
 		RETURNING id::text
-	`, bookingID, userID, amountPaise, gateway, gatewayRef).Scan(&id)
+	`, ptrOrEmpty(bookingID), userID, amountPaise, gateway, gatewayRef).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create payment: %w", err)
 	}
 	return id, nil
+}
+
+// UpdateStatusByGatewayRef flips the gateway_status of the row whose
+// gateway_ref matches. Idempotent — only writes when current status differs
+// from target. Sets webhook_received_at to receivedAt on the same write.
+//
+// Status MUST be one of pending|success|failed|refunded (the CHECK
+// constraint in 056_payments.sql is the source of truth). Anything else is
+// rejected client-side to surface logic bugs early.
+func (l *Ledger) UpdateStatusByGatewayRef(ctx context.Context, ref, status string, receivedAt time.Time) error {
+	if l == nil || l.db == nil {
+		return fmt.Errorf("ledger not configured")
+	}
+	if err := validateGatewayStatus(ref, status); err != nil {
+		return err
+	}
+	_, err := l.db.Exec(ctx, updateStatusByGatewayRefSQL, ref, status, receivedAt)
+	if err != nil {
+		return fmt.Errorf("update status by ref: %w", err)
+	}
+	return nil
+}
+
+// UpdateStatusByGatewayRefTx is the tx-bound variant. Same semantics as
+// UpdateStatusByGatewayRef but every write goes through the supplied tx so
+// the caller can compose it with other writes (e.g. event_outbox INSERT)
+// inside a single all-or-nothing transaction.
+func (l *Ledger) UpdateStatusByGatewayRefTx(ctx context.Context, tx pgx.Tx, ref, status string, receivedAt time.Time) error {
+	if tx == nil {
+		return fmt.Errorf("nil tx")
+	}
+	if err := validateGatewayStatus(ref, status); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, updateStatusByGatewayRefSQL, ref, status, receivedAt); err != nil {
+		return fmt.Errorf("update status by ref (tx): %w", err)
+	}
+	return nil
+}
+
+const updateStatusByGatewayRefSQL = `
+	UPDATE payments
+	SET gateway_status = $2,
+	    webhook_received_at = COALESCE(webhook_received_at, $3)
+	WHERE gateway_ref = $1
+	  AND gateway_status <> $2
+`
+
+func validateGatewayStatus(ref, status string) error {
+	switch status {
+	case "pending", "success", "failed", "refunded":
+	default:
+		return fmt.Errorf("invalid gateway_status %q", status)
+	}
+	if ref == "" {
+		return fmt.Errorf("empty gateway_ref")
+	}
+	return nil
+}
+
+// ptrOrEmpty returns the pointed-to string or "" so the SQL `CASE WHEN
+// $1::text IS NULL OR $1::text = ''` branch can route to NULL via either
+// path — saves callers having to construct a sql.NullString.
+func ptrOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // IsReconciled reports whether the row with the given gateway_ref has

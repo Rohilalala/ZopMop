@@ -208,6 +208,14 @@ func RateLimiter(rdb *redis.Client, config RateLimitConfig, keyType string) fibe
 // sharing counters. Pass bucket="" to behave identically to RateLimiter.
 func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Server-to-server webhook endpoints don't have a user identity and
+		// shouldn't be metered by user-keyed buckets. They're already
+		// authenticated by HMAC signature inside the handler. See
+		// IsUnauthenticatedPath in auth.go for the rationale.
+		if IsUnauthenticatedPath(c.Path()) {
+			return c.Next()
+		}
+
 		var identifier string
 
 		switch keyType {
