@@ -52,3 +52,10 @@ App/househelp-test-client.bak/
 App/zopmop-crm/dist/
 App/zopmop-crm/node_modules/
 App/zopmop-crm/tsconfig.tsbuildinfo
+
+# Codebase audit working artefacts. The redacted final report is tracked
+# at App/househelp-api/docs/audits/; the raw shared_memory.md and per-
+# agent logs stay local — they are noisy, sometimes contain unredacted
+# fingerprints, and are regenerated each audit pass.
+.audit/
+/report/
