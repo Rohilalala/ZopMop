@@ -225,8 +225,8 @@ func (r *Repository) Stats(ctx context.Context, code string) (*Stats, error) {
 	err := r.read.QueryRow(ctx, `
 		SELECT COUNT(*),
 		       COUNT(DISTINCT customer_id),
-		       COALESCE(SUM(discount_cents), 0),
-		       COALESCE(SUM(price_cents) FILTER (WHERE status = 'completed'), 0)
+		       COALESCE(SUM(discount_paise), 0),
+		       COALESCE(SUM(amount_paise) FILTER (WHERE status = 'completed'), 0)
 		FROM bookings
 		WHERE promo_code = $1
 	`, code).Scan(&s.Redemptions, &s.UniqueUsers, &s.DiscountCents, &s.RevenueCents)

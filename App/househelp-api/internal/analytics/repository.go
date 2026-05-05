@@ -151,9 +151,9 @@ func (r *Repository) RefreshRollups(ctx context.Context) error {
 			COUNT(*) FILTER (WHERE started_at IS NOT NULL) AS started_bookings,
 			COUNT(*) FILTER (WHERE status = 'cancelled' AND cancelled_by = 'system') AS auto_expired_bookings,
 			COALESCE(SUM(match_attempts), 0) AS total_match_attempts,
-			COALESCE(SUM(price_cents), 0) AS revenue_gross_cents,
-			COALESCE(SUM(discount_cents), 0) AS revenue_discount_cents,
-			COALESCE(SUM(price_cents - discount_cents), 0) AS revenue_net_cents,
+			COALESCE(SUM(amount_paise), 0) AS revenue_gross_cents,
+			COALESCE(SUM(discount_paise), 0) AS revenue_discount_cents,
+			COALESCE(SUM(amount_paise - discount_paise), 0) AS revenue_net_cents,
 			COALESCE(
 				SUM(EXTRACT(EPOCH FROM (accepted_at - created_at)))
 				FILTER (WHERE accepted_at IS NOT NULL),

@@ -46,7 +46,7 @@ func (s *Service) RevenueDaily(ctx context.Context, from, to time.Time) ([]Daily
 		WITH days AS (
 		  SELECT generate_series(date_trunc('day', $1::timestamptz), date_trunc('day', $2::timestamptz), interval '1 day') AS day
 		)
-		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(SUM(b.price_cents), 0)
+		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(SUM(b.amount_paise), 0)
 		FROM days d
 		LEFT JOIN bookings b ON b.status = 'completed'
 		  AND b.completed_at >= d.day AND b.completed_at < d.day + interval '1 day'
@@ -119,8 +119,8 @@ func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, er
 		  COUNT(*),
 		  COUNT(*) FILTER (WHERE status = 'completed'),
 		  COUNT(*) FILTER (WHERE status = 'cancelled'),
-		  COALESCE(SUM(price_cents) FILTER (WHERE status = 'completed'), 0),
-		  COALESCE(AVG(price_cents) FILTER (WHERE status = 'completed'), 0)::bigint
+		  COALESCE(SUM(amount_paise) FILTER (WHERE status = 'completed'), 0),
+		  COALESCE(AVG(amount_paise) FILTER (WHERE status = 'completed'), 0)::bigint
 		FROM bookings
 		WHERE created_at >= $1 AND created_at <= $2
 	`, from, to).Scan(&sum.Orders, &sum.CompletedOrders, &sum.CancelledOrders, &sum.RevenueCents, &sum.AvgOrderCents)
@@ -146,7 +146,7 @@ func (s *Service) ByCategory(ctx context.Context, from, to time.Time) ([]Categor
 	rows, err := s.db.Query(ctx, `
 		SELECT COALESCE(sc.name, '—'),
 		       COUNT(*),
-		       COALESCE(SUM(b.price_cents) FILTER (WHERE b.status = 'completed'), 0)
+		       COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0)
 		FROM bookings b
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		WHERE b.created_at >= $1 AND b.created_at <= $2

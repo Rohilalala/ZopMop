@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"errors"
+
 	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
@@ -107,6 +109,9 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid coordinates"})
 	}
 	if err := h.service.UpdateLocation(c.UserContext(), helperID, req.Lat, req.Lng); err != nil {
+		if errors.Is(err, ErrHelperNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper profile not found", "code": "HELPER_NOT_FOUND"})
+		}
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to update location")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update location"})
 	}
@@ -122,6 +127,10 @@ func (h *Handler) SetStatus(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 	if err := h.service.SetAvailability(c.UserContext(), helperID, req.IsAvailable); err != nil {
+		if errors.Is(err, ErrHelperNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "helper profile not found", "code": "HELPER_NOT_FOUND"})
+		}
+		log.Error().Err(err).Str("helper_id", helperID).Bool("is_available", req.IsAvailable).Msg("failed to update helper status")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update status"})
 	}
 	return c.JSON(fiber.Map{"is_available": req.IsAvailable})

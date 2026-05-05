@@ -21,9 +21,10 @@ type Invite struct {
 	Lat          float64   `json:"lat"`
 	Lng          float64   `json:"lng"`
 	Services     []string  `json:"services"`
-	TotalMinutes int       `json:"total_minutes"`
-	PriceCents   int       `json:"price_cents"`
-	CreatedAt    time.Time `json:"created_at"`
+	TotalMinutes int `json:"total_minutes"`
+	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
+	AmountPaise int       `json:"price_cents"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // LocationUpdateRequest is the payload for PUT /helpers/me/location.

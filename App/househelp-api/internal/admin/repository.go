@@ -117,9 +117,9 @@ func (r *Repository) GetDashboardStats(ctx context.Context) (*DashboardStats, er
 		return nil, fmt.Errorf("failed to count active bookings: %w", err)
 	}
 
-	// Revenue today (sum of price_cents for completed bookings today).
+	// Revenue today (sum of net amount_paise for completed bookings today).
 	err = r.db.QueryRow(queryCtx,
-		`SELECT COALESCE(SUM(price_cents - discount_cents), 0)
+		`SELECT COALESCE(SUM(amount_paise - discount_paise), 0)
 		 FROM bookings
 		 WHERE status = 'completed' AND created_at >= CURRENT_DATE`,
 	).Scan(&stats.RevenueTodayCents)
@@ -353,7 +353,7 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 		)
 		SELECT
 			b.id, b.customer_id, cu.phone, b.helper_id, hu.phone,
-			sc.name, b.status, b.price_cents, b.discount_cents, b.created_at
+			sc.name, b.status, b.amount_paise, b.discount_paise, b.created_at
 		FROM page p
 		JOIN bookings b ON b.id = p.id
 		JOIN users cu ON b.customer_id = cu.id
@@ -371,7 +371,7 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 		var b BookingListItem
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.CustomerPhone,
 			&b.HelperID, &b.HelperPhone, &b.ServiceCategory,
-			&b.Status, &b.PriceCents, &b.DiscountCents, &b.CreatedAt); err != nil {
+			&b.Status, &b.AmountPaise, &b.DiscountPaise, &b.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan booking: %w", err)
 		}
 		bookings = append(bookings, b)

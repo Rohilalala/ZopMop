@@ -29,7 +29,7 @@ type UpdateAddressRequest struct {
 	Floor         string  `json:"floor"          validate:"max=50"`
 	BuildingName  string  `json:"building_name"  validate:"omitempty,max=100"`
 	Landmark      string  `json:"landmark"       validate:"max=100"`
-	FullAddress   string  `json:"full_address"   validate:"omitempty"`
+	FullAddress   string  `json:"full_address"   validate:"omitempty,max=1000"`
 	ReceiverName  string  `json:"receiver_name"  validate:"max=100"`
 	ReceiverPhone string  `json:"receiver_phone" validate:"max=20"`
 	Lat           float64 `json:"lat"            validate:"omitempty,latitude"`
@@ -44,7 +44,7 @@ type CreateAddressRequest struct {
 	Floor         string  `json:"floor"          validate:"max=50"`
 	BuildingName  string  `json:"building_name"  validate:"required,max=100"`
 	Landmark      string  `json:"landmark"       validate:"max=100"`
-	FullAddress   string  `json:"full_address"   validate:"required"`
+	FullAddress   string  `json:"full_address"   validate:"required,max=1000"`
 	ReceiverName  string  `json:"receiver_name"  validate:"max=100"`
 	ReceiverPhone string  `json:"receiver_phone" validate:"max=20"`
 	Lat           float64 `json:"lat"            validate:"required,latitude"`

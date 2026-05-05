@@ -193,7 +193,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days') AS completed_30d,
-		    COALESCE(SUM(b.price_cents) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
+		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
 		    CASE
 		      WHEN COUNT(*) = 0 THEN 0
 		      ELSE COUNT(*) FILTER (WHERE b.status = 'cancelled')::float / COUNT(*)
@@ -239,7 +239,7 @@ func (r *Repository) Jobs(ctx context.Context, workerID string, limit int) ([]Jo
 	rows, err := r.read.Query(ctx, `
 		SELECT b.id::text,
 		       COALESCE(sc.name, '—'),
-		       b.status, b.price_cents, b.created_at, b.completed_at
+		       b.status, b.amount_paise, b.created_at, b.completed_at
 		FROM bookings b
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		WHERE b.helper_id = $1::uuid
@@ -253,7 +253,7 @@ func (r *Repository) Jobs(ctx context.Context, workerID string, limit int) ([]Jo
 	out := []JobRow{}
 	for rows.Next() {
 		var j JobRow
-		if err := rows.Scan(&j.ID, &j.Category, &j.Status, &j.PriceCents, &j.CreatedAt, &j.CompletedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.Category, &j.Status, &j.AmountPaise, &j.CreatedAt, &j.CompletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -288,6 +288,7 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 		  AND u.banned_at IS NULL
 		  AND u.is_suspended = FALSE
 		  AND h.approval_status = 'approved'
+		LIMIT 1000
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("live pins: %w", err)

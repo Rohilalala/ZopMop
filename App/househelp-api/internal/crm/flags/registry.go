@@ -21,10 +21,10 @@ func DefaultRegistry() []FlagDef {
 			Category:    "Booking", Type: TypeBool, Default: true,
 		},
 		{
-			Key: "booking.search_radius_km", Name: "Search Radius (km)",
-			Description: "How far instant matching looks for pros.",
-			Category:    "Booking", Type: TypeNumber, Default: 5.0,
-			Min: num(1), Max: num(50),
+			Key: "matching.max_walk_minutes", Name: "Max Walk Time (minutes)",
+			Description: "Helpers must be able to walk to the pickup point within this many minutes to be eligible.",
+			Category:    "Booking", Type: TypeNumber, Default: 20.0,
+			Min: num(1), Max: num(120),
 		},
 		{
 			Key: "booking.assignment_timeout_seconds", Name: "Assignment Timeout (seconds)",

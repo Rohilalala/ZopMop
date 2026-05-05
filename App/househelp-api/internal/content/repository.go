@@ -64,7 +64,7 @@ func (r *Repository) GetAllBanners(ctx context.Context) ([]Banner, error) {
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, title, COALESCE(subtitle, ''), image_url, COALESCE(tap_action, ''),
 		        display_order, is_active, starts_at, ends_at, created_by, updated_at
-		 FROM banners ORDER BY display_order ASC`,
+		 FROM banners ORDER BY display_order ASC LIMIT 500`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all banners: %w", err)
@@ -181,7 +181,7 @@ func (r *Repository) GetAllScreenContents(ctx context.Context) ([]AppScreen, err
 
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, screen_key, content, is_active, COALESCE(updated_by::text, ''), updated_at
-		 FROM app_screens ORDER BY screen_key`,
+		 FROM app_screens ORDER BY screen_key LIMIT 500`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all screen contents: %w", err)
@@ -337,7 +337,7 @@ func (r *Repository) GetActiveFAQs(ctx context.Context) ([]FAQItem, error) {
 
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, question, answer, COALESCE(category, ''), display_order, is_active
-		 FROM faq_items WHERE is_active = true ORDER BY display_order ASC`,
+		 FROM faq_items WHERE is_active = true ORDER BY display_order ASC LIMIT 500`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query FAQs: %w", err)

@@ -11,8 +11,14 @@ import (
 
 const (
 	helpersGeoKey = "helpers:locations"
-	// Search radius for "nearby" pros (km).
-	nearbyRadiusKm = 5.0
+	// LIVEPILL DISPLAY ONLY — not used by the matching engine, the booking
+	// service, or anything else. The pill is a marketing/awareness surface
+	// ("N pros nearby") and a 3 km halo reads as a pleasant "live in your
+	// neighbourhood" signal rather than the strict walking budget the
+	// matcher actually uses (matching.max_walk_minutes, see matching/engine.go).
+	// Do NOT reuse this constant for eligibility decisions — change one
+	// number, break two unrelated features.
+	pillRadiusKm = 3.0
 	// Average pro travel speed for ETA estimate (km/h). Walking-ish.
 	travelSpeedKmh = 12.0
 	// Floor / ceiling clamps for ETA so the pill never reads silly values.
@@ -36,7 +42,7 @@ type NearbyStats struct {
 }
 
 // NearbyStats returns live counts/ratings/ETA for the home pill.
-// Uses Redis GEOSEARCH to find available helpers within nearbyRadiusKm.
+// Uses Redis GEOSEARCH to find available helpers within pillRadiusKm.
 // Falls back to a positive-default if Redis is unavailable so the UI is never
 // misleadingly "0 pros" because of an infra blip.
 func (s *Service) NearbyStats(ctx context.Context, lat, lng float64) (*NearbyStats, error) {
@@ -45,7 +51,7 @@ func (s *Service) NearbyStats(ctx context.Context, lat, lng float64) (*NearbySta
 			GeoSearchQuery: redis.GeoSearchQuery{
 				Longitude:  lng,
 				Latitude:   lat,
-				Radius:     nearbyRadiusKm,
+				Radius:     pillRadiusKm,
 				RadiusUnit: "km",
 				Sort:       "ASC",
 				Count:      50,

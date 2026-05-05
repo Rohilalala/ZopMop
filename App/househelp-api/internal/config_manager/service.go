@@ -117,40 +117,25 @@ func (s *Service) GetPublicConfig(ctx context.Context) (map[string]string, error
 // Falls back to defaults for any value that fails to parse.
 func (s *Service) GetMatchingConfig(ctx context.Context) (*MatchingConfig, error) {
 	cfg := &MatchingConfig{
-		RadiusKm:           DefaultConfigs[ConfigMatchingRadiusKm].toFloat(),
-		MaxRadiusKm:        DefaultConfigs[ConfigMatchingMaxRadiusKm].toFloat(),
+		MaxWalkMinutes:     DefaultConfigs[ConfigMatchingMaxWalkMinutes].toInt(),
 		TimeoutSeconds:     DefaultConfigs[ConfigMatchingTimeoutSeconds].toInt(),
 		MaxHelpersNotified: DefaultConfigs[ConfigMatchingMaxHelpersNotified].toInt(),
 	}
 
-	if v, err := s.GetConfig(ctx, ConfigMatchingRadiusKm); err == nil {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			// Validate bounds: radius should be positive and reasonable (0.1 to 100 km)
-			if f > 0 && f <= 100 {
-				cfg.RadiusKm = f
+	if v, err := s.GetConfig(ctx, ConfigMatchingMaxWalkMinutes); err == nil {
+		if i, err := strconv.Atoi(v); err == nil {
+			// Walking budget should be positive and within a sane band (1..120
+			// min). Anything outside that suggests a misconfigured admin tool.
+			if i > 0 && i <= 120 {
+				cfg.MaxWalkMinutes = i
 			} else {
-				log.Warn().Float64("value", f).Str("key", ConfigMatchingRadiusKm).Msg("radius out of bounds, using default")
+				log.Warn().Int("value", i).Str("key", ConfigMatchingMaxWalkMinutes).Msg("walk budget out of bounds, using default")
 			}
 		} else {
-			log.Warn().Str("key", ConfigMatchingRadiusKm).Str("value", v).Msg("invalid config value, using default")
+			log.Warn().Str("key", ConfigMatchingMaxWalkMinutes).Str("value", v).Msg("invalid config value, using default")
 		}
 	} else {
-		log.Warn().Err(err).Msg("failed to get matching radius config, using default")
-	}
-
-	if v, err := s.GetConfig(ctx, ConfigMatchingMaxRadiusKm); err == nil {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			// Validate bounds: max radius should be positive and >= radius
-			if f > cfg.RadiusKm && f <= 100 {
-				cfg.MaxRadiusKm = f
-			} else {
-				log.Warn().Float64("value", f).Str("key", ConfigMatchingMaxRadiusKm).Msg("max radius out of bounds, using default")
-			}
-		} else {
-			log.Warn().Str("key", ConfigMatchingMaxRadiusKm).Str("value", v).Msg("invalid config value, using default")
-		}
-	} else {
-		log.Warn().Err(err).Msg("failed to get max matching radius config, using default")
+		log.Warn().Err(err).Msg("failed to get matching walk budget config, using default")
 	}
 
 	if v, err := s.GetConfig(ctx, ConfigMatchingTimeoutSeconds); err == nil {

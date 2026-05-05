@@ -224,7 +224,7 @@ func (r *Repository) GetAddons(ctx context.Context, serviceID string) ([]Service
 		`SELECT sc.id, sc.name, sc.emoji, sc.bg_color, sc.base_price_cents, sa.display_order
 		 FROM service_addons sa
 		 JOIN service_categories sc ON sc.id = sa.addon_service_id
-		 WHERE sa.service_id = $1 ORDER BY sa.display_order ASC`,
+		 WHERE sa.service_id = $1 ORDER BY sa.display_order ASC LIMIT 50`,
 		serviceID,
 	)
 	if err != nil {
@@ -252,7 +252,7 @@ func (r *Repository) listIncludes(ctx context.Context, serviceID string) ([]Serv
 
 	rows, err := r.db.Query(ctx,
 		`SELECT id, item, display_order FROM service_includes
-		 WHERE service_id = $1 ORDER BY display_order ASC`, serviceID,
+		 WHERE service_id = $1 ORDER BY display_order ASC LIMIT 100`, serviceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query includes: %w", err)
@@ -279,7 +279,7 @@ func (r *Repository) listExcludes(ctx context.Context, serviceID string) ([]Serv
 
 	rows, err := r.db.Query(ctx,
 		`SELECT id, item, display_order FROM service_excludes
-		 WHERE service_id = $1 ORDER BY display_order ASC`, serviceID,
+		 WHERE service_id = $1 ORDER BY display_order ASC LIMIT 100`, serviceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query excludes: %w", err)
@@ -306,7 +306,7 @@ func (r *Repository) listSteps(ctx context.Context, serviceID string) ([]Service
 
 	rows, err := r.db.Query(ctx,
 		`SELECT id, step_number, title, description, icon FROM service_steps
-		 WHERE service_id = $1 ORDER BY step_number ASC`, serviceID,
+		 WHERE service_id = $1 ORDER BY step_number ASC LIMIT 50`, serviceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query steps: %w", err)

@@ -192,6 +192,8 @@ func (r *Repository) ListProBookingsOnDate(ctx context.Context, proID string, da
 		  AND b.scheduled_time IS NOT NULL
 		  AND b.scheduled_time::date = $2
 		  AND b.status IN ('pending', 'accepted')
+		ORDER BY b.scheduled_time
+		LIMIT 200
 	`, proID, date)
 	if err != nil {
 		return nil, err

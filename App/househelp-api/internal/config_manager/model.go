@@ -26,10 +26,11 @@ func (c AppConfig) toInt() int {
 
 // Config key constants — all business logic variables controlled from admin panel.
 const (
-	// Matching.
-	ConfigMatchingRadiusKm         = "matching.radius_km"
-	ConfigMatchingMaxRadiusKm      = "matching.max_radius_km"
-	ConfigMatchingTimeoutSeconds   = "matching.timeout_seconds"
+	// Matching. Distance is expressed as a maximum walking time from the
+	// customer's pickup point — there is no "radius" concept any more. The
+	// engine derives the geo-search km bound internally from this value.
+	ConfigMatchingMaxWalkMinutes     = "matching.max_walk_minutes"
+	ConfigMatchingTimeoutSeconds     = "matching.timeout_seconds"
 	ConfigMatchingMaxHelpersNotified = "matching.max_helpers_notified"
 
 	// Pricing.
@@ -55,9 +56,8 @@ const (
 
 // DefaultConfigs maps each config key to its default value and metadata.
 var DefaultConfigs = map[string]AppConfig{
-	ConfigMatchingRadiusKm:                 {Key: ConfigMatchingRadiusKm, Value: "3", ValueType: "float", Description: "Default helper search radius in km"},
-	ConfigMatchingMaxRadiusKm:              {Key: ConfigMatchingMaxRadiusKm, Value: "5", ValueType: "float", Description: "Expanded radius after timeout in km"},
-	ConfigMatchingTimeoutSeconds:           {Key: ConfigMatchingTimeoutSeconds, Value: "90", ValueType: "int", Description: "Seconds before expanding search radius"},
+	ConfigMatchingMaxWalkMinutes:           {Key: ConfigMatchingMaxWalkMinutes, Value: "25", ValueType: "int", Description: "Maximum walking minutes from customer to helper"},
+	ConfigMatchingTimeoutSeconds:           {Key: ConfigMatchingTimeoutSeconds, Value: "90", ValueType: "int", Description: "Seconds before a pending booking is escalated"},
 	ConfigMatchingMaxHelpersNotified:       {Key: ConfigMatchingMaxHelpersNotified, Value: "3", ValueType: "int", Description: "How many helpers to notify at once"},
 	ConfigPricingBaseFeeCents:              {Key: ConfigPricingBaseFeeCents, Value: "2000", ValueType: "int", Description: "Platform base fee in cents"},
 	ConfigPricingSurgeMultiplier:           {Key: ConfigPricingSurgeMultiplier, Value: "1.0", ValueType: "float", Description: "Surge pricing multiplier"},
@@ -84,10 +84,14 @@ var PublicConfigKeys = []string{
 
 // MatchingConfig holds matching-related configuration values.
 type MatchingConfig struct {
-	RadiusKm           float64 `json:"radius_km"`
-	MaxRadiusKm        float64 `json:"max_radius_km"`
-	TimeoutSeconds     int     `json:"timeout_seconds"`
-	MaxHelpersNotified int     `json:"max_helpers_notified"`
+	// MaxWalkMinutes is the only spatial bound that matters: a helper is
+	// eligible if their walking ETA to the pickup point is within this many
+	// minutes. The engine derives an internal km bound for the geo-index
+	// pre-filter (5 km/h × minutes/60 with a slack factor) but the actual
+	// matching decision is made on walking time.
+	MaxWalkMinutes     int `json:"max_walk_minutes"`
+	TimeoutSeconds     int `json:"timeout_seconds"`
+	MaxHelpersNotified int `json:"max_helpers_notified"`
 }
 
 // PricingConfig holds pricing-related configuration values.

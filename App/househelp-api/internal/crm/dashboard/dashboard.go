@@ -77,7 +77,7 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 		},
 		{
 			"revenue_today",
-			`SELECT COALESCE(SUM(price_cents), 0) FROM bookings
+			`SELECT COALESCE(SUM(amount_paise), 0) FROM bookings
 			 WHERE status = 'completed'
 			   AND completed_at >= date_trunc('day', now())`,
 			&out.RevenueTodayCents,
@@ -156,7 +156,7 @@ func (s *Service) Revenue7d(ctx context.Context) ([]RevenuePoint, error) {
 		  ) AS day
 		)
 		SELECT to_char(d.day, 'YYYY-MM-DD'),
-		       COALESCE(SUM(b.price_cents), 0)
+		       COALESCE(SUM(b.amount_paise), 0)
 		FROM days d
 		LEFT JOIN bookings b
 		  ON b.status = 'completed'

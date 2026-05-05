@@ -130,7 +130,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*)                                        AS total_orders,
-		    COALESCE(SUM(b.price_cents) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents,
+		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents,
 		    MAX(b.created_at)                               AS last_active_at
 		  FROM bookings b
 		  WHERE b.customer_id = u.id
@@ -175,7 +175,7 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		  LEFT JOIN LATERAL (
 		    SELECT
 		      COUNT(*)                                        AS total_orders,
-		      COALESCE(SUM(b.price_cents) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents
+		      COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents
 		    FROM bookings b
 		    WHERE b.customer_id = u.id
 		  ) stats ON TRUE
@@ -217,8 +217,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*)                                        AS total_orders,
-		    COALESCE(SUM(b.price_cents) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents,
-		    COALESCE(AVG(b.price_cents) FILTER (WHERE b.status = 'completed'), 0)::int AS avg_order_cents,
+		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents,
+		    COALESCE(AVG(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0)::int AS avg_order_cents,
 		    COUNT(*) FILTER (WHERE b.status IN ('pending','assigned','en_route','in_progress','arrived')) AS active_orders,
 		    MAX(b.created_at)                               AS last_active_at
 		  FROM bookings b
@@ -287,7 +287,7 @@ func (r *Repository) Orders(ctx context.Context, userID string, limit int) ([]Or
 	rows, err := r.read.Query(ctx, `
 		SELECT b.id::text,
 		       COALESCE(sc.name, '—'),
-		       b.status, b.price_cents, b.created_at, b.completed_at
+		       b.status, b.amount_paise, b.created_at, b.completed_at
 		FROM bookings b
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		WHERE b.customer_id = $1::uuid
@@ -301,7 +301,7 @@ func (r *Repository) Orders(ctx context.Context, userID string, limit int) ([]Or
 	out := []OrderRow{}
 	for rows.Next() {
 		var o OrderRow
-		if err := rows.Scan(&o.ID, &o.Category, &o.Status, &o.PriceCents, &o.CreatedAt, &o.CompletedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.Category, &o.Status, &o.AmountPaise, &o.CreatedAt, &o.CompletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, o)
@@ -410,6 +410,7 @@ func (r *Repository) ListNotes(ctx context.Context, userID string) ([]Note, erro
 		FROM crm_user_notes
 		WHERE user_id = $1::uuid
 		ORDER BY created_at DESC
+		LIMIT 200
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)

@@ -67,7 +67,7 @@ type CreateBannerRequest struct {
 	Title        string     `json:"title" validate:"required,max=200"`
 	Subtitle     string     `json:"subtitle,omitempty" validate:"max=500"`
 	ImageURL     string     `json:"image_url" validate:"required,url"`
-	TapAction    string     `json:"tap_action,omitempty"`
+	TapAction    string     `json:"tap_action,omitempty" validate:"omitempty,max=500"`
 	DisplayOrder int        `json:"display_order"`
 	IsActive     bool       `json:"is_active"`
 	StartsAt     *time.Time `json:"starts_at,omitempty"`
@@ -77,14 +77,16 @@ type CreateBannerRequest struct {
 // CreateServiceCategoryRequest is the input for creating/updating a service category.
 type CreateServiceCategoryRequest struct {
 	Name           string `json:"name" validate:"required,max=100"`
-	Description    string `json:"description,omitempty"`
-	IconURL        string `json:"icon_url,omitempty"`
+	Description    string `json:"description,omitempty" validate:"omitempty,max=2000"`
+	IconURL        string `json:"icon_url,omitempty" validate:"omitempty,max=500"`
 	BasePriceCents int    `json:"base_price_cents" validate:"required,min=0"`
 	IsActive       bool   `json:"is_active"`
 	DisplayOrder   int    `json:"display_order"`
 }
 
-// UpdateScreenContentRequest is the input for updating screen content.
+// UpdateScreenContentRequest is the input for updating screen content. The
+// JSON blob is parsed downstream by the SDUI resolver; cap raw size at 100KB
+// so a malicious admin can't fill the table with megabyte payloads.
 type UpdateScreenContentRequest struct {
-	Content json.RawMessage `json:"content" validate:"required"`
+	Content json.RawMessage `json:"content" validate:"required,max=100000"`
 }

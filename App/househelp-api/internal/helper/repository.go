@@ -2,12 +2,20 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrHelperNotFound is returned when a helpers row is missing for the
+// authenticated user. Pro JWTs reach helper endpoints before the helpers
+// row is seeded (in dev or after a partial signup), and we want callers to
+// see a clean 404 instead of a generic 500.
+var ErrHelperNotFound = errors.New("helper: row not found")
 
 // Repository handles database access for the helper module.
 type Repository struct {
@@ -61,7 +69,7 @@ func (r *Repository) GetBookingInviteDetails(ctx context.Context, bookingIDs []s
 		   COALESCE(a.lat,  b.lat,  0.0)             AS lat,
 		   COALESCE(a.lon,  b.lng,  0.0)             AS lng,
 		   COALESCE(b.total_duration_minutes, 0)     AS total_minutes,
-		   b.price_cents,
+		   b.amount_paise,
 		   b.created_at
 		 FROM bookings b
 		 JOIN users u ON u.id = b.customer_id
@@ -82,7 +90,7 @@ func (r *Repository) GetBookingInviteDetails(ctx context.Context, bookingIDs []s
 		inv := &Invite{}
 		if err := rows.Scan(
 			&inv.BookingID, &inv.CustomerName, &inv.Address,
-			&inv.Lat, &inv.Lng, &inv.TotalMinutes, &inv.PriceCents, &inv.CreatedAt,
+			&inv.Lat, &inv.Lng, &inv.TotalMinutes, &inv.AmountPaise, &inv.CreatedAt,
 		); err != nil {
 			continue
 		}
@@ -147,6 +155,9 @@ func (r *Repository) SetAvailability(ctx context.Context, helperID string, avail
 		`SELECT is_available FROM helpers WHERE id = $1 FOR UPDATE`,
 		helperID,
 	).Scan(&prev); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrHelperNotFound
+		}
 		return false, fmt.Errorf("load helper: %w", err)
 	}
 	if prev == available {
@@ -191,21 +202,35 @@ func (r *Repository) GetLastLocation(ctx context.Context, helperID string) (floa
 }
 
 // UpdateLocation stores the helper's lat/lng and hex cell in Postgres.
+// Returns ErrHelperNotFound when the authenticated pro has no helpers row
+// yet (e.g. partial signup) so the handler can map it to 404 rather than
+// surfacing a generic 500.
 func (r *Repository) UpdateLocation(ctx context.Context, helperID string, lat, lng float64, cellID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := r.db.Exec(ctx,
+	// Also write the PostGIS `location` geography column — the matching
+	// engine's nearest-neighbour query filters `h.location IS NOT NULL` and
+	// orders by `<-> ST_SetSRID(...)::geography`, so a row with current_lat/
+	// current_lng populated but `location` NULL is invisible to dispatch.
+	tag, err := r.db.Exec(ctx,
 		`UPDATE helpers
-		 SET current_lat      = $1,
-		     current_lng      = $2,
+		 SET current_lat      = $1::numeric,
+		     current_lng      = $2::numeric,
 		     hex_cell_id      = $3,
 		     is_available     = true,
-		     last_location_at = NOW()
+		     last_location_at = NOW(),
+		     location         = ST_SetSRID(ST_MakePoint($2::float8, $1::float8), 4326)::geography
 		 WHERE id = $4`,
 		lat, lng, cellID, helperID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHelperNotFound
+	}
+	return nil
 }
 
 // UpdateLocality validates the locality against active localities (case

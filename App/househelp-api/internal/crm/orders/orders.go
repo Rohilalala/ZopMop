@@ -38,9 +38,11 @@ type ListItem struct {
 	WorkerName     *string    `json:"worker_name,omitempty"`
 	WorkerPhone    *string    `json:"worker_phone,omitempty"`
 	Category       string     `json:"category"`
-	Status         string     `json:"status"`
-	PriceCents     int        `json:"price_cents"`
-	DiscountCents  int        `json:"discount_cents"`
+	Status string `json:"status"`
+	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
+	AmountPaise int `json:"price_cents"`
+	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	DiscountPaise int `json:"discount_cents"`
 	PromoCode      *string    `json:"promo_code,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
@@ -149,14 +151,14 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	}
 	if minCents != nil {
 		args = append(args, *minCents)
-		conds = append(conds, fmt.Sprintf("b.price_cents >= $%d", len(args)))
+		conds = append(conds, fmt.Sprintf("b.amount_paise >= $%d", len(args)))
 	}
 	if maxCents != nil {
 		args = append(args, *maxCents)
-		conds = append(conds, fmt.Sprintf("b.price_cents <= $%d", len(args)))
+		conds = append(conds, fmt.Sprintf("b.amount_paise <= $%d", len(args)))
 	}
 
-	sortColMap := map[string]string{"": "b.created_at", "created_at": "b.created_at", "price": "b.price_cents", "status": "b.status"}
+	sortColMap := map[string]string{"": "b.created_at", "created_at": "b.created_at", "price": "b.amount_paise", "status": "b.status"}
 	sortCol, ok := sortColMap[sortBy]
 	if !ok {
 		sortCol = "b.created_at"
@@ -179,7 +181,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	pageSQL := fmt.Sprintf(`
 		SELECT b.id::text, cu.name, cu.phone, hu.name, hu.phone,
 		       COALESCE(sc.name, '—'),
-		       b.status, b.price_cents, b.discount_cents, b.promo_code,
+		       b.status, b.amount_paise, b.discount_paise, b.promo_code,
 		       b.created_at, b.completed_at
 		FROM bookings b
 		JOIN users cu ON cu.id = b.customer_id
@@ -201,7 +203,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 		var it ListItem
 		if err := rows.Scan(
 			&it.ID, &it.CustomerName, &it.CustomerPhone, &it.WorkerName, &it.WorkerPhone,
-			&it.Category, &it.Status, &it.PriceCents, &it.DiscountCents, &it.PromoCode,
+			&it.Category, &it.Status, &it.AmountPaise, &it.DiscountPaise, &it.PromoCode,
 			&it.CreatedAt, &it.CompletedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan order: %w", err)
@@ -232,7 +234,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	const q = `
 		SELECT b.id::text, cu.name, cu.phone, hu.name, hu.phone,
 		       COALESCE(sc.name, '—'),
-		       b.status, b.price_cents, b.discount_cents, b.promo_code,
+		       b.status, b.amount_paise, b.discount_paise, b.promo_code,
 		       b.created_at, b.completed_at,
 		       b.customer_id::text, b.helper_id::text,
 		       b.address, b.lat::float8, b.lng::float8,
@@ -247,7 +249,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	var d Detail
 	err := r.read.QueryRow(ctx, q, id).Scan(
 		&d.ID, &d.CustomerName, &d.CustomerPhone, &d.WorkerName, &d.WorkerPhone,
-		&d.Category, &d.Status, &d.PriceCents, &d.DiscountCents, &d.PromoCode,
+		&d.Category, &d.Status, &d.AmountPaise, &d.DiscountPaise, &d.PromoCode,
 		&d.CreatedAt, &d.CompletedAt,
 		&d.CustomerID, &d.WorkerID,
 		&d.Address, &d.Lat, &d.Lng,

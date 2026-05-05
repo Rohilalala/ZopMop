@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // Handler exposes pro-side leave endpoints. Auth middleware must wrap the
@@ -91,6 +93,19 @@ func (h *Handler) Balance(c *fiber.Ctx) error {
 	}
 	bal, err := h.service.Balance(c.UserContext(), proID)
 	if err != nil {
+		// Caller is authed but no helpers row exists — they're not a pro
+		// yet (or the row was wiped). Return a neutral zero-balance payload
+		// instead of 500 so the pro-side dashboard doesn't trip the global
+		// "backend down" flag in the client.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return c.JSON(fiber.Map{
+				"balance":    0,
+				"used":       0,
+				"quota":      0,
+				"reset_date": time.Now(),
+			})
+		}
+		log.Error().Err(err).Str("pro_id", proID).Msg("[leave] balance lookup failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not load balance"})
 	}
 	return c.JSON(bal)
