@@ -27,11 +27,11 @@ func (r *Repository) CreateBooking(ctx context.Context, b *Booking) error {
 	defer cancel()
 
 	err := r.db.QueryRow(queryCtx,
-		`INSERT INTO bookings (customer_id, service_category_id, status, address, lat, lng, price_cents, promo_code, discount_cents)
+		`INSERT INTO bookings (customer_id, service_category_id, status, address, lat, lng, amount_paise, promo_code, discount_paise)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, created_at, updated_at`,
 		b.CustomerID, b.ServiceCategoryID, StatusPending, b.Address,
-		b.Lat, b.Lng, b.PriceCents, b.PromoCode, b.DiscountCents,
+		b.Lat, b.Lng, b.AmountPaise, b.PromoCode, b.DiscountPaise,
 	).Scan(&b.ID, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create booking: %w", err)
@@ -51,15 +51,15 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	b := &Booking{}
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents,
+		        lat, lng, amount_paise, promo_code, discount_paise,
 		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
 		        created_at, updated_at
 		 FROM bookings WHERE id = $1`,
 		bookingID,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
-		&b.Address, &b.Lat, &b.Lng, &b.PriceCents, &b.PromoCode,
-		&b.DiscountCents,
+		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
+		&b.DiscountPaise,
 		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
@@ -90,13 +90,13 @@ func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string
 	b := &Booking{}
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
 		 FROM bookings WHERE id = $1 AND status = $2`,
 		bookingID, StatusPending,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
-		&b.Address, &b.Lat, &b.Lng, &b.PriceCents, &b.PromoCode,
-		&b.DiscountCents, &b.CreatedAt, &b.UpdatedAt,
+		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
+		&b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -180,7 +180,7 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 		        cancellation_fee_applied = $4, cancellation_fee_cents = $5
 		  WHERE id = $1
 		    AND status IN ('pending', 'accepted')
-		  RETURNING customer_id::text, price_cents, COALESCE(discount_cents, 0),
+		  RETURNING customer_id::text, amount_paise, COALESCE(discount_paise, 0),
 		            payment_method, payment_id, payment_status`,
 		bookingID, StatusCancelled, cancelledBy, feeApplied, feeCents,
 	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus)
@@ -197,11 +197,17 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 	nonCod := paymentMethod != nil && *paymentMethod != "" && *paymentMethod != "cod"
 	refundAmount := priceCents - discountCents - int64(feeCents)
 	if paid && nonCod && refundAmount > 0 {
+		// $3 is used twice — once as text (source_ref) and once as uuid
+		// (booking_id). Postgres prepared-statement parameter inference
+		// requires a single type per param, so both usages get explicit
+		// casts: $3::text for source_ref, $3::uuid for booking_id.
+		// Without the ::text cast we get SQLSTATE 42P08 ("inconsistent
+		// types deduced for parameter $3").
 		if _, err := tx.Exec(queryCtx,
 			`INSERT INTO pending_refunds
 			   (user_id, amount_cents, source, source_ref,
 			    booking_id, payment_method, payment_id, status)
-			 VALUES ($1::uuid, $2, 'booking_cancellation', $3,
+			 VALUES ($1::uuid, $2, 'booking_cancellation', $3::text,
 			         $3::uuid, $4, $5, 'pending')
 			 ON CONFLICT (booking_id) WHERE booking_id IS NOT NULL
 			   AND status IN ('pending','approved','processed','processed_manual')
@@ -368,13 +374,13 @@ func (r *Repository) getBookingByID(ctx context.Context, bookingID string) (*Boo
 	b := &Booking{}
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
 		 FROM bookings WHERE id = $1`,
 		bookingID,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
-		&b.Address, &b.Lat, &b.Lng, &b.PriceCents, &b.PromoCode,
-		&b.DiscountCents, &b.CreatedAt, &b.UpdatedAt,
+		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
+		&b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -409,12 +415,16 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	// Hard LIMIT — matching.max_active_per_helper is small (default 3), but
+	// we never trust config to be the only cap; an explicit ceiling keeps a
+	// runaway state from melting the pro dashboard.
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
 		 FROM bookings
 		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')
-		 ORDER BY updated_at DESC`,
+		 ORDER BY updated_at DESC
+		 LIMIT 50`,
 		helperID,
 	)
 	if err != nil {
@@ -426,8 +436,8 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 	for rows.Next() {
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
-			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.PriceCents,
-			&b.PromoCode, &b.DiscountCents, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
+			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan helper active booking: %w", err)
 		}
 		bookings = append(bookings, b)
@@ -445,7 +455,7 @@ func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string
 
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
 		 FROM bookings
 		 WHERE helper_id = $1
 		   AND (
@@ -460,7 +470,8 @@ func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string
 		     WHEN 'cancelled'   THEN 3
 		     ELSE 4
 		   END,
-		   updated_at DESC`,
+		   updated_at DESC
+		 LIMIT 100`,
 		helperID,
 	)
 	if err != nil {
@@ -472,8 +483,8 @@ func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string
 	for rows.Next() {
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
-			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.PriceCents,
-			&b.PromoCode, &b.DiscountCents, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
+			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan helper today booking: %w", err)
 		}
 		bookings = append(bookings, b)
@@ -488,10 +499,14 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 
 	offset := (page - 1) * limit
 
+	// Same Cashfree-pending-unpaid filter as GetCustomerBookingsByStatus.
+	// Direct-pay rows show up only after the webhook stamps payment_status.
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, price_cents, promo_code, discount_cents, created_at, updated_at
-		 FROM bookings WHERE customer_id = $1
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
+		 FROM bookings
+		 WHERE customer_id = $1
+		   AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		customerID, limit, offset,
 	)
@@ -504,8 +519,8 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 	for rows.Next() {
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
-			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.PriceCents,
-			&b.PromoCode, &b.DiscountCents, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
+			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan booking: %w", err)
 		}
 		bookings = append(bookings, b)
@@ -589,20 +604,20 @@ func (r *Repository) CreateScheduledBooking(
 	err = tx.QueryRow(queryCtx,
 		`INSERT INTO bookings
 		   (customer_id, service_category_id, status, address, lat, lng,
-		    price_cents, discount_cents, promo_code,
+		    amount_paise, discount_paise, promo_code,
 		    address_id, time_slot_id, scheduled_time, total_duration_minutes,
 		    is_stealth_instant, fire_at, locality)
 		 VALUES ($1, $2, $3, '', 0, 0, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 RETURNING id, customer_id, address_id, time_slot_id,
 		           to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		           total_duration_minutes, status, price_cents, discount_cents, promo_code, created_at`,
+		           total_duration_minutes, status, amount_paise, discount_paise, promo_code, created_at`,
 		customerID, legacyServiceID, StatusPending,
 		totalPriceCents, discountCents, promoCode,
 		addressID, timeSlotID, scheduledTime, totalDuration,
 		isStealthInstant, fireAt, locality,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
-		&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
+		&b.TotalDurationMinutes, &b.Status, &b.AmountPaise, &b.DiscountPaise,
 		&b.PromoCode, &b.CreatedAt,
 	)
 	if err != nil {
@@ -637,10 +652,20 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 
 	offset := (page - 1) * limit
 
+	// Filter out Cashfree-pending unpaid bookings from the customer-facing
+	// list. A direct-pay booking is created in 'pending' status with
+	// payment_method='cashfree' BEFORE the SDK sheet opens; if the user
+	// abandons the payment, the row stays pending forever. Hide it until
+	// the PAYMENT_SUCCESS webhook flips payment_status='paid'. Wallet-pay
+	// (payment_method='wallet', stamped paid inline) and legacy COD/null
+	// bookings continue to surface as before.
+	const hidePendingUnpaidCashfree = `
+		(payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+	`
 	var statusFilter string
 	switch status {
 	case "upcoming":
-		statusFilter = `status IN ('pending', 'accepted', 'in_progress')`
+		statusFilter = `status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
 	case "past":
 		statusFilter = `status IN ('completed', 'cancelled')`
 	default:
@@ -651,7 +676,7 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		SELECT
 			b.id, b.customer_id, b.address_id, ua.tag, ua.title, b.time_slot_id,
 			to_char(b.scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_time,
-			b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at,
+			b.total_duration_minutes, b.status, b.amount_paise, b.discount_paise, b.promo_code, b.created_at,
 			COALESCE(
 				json_agg(
 					json_build_object(
@@ -671,7 +696,7 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		WHERE b.customer_id = $1
 		  AND `+statusFilter+`
 		GROUP BY b.id, b.customer_id, b.address_id, ua.tag, ua.title, b.time_slot_id, b.scheduled_time,
-		         b.total_duration_minutes, b.status, b.price_cents, b.discount_cents, b.promo_code, b.created_at
+		         b.total_duration_minutes, b.status, b.amount_paise, b.discount_paise, b.promo_code, b.created_at
 		ORDER BY COALESCE(b.scheduled_time, b.created_at) DESC
 		LIMIT $2 OFFSET $3`,
 		customerID, limit, offset)
@@ -686,7 +711,7 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 		var servicesJSON []byte
 		if err := rows.Scan(
 			&b.ID, &b.CustomerID, &b.AddressID, &b.AddressTag, &b.AddressTitle, &b.TimeSlotID, &b.ScheduledTime,
-			&b.TotalDurationMinutes, &b.Status, &b.PriceCents, &b.DiscountCents,
+			&b.TotalDurationMinutes, &b.Status, &b.AmountPaise, &b.DiscountPaise,
 			&b.PromoCode, &b.CreatedAt, &servicesJSON,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan booking: %w", err)

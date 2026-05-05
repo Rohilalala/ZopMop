@@ -87,19 +87,41 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 
 	booking, err := h.service.CreateBooking(c.UserContext(), &req, customerID)
 	if err != nil {
-		log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
-
 		// Map Postgres unique-violation (e.g. bookings_dedup constraint
 		// preventing same customer+category within 1 hour) to 409 Conflict
 		// with a stable client-facing code so apps can show a useful prompt
-		// instead of a generic 500.
+		// instead of a generic 500. This is an expected user-side condition
+		// (double-tap, retry without idempotency key) — log at WARN so it
+		// doesn't pollute the ERR stream alongside real server faults.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			log.Warn().Str("customer_id", customerID).Msg("rejected duplicate pending booking within 2-minute window")
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"error": "duplicate booking for the same customer and category in the last hour",
+				"error": "you already have a pending booking for this service — give it a moment to match",
 				"code":  "DUPLICATE_BOOKING",
 			})
 		}
+
+		// Instant booking is closed overnight (20:00–06:00 IST) — return 503
+		// with a stable code so the app can show a "we're closed" prompt
+		// instead of a generic failure.
+		if errors.Is(err, ErrInstantBookingClosed) {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "instant booking is closed overnight — please try after 6am",
+				"code":  "INSTANT_BOOKING_CLOSED",
+			})
+		}
+
+		// Wallet payment selected but balance is short — 402 with a stable
+		// code so the app can route the user to the topup screen.
+		if errors.Is(err, ErrInsufficientWalletBalance) {
+			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+				"error": "insufficient wallet balance",
+				"code":  "INSUFFICIENT_WALLET_BALANCE",
+			})
+		}
+
+		log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
 
 		status := fiber.StatusInternalServerError
 		message := "failed to create booking"
@@ -234,6 +256,12 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 		if errors.Is(err, ErrSlotInPast) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "selected time slot is in the past — please pick another",
+			})
+		}
+		if errors.Is(err, ErrInsufficientWalletBalance) {
+			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+				"error": "insufficient wallet balance",
+				"code":  "INSUFFICIENT_WALLET_BALANCE",
 			})
 		}
 		status := fiber.StatusInternalServerError

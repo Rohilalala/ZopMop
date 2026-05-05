@@ -2,10 +2,12 @@ package booking
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/admin"
@@ -34,7 +36,9 @@ var ErrAddressNotOwned = errors.New("address does not belong to caller")
 var ErrTooFarAway = errors.New("helper too far from booking")
 
 // acceptMaxWalkingMinutes is the upper bound on helper→pickup walking time
-// at accept-time. Above this we block the accept.
+// at accept-time. Slightly above matching.max_walk_minutes (default 20) so a
+// helper who has drifted a few hundred metres after being matched isn't
+// refused on accept due to ETA noise.
 const acceptMaxWalkingMinutes = 25
 
 // ErrSlotUnavailable is returned when the requested time slot is full or
@@ -55,6 +59,26 @@ var ErrSlotInPast = errors.New("requested time slot is in the past")
 // still place it but the dispatch cron treats it as a near-instant request
 // instead of waiting for the nightly batch.
 const schedulingCutoffHourIST = 20 // 8pm IST
+
+// instantBookingNightStartHour / instantBookingNightEndHour close the instant
+// booking window between 20:00 and 06:00 IST. Pros are off-shift overnight,
+// so no walking-time match could succeed; we reject the request up-front
+// (mirrors the LivePill night gate so the UI stays consistent with the API).
+const (
+	instantBookingNightStartHour = 20 // 8pm IST
+	instantBookingNightEndHour   = 6  // 6am IST
+)
+
+// ErrInstantBookingClosed is returned when a customer tries to place an
+// instant booking outside operating hours (20:00–06:00 IST).
+var ErrInstantBookingClosed = errors.New("instant booking is closed overnight")
+
+// isInstantBookingClosed reports whether `t` (in IST) falls inside the
+// nightly closed window.
+func isInstantBookingClosed(t time.Time) bool {
+	hr := t.In(indiaLocation()).Hour()
+	return hr >= instantBookingNightStartHour || hr < instantBookingNightEndHour
+}
 
 // stealthFireLeadTime is how far before scheduled_time the stealth dispatch
 // cron fires its invite chain. Spec calls for 15 minutes.
@@ -85,6 +109,27 @@ func indiaLocation() *time.Location {
 	return time.FixedZone("IST", 5*3600+30*60)
 }
 
+// WalletDebiter is the slice of internal/wallet's Service that the booking
+// flow needs to spend wallet funds. Defined as an interface to avoid an
+// import cycle (wallet imports nothing from booking; if we typed against
+// the concrete type the dependency direction would still flip in main).
+type WalletDebiter interface {
+	DebitTx(
+		ctx context.Context,
+		tx pgx.Tx,
+		userID string,
+		amountPaise int64,
+		kind string,
+		bookingID *string,
+		note string,
+	) error
+}
+
+// ErrInsufficientWalletBalance is returned by CreateBooking when
+// payment_source="wallet" and the user's wallet doesn't have enough.
+// Handler maps this to 402 with code "insufficient_wallet_balance".
+var ErrInsufficientWalletBalance = errors.New("insufficient wallet balance")
+
 // Service handles booking business logic.
 type Service struct {
 	repo         *Repository
@@ -98,12 +143,112 @@ type Service struct {
 	analytics    *analytics.Service   // nil-safe; fire-and-forget event tracking
 	webhooks     *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
 	ledger       *payments.Ledger     // nil-safe; charge-row writer
+	wallet       WalletDebiter        // nil-safe; payment_source="wallet" flow
 }
 
 // SetPaymentsLedger wires the payments ledger so booking confirmation can
 // open a pending charge row. nil-safe — leaving it unset disables ledger
 // writes (used by unit tests that don't care about the payments table).
 func (s *Service) SetPaymentsLedger(l *payments.Ledger) { s.ledger = l }
+
+// SetWallet wires the wallet service so payment_source="wallet" can debit
+// inline. Optional — without it, a wallet-source request is rejected.
+func (s *Service) SetWallet(w WalletDebiter) { s.wallet = w }
+
+// payBookingFromWallet runs the wallet debit + payments row insert + booking
+// status flip + booking.paid outbox event for a freshly created booking.
+// Single tx. On ErrInsufficientBalance (translated to ErrInsufficientWalletBalance)
+// the caller is expected to roll the booking back via CancelBookingWithFee.
+func (s *Service) payBookingFromWallet(ctx context.Context, bookingID, userID string, netPaise int64) error {
+	if s.wallet == nil || s.ledger == nil {
+		return fmt.Errorf("wallet payment not configured")
+	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		// Debit the wallet inside the tx. The wallet.DebitTx interface
+		// surfaces ErrInsufficientBalance via the wallet package's error
+		// sentinel; we re-export as ErrInsufficientWalletBalance so callers
+		// don't have to import internal/wallet.
+		bid := bookingID
+		if err := s.wallet.DebitTx(ctx, tx, userID, netPaise, "spend", &bid, "Booking "+bookingID); err != nil {
+			if isInsufficientBalance(err) {
+				return ErrInsufficientWalletBalance
+			}
+			return fmt.Errorf("wallet debit: %w", err)
+		}
+
+		// Record the matching payment row. gateway='wallet', no gateway_ref.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO payments
+			  (booking_id, user_id, amount_paise, gateway, gateway_status, webhook_received_at, reconciled)
+			VALUES ($1::uuid, $2::uuid, $3, 'wallet', 'success', NOW(), TRUE)
+		`, bookingID, userID, netPaise); err != nil {
+			return fmt.Errorf("insert wallet payment row: %w", err)
+		}
+
+		// Stamp payment_method/payment_status on bookings so the CRM refund
+		// dispatcher detects the wallet rail when the refund flow loads
+		// booking metadata. The refund handler reads bookings.payment_method
+		// as a fallback when pending_refunds doesn't carry it.
+		if _, err := tx.Exec(ctx, `
+			UPDATE bookings
+			SET payment_method = 'wallet',
+			    payment_status = 'paid',
+			    updated_at = NOW()
+			WHERE id = $1::uuid
+		`, bookingID); err != nil {
+			return fmt.Errorf("stamp booking payment fields: %w", err)
+		}
+
+		// Emit booking.paid in the same tx so the durable outbox row is
+		// committed iff the wallet debit + payment row commit.
+		payload, err := json.Marshal(map[string]any{
+			"booking_id":   bookingID,
+			"user_id":      userID,
+			"amount_paise": netPaise,
+			"gateway":      "wallet",
+			"paid_at":      time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			return fmt.Errorf("marshal booking.paid payload: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO event_outbox (event_type, aggregate_id, payload)
+			VALUES ($1, $2::uuid, $3::jsonb)
+		`, "booking.paid", bookingID, payload); err != nil {
+			return fmt.Errorf("insert booking.paid event: %w", err)
+		}
+		return nil
+	})
+}
+
+// isInsufficientBalance unwraps the wallet package's ErrInsufficientBalance.
+// Implemented as a string match instead of errors.Is to avoid importing
+// internal/wallet (which would flip the dependency direction).
+func isInsufficientBalance(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "insufficient balance")
+}
+
+// stampBookingDirectPay tags a freshly created booking as awaiting Cashfree
+// payment. The booking is still in 'pending' status (no new enum value
+// introduced — see scope decision in the bug fix); the customer-facing
+// bookings list filters out rows where payment_method='cashfree' AND
+// payment_status IS NOT 'paid' so they appear only after the webhook
+// confirms payment. The webhook handler in internal/payments/handler.go
+// flips payment_status to 'paid' inside the same tx as the ledger update.
+//
+// Errors are logged, never propagated: a tag glitch must not unwind a
+// booking the customer already saw confirmed. Worst case the row stays
+// payment_method=NULL and is treated as a legacy/COD booking — visible
+// in upcoming. Better than failing the booking creation entirely.
+func (s *Service) stampBookingDirectPay(ctx context.Context, bookingID string) {
+	if _, err := s.db.Exec(ctx,
+		`UPDATE bookings SET payment_method = 'cashfree', updated_at = NOW()
+		 WHERE id = $1::uuid AND payment_method IS NULL`,
+		bookingID,
+	); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("failed to stamp booking payment_method='cashfree'")
+	}
+}
 
 // recordPaymentIntent inserts a pending payment row for a freshly created
 // booking and emits payment.initiated. Errors are logged, never propagated —
@@ -112,7 +257,7 @@ func (s *Service) recordPaymentIntent(ctx context.Context, bookingID, customerID
 	if s.ledger == nil {
 		return
 	}
-	if _, err := s.ledger.CreatePayment(ctx, bookingID, customerID, int64(amountCents), "cod", nil); err != nil {
+	if _, err := s.ledger.CreatePayment(ctx, &bookingID, customerID, int64(amountCents), "cod", nil); err != nil {
 		log.Warn().Err(err).Str("booking_id", bookingID).Msg("payments ledger insert failed")
 		return
 	}
@@ -162,6 +307,13 @@ func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc
 // CreateBooking validates the service category, applies promo if present,
 // and creates the booking record.
 func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, customerID string) (*Booking, error) {
+	// Reject after 8pm / before 6am IST. Pros are off-shift overnight; the
+	// matcher has nothing to invite, so the booking is closed at the API
+	// boundary instead of being silently routed to the stealth path.
+	if isInstantBookingClosed(time.Now()) {
+		return nil, ErrInstantBookingClosed
+	}
+
 	// Check max active bookings from config.
 	maxActiveStr, err := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerCustomer)
 	if err != nil {
@@ -241,9 +393,9 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		Address:           req.Address,
 		Lat:               req.Lat,
 		Lng:               req.Lng,
-		PriceCents:        totalPriceCents,
+		AmountPaise:        totalPriceCents,
 		PromoCode:         promoCode,
-		DiscountCents:     discountCents,
+		DiscountPaise:     discountCents,
 	}
 
 	if err := s.repo.CreateBooking(ctx, booking); err != nil {
@@ -261,25 +413,50 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 	log.Info().
 		Str("booking_id", booking.ID).
 		Str("customer_id", customerID).
-		Int("price_cents", totalPriceCents).
-		Int("discount_cents", discountCents).
+		Int("amount_paise", totalPriceCents).
+		Int("discount_paise", discountCents).
 		Msg("booking created")
 
 	// Track booking creation event.
 	s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, booking.ID, map[string]string{
 		"service_category_id": req.ServiceCategoryID,
-		"price_cents":         fmt.Sprintf("%d", totalPriceCents),
+		"amount_paise":         fmt.Sprintf("%d", totalPriceCents),
 		"has_promo":           fmt.Sprintf("%v", promoCode != nil),
 	})
 
-	s.recordPaymentIntent(ctx, booking.ID, customerID, totalPriceCents-discountCents)
+	netPaise := totalPriceCents - discountCents
+
+	if req.PaymentSource == "wallet" {
+		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
+			// Roll back the booking on wallet-debit failure so we don't
+			// leave a pending unpaid row in the matching pipeline. Free
+			// cancellation (fee=0) — customer never saw a confirmation.
+			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
+					Msg("failed to roll back booking after wallet payment failure")
+			}
+			if errors.Is(err, ErrInsufficientWalletBalance) {
+				return nil, ErrInsufficientWalletBalance
+			}
+			return nil, fmt.Errorf("wallet payment failed: %w", err)
+		}
+	} else {
+		// Default / "direct" path: stamp payment_method='cashfree' so the
+		// customer-facing bookings list filters this row out until the
+		// webhook stamps payment_status='paid'. Without this tag the row
+		// shows up in 'upcoming' the moment the user taps Confirm Booking,
+		// before the SDK sheet opens. recordPaymentIntent stays for the
+		// legacy ledger row (gateway='cod' placeholder, harmless).
+		s.stampBookingDirectPay(ctx, booking.ID)
+		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	}
 
 	s.fireWebhook(ctx, webhooks.EventOrderCreated, webhooks.OrderEvent{
 		OrderID:           booking.ID,
 		Status:            string(StatusPending),
 		CustomerID:        customerID,
 		ServiceCategoryID: req.ServiceCategoryID,
-		PriceCents:        int64(totalPriceCents),
+		AmountPaise:        int64(totalPriceCents),
 		OccurredAt:        time.Now().UTC(),
 	})
 
@@ -360,7 +537,7 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 			CustomerID:        booking.CustomerID,
 			HelperID:          booking.HelperID,
 			ServiceCategoryID: booking.ServiceCategoryID,
-			PriceCents:        int64(booking.PriceCents),
+			AmountPaise:        int64(booking.AmountPaise),
 			OccurredAt:        time.Now().UTC(),
 		},
 		CancelledBy: "customer",
@@ -478,7 +655,7 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		CustomerID:        booking.CustomerID,
 		HelperID:          &helperRef,
 		ServiceCategoryID: booking.ServiceCategoryID,
-		PriceCents:        int64(booking.PriceCents),
+		AmountPaise:        int64(booking.AmountPaise),
 		OccurredAt:        time.Now().UTC(),
 	})
 
@@ -842,19 +1019,193 @@ func (s *Service) CreateScheduledBooking(
 	}
 
 	s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, booking.ID, map[string]string{
-		"type":        "scheduled",
-		"price_cents": fmt.Sprintf("%d", totalPriceCents),
-		"has_promo":   fmt.Sprintf("%v", promoCode != nil),
+		"type":         "scheduled",
+		"amount_paise": fmt.Sprintf("%d", totalPriceCents),
+		"has_promo":    fmt.Sprintf("%v", promoCode != nil),
 	})
 
-	s.recordPaymentIntent(ctx, booking.ID, customerID, totalPriceCents-discountCents)
+	netPaise := totalPriceCents - discountCents
+	if req.PaymentSource == "wallet" {
+		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
+			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
+					Msg("failed to roll back scheduled booking after wallet payment failure")
+			}
+			if errors.Is(err, ErrInsufficientWalletBalance) {
+				return nil, ErrInsufficientWalletBalance
+			}
+			return nil, fmt.Errorf("wallet payment failed: %w", err)
+		}
+	} else {
+		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	}
 
 	log.Info().
 		Str("booking_id", booking.ID).
 		Str("customer_id", customerID).
 		Int("services", len(cartItems)).
-		Int("price_cents", totalPriceCents).
+		Int("amount_paise", totalPriceCents).
 		Msg("scheduled booking created")
+
+	return booking, nil
+}
+
+// CreateInstantBookingFromCart is the cart-based instant booking entrypoint
+// used by the Zop AI assistant's `create_instant_booking` tool. The legacy
+// `CreateBooking` path is single-service and prices off `service_categories`
+// + `BaseFeeCents` + surge — the LLM never sees those add-ons, so its
+// rendered total would diverge from the booking total. We need the same
+// cart-derived totals as `CreateScheduledBooking`, BUT the booking must hit
+// the matcher batcher in real time (not the nightly scheduled cron). This
+// method bridges the two: insert via the cart-aware repo, stamp lat/lng/
+// address onto the row from the chosen saved address, then enqueue into
+// the batcher exactly like `CreateBooking` does.
+func (s *Service) CreateInstantBookingFromCart(
+	ctx context.Context,
+	customerID, addressID, timeSlotID, scheduledTime string,
+	cartItems []BookingServiceItem,
+	promoCode string,
+	paymentSource string,
+) (*ScheduledBooking, error) {
+	if isInstantBookingClosed(time.Now()) {
+		return nil, ErrInstantBookingClosed
+	}
+	if len(cartItems) == 0 {
+		return nil, fmt.Errorf("cart is empty")
+	}
+
+	maxActiveStr, _ := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerCustomer)
+	maxActive, parseErr := strconv.Atoi(maxActiveStr)
+	if parseErr != nil || maxActive <= 0 {
+		maxActive = 2
+	}
+	activeCount, countErr := s.repo.GetActiveBookingsCount(ctx, customerID)
+	if countErr != nil {
+		return nil, fmt.Errorf("failed to check active bookings: %w", countErr)
+	}
+	if activeCount >= maxActive {
+		return nil, fmt.Errorf("maximum active bookings limit reached")
+	}
+
+	// Address ownership + coords come from user_addresses. The matcher needs
+	// real lat/lng; the repo's INSERT writes 0,0 by default.
+	var lat, lng float64
+	var addressText string
+	addrCtx, addrCancel := context.WithTimeout(ctx, 5*time.Second)
+	addrErr := s.db.QueryRow(addrCtx,
+		`SELECT lat, lon, COALESCE(full_address, '')
+		 FROM user_addresses WHERE id = $1::uuid AND user_id = $2::uuid`,
+		addressID, customerID,
+	).Scan(&lat, &lng, &addressText)
+	addrCancel()
+	if addrErr != nil {
+		if errors.Is(addrErr, pgx.ErrNoRows) {
+			return nil, ErrAddressNotOwned
+		}
+		return nil, fmt.Errorf("address lookup: %w", addrErr)
+	}
+
+	locality, locErr := s.resolveLocality(ctx, addressID)
+	if locErr != nil {
+		log.Warn().Err(locErr).Str("address_id", addressID).Msg("[booking] locality resolve failed")
+		locality = nil
+	}
+
+	totalPriceCents := 0
+	for _, item := range cartItems {
+		totalPriceCents += item.PriceCents
+	}
+
+	discountCents := 0
+	var promoCodePtr *string
+	if promoCode != "" {
+		promo, perr := s.ValidatePromoCode(ctx, promoCode, totalPriceCents)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid promo code: %w", perr)
+		}
+		if promo != nil {
+			promoCodePtr = &promoCode
+			if promo.DiscountType == "percent" {
+				discountCents = totalPriceCents * promo.DiscountValue / 100
+			} else {
+				discountCents = promo.DiscountValue
+			}
+			if discountCents > totalPriceCents {
+				discountCents = totalPriceCents
+			}
+		}
+	}
+
+	// Insert with isStealthInstant=false + fireAt=nil so the stealth/
+	// scheduled crons leave it alone — the matcher batcher owns this row.
+	booking, err := s.repo.CreateScheduledBooking(
+		ctx, customerID, addressID, timeSlotID,
+		scheduledTime, cartItems,
+		totalPriceCents, discountCents, promoCodePtr,
+		false, nil, locality,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Stamp coords + address onto the row so the batcher's pending-bookings
+	// rescan picks up real lat/lng (FetchPendingUnmatched reads them) and
+	// the customer-facing match status renders the correct address.
+	if _, err := s.db.Exec(ctx,
+		`UPDATE bookings SET lat = $1, lng = $2, address = $3 WHERE id = $4::uuid`,
+		lat, lng, addressText, booking.ID,
+	); err != nil {
+		log.Warn().Err(err).Str("booking_id", booking.ID).
+			Msg("[booking] failed to stamp coords on instant booking — matcher may miss it")
+	}
+
+	if promoCodePtr != nil {
+		if err := s.repo.IncrementPromoCodeUsage(ctx, *promoCodePtr); err != nil {
+			log.Warn().Err(err).Str("promo_code", *promoCodePtr).Msg("failed to increment promo code usage")
+		}
+	}
+
+	s.analytics.Track(ctx, analytics.EventBookingCreated, customerID, booking.ID, map[string]string{
+		"type":         "instant_cart",
+		"amount_paise": fmt.Sprintf("%d", totalPriceCents),
+		"has_promo":    fmt.Sprintf("%v", promoCodePtr != nil),
+	})
+
+	netPaise := totalPriceCents - discountCents
+	if paymentSource == "wallet" {
+		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
+			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
+					Msg("failed to roll back instant cart booking after wallet payment failure")
+			}
+			if errors.Is(err, ErrInsufficientWalletBalance) {
+				return nil, ErrInsufficientWalletBalance
+			}
+			return nil, fmt.Errorf("wallet payment failed: %w", err)
+		}
+	} else {
+		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	}
+
+	matching.TrackDemand(ctx, s.rdb, lat, lng)
+	if s.matchBatcher != nil {
+		s.matchBatcher.Enqueue(matching.BatchEntry{
+			BookingID:  booking.ID,
+			CustomerID: customerID,
+			Lat:        lat,
+			Lng:        lng,
+			CellID:     matching.LatLngToCell(lat, lng),
+			EnqueuedAt: time.Now(),
+		})
+	}
+
+	log.Info().
+		Str("booking_id", booking.ID).
+		Str("customer_id", customerID).
+		Int("services", len(cartItems)).
+		Int("amount_paise", totalPriceCents).
+		Float64("lat", lat).Float64("lng", lng).
+		Msg("instant booking created via cart")
 
 	return booking, nil
 }
@@ -1138,7 +1489,7 @@ func (s *Service) buildOrderEvent(ctx context.Context, bookingID string, helperI
 		priceCents        int
 	)
 	if err := s.db.QueryRow(qCtx,
-		`SELECT customer_id, service_category_id, price_cents FROM bookings WHERE id = $1`,
+		`SELECT customer_id, service_category_id, amount_paise FROM bookings WHERE id = $1`,
 		bookingID,
 	).Scan(&customerID, &serviceCategoryID, &priceCents); err != nil {
 		log.Warn().Err(err).Str("booking_id", bookingID).Msg("[webhooks] enrich order event failed")
@@ -1146,7 +1497,7 @@ func (s *Service) buildOrderEvent(ctx context.Context, bookingID string, helperI
 	}
 	ev.CustomerID = customerID
 	ev.ServiceCategoryID = serviceCategoryID
-	ev.PriceCents = int64(priceCents)
+	ev.AmountPaise = int64(priceCents)
 	return ev
 }
 

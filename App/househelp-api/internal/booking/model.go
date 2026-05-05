@@ -14,7 +14,7 @@ const (
 )
 
 // Booking represents a service booking.
-// Price is always stored as integer cents to avoid floating point errors.
+// Amount is always stored as integer paise to avoid floating point errors.
 type Booking struct {
 	ID                     string        `json:"id"`
 	CustomerID             string        `json:"customer_id"`
@@ -24,9 +24,11 @@ type Booking struct {
 	Address                string        `json:"address"`
 	Lat                    float64       `json:"lat"`
 	Lng                    float64       `json:"lng"`
-	PriceCents             int           `json:"price_cents"`
-	PromoCode              *string       `json:"promo_code,omitempty"`
-	DiscountCents          int           `json:"discount_cents"`
+	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
+	AmountPaise int     `json:"price_cents"`
+	PromoCode   *string `json:"promo_code,omitempty"`
+	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	DiscountPaise int `json:"discount_cents"`
 	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
@@ -48,12 +50,18 @@ type CancelBookingResponse struct {
 }
 
 // CreateBookingRequest is the input for creating a new booking.
+//
+// PaymentSource selects the funding rail. Empty / "direct" uses the
+// existing Cashfree-or-COD path; "wallet" debits the closed-loop wallet
+// inline. Wallet path requires sufficient balance — caller gets a 402 with
+// code "insufficient_wallet_balance" when short.
 type CreateBookingRequest struct {
 	ServiceCategoryID string  `json:"service_category_id" validate:"required,uuid_format"`
 	Address           string  `json:"address" validate:"required,min=5,max=500"`
 	Lat               float64 `json:"lat" validate:"required,latitude"`
 	Lng               float64 `json:"lng" validate:"required,longitude"`
 	PromoCode         string  `json:"promo_code,omitempty" validate:"omitempty,max=50"`
+	PaymentSource     string  `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
 }
 
 // CancelBookingRequest is the input for cancelling a booking.
@@ -82,23 +90,27 @@ type ScheduledBooking struct {
 	TotalDurationMinutes int                  `json:"total_duration_minutes"`
 	Services             []BookingServiceItem `json:"services"`
 	Status               BookingStatus        `json:"status"`
-	PriceCents           int                  `json:"price_cents"`
-	DiscountCents        int                  `json:"discount_cents"`
-	PromoCode            *string              `json:"promo_code,omitempty"`
-	CreatedAt            time.Time            `json:"created_at"`
+	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
+	AmountPaise int `json:"price_cents"`
+	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	DiscountPaise int                 `json:"discount_cents"`
+	PromoCode     *string             `json:"promo_code,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
 }
 
 // CreateScheduledBookingRequest is the input for the new booking flow.
 type CreateScheduledBookingRequest struct {
-	AddressID  string `json:"address_id"  validate:"required,uuid_format"`
-	TimeSlotID string `json:"time_slot_id" validate:"required,uuid_format"`
-	PromoCode  string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
+	AddressID     string `json:"address_id"  validate:"required,uuid_format"`
+	TimeSlotID    string `json:"time_slot_id" validate:"required,uuid_format"`
+	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
 }
 
 // CreateInstantBookingRequest is the input for POST /bookings/instant.
 // Cart items are read server-side; only the delivery address is required.
 type CreateInstantBookingRequest struct {
-	AddressID string `json:"address_id" validate:"required,uuid_format"`
+	AddressID     string `json:"address_id" validate:"required,uuid_format"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
 }
 
 // MatchStatusResponse is returned by GET /bookings/:id/match-status.
