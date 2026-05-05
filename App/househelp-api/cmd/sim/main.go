@@ -486,7 +486,7 @@ func dbSeedBookings(ctx context.Context, pool *pgxpool.Pool, cnt *counters, cust
 		lng := anchorLng + randJitter()*0.05
 		var bid string
 		err := pool.QueryRow(ctx, `
-			INSERT INTO bookings (id, customer_id, service_category_id, status, address, lat, lng, price_cents, created_at)
+			INSERT INTO bookings (id, customer_id, service_category_id, status, address, lat, lng, amount_paise, created_at)
 			VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'pending', 'Sim address', $3, $4, 49900, now())
 			RETURNING id::text
 		`, u.ID, categoryID, lat, lng).Scan(&bid)

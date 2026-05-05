@@ -127,22 +127,22 @@ func checkUsers(ctx context.Context, pool *pgxpool.Pool, maxIssues int) EntityRe
 	}
 
 	// Lifetime-value reconciliation: SUM(payments.amount_paise) per user
-	// should equal SUM(bookings.price_cents) for completed bookings.
-	// (Both stored in paise/cents; pre-payments-ledger rows have no payment
-	// row at all — they're the "missing" set.)
+	// should equal SUM(bookings.amount_paise) for completed bookings.
+	// Pre-payments-ledger rows have no payment row at all — they're the
+	// "missing" set.
 	var ltvIssues int64
 	const ltvSQL = `
-		SELECT u.id::text, COALESCE(p.sum_paise, 0), COALESCE(b.sum_cents, 0)
+		SELECT u.id::text, COALESCE(p.sum_paise, 0), COALESCE(b.sum_paise, 0)
 		FROM users u
 		LEFT JOIN (
 		  SELECT user_id, SUM(amount_paise) AS sum_paise
 		  FROM payments WHERE gateway_status IN ('success','pending') GROUP BY user_id
 		) p ON p.user_id = u.id
 		LEFT JOIN (
-		  SELECT customer_id, SUM(price_cents) AS sum_cents
+		  SELECT customer_id, SUM(amount_paise) AS sum_paise
 		  FROM bookings WHERE status = 'completed' GROUP BY customer_id
 		) b ON b.customer_id = u.id
-		WHERE u.deleted_at IS NULL AND COALESCE(p.sum_paise, 0) <> COALESCE(b.sum_cents, 0)
+		WHERE u.deleted_at IS NULL AND COALESCE(p.sum_paise, 0) <> COALESCE(b.sum_paise, 0)
 		LIMIT $1
 	`
 	rows2, err := pool.Query(ctx, ltvSQL, maxIssues)

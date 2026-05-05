@@ -4,6 +4,21 @@ Branch: `feature/sdui`. Started: 2026-05-02.
 
 ---
 
+## 2026-05-05 — Cashfree PG + closed-loop wallet (Phases 1-6)
+
+- Razorpay excised entirely; Cashfree PG is now the sole payment gateway for collection and refunds (`internal/payments/cashfree.go`).
+- Cashfree Payouts retained for VPA validation (helper payouts in future).
+- Closed-loop Zopmop Wallet: topup via Cashfree, spend on bookings, refund_credit on cancellations. No P2P, no withdrawal. Service-layer + DB CHECK enforce kind enum.
+- Migrations 064-070 (incl. transactional outbox `event_outbox`).
+- Webhook handler with full transactional outbox pattern (`ConsumeOnceTx` + `FOR UPDATE` payment lock + tx-bound ledger / outbox writes).
+- `bookings.price_cents` → `amount_paise`, widened to `BIGINT`. JSON tags kept at `price_cents` for mobile back-compat (TODO comments mark every site).
+- `users.email` column added (nullable). Synthesised when null at the Cashfree boundary.
+- Tests: `cashfree_test.go` (webhook signature, paise↔rupees, redaction); `wallet/service_test.go` (validation + DB-backed FOR UPDATE race test, 50 iterations × 2 goroutines).
+
+The historical T1.6 / line 255+ entries describing the Razorpay integration remain unchanged — they're accurate as a record of what was built at the time.
+
+---
+
 ## T1.1 — RBAC Enforcement ✅ (2026-05-02)
 
 ### Design

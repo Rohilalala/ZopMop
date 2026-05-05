@@ -393,9 +393,11 @@ type SafeBooking struct {
 	AddressLabel         string               `json:"address_label,omitempty"`
 	AddressTag           string               `json:"address_tag,omitempty"`
 	AddressTitle         string               `json:"address_title,omitempty"`
-	PriceRupees          int                  `json:"price_rupees,omitempty"`
-	PriceCents           int                  `json:"price_cents,omitempty"`
-	DiscountCents        int                  `json:"discount_cents,omitempty"`
+	PriceRupees int `json:"price_rupees,omitempty"`
+	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
+	AmountPaise int `json:"price_cents,omitempty"`
+	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	DiscountPaise        int                  `json:"discount_cents,omitempty"`
 	TotalDurationMinutes int                  `json:"total_duration_minutes,omitempty"`
 	Services             []SafeBookingService `json:"services,omitempty"`
 }
@@ -417,7 +419,7 @@ func sanitizeBookingsForLLM(bks []booking.Booking) []SafeBooking {
 			ScheduledTime: sched,
 			Status:        string(b.Status),
 			AddressLabel:  addrCity,
-			PriceRupees:   (b.PriceCents - b.DiscountCents) / 100,
+			PriceRupees:   (b.AmountPaise - b.DiscountPaise) / 100,
 		})
 	}
 	return out
@@ -482,9 +484,9 @@ func sanitizeScheduledBookingsForLLM(bks []booking.ScheduledBooking, addrs []add
 			AddressLabel:         label,
 			AddressTag:           tag,
 			AddressTitle:         title,
-			PriceRupees:          (b.PriceCents - b.DiscountCents) / 100,
-			PriceCents:           b.PriceCents,
-			DiscountCents:        b.DiscountCents,
+			PriceRupees:          (b.AmountPaise - b.DiscountPaise) / 100,
+			AmountPaise:          b.AmountPaise,
+			DiscountPaise:        b.DiscountPaise,
 			TotalDurationMinutes: b.TotalDurationMinutes,
 			Services:             svcs,
 		})
@@ -1194,7 +1196,7 @@ func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, 
 	// PRICING CONTRACT — keep this in sync with `sanitizeServicesForLLM` and
 	// `sanitizeCartForLLM`. Both projections expose pre-computed per-item
 	// prices (`base * duration / min` in rupees). `CreateScheduledBooking`
-	// sums those exact cart prices and stores them as `b.PriceCents`. We
+	// sums those exact cart prices and stores them as `b.AmountPaise`. We
 	// MUST NOT route this tool through `bookingSvc.CreateBooking` (the
 	// single-service path) — it adds `BaseFeeCents` + surge multiplier on
 	// top, which the LLM never sees, so the chat-rendered total would
@@ -1226,17 +1228,29 @@ func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, 
 				return errorJSON("address not found — please pick one from the saved-addresses list (use exact id)")
 			}
 		}
-		req := &booking.CreateScheduledBookingRequest{
-			AddressID:  addressID,
-			TimeSlotID: timeSlotID,
-		}
-		// Pull cart for the user — Zop today still requires the customer to
-		// have populated their cart in-app first. Pass nil to force the
-		// service-layer check to fetch from the cart_items table itself.
 		_ = serviceCategoryID
+		// Pull cart for the user — Zop today still requires the customer to
+		// have populated their cart in-app first.
 		cartItems, err := s.bookingSvc.GetCartItemsForUser(ctx, userID)
 		if err != nil {
 			return errorJSON(err.Error())
+		}
+		// Fork on tool name. Instant flows route through the matcher batcher
+		// for real-time pro dispatch; scheduled flows go through the cron
+		// pre-dispatch path. Same cart-derived pricing in both cases.
+		if toolName == "create_instant_booking" {
+			b, err := s.bookingSvc.CreateInstantBookingFromCart(
+				ctx, userID, addressID, timeSlotID, scheduledTime, cartItems, "", "",
+			)
+			if err != nil {
+				return errorJSON(err.Error())
+			}
+			out, _ := json.Marshal(b)
+			return string(out)
+		}
+		req := &booking.CreateScheduledBookingRequest{
+			AddressID:  addressID,
+			TimeSlotID: timeSlotID,
 		}
 		b, err := s.bookingSvc.CreateScheduledBooking(ctx, userID, req, cartItems, scheduledTime)
 		if err != nil {
@@ -1475,7 +1489,7 @@ var zopTools = []openRouterTool{
 		Type: "function",
 		Function: openRouterToolDescription{
 			Name:        "create_instant_booking",
-			Description: "Create an INSTANT booking — dispatch a pro now. ONLY call AFTER summary + explicit user confirm. Same prereqs as create_scheduled_booking. Pass the EARLIEST available slot from get_available_slots for today as time_slot_id+scheduled_time. Instant has open hours 7AM-8PM IST; outside that window the call fails — offer scheduled instead.",
+			Description: "Create an INSTANT booking — dispatch a pro now via the real-time matcher. ONLY call AFTER summary + explicit user confirm. Same prereqs as create_scheduled_booking (cart populated, address_id, slot). Pass the EARLIEST available slot from get_available_slots for today as time_slot_id+scheduled_time. Instant is open 6AM–8PM IST; outside that window the call fails (INSTANT_BOOKING_CLOSED) — offer scheduled instead. This is DIFFERENT from create_scheduled_booking: instant goes to a pro right now, scheduled is dispatched closer to the slot.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1546,7 +1560,7 @@ func BuildSystemPrompt(now time.Time, firstName string) (string, string) {
 	staticPrefix := chatSystemPrompt
 
 	hour := now.Hour()
-	instantOpen := hour >= 7 && hour < 20
+	instantOpen := hour >= 6 && hour < 20
 
 	tomorrow := now.AddDate(0, 0, 1)
 	daysUntil := func(target time.Weekday) int {
@@ -1584,16 +1598,16 @@ Tomorrow's YYYY-MM-DD; "saturday" → Saturday's YYYY-MM-DD; etc.`,
 
 	var instantStatusBlock string
 	if instantOpen {
-		instantStatusBlock = "INSTANT BOOKING: currently AVAILABLE (open 7 AM – 8 PM IST). You can call create_instant_booking."
+		instantStatusBlock = "INSTANT BOOKING: currently AVAILABLE (open 6 AM – 8 PM IST). You can call create_instant_booking."
 	} else {
 		var nextOpen time.Time
-		if hour < 7 {
-			nextOpen = time.Date(now.Year(), now.Month(), now.Day(), 7, 0, 0, 0, now.Location())
+		if hour < 6 {
+			nextOpen = time.Date(now.Year(), now.Month(), now.Day(), 6, 0, 0, 0, now.Location())
 		} else {
-			nextOpen = time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 7, 0, 0, 0, now.Location())
+			nextOpen = time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 6, 0, 0, 0, now.Location())
 		}
 		instantStatusBlock = fmt.Sprintf(
-			`INSTANT BOOKING: currently UNAVAILABLE. Open hours are 7 AM – 8 PM IST. Right now it is %s. Instant opens again at %s. Do NOT call create_instant_booking — it will fail. Offer scheduled booking instead. Let the user know when instant becomes available again.`,
+			`INSTANT BOOKING: currently UNAVAILABLE. Open hours are 6 AM – 8 PM IST. Right now it is %s. Instant opens again at %s. Do NOT call create_instant_booking — it will fail. Offer scheduled booking instead. Let the user know when instant becomes available again.`,
 			now.Format("15:04 IST"),
 			nextOpen.Format("Monday 15:04 IST"),
 		)

@@ -21,7 +21,7 @@ On-demand help for chores, cleaning, and errands — delivered by verified helpe
 
 ZopMop connects customers with vetted home-service professionals — cleaning, repairs, household chores, groceries, and more — with instant or scheduled dispatch. The platform is built as two primary experiences:
 
-- **Customer App** — book services, track active jobs, manage households ("Roomies" groups), and pay via Razorpay.
+- **Customer App** — book services, track active jobs, manage households ("Roomies" groups), and pay via Cashfree PG or the closed-loop Zopmop Wallet.
 - **Helper / Pro App** — onboard as a pro, receive live job matches, accept work, and manage earnings.
 
 Both talk to a shared Go API backed by PostgreSQL (with PostGIS for geospatial matching) and Redis.
@@ -33,7 +33,7 @@ Both talk to a shared Go API backed by PostgreSQL (with PostGIS for geospatial m
 - **Live tracking** — react-native-maps + Google Directions, continuously updated ETA.
 - **Roomies** — shared households: multiple users under one address, bookings visible to the group, auto-settle of shared expenses.
 - **Reengagement** — event-driven push/notification pipeline for idle users, cart abandonment, and offers.
-- **Wallet & payments** — Razorpay integration, in-wallet credits, offers, and coupons.
+- **Wallet & payments** — Cashfree PG integration with closed-loop wallet (topup, spend, refund credit), offers, and coupons.
 - **Mascot-driven onboarding** — Lottie + custom animations for a playful, app-specific intro flow.
 
 ## Tech Stack
@@ -47,7 +47,7 @@ Both talk to a shared Go API backed by PostgreSQL (with PostGIS for geospatial m
 | Animations | `lottie-react-native`, `gsap`, `react-native-svg` |
 | Auth | `@react-native-firebase/auth` — phone OTP |
 | Maps | `react-native-maps`, Google Directions via `@mapbox/polyline` |
-| Payments | `react-native-razorpay` |
+| Payments | `react-native-cashfree-pg-sdk` |
 | Fonts | Plus Jakarta Sans, Qurova (brand wordmark) |
 
 ### Backend (`App/househelp-api`)
@@ -122,7 +122,7 @@ ZopMop/
 - **Go** 1.22+
 - **Docker** (for local Postgres + Redis)
 - **Firebase project** with phone auth enabled (`GoogleService-Info.plist` / `google-services.json`)
-- **Razorpay** test key (optional, for payments)
+- **Cashfree** sandbox keys (App ID + Secret) for end-to-end payment testing. Backend uses both; the RN app needs only the App ID.
 
 ### Backend
 
@@ -161,7 +161,7 @@ npx expo run:android
 npx expo start --clear
 ```
 
-A dev client build is required (not Expo Go) because the app ships custom native modules: Firebase, Razorpay, Maps, Lottie, SVG.
+A dev client build is required (not Expo Go) because the app ships custom native modules: Firebase, Cashfree PG, Maps, Lottie, SVG.
 
 ### Environment
 
@@ -170,7 +170,8 @@ Set in `App/zopmop-app/.env`:
 ```
 EXPO_PUBLIC_API_URL=http://192.168.x.x:8080
 GOOGLE_MAPS_API_KEY=...
-EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_test_...
+EXPO_PUBLIC_CASHFREE_PG_APP_ID=TEST...
+EXPO_PUBLIC_CASHFREE_ENV=sandbox
 ```
 
 Use your machine's LAN IP for `EXPO_PUBLIC_API_URL` when running on a physical device.
@@ -195,6 +196,159 @@ Each screen overlays form elements on top of a full-screen `.lottie` asset. Navi
 - **Animations** prefer Lottie for complex sequences, `Animated` / `gsap` for incidental opacity / transforms.
 - **Security**: short-lived tokens are held in `pendingAuthStore` (in-memory only) and never serialized to disk through React Navigation state.
 - **Graph-powered navigation** — the repo includes a code-review knowledge graph (`code-review-graph` MCP tools) for structural queries; use it instead of grep when exploring.
+
+## Payments — Cashfree PG
+
+Single-gateway architecture on Cashfree. Cashfree PG (`api.cashfree.com/pg`) handles
+collection (orders, hosted checkout, webhooks, refunds). Cashfree Payouts
+(`payout-api.cashfree.com`) is retained for VPA validation today and helper
+disbursement later. Razorpay is excised.
+
+```
+   ┌──────────┐  POST /payments/cashfree/order   ┌──────────┐
+   │  RN app  │ ───────────────────────────────▶ │  backend │
+   └──────────┘ ◀─ payment_session_id ────────── └──────────┘
+        │                                              │ POST /orders
+        │ doWebPayment(payment_session_id)             ▼
+        │                                        ┌──────────┐
+        ▼                                        │ Cashfree │
+   ┌──────────┐                                  │   PG     │
+   │ Cashfree │                                  └──────────┘
+   │  hosted  │ ◀──── card / UPI / netbanking ───┐
+   │ checkout │                                  │
+   └──────────┘ ─── webhook (HMAC-signed) ───▶ /payments/cashfree/webhook
+                                                      │
+   GET /payments/cashfree/orders/:id/status ─────────▶ backend
+   (RN app polls every 3s for up to 60s)              │
+                                                      ▼
+                                                 ledger + outbox
+```
+
+### Required env vars (househelp-api)
+
+| Var | Purpose | Local dev |
+|---|---|---|
+| `CASHFREE_PG_APP_ID` | Cashfree PG app id (Dashboard → Developers → API Keys) | required |
+| `CASHFREE_PG_SECRET_KEY` | Matching secret | required |
+| `CASHFREE_PG_ENV` | `sandbox` or `production` | `sandbox` |
+| `CASHFREE_PG_WEBHOOK_SECRET` | Webhook signing secret (defaults to `CASHFREE_PG_SECRET_KEY`) | optional |
+| `PUBLIC_BASE_URL` | Public https URL of the API; used to build the webhook callback | required (use ngrok locally) |
+
+### Local webhook setup
+
+1. Install ngrok: `brew install ngrok`
+2. Run backend: `go run ./cmd/api` from `App/househelp-api`
+3. Tunnel: `ngrok http 8080`
+4. Set `PUBLIC_BASE_URL` to the printed `https://*.ngrok-free.app`
+5. In Cashfree Dashboard → Developers → Webhooks, set URL to `<ngrok-url>/payments/cashfree/webhook`
+6. Click "Send Test" — you should see `[cashfree] merchant dashboard test webhook acknowledged` in the API log
+
+### Webhook signature
+
+Signing string = `timestamp + raw_body` (no separator). HMAC-SHA256 with
+`CASHFREE_PG_WEBHOOK_SECRET`. Base64-encoded. Replay window ±300s. The handler
+reads `c.Body()` *before* parsing so signature computation matches Cashfree's
+exact byte sequence.
+
+### Idempotency
+
+Every webhook dispatch runs inside `payments.ConsumeOnceTx` — a single Postgres
+transaction that atomically claims the `event_id` AND runs the business logic.
+Crash between ledger update and outbox emit rolls both back; Cashfree's retry
+re-runs from scratch. Migration `070_event_outbox_dedupe.sql` adds a unique
+index on `event_outbox(payload->>'payment_id')` for `booking.paid` /
+`wallet.topped_up` events as belt-and-suspenders.
+
+## Wallet (closed-loop)
+
+Schema: `migrations/067_wallets.sql` (`wallets` + `wallet_transactions`).
+
+### Closed-loop guarantees
+
+- **No P2P transfers.** No kind in `wallet_transactions.kind` enum allows
+  user-to-user movement.
+- **No withdrawal-to-bank.** No route exists; refund of a wallet-paid booking
+  credits back into the wallet (kind=`refund_credit`) by design.
+- **No third-party payments.** Wallet funds are only spendable through
+  `kind='spend'`, which the service-layer validation requires a `booking_id`
+  for. The booking belongs to a Zopmop service, gated by the matching engine.
+- **Money in only via Cashfree topup** (kind=`topup`, requires
+  `payment_id` referencing the Cashfree-funded `payments` row) or refund
+  credit / admin adjustment.
+
+This keeps Zopmop outside RBI Prepaid Payment Instrument licensing scope —
+closed-loop instruments don't require RBI authorisation under the Master
+Direction on PPIs.
+
+### Race protection
+
+`Repository.ApplyTransactionTx` locks the `wallets` row with
+`SELECT … FOR UPDATE` before computing the new balance. Two concurrent debits
+on the same wallet are serialised at the row level. Test:
+`TestApplyTransactionTx_RaceCondition` runs 50 × 2 concurrent debits and
+asserts exactly one succeeds per iteration.
+
+### Topup limits
+
+`100 paise (₹1)` ≤ amount ≤ `500_000 paise (₹5,000)`, enforced in
+`payments.Handler.createCashfreeOrderForWalletTopup`. Returns 402 with code
+`amount_too_low` / `amount_too_high`.
+
+### Routes
+
+| Method | Path | Behavior |
+|---|---|---|
+| `GET` | `/wallet` | `{ balance_paise }` |
+| `GET` | `/wallet/transactions?limit=20&before=<rfc3339>&before_id=<uuid>` | reverse-chrono history with cursor pagination |
+| `POST` | `/wallet/topup` | body `{ amount_paise }`; delegates to payments handler with `payment_source=wallet_topup` |
+
+## Migrations
+
+Plain SQL files under `App/househelp-api/migrations/`. No Go migration tool —
+apply manually via `psql`.
+
+| File | Summary |
+|---|---|
+| `064_add_email_to_users.sql` | Adds optional `users.email` column for Cashfree customer details |
+| `065_bookings_amount_paise.sql` | Renames `bookings.price_cents`→`amount_paise`, `discount_cents`→`discount_paise`, widens to `BIGINT` |
+| `066_cashfree_orders.sql` | Per-payment Cashfree order metadata (`cf_order_id`, `payment_session_id`, `expires_at`) |
+| `067_wallets.sql` | `wallets` + `wallet_transactions` (closed-loop) |
+| `068_payments_nullable_booking.sql` | Loosens `payments.booking_id NOT NULL` so wallet topups can land |
+| `069_event_outbox.sql` | Transactional outbox (status state machine, version, available_at) |
+| `070_event_outbox_dedupe.sql` | Unique index on `event_outbox(payload->>'payment_id')` for booking.paid / wallet.topped_up |
+
+### Manual apply order
+
+1. Deploy the Go binary built from this commit (or atomically with step 2).
+2. Run migrations via `psql` in numerical order.
+3. Restart backend.
+
+**Migration 065 is binary-aware**: applying it before deploying matching code
+breaks every booking read because deployed SQL strings still reference
+`price_cents` / `discount_cents`. Single-PR deploys are safe; canary deploys
+must hold the migration until all old replicas drain.
+
+### Known *_cents naming drift
+
+`service_categories.base_price_cents` / `mrp_cents`, `cart_items.price_cents`,
+`booking_services.price_cents`, and `analytics_*.revenue_*_cents` all store
+**paise** despite the `_cents` suffix. The values are correct; the names lie.
+Do not multiply when reading. Future cleanup will rename in a separate sweep.
+
+## Tech Debt
+
+- COD placeholder row in `payments` for direct-pay bookings — `recordPaymentIntent`
+  inserts a `gateway='cod'` row that stays `pending` forever when the customer
+  pays via Cashfree. Pre-existing; needs a sweep.
+- JSON-tag back-compat — Go field names are `AmountPaise` / `DiscountPaise`
+  but JSON tags still read `price_cents` / `discount_cents`. TODO comment on
+  every site says "rename after mobile v2 ships."
+- Naming drift on `*_cents` columns outside `bookings` (see Migrations section).
+- Outbox drainer worker — `event_outbox` accumulates rows with no consumer.
+  Will write when the CRM swap or analytics pipeline lands.
+- Cashfree S2S / custom UI — currently using hosted checkout via
+  `doWebPayment`. S2S enablement pending from Cashfree; RN side will swap
+  when it lands (backend already supports both flows).
 
 ## Roadmap
 
