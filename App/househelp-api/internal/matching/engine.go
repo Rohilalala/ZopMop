@@ -20,6 +20,11 @@ import (
 // roundCoord rounds a lat/lng to 2 decimals (~1.1 km) for safe logging.
 func roundCoord(x float64) float64 { return math.Round(x*100) / 100 }
 
+// Eligibility rule is purely "≤ MaxWalkMinutes walking via Google Maps".
+// No crow-fly radius gate. We pull the closest N pros from Postgres only as
+// a soft volume bound so we do not hand a cartesian product to the Maps API.
+const candidateFetchLimit = 50
+
 // Redis key templates for match results.
 //
 //	match:b:<bookingID>         → JSON array of HelperMatch; TTL = timeout_seconds
@@ -32,11 +37,11 @@ const (
 )
 
 // Engine handles the full matching pipeline:
-//  1. Hex-cell pre-filter  — narrows the search area via Redis GEOSEARCH
-//  2. Postgres enrich      — fetches availability, rating, active booking count
-//  3. Staleness check      — drops helpers whose location TTL marker has expired
-//  4. Score & rank         — multi-factor composite score via score.go
-//  5. Store results        — writes matches to Redis for helpers to poll
+//  1. Postgres fetch      — closest N is_available helpers via PostGIS, ordered by distance
+//  2. Staleness check     — drops helpers whose Redis location TTL marker has expired
+//  3. Walking-time gate   — Google Maps Distance Matrix; only ≤ MaxWalkMinutes pros survive
+//  4. Score & rank        — multi-factor composite score via score.go
+//  5. Store results       — writes matches to Redis for helpers to poll
 //
 // Only instant bookings flow through the Engine (via Batcher).
 // Scheduled bookings are matched separately, closer to their scheduled_time.
@@ -44,7 +49,7 @@ type Engine struct {
 	db        *pgxpool.Pool
 	rdb       *redis.Client
 	configSvc *config_manager.Service
-	maps      *googlemaps.Client // optional; nil = skip walking-time filter
+	maps      *googlemaps.Client // required for instant booking (see SetMapsClient)
 }
 
 // NewEngine creates a ready-to-use matching engine.
@@ -73,9 +78,11 @@ func (e *Engine) getConfig(ctx context.Context) *config_manager.MatchingConfig {
 // when it needs an immediate result (e.g. admin dashboard, fallback path).
 // For the normal flow, bookings go through the Batcher instead.
 //
-// The function implements the two-phase search described in the stub:
-//  1. Search within radius_km.
-//  2. If no qualified helpers found, wait and retry with max_radius_km.
+// The only eligibility rule is "the helper can walk to the customer in
+// `MaxWalkMinutes` or less", evaluated by the Google Maps walking-time
+// filter. There is no crow-fly radius gate. We return every eligible pro
+// (no notification cap) so that as the chain expires/rejects, the booking
+// can fall through to the next pro instead of dead-ending at a static top-N.
 func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]HelperMatch, error) {
 	cfg := e.getConfig(ctx)
 
@@ -84,32 +91,25 @@ func (e *Engine) FindBestHelpers(ctx context.Context, lat, lng float64) ([]Helpe
 		return nil, err
 	}
 
-	// Phase 2: expand radius if nothing found in the initial search.
-	if len(candidates) == 0 && cfg.MaxRadiusKm > cfg.RadiusKm {
-		log.Info().
-			Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
-			Float64("initial_radius_km", cfg.RadiusKm).
-			Float64("expanded_radius_km", cfg.MaxRadiusKm).
-			Msg("[engine] no helpers in initial radius — expanding")
-
-		candidates, err = e.geoSearchCandidates(ctx, lat, lng, cfg.MaxRadiusKm, cfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	candidates = e.filterByWalkingTime(ctx, candidates, lat, lng, cfg.MaxWalkMinutes)
 	RankCandidates(candidates)
-	candidates = e.filterByWalkingTime(ctx, candidates, lat, lng)
-	return ToHelperMatches(candidates, cfg.MaxHelpersNotified), nil
+	return ToHelperMatches(candidates, 0), nil
 }
 
 // GetHelperInvites returns the booking IDs a helper has been matched to.
 // Helpers call this to discover which pending bookings they can accept.
+// Capped at 100 entries — the set should never grow that large in practice
+// (TTL prunes stale entries) but a runaway dispatch loop must not be able
+// to drown the pro app in invites.
 func (e *Engine) GetHelperInvites(ctx context.Context, helperID string) ([]string, error) {
+	const maxInvites = 100
 	key := fmt.Sprintf(matchHelperKeyFmt, helperID)
 	members, err := e.rdb.SMembers(ctx, key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read helper invites: %w", err)
+	}
+	if len(members) > maxInvites {
+		members = members[:maxInvites]
 	}
 	return members, nil
 }
@@ -178,94 +178,17 @@ func (e *Engine) ClearMatchOnAccept(ctx context.Context, bookingID string, accep
 
 // ── Internal pipeline ─────────────────────────────────────────────────────────
 
-// fetchAndScoreCandidates runs the full pipeline for a single lat/lng:
-// geo-search → postgres enrich → stale filter → score.
+// fetchAndScoreCandidates pulls the closest available helpers from Postgres,
+// drops any whose live-location TTL marker has expired, and scores the
+// survivors. There is no crow-fly radius gate — eligibility is decided
+// downstream by the walking-time filter against the Google Maps API. The
+// Postgres LIMIT exists only to bound how many helpers we hand to the Maps
+// API per booking.
 func (e *Engine) fetchAndScoreCandidates(ctx context.Context, lat, lng float64) ([]HelperCandidate, error) {
-	cfg := e.getConfig(ctx)
-	return e.geoSearchCandidates(ctx, lat, lng, cfg.RadiusKm, cfg)
-}
-
-// geoSearchCandidates performs the three-stage pipeline for a given radius.
-func (e *Engine) geoSearchCandidates(
-	ctx context.Context,
-	lat, lng, radiusKm float64,
-	cfg *config_manager.MatchingConfig,
-) ([]HelperCandidate, error) {
-	// ── Stage 1: Redis GEOSEARCH ──────────────────────────────────────────────
-	// Fetch up to 4× max helpers so Postgres filtering still leaves enough.
-	fetchCount := cfg.MaxHelpersNotified * 4
-	if fetchCount < 20 {
-		fetchCount = 20
-	}
-
-	geoResults, err := e.rdb.GeoSearchLocation(ctx, "helpers:locations",
-		&redis.GeoSearchLocationQuery{
-			GeoSearchQuery: redis.GeoSearchQuery{
-				Longitude:  lng,
-				Latitude:   lat,
-				Radius:     radiusKm,
-				RadiusUnit: "km",
-				Sort:       "ASC",
-				Count:      fetchCount,
-			},
-			WithCoord: true,
-			WithDist:  true,
-		},
-	).Result()
-	if err != nil {
-		log.Error().Err(err).
-			Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
-			Msg("[engine] Redis GEOSEARCH failed — falling back to Postgres haversine")
-		return e.postgresGeoFallback(ctx, lat, lng, radiusKm, cfg)
-	}
-	log.Debug().
-		Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
-		Float64("radius_km", radiusKm).
-		Int("geo_results", len(geoResults)).
-		Msg("[engine] GEOSEARCH result")
-	if len(geoResults) == 0 {
-		log.Warn().Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).Float64("radius_km", radiusKm).
-			Msg("[engine] no helpers in Redis geo index")
-		return nil, nil
-	}
-
-	// Build helper ID list, distance map, and coordinate map.
-	helperIDs := make([]string, len(geoResults))
-	distByID := make(map[string]float64, len(geoResults))
-	coordByID := make(map[string][2]float64, len(geoResults)) // [lat, lng]
-	for i, r := range geoResults {
-		helperIDs[i] = r.Name
-		distByID[r.Name] = r.Dist // km, as returned by Redis
-		coordByID[r.Name] = [2]float64{r.Latitude, r.Longitude}
-	}
-
-	// ── Stage 2: Postgres enrich + filter ────────────────────────────────────
 	minRatingStr, _ := e.configSvc.GetConfig(ctx, config_manager.ConfigHelperMinRatingToAppear)
 	minRating, _ := strconv.ParseFloat(minRatingStr, 64)
 	if minRating <= 0 {
 		minRating = 3.0
-	}
-
-	// Pipeline TTL-marker EXISTS for every geo-search hit in one round-trip.
-	// Was: one EXISTS per Postgres row inside the scan loop (N round-trips).
-	// Now: a single pipelined batch keyed on the geoResults helperIDs.
-	aliveByID := make(map[string]bool, len(helperIDs))
-	{
-		pipe := e.rdb.Pipeline()
-		cmds := make(map[string]*redis.IntCmd, len(helperIDs))
-		for _, id := range helperIDs {
-			cmds[id] = pipe.Exists(ctx, fmt.Sprintf("helper:active:%s", id))
-		}
-		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil && !errors.Is(pipeErr, redis.Nil) {
-			log.Warn().Err(pipeErr).Msg("[engine] pipelined helper:active EXISTS failed; treating all as alive")
-			for _, id := range helperIDs {
-				aliveByID[id] = true
-			}
-		} else {
-			for id, cmd := range cmds {
-				aliveByID[id] = cmd.Val() > 0
-			}
-		}
 	}
 
 	rows, err := e.db.Query(ctx, `
@@ -273,7 +196,13 @@ func (e *Engine) geoSearchCandidates(
 			h.id,
 			COALESCE(h.rating, 5.0)    AS rating,
 			COALESCE(h.total_jobs, 0)  AS total_jobs,
-			COALESCE(active.cnt, 0)    AS active_bookings
+			COALESCE(active.cnt, 0)    AS active_bookings,
+			ST_Y(h.location::geometry) AS cur_lat,
+			ST_X(h.location::geometry) AS cur_lng,
+			ST_Distance(
+				h.location,
+				ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+			) / 1000.0                 AS dist_km
 		FROM helpers h
 		LEFT JOIN (
 			SELECT helper_id, COUNT(*) AS cnt
@@ -281,46 +210,74 @@ func (e *Engine) geoSearchCandidates(
 			WHERE status IN ('accepted', 'in_progress')
 			GROUP BY helper_id
 		) active ON active.helper_id = h.id
-		WHERE h.id = ANY($1::uuid[])
-		  AND h.is_available = true
-		  AND COALESCE(h.rating, 5.0) >= $2
-	`, helperIDs, minRating)
+		WHERE h.is_available = true
+		  AND h.location IS NOT NULL
+		  AND COALESCE(h.rating, 5.0) >= $3
+		ORDER BY h.location <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
+		LIMIT $4
+	`, lat, lng, minRating, candidateFetchLimit)
 	if err != nil {
-		return nil, fmt.Errorf("Postgres enrichment failed: %w", err)
+		return nil, fmt.Errorf("candidate fetch failed: %w", err)
 	}
 	defer rows.Close()
 
-	// ── Stage 3: Stale location check + score ─────────────────────────────────
-	// A helper whose TTL marker has expired was last seen > 5 minutes ago.
-	// We drop them to avoid assigning a booking to someone who may have gone
-	// offline. The aliveByID map was filled by the single pipelined EXISTS above.
-	var candidates []HelperCandidate
+	var (
+		candidates []HelperCandidate
+		ids        []string
+	)
 	for rows.Next() {
 		var c HelperCandidate
-		if err := rows.Scan(&c.HelperID, &c.Rating, &c.TotalJobs, &c.ActiveBookings); err != nil {
+		if err := rows.Scan(&c.HelperID, &c.Rating, &c.TotalJobs, &c.ActiveBookings,
+			&c.Lat, &c.Lng, &c.DistanceKm); err != nil {
 			log.Warn().Err(err).Msg("[engine] failed to scan helper row")
 			continue
 		}
-
-		if !aliveByID[c.HelperID] {
-			log.Debug().Str("helper_id", c.HelperID).
-				Msg("[engine] dropping stale helper — location TTL expired")
-			continue
-		}
-
-		c.DistanceKm = distByID[c.HelperID]
-		coord := coordByID[c.HelperID]
-		c.Lat = coord[0]
-		c.Lng = coord[1]
-		ScoreCandidate(&c)
+		ids = append(ids, c.HelperID)
 		candidates = append(candidates, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating helper rows: %w", err)
 	}
-	log.Debug().Int("candidates_after_filter", len(candidates)).Msg("[engine] scored candidates")
 
-	// Update per-cell supply counter for demand-ratio calculations.
+	// Drop helpers whose Redis active-marker has expired (no location ping in
+	// the last 5 minutes). This is the "currently online" gate.
+	if len(ids) > 0 {
+		aliveByID := make(map[string]bool, len(ids))
+		pipe := e.rdb.Pipeline()
+		cmds := make(map[string]*redis.IntCmd, len(ids))
+		for _, id := range ids {
+			cmds[id] = pipe.Exists(ctx, fmt.Sprintf("helper:active:%s", id))
+		}
+		if _, pipeErr := pipe.Exec(ctx); pipeErr != nil && !errors.Is(pipeErr, redis.Nil) {
+			log.Warn().Err(pipeErr).Msg("[engine] pipelined helper:active EXISTS failed; treating all as alive")
+			for _, id := range ids {
+				aliveByID[id] = true
+			}
+		} else {
+			for id, cmd := range cmds {
+				aliveByID[id] = cmd.Val() > 0
+			}
+		}
+		fresh := candidates[:0]
+		for _, c := range candidates {
+			if !aliveByID[c.HelperID] {
+				log.Debug().Str("helper_id", c.HelperID).
+					Msg("[engine] dropping stale helper — location TTL expired")
+				continue
+			}
+			fresh = append(fresh, c)
+		}
+		candidates = fresh
+	}
+
+	for i := range candidates {
+		ScoreCandidate(&candidates[i])
+	}
+	log.Debug().
+		Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
+		Int("candidates", len(candidates)).
+		Msg("[engine] scored candidates")
+
 	candidatesCount := len(candidates)
 	mw.SafeGo("matching.update_supply_counter", func() {
 		e.updateSupplyCounter(context.Background(), lat, lng, candidatesCount)
@@ -428,6 +385,10 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 		log.Warn().Err(expErr).Msg("[engine] failed to auto-cancel expired pending bookings")
 	}
 
+	// Same payment-state gate as the customer-facing list + scheduled
+	// dispatcher. Cashfree-pending bookings only enter the candidate set
+	// after the webhook flips payment_status='paid'. Wallet-pay (stamped
+	// paid inline) and legacy/COD (NULL payment_method) continue to surface.
 	rows, err := e.db.Query(ctx, `
 		SELECT id, customer_id, lat::float8, lng::float8, COALESCE(hex_cell_id, '')
 		FROM bookings
@@ -435,6 +396,7 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 		  AND (matched_at IS NULL OR matched_at < NOW() - INTERVAL '30 seconds')
 		  AND match_attempts < 5
 		  AND created_at > NOW() - INTERVAL '10 minutes'
+		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
 		ORDER BY created_at ASC
 		LIMIT 50
 	`)
@@ -456,47 +418,52 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 }
 
 // SetMapsClient attaches a Google Maps client for walking-time validation.
-// Pass nil to disable the filter (default behaviour when no API key is set).
+// Instant booking is gated entirely by this client — passing nil disables
+// instant matching outright, since the spec eligibility rule (≤ MaxWalkMinutes
+// walking via Maps) cannot be evaluated without it.
 func (e *Engine) SetMapsClient(c *googlemaps.Client) { e.maps = c }
 
-// filterByWalkingTime removes candidates whose walking travel time to the
-// booking location exceeds 30 minutes.  It only checks the top 3 candidates
-// (the rest are already unlikely to be assigned) and runs checks in parallel
-// with a 5-second timeout so it never blocks the matching pipeline.
-// Candidates with an unavailable result (API down, no key) are kept.
+// filterByWalkingTime is the sole eligibility gate. It calls Google Maps
+// for every candidate (no top-N truncation) in parallel, drops anyone whose
+// walking ETA exceeds the budget, AND drops anyone whose ETA is unknown
+// (mins == 0 means API failure / ZERO_RESULTS / no key — fail-closed, since
+// inviting an unverified pro violates the "≤ N min walk" guarantee).
+//
+// If the Maps client is nil, filtering is impossible and we return zero
+// candidates so the booking is left unmatched and surfaces as no-pros-found
+// instead of being routed to a pro who may be hours away.
 func (e *Engine) filterByWalkingTime(
 	ctx context.Context,
 	candidates []HelperCandidate,
 	destLat, destLng float64,
+	maxWalkMinutes int,
 ) []HelperCandidate {
-	if e.maps == nil || len(candidates) == 0 {
+	if len(candidates) == 0 {
 		return candidates
 	}
-
-	checkCount := len(candidates)
-	if checkCount > 3 {
-		checkCount = 3
+	if e.maps == nil {
+		log.Error().
+			Msg("[engine] walking-time filter has no Maps client — refusing to match (set GOOGLE_MAPS_API_KEY)")
+		return nil
 	}
-	toCheck := candidates[:checkCount]
-	rest := candidates[checkCount:]
 
 	type res struct {
 		idx     int
 		minutes int
 	}
-	ch := make(chan res, checkCount)
+	ch := make(chan res, len(candidates))
 
-	tCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	for i, c := range toCheck {
+	for i, c := range candidates {
 		go func(i int, c HelperCandidate) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Error().Interface("panic", r).
 						Str("helper_id", c.HelperID).
-						Msg("[engine] panic in walking time check — keeping candidate")
-					ch <- res{i, 0} // 0 = keep candidate (fail open)
+						Msg("[engine] panic in walking time check — dropping candidate")
+					ch <- res{i, 0}
 				}
 			}()
 			mins, _ := e.maps.GetTravelMinutes(tCtx, c.Lat, c.Lng, destLat, destLng)
@@ -504,120 +471,40 @@ func (e *Engine) filterByWalkingTime(
 		}(i, c)
 	}
 
-	minutesByIdx := make(map[int]int, checkCount)
-	for range toCheck {
+	minutesByIdx := make(map[int]int, len(candidates))
+	for range candidates {
 		r := <-ch
 		minutesByIdx[r.idx] = r.minutes
 	}
 
 	filtered := make([]HelperCandidate, 0, len(candidates))
-	for i := range toCheck {
+	for i := range candidates {
 		mins := minutesByIdx[i]
-		toCheck[i].WalkingMinutes = mins
-		if mins == 0 || mins <= 30 {
-			filtered = append(filtered, toCheck[i])
-		} else {
+		candidates[i].WalkingMinutes = mins
+		switch {
+		case mins == 0:
+			log.Warn().
+				Str("helper_id", candidates[i].HelperID).
+				Float64("crow_km", candidates[i].DistanceKm).
+				Msg("[engine] dropping candidate — Maps walking-time unknown (fail-closed)")
+		case mins > maxWalkMinutes:
 			log.Debug().
-				Str("helper_id", toCheck[i].HelperID).
+				Str("helper_id", candidates[i].HelperID).
 				Int("walking_minutes", mins).
-				Msg("[engine] helper filtered — walking time > 30 min")
+				Int("max_walk_minutes", maxWalkMinutes).
+				Msg("[engine] helper filtered — walking time over budget")
+		default:
+			filtered = append(filtered, candidates[i])
 		}
 	}
-	filtered = append(filtered, rest...)
 	return filtered
-}
-
-// postgresGeoFallback is used when Redis GEOSEARCH is unavailable.
-// It queries helpers directly using a haversine distance calculation on
-// current_lat/current_lng columns. Slower than Redis GEO but correct.
-// The Redis staleness TTL check is skipped — is_available flag is used instead.
-func (e *Engine) postgresGeoFallback(
-	ctx context.Context,
-	lat, lng, radiusKm float64,
-	cfg *config_manager.MatchingConfig,
-) ([]HelperCandidate, error) {
-	minRatingStr, _ := e.configSvc.GetConfig(ctx, config_manager.ConfigHelperMinRatingToAppear)
-	minRating, _ := strconv.ParseFloat(minRatingStr, 64)
-	if minRating <= 0 {
-		minRating = 3.0
-	}
-
-	fetchCount := cfg.MaxHelpersNotified * 4
-	if fetchCount < 20 {
-		fetchCount = 20
-	}
-
-	// Uses ST_DWithin on the geography column so the GIST index
-	// (idx_helpers_location) accelerates the radius filter. Distance is in
-	// meters from PostGIS; we convert to km for the candidate struct.
-	rows, err := e.db.Query(ctx, `
-		SELECT
-			h.id,
-			COALESCE(h.rating, 5.0)   AS rating,
-			COALESCE(h.total_jobs, 0) AS total_jobs,
-			COALESCE(active.cnt, 0)   AS active_bookings,
-			ST_Y(h.location::geometry) AS current_lat,
-			ST_X(h.location::geometry) AS current_lng,
-			ST_Distance(
-				h.location,
-				ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
-			) / 1000.0 AS dist_km
-		FROM helpers h
-		LEFT JOIN (
-			SELECT helper_id, COUNT(*) AS cnt
-			FROM bookings
-			WHERE status IN ('accepted', 'in_progress')
-			GROUP BY helper_id
-		) active ON active.helper_id = h.id
-		WHERE h.is_available = true
-		  AND h.location IS NOT NULL
-		  AND COALESCE(h.rating, 5.0) >= $3
-		  AND ST_DWithin(
-				h.location,
-				ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
-				$4 * 1000.0
-		      )
-		ORDER BY h.location <-> ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
-		LIMIT $5
-	`, lat, lng, minRating, radiusKm, fetchCount)
-	if err != nil {
-		return nil, fmt.Errorf("Postgres geo fallback failed: %w", err)
-	}
-	defer rows.Close()
-
-	var candidates []HelperCandidate
-	for rows.Next() {
-		var c HelperCandidate
-		if err := rows.Scan(&c.HelperID, &c.Rating, &c.TotalJobs, &c.ActiveBookings,
-			&c.Lat, &c.Lng, &c.DistanceKm); err != nil {
-			log.Warn().Err(err).Msg("[engine] fallback: failed to scan helper row")
-			continue
-		}
-		ScoreCandidate(&c)
-		candidates = append(candidates, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("Postgres geo fallback iteration error: %w", err)
-	}
-
-	log.Warn().
-		Float64("lat", roundCoord(lat)).Float64("lng", roundCoord(lng)).
-		Int("candidates", len(candidates)).
-		Msg("[engine] Postgres geo fallback complete")
-
-	fallbackCount := len(candidates)
-	mw.SafeGo("matching.update_supply_counter_fallback", func() {
-		e.updateSupplyCounter(context.Background(), lat, lng, fallbackCount)
-	})
-	return candidates, nil
 }
 
 // ── defaults ──────────────────────────────────────────────────────────────────
 
 func defaultCfg() *config_manager.MatchingConfig {
 	return &config_manager.MatchingConfig{
-		RadiusKm:           5.0,
-		MaxRadiusKm:        15.0,
+		MaxWalkMinutes:     25,
 		TimeoutSeconds:     90,
 		MaxHelpersNotified: 3,
 	}

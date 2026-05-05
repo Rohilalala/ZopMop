@@ -14,13 +14,13 @@ type HelperMatch struct {
 }
 
 // MatchRequest is used by callers (e.g. booking service) to request matching.
+// Spatial bounds come from the engine's MatchingConfig (max_walk_minutes), not
+// from the request — there is no per-request radius override.
 type MatchRequest struct {
 	BookingID  string  `json:"booking_id"`
 	CustomerID string  `json:"customer_id"`
 	Lat        float64 `json:"lat"`
 	Lng        float64 `json:"lng"`
-	// RadiusKm is optional; 0 means use config default.
-	RadiusKm float64 `json:"radius_km"`
 }
 
 // HelperCandidate is an intermediate representation during the scoring pipeline.

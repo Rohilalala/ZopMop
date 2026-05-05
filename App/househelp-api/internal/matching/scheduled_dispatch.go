@@ -142,6 +142,12 @@ func (s *ScheduledDispatcher) RunOnce(ctx context.Context) (RunSummary, error) {
 //   AND is_stealth_instant = false
 //   AND helper_id IS NULL
 //   AND scheduled_time BETWEEN now() + 6h AND now() + 30h
+//   AND (payment_method != 'cashfree' OR payment_status = 'paid')
+//
+// The payment-state gate hides Cashfree-pending unpaid bookings — same
+// filter the customer-facing list applies. Without it the dispatcher
+// would invite helpers for a booking the customer hasn't actually paid
+// for yet (or never will, if they bailed on the SDK sheet).
 //
 // We don't actually update the row inside this tx — InviteChain mutates
 // state via its own writes. The lock just prevents two cron instances from
@@ -164,6 +170,7 @@ func (s *ScheduledDispatcher) claimNext(ctx context.Context) (bookingID, custome
 		  AND helper_id           IS NULL
 		  AND scheduled_time      BETWEEN now() + interval '6 hours'
 		                              AND now() + interval '30 hours'
+		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
 		ORDER BY scheduled_time ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED

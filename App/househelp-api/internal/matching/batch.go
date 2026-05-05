@@ -140,6 +140,7 @@ func (b *Batcher) processBatch() {
 	log.Info().Int("bookings", len(batch)).Msg("[batcher] processing batch")
 
 	// Score all candidates for every booking in the batch.
+	cfg := b.engine.getConfig(ctx)
 	candidatesByBooking := make(map[string][]HelperCandidate, len(batch))
 	for _, entry := range batch {
 		candidates, err := b.engine.fetchAndScoreCandidates(ctx, entry.Lat, entry.Lng)
@@ -149,16 +150,15 @@ func (b *Batcher) processBatch() {
 				Msg("[batcher] failed to fetch candidates")
 			continue
 		}
-		candidates = b.engine.filterByWalkingTime(ctx, candidates, entry.Lat, entry.Lng)
+		candidates = b.engine.filterByWalkingTime(ctx, candidates, entry.Lat, entry.Lng, cfg.MaxWalkMinutes)
 		candidatesByBooking[entry.BookingID] = candidates
 	}
 
-	// Global greedy assignment — one helper per booking per window.
-	maxPerBooking := b.engine.getConfig(ctx).MaxHelpersNotified
-	if maxPerBooking < 1 {
-		maxPerBooking = 3
-	}
-	assignments := GreedyAssign(batch, candidatesByBooking, maxPerBooking)
+	// Dynamic cap: keep every walk-eligible pro per booking. As pros reject
+	// or their per-pro invite expires, the chain (matchHelperKeyFmt set) falls
+	// through to the next ranked pro automatically rather than dead-ending at
+	// a fixed top-N. Zero = no cap inside ToHelperMatches.
+	assignments := GreedyAssign(batch, candidatesByBooking, 0)
 
 	// Persist assignments to Redis and update match_attempts in Postgres.
 	for bookingID, matches := range assignments {

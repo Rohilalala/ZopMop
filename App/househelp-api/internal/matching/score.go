@@ -108,8 +108,11 @@ func ToHelperMatches(cs []HelperCandidate, limit int) []HelperMatch {
 // prevent over-notification.  This is O(B × H) which is fast enough when
 // batches are small (< 20 bookings, < 50 helpers in a cell neighbourhood).
 //
-// Returns a map of bookingID → []HelperMatch (ordered, best first) so the
-// caller can notify the top-N helpers per booking.
+// `maxPerBooking == 0` means no cap — every walk-eligible pro is assigned so
+// the invite chain can fall through on rejection / expiry without re-running
+// the matcher. A positive value enforces a hard top-N per booking.
+//
+// Returns a map of bookingID → []HelperMatch (ordered, best first).
 func GreedyAssign(
 	bookings []BatchEntry,
 	// candidatesByBooking maps bookingID → scored+ranked candidates
@@ -132,7 +135,7 @@ func GreedyAssign(
 			}
 			picks = append(picks, c)
 			assigned[c.HelperID] = true
-			if len(picks) >= maxPerBooking {
+			if maxPerBooking > 0 && len(picks) >= maxPerBooking {
 				break
 			}
 		}
