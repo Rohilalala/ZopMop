@@ -116,11 +116,6 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
-          name="PaymentMethods"
-          getComponent={() => require('../screens/main/PaymentMethodsScreen').default}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
           name="Offers"
           component={OffersScreen}
           options={{ animation: 'slide_from_right' }}

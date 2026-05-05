@@ -41,6 +41,15 @@ export interface CreateBookingPayload {
   address_id: string;
   time_slot_id: string;
   promo_code?: string;
+  /**
+   * Funding rail for the booking.
+   *   - "direct" (default when omitted) → backend creates a pending
+   *     payments row; client follows up with POST /payments/cashfree/order
+   *     to launch the SDK.
+   *   - "wallet" → backend debits the closed-loop wallet inline. Returns
+   *     402 INSUFFICIENT_WALLET_BALANCE on short balance.
+   */
+  payment_source?: 'direct' | 'wallet';
 }
 
 export async function createScheduledBooking(

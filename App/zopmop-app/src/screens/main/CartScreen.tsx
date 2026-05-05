@@ -14,7 +14,7 @@ import {
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
 import Svg, {
   Defs,
@@ -34,6 +34,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
 import { createScheduledBooking, getBookings } from '../../api/bookings';
+import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal from '../../components/SchedulingModal';
 import AddressPickerModal from '../../components/AddressPickerModal';
 import { promoStore } from '../../utils/promoStore';
@@ -84,6 +85,31 @@ export default function CartScreen() {
 
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
+
+  // Payment-source picker state. Direct = Cashfree drop sheet via Payment
+  // route. Wallet = backend debits inline at booking-create time.
+  const [paymentSource, setPaymentSource] = useState<'direct' | 'wallet'>('direct');
+  // null = haven't fetched yet; treat as unknown for UI gating purposes.
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
+
+  const refetchWalletBalance = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await getWalletBalance(token);
+      setWalletBalance(r.balance_paise);
+    } catch {
+      // Soft-fail: treat as 0 so the picker degrades gracefully when the
+      // wallet endpoint is unreachable (server outage, network blip).
+      // Customer can still pay-now; wallet card just shows insufficient.
+      setWalletBalance(0);
+    }
+  }, [token]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refetchWalletBalance();
+    }, [refetchWalletBalance]),
+  );
 
   const isRoomiesAddress =
     !!myGroup && !!selectedAddress && selectedAddress.id === myGroup.group.address_id;
@@ -183,6 +209,17 @@ export default function CartScreen() {
     if (!selectedSlotId) { showError('Please pick a date and time slot.', { title: 'No time selected' }); return; }
     if (itemCount === 0) return;
     if (bookingInFlight.current) return;
+
+    // Wallet pre-flight: defense in depth. Card B disables itself when
+    // balance < total, but a stale balance + race on the focus refetch
+    // could let the user submit anyway — catch here too.
+    if (paymentSource === 'wallet') {
+      if (walletBalance == null || walletBalance < totalCents) {
+        showError('Insufficient wallet balance.', { title: 'Top up first' });
+        return;
+      }
+    }
+
     haptics.medium();
 
     const doSplit = splitEnabled && !!myGroup && selectedMemberIds.size > 0;
@@ -195,6 +232,7 @@ export default function CartScreen() {
         address_id: selectedAddress.id,
         time_slot_id: selectedSlotId,
         ...(promoCode ? { promo_code: promoCode } : {}),
+        payment_source: paymentSource,
       });
 
       if (doSplit && myGroup) {
@@ -212,6 +250,21 @@ export default function CartScreen() {
       promoStore.clear();
       await refreshCart();
 
+      if (paymentSource === 'direct') {
+        // Booking exists in 'pending'. Hand off to the Cashfree drop
+        // sheet flow — PaymentScreen owns order creation + SDK launch.
+        navigation.replace('Payment', {
+          booking_id: created.id,
+          // JSON field is back-compat; value is paise (see backend
+          // migration 065). No * 100 conversion needed.
+          amount_paise: created.price_cents,
+        });
+        return;
+      }
+
+      // payment_source === 'wallet': backend has already debited the
+      // wallet inside the same tx as the booking insert + booking.paid
+      // outbox emit. Skip Cashfree entirely.
       navigation.replace('BookingConfirmed', {
         bookingId: created.id,
         totalCents,
@@ -219,8 +272,25 @@ export default function CartScreen() {
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
       });
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err?.response?.data?.message ?? err?.message ?? 'Something went wrong. Please try again.';
-      showError(msg, { title: 'Booking failed' });
+      const code: string | undefined = err?.response?.data?.code ?? err?.code;
+      const msg: string =
+        err?.response?.data?.error ??
+        err?.response?.data?.message ??
+        err?.message ??
+        'Something went wrong. Please try again.';
+
+      if (paymentSource === 'wallet' && code === 'INSUFFICIENT_WALLET_BALANCE') {
+        // Race: balance dropped below required between focus-refetch and
+        // submit. Don't auto-flip selection — that's hostile UX. Tell the
+        // user, refresh balance, leave them on Cart.
+        showError(
+          'Wallet balance dropped below required amount. Top up or switch to Pay now.',
+          { title: 'Insufficient balance' },
+        );
+        refetchWalletBalance();
+      } else {
+        showError(msg, { title: 'Booking failed' });
+      }
     } finally {
       setBooking(false);
       bookingInFlight.current = false;
@@ -228,6 +298,7 @@ export default function CartScreen() {
   }, [
     token, selectedAddress, selectedSlotId, itemCount, refreshCart, navigation,
     splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore, selectedSlotLabel,
+    paymentSource, walletBalance, refetchWalletBalance,
   ]);
 
   if (hydrating) {
@@ -490,6 +561,14 @@ export default function CartScreen() {
               <Text style={s.totalValue}>₹{(totalCents / 100).toFixed(0)}</Text>
             </View>
           </Card>
+
+          <SectionHeader>Pay with</SectionHeader>
+          <PaymentSourcePicker
+            selected={paymentSource}
+            onChange={setPaymentSource}
+            walletBalanceCents={walletBalance}
+            requiredCents={totalCents}
+          />
         </ScrollView>
 
         <View style={[s.payDock, { paddingBottom: 16 + insets.bottom }]}>
@@ -742,3 +821,137 @@ function FloatingZop() {
     </Animated.View>
   );
 }
+
+// PaymentSourcePicker — two-card chooser between Cashfree drop checkout
+// ("Pay now") and the closed-loop wallet ("Use wallet"). Wallet card
+// disables itself when the loaded balance is below the booking total.
+function PaymentSourcePicker({
+  selected,
+  onChange,
+  walletBalanceCents,
+  requiredCents,
+}: {
+  selected: 'direct' | 'wallet';
+  onChange: (next: 'direct' | 'wallet') => void;
+  walletBalanceCents: number | null;
+  requiredCents: number;
+}) {
+  const balanceKnown = walletBalanceCents != null;
+  const sufficient = balanceKnown && walletBalanceCents! >= requiredCents;
+  const walletDisabled = !sufficient;
+
+  const walletSubtitle = !balanceKnown
+    ? 'Checking balance…'
+    : sufficient
+    ? `Balance: ₹${(walletBalanceCents! / 100).toFixed(0)}`
+    : `Insufficient — ₹${(walletBalanceCents! / 100).toFixed(0)} available, ₹${(requiredCents / 100).toFixed(0)} needed`;
+
+  return (
+    <View style={pickerStyles.row}>
+      <PaymentSourceCard
+        selected={selected === 'direct'}
+        title="Pay now"
+        subtitle="Cards, UPI, netbanking"
+        icons={['credit-card', 'smartphone', 'briefcase']}
+        onPress={() => onChange('direct')}
+      />
+      <PaymentSourceCard
+        selected={selected === 'wallet'}
+        title="Use wallet"
+        subtitle={walletSubtitle}
+        icons={['zap']}
+        disabled={walletDisabled}
+        onPress={() => {
+          if (walletDisabled) return;
+          onChange('wallet');
+        }}
+      />
+    </View>
+  );
+}
+
+function PaymentSourceCard({
+  selected,
+  title,
+  subtitle,
+  icons,
+  disabled,
+  onPress,
+}: {
+  selected: boolean;
+  title: string;
+  subtitle: string;
+  icons: Array<keyof typeof Feather.glyphMap>;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const tint = disabled ? 'rgba(255,255,255,0.18)' : '#F5A300';
+  return (
+    <TouchableOpacity
+      activeOpacity={disabled ? 1 : 0.85}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected, disabled: !!disabled }}
+      accessibilityLabel={`${title}. ${subtitle}.`}
+      style={[
+        pickerStyles.card,
+        selected && pickerStyles.cardSelected,
+        disabled && pickerStyles.cardDisabled,
+      ]}
+    >
+      <View style={pickerStyles.iconRow}>
+        {icons.map((name) => (
+          <Feather key={name} name={name} size={14} color={tint} />
+        ))}
+        {selected ? (
+          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+            <Feather name="check-circle" size={16} color={tint} />
+          </View>
+        ) : null}
+      </View>
+      <Text style={[pickerStyles.title, disabled && { color: 'rgba(255,255,255,0.45)' }]}>
+        {title}
+      </Text>
+      <Text style={pickerStyles.subtitle} numberOfLines={2}>
+        {subtitle}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+const pickerStyles = StyleSheet.create({
+  row: { flexDirection: 'row', gap: 10 },
+  card: {
+    flex: 1,
+    minHeight: 92,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 6,
+  },
+  cardSelected: {
+    borderColor: 'rgba(245,163,0,0.55)',
+    backgroundColor: 'rgba(245,163,0,0.10)',
+    shadowColor: '#F5A300',
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  cardDisabled: { opacity: 0.55 },
+  iconRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  title: {
+    fontFamily: FontFamily.bold,
+    fontSize: 14,
+    color: '#FFFFFF',
+    letterSpacing: -0.1,
+  },
+  subtitle: {
+    fontFamily: FontFamily.medium,
+    fontSize: 11.5,
+    color: 'rgba(255,255,255,0.6)',
+    lineHeight: 15,
+  },
+});
