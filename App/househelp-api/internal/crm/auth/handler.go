@@ -143,7 +143,7 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 	if cookieVal == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "no session"})
 	}
-	res, err := h.svc.Refresh(c.UserContext(), cookieVal)
+	res, err := h.svc.Refresh(c.UserContext(), cookieVal, c.Get("User-Agent"), c.IP(), c.Get("X-Request-ID"))
 	if err != nil {
 		h.clearRefreshCookie(c)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "session expired"})

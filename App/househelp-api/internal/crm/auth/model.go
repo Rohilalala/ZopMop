@@ -25,16 +25,29 @@ type Admin struct {
 }
 
 // Session is the row representation of crm_admin_sessions.
+//
+// FamilyID groups every refresh-token row that originated from the same
+// login: the session created at TOTP-verify time has FamilyID == ID, and
+// every rotation inserts a new row that inherits that FamilyID. RotatedAt
+// + RotatedTo mark the row as superseded once a successor exists; a
+// non-nil RotatedAt observed at refresh time is what signals replay (see
+// migration 072 + Service.Refresh). ReplayDetectedAt is set on every row
+// in a family when the family is killed by replay detection — distinguishes
+// "logged out" from "compromised + force-relogin".
 type Session struct {
-	ID               string     `json:"id"`
-	AdminID          string     `json:"admin_id"`
-	RefreshTokenHash string     `json:"-"`
-	UserAgent        *string    `json:"user_agent,omitempty"`
-	IPAddress        *string    `json:"ip_address,omitempty"`
-	IssuedAt         time.Time  `json:"issued_at"`
-	LastUsedAt       time.Time  `json:"last_used_at"`
-	ExpiresAt        time.Time  `json:"expires_at"`
-	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	ID                 string     `json:"id"`
+	FamilyID           string     `json:"-"`
+	AdminID            string     `json:"admin_id"`
+	RefreshTokenHash   string     `json:"-"`
+	UserAgent          *string    `json:"user_agent,omitempty"`
+	IPAddress          *string    `json:"ip_address,omitempty"`
+	IssuedAt           time.Time  `json:"issued_at"`
+	LastUsedAt         time.Time  `json:"last_used_at"`
+	ExpiresAt          time.Time  `json:"expires_at"`
+	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
+	RotatedAt          *time.Time `json:"-"`
+	RotatedTo          *string    `json:"-"`
+	ReplayDetectedAt   *time.Time `json:"-"`
 }
 
 // PublicSession is the response shape for sessions list — never leaks token hashes.

@@ -41,6 +41,9 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/wallet"
+
+	"github.com/jackc/pgx/v5"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
@@ -154,6 +157,9 @@ func main() {
 		LockoutThreshold: cfg.LockoutThreshold,
 		LockoutDuration:  cfg.LockoutDuration,
 	})
+	// Wire the audit recorder so refresh-token replay detection can write
+	// auth.session_replay_detected rows (audit C-2 / A1-F1).
+	authSvc.SetRecorder(auditRecorder)
 	authHandler := auth.NewHandler(authSvc, auditRecorder, auth.CookieOptions{
 		Domain: cfg.RefreshCookieDomain,
 		Secure: cfg.RefreshCookieSecure,
@@ -239,18 +245,17 @@ func main() {
 	zonesHandler.SetDispatcher(webhookDispatcher)
 	refundsHandler.SetDispatcher(webhookDispatcher)
 	refundsHandler.SetNotification(notifSvc)
+	walletRepo := wallet.NewRepository(dbPool)
+	walletSvc := wallet.NewService(walletRepo)
+	refundsHandler.SetWallet(refundsWalletAdapter{svc: walletSvc})
 
-	// Pick the active payment gateway. Razorpay activates when both
-	// RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are set; otherwise the
-	// manual gateway marks every approved refund as processed_manual for
-	// ops to settle offline.
+	// Pick the active payment gateway. Cashfree activates when CASHFREE_PG_APP_ID
+	// is configured (full key set validated by pkg/config); otherwise the manual
+	// gateway marks every approved refund as processed_manual for ops to settle
+	// offline. Cashfree gateway implementation lands in a follow-up phase; until
+	// then the manual gateway is the only available option.
 	var refundGateway payments.Gateway = &payments.ManualGateway{}
-	if rzp := payments.NewRazorpayGateway(); rzp != nil {
-		refundGateway = rzp
-		log.Info().Msg("[payments] razorpay gateway active")
-	} else {
-		log.Info().Msg("[payments] using manual gateway (RAZORPAY_KEY_ID/SECRET not set)")
-	}
+	log.Info().Msg("[payments] using manual gateway (cashfree gateway not yet wired)")
 	refundsHandler.SetGateway(refundGateway)
 
 	ordersHandler.SetDispatcher(webhookDispatcher)
@@ -345,3 +350,24 @@ func main() {
 	}
 	log.Info().Msg("[crm] stopped")
 }
+
+// refundsWalletAdapter bridges the concrete *wallet.Service to the narrow
+// WalletCrediter interface declared in internal/crm/refunds. Lets the
+// refunds package stay free of an internal/wallet import.
+type refundsWalletAdapter struct{ svc *wallet.Service }
+
+func (a refundsWalletAdapter) Credit(
+	ctx context.Context,
+	userID string,
+	amountPaise int64,
+	kind string,
+	paymentID, bookingID *string,
+	note string,
+) error {
+	_, err := a.svc.Credit(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note)
+	return err
+}
+
+// _ keeps the pgx import alive for tx-bound adapters that may land here in
+// future passes (the refunds dispatcher does not currently take a tx).
+var _ = pgx.ErrNoRows

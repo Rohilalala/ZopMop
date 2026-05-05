@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 )
 
 // Sentinel errors returned by Service. Handlers map these to HTTP responses.
@@ -20,27 +23,43 @@ var (
 	ErrSessionExpired     = errors.New("session expired")
 )
 
+// defaultRefreshGraceWindow absorbs genuine network-flake retries where the
+// same refresh request lands twice within a few seconds. Outside this
+// window, a second presentation of an already-rotated hash is treated as
+// replay and kills the family.
+const defaultRefreshGraceWindow = 5 * time.Second
+
 // Config holds runtime knobs the service needs.
 type Config struct {
-	JWTSecret        string
-	JWTSecretID      string
-	AccessTokenTTL   time.Duration
-	RefreshTokenTTL  time.Duration
-	TOTPIssuer       string
-	LockoutThreshold int
-	LockoutDuration  time.Duration
+	JWTSecret           string
+	JWTSecretID         string
+	AccessTokenTTL      time.Duration
+	RefreshTokenTTL     time.Duration
+	TOTPIssuer          string
+	LockoutThreshold    int
+	LockoutDuration     time.Duration
+	RefreshGraceWindow  time.Duration
 }
 
 // Service implements the auth flow.
 type Service struct {
-	repo *Repository
-	cfg  Config
+	repo     *Repository
+	cfg      Config
+	recorder *audit.Recorder
 }
 
 // NewService constructs the auth Service.
 func NewService(repo *Repository, cfg Config) *Service {
+	if cfg.RefreshGraceWindow <= 0 {
+		cfg.RefreshGraceWindow = defaultRefreshGraceWindow
+	}
 	return &Service{repo: repo, cfg: cfg}
 }
+
+// SetRecorder wires the audit recorder so replay-detection events can be
+// written. Optional — the Service degrades gracefully (logs only) if no
+// recorder is attached.
+func (s *Service) SetRecorder(r *audit.Recorder) { s.recorder = r }
 
 // LoginResult is what handler returns after step 1 (password).
 type LoginResult struct {
@@ -198,11 +217,45 @@ type RefreshResult struct {
 	SessionID             string
 }
 
-// Refresh validates a refresh-token plaintext and rotates it.
-func (s *Service) Refresh(ctx context.Context, plaintext string) (*RefreshResult, error) {
+// Refresh validates a refresh-token plaintext and rotates it. Implements
+// RFC 6819 §5.2.2 replay detection: if the presented hash matches a row
+// whose rotated_at is set (i.e. someone already rotated this token),
+// the entire session family is revoked and an audit row is written —
+// unless we're inside cfg.RefreshGraceWindow, in which case we treat it
+// as a benign retry of a network-flake.
+//
+// userAgent / ip / requestID are propagated from the HTTP layer so the
+// replay-detection audit row carries the same forensic fields as other
+// CRM audit entries (admin_id, IP, UA, request_id).
+func (s *Service) Refresh(ctx context.Context, plaintext, userAgent, ip, requestID string) (*RefreshResult, error) {
 	hash := HashRefreshToken(plaintext)
-	sess, err := s.repo.GetSessionByHash(ctx, hash)
+
+	// Lookup includes rotated/revoked rows so we can detect replay.
+	sess, err := s.repo.GetSessionByHashIncludingRotated(ctx, hash)
 	if err != nil {
+		return nil, ErrSessionExpired
+	}
+
+	// Already revoked (logout, prior replay-kill, or expired-cleanup) —
+	// always reject. No new audit row; this is a reuse of a dead token.
+	if sess.RevokedAt != nil {
+		return nil, ErrSessionExpired
+	}
+
+	if sess.RotatedAt != nil {
+		// Hash was rotated. Either:
+		//   - Inside grace window  → benign retry (same client retried; new
+		//     successor cookie was just sent). Fail soft, no family kill.
+		//   - Outside grace window → replay attempt (RFC 6819 §5.2.2).
+		//     Revoke the entire family and audit-log the event.
+		if time.Since(*sess.RotatedAt) < s.cfg.RefreshGraceWindow {
+			return nil, ErrSessionExpired
+		}
+		s.handleReplay(ctx, sess, userAgent, ip, requestID)
+		return nil, ErrSessionExpired
+	}
+
+	if sess.ExpiresAt.Before(time.Now()) {
 		return nil, ErrSessionExpired
 	}
 
@@ -215,14 +268,33 @@ func (s *Service) Refresh(ctx context.Context, plaintext string) (*RefreshResult
 	if err != nil {
 		return nil, err
 	}
+	newSessionID := uuid.NewString()
 	newExp := time.Now().Add(s.cfg.RefreshTokenTTL)
-	if err := s.repo.RotateSession(ctx, sess.ID, newHash, newExp); err != nil {
+
+	var uaPtr, ipPtr *string
+	if userAgent != "" {
+		uaPtr = &userAgent
+	}
+	if ip != "" {
+		ipPtr = &ip
+	}
+
+	if err := s.repo.Rotate(ctx, sess.ID, newSessionID, newHash, newExp, uaPtr, ipPtr); err != nil {
+		// CAS lost to a concurrent rotator. The winner is legitimate too
+		// (someone else just rotated this same active-leg row). Fail soft —
+		// neither caller should think they're the survivor. Client retries
+		// with the new cookie when the winner's response lands; if both
+		// callers were the same client (true network flake), the second
+		// response was the loser anyway.
+		if errors.Is(err, ErrSessionAlreadyRotated) {
+			return nil, ErrSessionExpired
+		}
 		return nil, err
 	}
 
 	access, accessExp, err := IssueAccessToken(
 		s.cfg.JWTSecret, s.cfg.JWTSecretID,
-		admin.ID, admin.Email, admin.Role, sess.ID, s.cfg.AccessTokenTTL,
+		admin.ID, admin.Email, admin.Role, newSessionID, s.cfg.AccessTokenTTL,
 	)
 	if err != nil {
 		return nil, err
@@ -234,8 +306,53 @@ func (s *Service) Refresh(ctx context.Context, plaintext string) (*RefreshResult
 		RefreshTokenPlaintext: newPlaintext,
 		RefreshExpiresAt:      newExp,
 		Admin:                 admin,
-		SessionID:             sess.ID,
+		SessionID:             newSessionID,
 	}, nil
+}
+
+// handleReplay is invoked when a refresh request presents a hash whose
+// row is already rotated (and outside the grace window). Revokes the
+// family and writes an audit row. Errors are logged, never returned —
+// the caller already knows it's returning ErrSessionExpired regardless.
+func (s *Service) handleReplay(ctx context.Context, sess *Session, userAgent, ip, requestID string) {
+	if err := s.repo.RevokeFamily(ctx, sess.FamilyID); err != nil {
+		log.Error().
+			Err(err).
+			Str("family_id", sess.FamilyID).
+			Str("admin_id", sess.AdminID).
+			Msg("[crm.auth] failed to revoke family on replay detection")
+	}
+	if s.recorder == nil {
+		log.Warn().
+			Str("family_id", sess.FamilyID).
+			Str("admin_id", sess.AdminID).
+			Msg("[crm.auth] session replay detected (no audit recorder wired)")
+		return
+	}
+	adminEmail := ""
+	if a, err := s.repo.GetAdminByID(ctx, sess.AdminID); err == nil && a != nil {
+		adminEmail = a.Email
+	}
+	s.recorder.Log(ctx, audit.Entry{
+		AdminID:    sess.AdminID,
+		AdminEmail: adminEmail,
+		Action:     "auth.session_replay_detected",
+		Module:     "auth",
+		TargetType: "session_family",
+		TargetID:   sess.FamilyID,
+		IPAddress:  ip,
+		UserAgent:  userAgent,
+		RequestID:  requestID,
+		Before: map[string]any{
+			"session_id": sess.ID,
+			"rotated_at": sess.RotatedAt,
+			"rotated_to": sess.RotatedTo,
+		},
+		After: map[string]any{
+			"family_revoked":     true,
+			"replay_detected_at": time.Now().UTC(),
+		},
+	})
 }
 
 // Logout revokes the session bound to a given refresh-token plaintext.

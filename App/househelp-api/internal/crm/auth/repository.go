@@ -13,6 +13,13 @@ import (
 // ErrNotFound is returned when a row lookup yields no result.
 var ErrNotFound = errors.New("not found")
 
+// ErrSessionAlreadyRotated signals that the CAS in Rotate observed
+// RowsAffected == 0 — i.e. another goroutine rotated the same active-leg
+// session row between our read and our UPDATE. Service.Refresh maps this
+// to ErrSessionExpired (fail-soft for the loser) rather than killing the
+// family, because the winning rotation is itself legitimate.
+var ErrSessionAlreadyRotated = errors.New("session already rotated")
+
 // Repository encapsulates DB access for auth.
 type Repository struct {
 	db *pgxpool.Pool
@@ -140,28 +147,66 @@ func (r *Repository) CreateSession(ctx context.Context, s *Session) error {
 	return nil
 }
 
-// GetSessionByHash looks up an active (not revoked, not expired) session.
+// GetSessionByHash looks up an active-leg session (not revoked, not
+// expired, not yet rotated). Used by Logout — a logout against a stale
+// (rotated) hash should be a no-op.
 func (r *Repository) GetSessionByHash(ctx context.Context, hash string) (*Session, error) {
 	const q = `
-		SELECT id, admin_id, refresh_token_hash, user_agent,
+		SELECT id, family_id, admin_id, refresh_token_hash, user_agent,
 		       host(ip_address)::text, issued_at, last_used_at,
-		       expires_at, revoked_at
+		       expires_at, revoked_at, rotated_at, rotated_to::text,
+		       replay_detected_at
 		FROM crm_admin_sessions
 		WHERE refresh_token_hash = $1
 		  AND revoked_at IS NULL
+		  AND rotated_at IS NULL
 		  AND expires_at > now()
 	`
 	var s Session
 	err := r.db.QueryRow(ctx, q, hash).Scan(
-		&s.ID, &s.AdminID, &s.RefreshTokenHash, &s.UserAgent,
+		&s.ID, &s.FamilyID, &s.AdminID, &s.RefreshTokenHash, &s.UserAgent,
 		&s.IPAddress, &s.IssuedAt, &s.LastUsedAt,
-		&s.ExpiresAt, &s.RevokedAt,
+		&s.ExpiresAt, &s.RevokedAt, &s.RotatedAt, &s.RotatedTo,
+		&s.ReplayDetectedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
+	}
+	return &s, nil
+}
+
+// GetSessionByHashIncludingRotated looks up a session row by hash without
+// the rotated_at filter. Used by Service.Refresh to detect replay: a hash
+// presented for refresh whose row already has rotated_at set is the very
+// signal we need (RFC 6819 §5.2.2). Revoked rows still match too — that
+// way we can distinguish "you logged out, hash gone" (returns ErrNotFound,
+// row simply isn't there because never rotated) from "you tried to use a
+// refresh token whose family has been killed" (returns the row + caller
+// inspects RevokedAt + ReplayDetectedAt).
+func (r *Repository) GetSessionByHashIncludingRotated(ctx context.Context, hash string) (*Session, error) {
+	const q = `
+		SELECT id, family_id, admin_id, refresh_token_hash, user_agent,
+		       host(ip_address)::text, issued_at, last_used_at,
+		       expires_at, revoked_at, rotated_at, rotated_to::text,
+		       replay_detected_at
+		FROM crm_admin_sessions
+		WHERE refresh_token_hash = $1
+	`
+	var s Session
+	err := r.db.QueryRow(ctx, q, hash).Scan(
+		&s.ID, &s.FamilyID, &s.AdminID, &s.RefreshTokenHash, &s.UserAgent,
+		&s.IPAddress, &s.IssuedAt, &s.LastUsedAt,
+		&s.ExpiresAt, &s.RevokedAt, &s.RotatedAt, &s.RotatedTo,
+		&s.ReplayDetectedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get session by hash (incl rotated): %w", err)
 	}
 	return &s, nil
 }
@@ -177,15 +222,91 @@ func (r *Repository) TouchSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// RotateSession replaces the refresh-token hash in place (atomic rotation on refresh).
-func (r *Repository) RotateSession(ctx context.Context, sessionID, newHash string, newExpires time.Time) error {
+// Rotate atomically retires an active-leg session row and inserts its
+// successor in the same family. The old row is stamped rotated_at +
+// rotated_to. The new row inherits family_id from the old row.
+//
+// The CAS is the WHERE rotated_at IS NULL clause on the UPDATE. If two
+// concurrent rotators race against the same active-leg row, exactly one
+// flips rotated_at; the other observes RowsAffected == 0 and we return
+// ErrSessionAlreadyRotated. Service.Refresh maps that to fail-soft —
+// it is NOT replay (the winner is legitimate too); the loser just gives
+// up its rotation and the user retries.
+//
+// Wrapped in a transaction so the UPDATE + INSERT either both commit or
+// neither does. A partial commit (old row marked rotated but new row not
+// inserted) would brick the session.
+func (r *Repository) Rotate(
+	ctx context.Context,
+	oldSessionID, newSessionID, newHash string,
+	newExpiresAt time.Time,
+	userAgent, ipAddress *string,
+) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("rotate begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Insert the successor first. crm_admin_sessions.rotated_to has a FK
+	// reference to crm_admin_sessions(id) which is checked per-statement
+	// (NOT DEFERRED), so the successor row must exist before we can
+	// reference it from the old row's rotated_to. The INSERT is "safe" to
+	// race against — if the CAS UPDATE below loses, the whole transaction
+	// (including this insert) rolls back, leaving no orphan row behind.
+	_, err = tx.Exec(ctx, `
+		INSERT INTO crm_admin_sessions (
+			id, family_id, admin_id, refresh_token_hash, user_agent, ip_address,
+			issued_at, last_used_at, expires_at
+		)
+		SELECT $1::uuid, family_id, admin_id, $2, $3, $4::inet,
+		       now(), now(), $5
+		FROM crm_admin_sessions
+		WHERE id = $6::uuid
+	`,
+		newSessionID, newHash, ipTextPtr(userAgent), ipTextPtr(ipAddress),
+		newExpiresAt, oldSessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("rotate: insert successor: %w", err)
+	}
+
+	// CAS retire of the old row. Concurrent rotators race here — exactly
+	// one flips rotated_at; the rest observe RowsAffected == 0 and roll
+	// back via ErrSessionAlreadyRotated.
+	res, err := tx.Exec(ctx, `
+		UPDATE crm_admin_sessions
+		SET rotated_at = now(),
+		    rotated_to = $2::uuid
+		WHERE id = $1::uuid
+		  AND rotated_at IS NULL
+		  AND revoked_at IS NULL
+	`, oldSessionID, newSessionID)
+	if err != nil {
+		return fmt.Errorf("rotate: retire old: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrSessionAlreadyRotated
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("rotate commit: %w", err)
+	}
+	return nil
+}
+
+// RevokeFamily marks every live row in a session family as revoked +
+// replay-detected. Called when a rotated hash is presented outside the
+// grace window (replay). Only touches rows that aren't already revoked
+// so a second replay of the same family is a no-op.
+func (r *Repository) RevokeFamily(ctx context.Context, familyID string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE crm_admin_sessions
-		SET refresh_token_hash = $2, last_used_at = now(), expires_at = $3
-		WHERE id = $1 AND revoked_at IS NULL
-	`, sessionID, newHash, newExpires)
+		SET revoked_at = now(), replay_detected_at = now()
+		WHERE family_id = $1::uuid AND revoked_at IS NULL
+	`, familyID)
 	if err != nil {
-		return fmt.Errorf("rotate session: %w", err)
+		return fmt.Errorf("revoke family: %w", err)
 	}
 	return nil
 }
