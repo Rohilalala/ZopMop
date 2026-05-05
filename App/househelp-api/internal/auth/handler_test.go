@@ -14,7 +14,7 @@ func TestSendOTP_InvalidJSON_ReturnsBadRequest(t *testing.T) {
 	t.Parallel()
 
 	app := fiber.New()
-	h := NewHandler(nil, false)
+	h := NewHandler(nil, nil, false)
 	app.Post("/auth/send-otp", h.SendOTP)
 
 	req := httptest.NewRequest("POST", "/auth/send-otp", strings.NewReader("{"))

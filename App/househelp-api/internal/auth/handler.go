@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -9,12 +11,14 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
 // Handler handles HTTP requests for the auth module.
 type Handler struct {
 	service      *Service
+	rdb          *redis.Client
 	isProduction bool
 }
 
@@ -22,8 +26,10 @@ type Handler struct {
 // isProduction toggles the Secure attribute on the httpOnly auth cookie.
 // In dev (plain HTTP) Secure cookies would be dropped by the browser, so we
 // only set Secure in production.
-func NewHandler(service *Service, isProduction bool) *Handler {
-	return &Handler{service: service, isProduction: isProduction}
+// rdb backs the per-phone OTP throttle (3 sends per 5 minutes) so abusers
+// behind the same NAT cannot spam an arbitrary number a million times.
+func NewHandler(service *Service, rdb *redis.Client, isProduction bool) *Handler {
+	return &Handler{service: service, rdb: rdb, isProduction: isProduction}
 }
 
 // setAuthCookie writes the JWT as an HttpOnly+SameSite=Strict cookie so that
@@ -125,6 +131,13 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 }
 
 // SendOTP handles POST /auth/send-otp.
+//
+// Two-tier rate limit applies:
+//  1. The route-level IP limiter (SensitivePublicRateLimit, 20/min) catches
+//     burst floods from one address.
+//  2. This per-phone Redis counter (3 sends per 5 minutes) catches the case
+//     where many addresses pile onto a single victim's number to drain SMS
+//     credits or trigger SMS-bombing.
 func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	var req OTPRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -136,6 +149,26 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 			"error":  "validation failed",
 			"fields": validator.FormatValidationErrors(err),
 		})
+	}
+
+	if h.rdb != nil {
+		const otpMaxPerWindow = 3
+		const otpWindow = 5 * time.Minute
+		key := fmt.Sprintf("otp:phone:%s", req.Phone)
+		ctx, cancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
+		defer cancel()
+		count, incrErr := h.rdb.Incr(ctx, key).Result()
+		if incrErr == nil {
+			if count == 1 {
+				_ = h.rdb.Expire(ctx, key, otpWindow).Err()
+			}
+			if count > otpMaxPerWindow {
+				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+					"error": "too many OTP requests for this number — try again in a few minutes",
+					"code":  "OTP_RATE_LIMITED",
+				})
+			}
+		}
 	}
 
 	otp, isNewUser, err := h.service.SendOTP(c.UserContext(), req.Phone)
