@@ -152,9 +152,21 @@ func main() {
 	}()
 
 	// Initialize Fiber app with security settings.
+	//
+	// WriteTimeout MUST be >= the longest per-handler Timeout middleware
+	// value, otherwise Fiber kills the connection mid-response and the
+	// client sees garbage. Audit E2-3. Current per-handler ceilings:
+	//   - /api/v1/zop/chat        : mw.Timeout(90s)  — LLM streaming
+	//   - /me/export              : variable; bounded only by client patience
+	//   - everything else (default): mw.DefaultRequestTimeout (12s)
+	// 120s gives 30s buffer past the 90s Zop ceiling — covers slow networks
+	// without giving runaway handlers more rope. ReadTimeout = 60s for
+	// large body uploads (banner images, etc.); IdleTimeout = 120s to
+	// match WriteTimeout for HTTP keep-alive consistency.
 	app := fiber.New(fiber.Config{
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
 		BodyLimit:    4 * 1024 * 1024, // 4MB
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError

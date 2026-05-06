@@ -101,9 +101,18 @@ func main() {
 		}
 	}()
 
+	// WriteTimeout MUST be >= the longest per-handler Timeout middleware
+	// (audit E2-3). CRM has no equivalent of cmd/api's 90s Zop AI
+	// timeout today, but matching the customer-API value (120s) keeps
+	// the two binaries aligned so a future long-running CRM endpoint
+	// (analytics export, bulk push) doesn't silently get killed at the
+	// connection level. ReadTimeout 60s for large body uploads
+	// (banner images at 8MB BodyLimit can take time on slow links);
+	// IdleTimeout 120s to match WriteTimeout.
 	app := fiber.New(fiber.Config{
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  120 * time.Second,
 		BodyLimit:    8 * 1024 * 1024, // 8MB — banner uploads.
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
