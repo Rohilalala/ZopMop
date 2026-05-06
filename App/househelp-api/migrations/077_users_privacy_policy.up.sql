@@ -1,4 +1,4 @@
--- 049_users_privacy_policy.sql
+-- 077_users_privacy_policy.up.sql
 -- Capture explicit Terms of Service / Privacy Policy acceptance at first sign-up.
 -- Existing rows backfill to TRUE so legacy users (who accepted under the prior
 -- click-through Terms link on PhoneEntry) are not blocked. New rows default to

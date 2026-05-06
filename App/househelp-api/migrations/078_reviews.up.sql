@@ -1,4 +1,4 @@
--- 057_reviews.sql
+-- 078_reviews.up.sql
 -- Customer-submitted ratings for completed bookings. helpers.rating is
 -- recomputed via a trigger so consumers (matching score, CRM workers list)
 -- don't need a separate query path.

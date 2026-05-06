@@ -1,4 +1,4 @@
--- 058_helper_status_log.sql
+-- 058_helper_status_log.up.sql
 -- Append-only history of helper online/offline transitions. Powers the CRM
 -- workers timeline + the integrity check that "every pro who went OFFLINE
 -- during a window has a row recorded".

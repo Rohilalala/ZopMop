@@ -1,4 +1,4 @@
--- 058_seed_ncr_zones.sql
+-- 079_seed_ncr_zones.up.sql
 -- Seed the 7 Delhi NCR operational zones used by the matching/serviceability
 -- check (CheckServiceability in internal/zones/repository.go). Each zone is a
 -- centroid + 5km radius — fits the existing service_zones schema (016).

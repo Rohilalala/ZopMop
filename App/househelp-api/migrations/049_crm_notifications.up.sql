@@ -1,4 +1,4 @@
--- 049_crm_notifications.sql
+-- 049_crm_notifications.up.sql
 -- CRM notification centre. Distinct from `crm_alerts` (which is the legacy
 -- system-feed dashboard widget): notifications are addressed to admins, can be
 -- marked read individually, and carry a typed link to the originating record.

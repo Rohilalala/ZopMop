@@ -132,8 +132,11 @@ cd App/househelp-api
 # 1. Start Postgres + Redis
 docker compose up -d postgres redis
 
-# 2. Run migrations (first run only)
-go run ./cmd/api migrate up
+# 2. Build + run migrations (first run only)
+go build -o bin/migrate ./cmd/migrate
+DATABASE_URL=postgres://... ./bin/migrate up
+# Existing DBs that pre-date the runner: ./bin/migrate baseline first.
+# See App/househelp-api/docs/migrations.md for full procedure.
 
 # 3. Start the API
 go run ./cmd/api
@@ -304,8 +307,10 @@ asserts exactly one succeeds per iteration.
 
 ## Migrations
 
-Plain SQL files under `App/househelp-api/migrations/`. No Go migration tool —
-apply manually via `psql`.
+`*.up.sql` files under `App/househelp-api/migrations/` driven by
+`golang-migrate/migrate/v4`. CLI binary at `App/househelp-api/cmd/migrate`.
+Forward-only (no `.down.sql` files). See
+`App/househelp-api/docs/migrations.md` for the full procedure.
 
 | File | Summary |
 |---|---|
@@ -317,10 +322,10 @@ apply manually via `psql`.
 | `069_event_outbox.sql` | Transactional outbox (status state machine, version, available_at) |
 | `070_event_outbox_dedupe.sql` | Unique index on `event_outbox(payload->>'payment_id')` for booking.paid / wallet.topped_up |
 
-### Manual apply order
+### Apply order
 
 1. Deploy the Go binary built from this commit (or atomically with step 2).
-2. Run migrations via `psql` in numerical order.
+2. Run `./bin/migrate up` (existing DBs: `./bin/migrate baseline` once first).
 3. Restart backend.
 
 **Migration 065 is binary-aware**: applying it before deploying matching code

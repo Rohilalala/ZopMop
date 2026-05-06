@@ -1,4 +1,4 @@
--- 056_processed_webhook_events.sql
+-- 057_processed_webhook_events.up.sql
 -- Idempotency table for inbound payment-gateway webhooks.
 -- Insert keyed on the gateway's event_id after the handler finishes; subsequent
 -- deliveries of the same event short-circuit on the existence check.
