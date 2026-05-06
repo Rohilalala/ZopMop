@@ -90,7 +90,7 @@ This section grows as we make retention decisions. Last updated:
 | CRM audit log | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB before_value/after_value not scrubbed (3-year retention is the bound). |
 | Refunds (money moved) | 7 years from processed_at | user_id anonymised to tombstone; financial fields preserved (amount, gateway_refund_id, payment_method, processed_at, etc.); approved_by admin actor preserved within window |
 | Refunds (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation). Active in-flight refunds (status='approved' < 10 min ago) block deletion temporarily. |
-| CRM push notification campaigns | 90 days from creation | No user-deletion hook (campaign-level schema, no per-user rows). User IDs may appear in target_filter JSONB on 'specific'-target campaigns; bounded by 90-day retention. Body/title text PII deferred per audit-log JSONB pattern. |
+| CRM push notification campaigns | 90 days from creation | Per-user UUIDs in `target_filter.user_ids` JSONB are removed on user deletion (chunk 12 `ScrubUserFromCampaignTargets`). Same hook also scrubs `promotions.audience_user_ids`. Body/title text are campaign-authored copy (not user PII). |
 | Helper status log (online/offline) | 90 days from recorded_at | CASCADE on helper deletion handles helper-side cleanup automatically. No customer surface. Schema is availability-toggle only — does NOT contain location data. |
 | Roomies wallet history | [BLOCKED] — pending settlement | Counterparty's ledger view + open prepaid balances make user erasure non-trivial. Blocked on the prepaid-balance settlement worker TODO; see roomies/* TODO comments. Tracked separately. |
 
@@ -252,6 +252,35 @@ Things they cannot yet do:
   pattern). Helper-only sections (`helper_profile`, 
   `helper_status_log`, `pro_leaves`) included only when the user 
   has a `helpers` row. Decision date: 2026-05-06.
+- [x] **JSONB PII scrubbing (chunk 12)**: closes two follow-ups
+  deferred from chunks 6 and 8.
+  - Audit-log JSONB (`crm_audit_log.before_value`/`after_value`,
+    `audit_log.old_value`/`new_value`): `compliance.ScrubJSONB`
+    walks each blob recursively and replaces values of denylisted
+    keys with `<redacted>`. Denylist covers contact info (phone /
+    email / mobile), names, address fields, location coordinates,
+    push tokens, identity documents (aadhaar / pan / kyc), financial
+    identifiers (account_number / bank_account / upi_id / vpa) and
+    `ip_address`. Generic identifiers (`id`, `user_id`, `target_id`,
+    `customer_id`, etc.) are intentionally NOT in the denylist —
+    context-dependent, would corrupt legitimate audit records. The
+    user's UUID is handled separately by chunk-6 target_id
+    anonymization.
+  - Campaign targets: `crm_push_messages.target_filter.user_ids`
+    (JSONB array) and `promotions.audience_user_ids` (top-level
+    UUID[]) — deleted user's UUID is removed via
+    `ScrubUserFromCampaignTargetsTx`. Other users in the same
+    targeting list are preserved.
+  - Wired into `SoftDeleteUser` so future deletions stay clean.
+    Pre-existing PII pollution is removed via the
+    `cmd/jsonb-scrub-backfill` one-shot binary (idempotent;
+    re-running on already-scrubbed rows is a no-op).
+  - Local DB smoke (`--dry-run`): scanned 12 crm_audit_log rows,
+    scrubbed 0 (current corpus carries no denylisted keys —
+    expected, since admin actions today log scalar config rather
+    than user-row snapshots; walker is defensive infrastructure for
+    future modules).
+  - Decision date: 2026-05-06.
 - [BLOCKED] **roomies wallet history**: deferred until the 
   prepaid-balance settlement worker lands. The roomies module 
   carries 5 explicit TODO comments noting that user-erasure with 
@@ -267,6 +296,14 @@ Things they cannot yet do:
 
 ## Things to revisit before launch
 
+- **Run `cmd/jsonb-scrub-backfill` once before launch**: chunk 12
+  landed the on-deletion JSONB scrub, but pre-existing rows about
+  users who haven't deleted yet may still hold PII baked in by past
+  admin actions. Run with `--dry-run` first to see how many rows
+  would change, then run for real. Idempotent — re-running on
+  already-scrubbed rows is a no-op (counted as scanned, not
+  scrubbed). Batched (default 500 rows/batch) so a large catch-up
+  pass doesn't hold long locks.
 - **Schedule `cmd/retention-worker`**: chunk 10 landed the worker, 
   but invocation is the deployer's job. Wire as a cron / k8s 
   CronJob / systemd-timer to run nightly. Recommended first prod 
@@ -286,22 +323,25 @@ Things they cannot yet do:
   is wiped when the chunk-1 SoftDeleteUser path drops the helpers 
   row. The remaining surfaces (tracking_ws ephemeral state, 
   mobile telemetry) are scoped for separate investigation.
-- crm_push_messages target_filter JSONB scrubbing: user IDs may 
-  persist in `target_filter.user_ids` for `target_kind='specific'` 
-  campaigns. 90-day retention bounds the exposure. Selective JSONB 
-  scrubbing for this one well-defined key 
-  (`UPDATE crm_push_messages SET target_filter = jsonb_set(...)
-  WHERE target_filter->'user_ids' ? $userID`) is a viable follow-up 
-  if a stricter posture is required.
-- Audit log JSONB scrubbing: `before_value` / `after_value` (and 
-  legacy `old_value` / `new_value`) payloads may contain user PII 
-  baked in by the recording module — for example, an admin 
-  user-suspension action might log the full users row, including 
-  phone and name. The chunk-6 structured-column anonymisation does 
-  NOT scrub these blobs. The 3-year retention window is the bound — 
-  PII ages out via the retention worker. JSONB-key-level recursive 
-  redaction (with a known-PII-keys allowlist) is dedicated follow-up 
-  work for the compliance sprint.
+- ~~crm_push_messages target_filter JSONB scrubbing~~ ✅ Closed
+  by chunk 12. SoftDeleteUser now calls
+  `ScrubUserFromCampaignTargetsTx`, which removes the deleted user's
+  UUID from `target_filter.user_ids` (JSONB) and from
+  `promotions.audience_user_ids` (UUID[]). Both surfaces audited
+  in the same transaction as the user-row scrub.
+- ~~Audit log JSONB scrubbing~~ ✅ Closed by chunk 12.
+  `AnonymizeAuditLogsAsTargetTx` now scrubs `before_value` /
+  `after_value` (crm_audit_log) and `old_value` / `new_value`
+  (audit_log) for the deleted user's target rows in the same
+  transaction as the target_id reassignment, using
+  `compliance.ScrubJSONB` against a known-PII-keys denylist (phone,
+  email, name, address, location coordinates, identity documents
+  including aadhaar/pan/kyc, financial identifiers including
+  account_number/upi_id/vpa, push tokens, ip_address). Recursive
+  walk handles nested objects and arrays of objects.
+  Pre-existing PII pollution is removed via the
+  `cmd/jsonb-scrub-backfill` one-shot binary (see operational note
+  below).
 - Implement the CRM admin deletion flow. When built, it should call 
   `compliance.AnonymizeLoginAttemptsByEmail(adminEmail)` to scrub 
   per-account history at deletion time. The 90-day retention sweep 
