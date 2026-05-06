@@ -11,11 +11,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with: { go-version: '1.26' }
       - run: go mod download
       - run: go vet ./...
       - run: go build ./...
-      - run: go test ./... -short
+      # -race catches the concurrency bugs the audit dug up; -short skips
+      # the integration tests that need testcontainers (audit NEW-E3-003).
+      - run: go test ./... -short -race
+  crm:
+    name: CRM (Vite/React)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: App/zopmop-crm } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm', cache-dependency-path: App/zopmop-crm/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
   migrations:
     name: Migration filename pattern
     runs-on: ubuntu-latest
