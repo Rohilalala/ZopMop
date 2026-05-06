@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/alerts"
@@ -132,6 +133,11 @@ func main() {
 	// Constructed early so the middleware below captures every request.
 	metricsCollector := healthmetrics.New(5 * time.Minute)
 
+	// Recover MUST be first so panics in any later middleware or handler
+	// are caught before they crash the worker (audit B2-01 / E2-2).
+	app.Use(fiberrecover.New(fiberrecover.Config{
+		EnableStackTrace: cfg.IsDevelopment(),
+	}))
 	app.Use(requestID())
 	app.Use(securityHeaders(cfg.IsProduction()))
 	app.Use(corsMiddleware(cfg.AllowedOrigins))

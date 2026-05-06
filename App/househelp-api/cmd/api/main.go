@@ -54,6 +54,7 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
+	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/rs/zerolog/log"
 )
 
@@ -183,6 +184,13 @@ func main() {
 	})
 
 	// --- Global middleware ---
+	// Recover MUST be first so panics in any later middleware or handler
+	// are caught before they crash the worker (audit B2-01 / E2-1).
+	// Stack traces only in dev; prod logs the error without leaking
+	// internals into the response body (ErrorHandler turns it into 500).
+	app.Use(fiberrecover.New(fiberrecover.Config{
+		EnableStackTrace: cfg.IsDevelopment(),
+	}))
 	app.Use(mw.RequestID())
 	app.Use(mw.SecurityHeaders(cfg.IsProduction()))
 	app.Use(mw.CORS(cfg.AllowedOrigins))
