@@ -2,6 +2,8 @@ package refunds
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 )
 
@@ -250,4 +253,121 @@ func TestRetry_ConcurrentDoubleClick(t *testing.T) {
 	if finalStatus != "processed" {
 		t.Fatalf("retry final status = %q, want processed", finalStatus)
 	}
+}
+
+// failingGatewayWithRowDeletion is a payments.Gateway test double that
+// simulates the rollback-DB-write-failure case audit B2-02 fixed.
+// It returns a gateway error AND deletes the pending_refunds row
+// during the call so the subsequent rollback approveUpdate finds no
+// row and returns ErrNotFound — driving the new CRITICAL log + 500
+// REFUND_ROLLBACK_FAILED branch.
+type failingGatewayWithRowDeletion struct {
+	pool     *pgxpool.Pool
+	refundID string
+}
+
+func (g *failingGatewayWithRowDeletion) Name() string { return "failing-test" }
+
+func (g *failingGatewayWithRowDeletion) Refund(ctx context.Context, _ string, _ int64, _ payments.PaymentMethod, _ string) (*payments.RefundResult, error) {
+	// Delete the row so the ROLLBACK approveUpdate that fires after
+	// our error return finds 0 rows and propagates ErrNotFound.
+	_, _ = g.pool.Exec(ctx, `DELETE FROM pending_refunds WHERE id=$1::uuid`, g.refundID)
+	return nil, fmt.Errorf("gateway down: simulated for B2-02 rollback test")
+}
+
+func TestApprove_RollbackDBWriteFailure_ReturnsLoudError(t *testing.T) {
+	pool := openRefundsTestDB(t)
+	repo := NewRepository(pool, pool)
+	const userID = "33330000-0000-0000-0000-000000000003"
+	const refundID = "33333333-3333-3333-3333-333333333333"
+	ensureTestUser(t, pool, userID)
+	makeRefundRow(t, pool, userID, refundID, "pending")
+
+	gw := &failingGatewayWithRowDeletion{pool: pool, refundID: refundID}
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	// Real audit recorder against the test pool — verifies the audit
+	// row actually lands in crm_audit_log. Module="refunds" hardcoded
+	// in h.audit, so the row's module field isn't asserted.
+	rec := audit.NewRecorder(pool)
+	h := NewHandler(repo, rec)
+	h.SetGateway(gw)
+	app.Post("/refunds/:id/approve", h.Approve)
+
+	req := httptest.NewRequest(http.MethodPost, "/refunds/"+refundID+"/approve",
+		strings.NewReader(`{"reason":"rollback test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "REFUND_ROLLBACK_FAILED") {
+		t.Fatalf("body missing code REFUND_ROLLBACK_FAILED: %s", body)
+	}
+
+	// Verify the audit row landed in crm_audit_log.
+	var n int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM crm_audit_log
+		WHERE action = 'refund.gateway_error_rollback_failed' AND target_id = $1
+	`, refundID).Scan(&n); err != nil {
+		t.Fatalf("count audit row: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("crm_audit_log rows = %d, want 1 for refund.gateway_error_rollback_failed", n)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM crm_audit_log WHERE target_id=$1 AND action LIKE 'refund.%'`, refundID)
+	})
+}
+
+func TestRetry_RollbackDBWriteFailure_ReturnsLoudError(t *testing.T) {
+	pool := openRefundsTestDB(t)
+	repo := NewRepository(pool, pool)
+	const userID = "33330000-0000-0000-0000-000000000004"
+	const refundID = "33334444-4444-4444-4444-444444444444"
+	ensureTestUser(t, pool, userID)
+	// Retry expects status='gateway_error' as the prior state.
+	makeRefundRow(t, pool, userID, refundID, "gateway_error")
+
+	gw := &failingGatewayWithRowDeletion{pool: pool, refundID: refundID}
+	app := fiber.New(fiber.Config{DisableStartupMessage: true})
+	rec := audit.NewRecorder(pool)
+	h := NewHandler(repo, rec)
+	h.SetGateway(gw)
+	app.Post("/refunds/:id/retry", h.Retry)
+
+	req := httptest.NewRequest(http.MethodPost, "/refunds/"+refundID+"/retry",
+		strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "REFUND_ROLLBACK_FAILED") {
+		t.Fatalf("body missing code REFUND_ROLLBACK_FAILED: %s", body)
+	}
+
+	var n int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM crm_audit_log
+		WHERE action = 'refund.gateway_error_rollback_failed' AND target_id = $1
+	`, refundID).Scan(&n); err != nil {
+		t.Fatalf("count audit row: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("crm_audit_log rows = %d, want 1", n)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM crm_audit_log WHERE target_id=$1 AND action LIKE 'refund.%'`, refundID)
+	})
 }

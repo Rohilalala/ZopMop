@@ -535,9 +535,27 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 		// row is now in 'approved' (the lock state), so allowedPrior is
 		// ["approved"] — not ["pending"] as it was before the lock fix.
 		now := time.Now().UTC()
-		_ = h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
+		if rollbackErr := h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
 			meta.PaymentMethod, meta.PaymentID, refundAmount, &now,
-			[]string{"approved"})
+			[]string{"approved"}); rollbackErr != nil {
+			// Audit B2-02: the rollback DB write itself failed. Gateway
+			// already errored (no money moved) BUT the row is now wedged
+			// in the 'approved' lock state and /retry expects
+			// 'gateway_error' — manual reconciliation required.
+			log.Error().
+				Err(rollbackErr).
+				Str("refund_id", id).
+				Str("phase", "gateway_error_rollback_db_write_failed").
+				Str("original_gateway_error", errMsg).
+				Msg("[crm.refunds] CRITICAL: gateway failed and rollback to gateway_error also failed; refund row wedged in 'approved'; /retry will reject; manual reconciliation required")
+			h.audit(c, "refund.gateway_error_rollback_failed", id,
+				map[string]any{"status": "approved"},
+				map[string]any{"intended_status": "gateway_error", "gateway_error": errMsg, "db_error": rollbackErr.Error()})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "refund rollback failed; manual reconciliation required",
+				"code":  "REFUND_ROLLBACK_FAILED",
+			})
+		}
 		h.audit(c, "refund.gateway_error", id, nil, map[string]any{
 			"amount_cents": refundAmount, "reason": req.Reason, "error": errMsg, "gateway": h.gateway.Name(),
 		})
@@ -563,6 +581,9 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 			Str("status", status).
 			Str("phase", "post_gateway_db_write").
 			Msg("CRITICAL: refund succeeded at gateway but DB row write to final status failed — manual reconciliation required, money has moved")
+		h.audit(c, "refund.post_gateway_db_write_failed", id,
+			map[string]any{"status": "approved"},
+			map[string]any{"intended_status": status, "gateway_ref": gatewayRefundID, "db_error": err.Error()})
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
@@ -638,9 +659,23 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), id, meta, refundAmount, current.UserID, "retry")
 	if httpErr != nil {
 		now := time.Now().UTC()
-		_ = h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
+		if rollbackErr := h.repo.approveUpdate(c.UserContext(), id, "gateway_error", "", errMsg, adminID,
 			meta.PaymentMethod, meta.PaymentID, refundAmount, &now,
-			[]string{"approved"})
+			[]string{"approved"}); rollbackErr != nil {
+			log.Error().
+				Err(rollbackErr).
+				Str("refund_id", id).
+				Str("phase", "gateway_error_rollback_db_write_failed").
+				Str("original_gateway_error", errMsg).
+				Msg("[crm.refunds] CRITICAL: retry gateway failed and rollback to gateway_error also failed; refund row wedged in 'approved'; subsequent /retry will reject; manual reconciliation required")
+			h.audit(c, "refund.gateway_error_rollback_failed", id,
+				map[string]any{"status": "approved"},
+				map[string]any{"intended_status": "gateway_error", "gateway_error": errMsg, "db_error": rollbackErr.Error()})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "refund rollback failed; manual reconciliation required",
+				"code":  "REFUND_ROLLBACK_FAILED",
+			})
+		}
 		h.audit(c, "refund.retry_failed", id, nil, map[string]any{"error": errMsg, "gateway": h.gateway.Name()})
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "gateway_error", "message": errMsg})
 	}
@@ -660,6 +695,9 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 			Str("status", status).
 			Str("phase", "post_gateway_db_write").
 			Msg("CRITICAL: refund retry succeeded at gateway but DB row write to final status failed — manual reconciliation required, money has moved")
+		h.audit(c, "refund.post_gateway_db_write_failed", id,
+			map[string]any{"status": "approved"},
+			map[string]any{"intended_status": status, "gateway_ref": gatewayRefundID, "db_error": err.Error()})
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
@@ -941,9 +979,28 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 	processed, status, gatewayRefundID, errMsg, httpErr := h.runGateway(c.UserContext(), refundID, meta, amount, booking.UserID, req.Reason)
 	if httpErr != nil {
 		now := time.Now().UTC()
-		_ = h.repo.approveUpdate(c.UserContext(), refundID, "gateway_error", "", errMsg, adminID,
+		if rollbackErr := h.repo.approveUpdate(c.UserContext(), refundID, "gateway_error", "", errMsg, adminID,
 			meta.PaymentMethod, meta.PaymentID, amount, &now,
-			[]string{"pending"})
+			[]string{"pending"}); rollbackErr != nil {
+			// CreateFromOrder rollback runs from 'pending' (not the
+			// lock state Approve/Retry use), so a wedged row stays
+			// in 'pending' rather than 'approved'. Same operational
+			// posture though — manual reconciliation, /retry can't
+			// help (status mismatch).
+			log.Error().
+				Err(rollbackErr).
+				Str("refund_id", refundID).
+				Str("phase", "gateway_error_rollback_db_write_failed").
+				Str("original_gateway_error", errMsg).
+				Msg("[crm.refunds] CRITICAL: manual-create gateway failed and rollback to gateway_error also failed; refund row wedged in 'pending'; manual reconciliation required")
+			h.audit(c, "refund.gateway_error_rollback_failed", refundID,
+				map[string]any{"status": "pending"},
+				map[string]any{"intended_status": "gateway_error", "gateway_error": errMsg, "db_error": rollbackErr.Error()})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "refund rollback failed; manual reconciliation required",
+				"code":  "REFUND_ROLLBACK_FAILED",
+			})
+		}
 		h.audit(c, "refund.manual_gateway_error", refundID, nil, map[string]any{
 			"order_id": orderID, "amount_cents": amount, "reason": req.Reason,
 			"error": errMsg, "gateway": h.gateway.Name(),
@@ -961,7 +1018,19 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 	if err := h.repo.approveUpdate(c.UserContext(), refundID, status, gatewayRefundID, "", adminID,
 		meta.PaymentMethod, meta.PaymentID, amount, processedAt,
 		[]string{"pending"}); err != nil {
-		log.Error().Err(err).Str("refund_id", refundID).Msg("[crm.refunds] manual approve update failed")
+		// CRITICAL: gateway moved money but DB write failed. Match the
+		// Approve/Retry forensic shape so a single ops grep alert keyed
+		// on phase=post_gateway_db_write catches all three handlers.
+		log.Error().
+			Err(err).
+			Str("refund_id", refundID).
+			Str("gateway_ref", gatewayRefundID).
+			Str("status", status).
+			Str("phase", "post_gateway_db_write").
+			Msg("CRITICAL: manual-create refund succeeded at gateway but DB row write to final status failed — manual reconciliation required, money has moved")
+		h.audit(c, "refund.post_gateway_db_write_failed", refundID,
+			map[string]any{"status": "pending"},
+			map[string]any{"intended_status": status, "gateway_ref": gatewayRefundID, "db_error": err.Error()})
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
