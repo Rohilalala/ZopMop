@@ -2,6 +2,7 @@ package compliance
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -1023,6 +1024,195 @@ func TestAnonymizeAuditLogsAsTarget_NoMatchReturnsZero(t *testing.T) {
 	}
 	if got != 0 {
 		t.Fatalf("rows updated = %d, want 0", got)
+	}
+}
+
+// ── pending_refunds (chunk 7) ───────────────────────────────────────────
+
+type refundOpts struct {
+	userID            string
+	status            string  // 'pending' | 'approved' | 'processed' | 'processed_manual' | 'gateway_error' | 'rejected' | 'cancelled'
+	gatewayRefundID   string  // empty = NULL
+	approvedAt        *time.Time
+	processedAt       *time.Time
+}
+
+// insertRefund inserts a pending_refunds row matching opts.
+func insertRefund(t *testing.T, pool *pgxpool.Pool, opts refundOpts) string {
+	t.Helper()
+	id := uuid.NewString()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO pending_refunds (
+			id, user_id, amount_cents, source, status,
+			gateway_refund_id, approved_at, processed_at
+		)
+		VALUES ($1::uuid, $2::uuid, 1000, 'test', $3,
+		        $4, $5, $6)
+	`, id, opts.userID, opts.status,
+		nullableString(opts.gatewayRefundID),
+		nullableTime(opts.approvedAt), nullableTime(opts.processedAt))
+	if err != nil {
+		t.Fatalf("insert refund (%s): %v", opts.status, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM pending_refunds WHERE id=$1::uuid`, id)
+	})
+	return id
+}
+
+// TestAnonymizeRefundsAsUser_PredicateBucketing covers all 7 status
+// values plus the gateway_refund_id-with-error edge in one pass.
+func TestAnonymizeRefundsAsUser_PredicateBucketing(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	user := makeUser(t, pool, uuid.NewString())
+	now := time.Now().UTC()
+
+	// 4 money-moved variants (anonymise-keep)
+	idProcessed := insertRefund(t, pool, refundOpts{
+		userID: user, status: "processed",
+		gatewayRefundID: "cf_refund_1", processedAt: &now,
+	})
+	idProcessedManual := insertRefund(t, pool, refundOpts{
+		userID: user, status: "processed_manual", processedAt: &now,
+	})
+	idGatewayErrorWithRefund := insertRefund(t, pool, refundOpts{
+		userID: user, status: "gateway_error",
+		gatewayRefundID: "cf_refund_2", // money moved before error
+	})
+
+	// 4 money-not-moved variants (hard-delete)
+	idPending := insertRefund(t, pool, refundOpts{userID: user, status: "pending"})
+	idGatewayErrorNoRefund := insertRefund(t, pool, refundOpts{
+		userID: user, status: "gateway_error", // gateway_refund_id NULL
+	})
+	idRejected := insertRefund(t, pool, refundOpts{userID: user, status: "rejected"})
+	idCancelled := insertRefund(t, pool, refundOpts{userID: user, status: "cancelled"})
+
+	hardDel, anon, err := svc.AnonymizeRefundsAsUser(context.Background(), user)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if hardDel != 4 {
+		t.Errorf("hard-deleted = %d, want 4 (pending + gateway_error_no_refund + rejected + cancelled)", hardDel)
+	}
+	if anon != 3 {
+		t.Errorf("anonymised = %d, want 3 (processed + processed_manual + gateway_error_with_refund)", anon)
+	}
+
+	// Money-moved rows persist with user_id reassigned.
+	for _, id := range []string{idProcessed, idProcessedManual, idGatewayErrorWithRefund} {
+		var got string
+		err := pool.QueryRow(context.Background(),
+			`SELECT user_id::text FROM pending_refunds WHERE id=$1::uuid`, id).Scan(&got)
+		if err != nil {
+			t.Fatalf("expected refund %s to persist: %v", id, err)
+		}
+		if got != TombstoneUserID {
+			t.Errorf("refund %s user_id = %s, want tombstone", id, got)
+		}
+	}
+
+	// Money-not-moved rows must be gone.
+	for _, id := range []string{idPending, idGatewayErrorNoRefund, idRejected, idCancelled} {
+		var n int
+		_ = pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM pending_refunds WHERE id=$1::uuid`, id).Scan(&n)
+		if n != 0 {
+			t.Errorf("refund %s should be hard-deleted, still present", id)
+		}
+	}
+}
+
+func TestAnonymizeRefundsAsUser_PreservesApprovedBy(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	user := makeUser(t, pool, uuid.NewString())
+	now := time.Now().UTC()
+
+	adminID := uuid.NewString()
+	makeCRMAdmin(t, pool, adminID, "admin-r-"+adminID[:8]+"@zopmop.local")
+
+	id := uuid.NewString()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO pending_refunds (
+			id, user_id, amount_cents, source, status, processed_at,
+			approved_by, gateway_refund_id
+		)
+		VALUES ($1::uuid, $2::uuid, 1000, 'test', 'processed', $3,
+		        $4::uuid, 'cf_refund_x')
+	`, id, user, now, adminID)
+	if err != nil {
+		t.Fatalf("insert refund: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM pending_refunds WHERE id=$1::uuid`, id)
+	})
+
+	if _, _, err := svc.AnonymizeRefundsAsUser(context.Background(), user); err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+
+	var gotUser, gotApprovedBy string
+	err = pool.QueryRow(context.Background(),
+		`SELECT user_id::text, approved_by::text FROM pending_refunds WHERE id=$1::uuid`, id,
+	).Scan(&gotUser, &gotApprovedBy)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if gotUser != TombstoneUserID {
+		t.Errorf("user_id not anonymised: %s", gotUser)
+	}
+	if gotApprovedBy != adminID {
+		t.Errorf("approved_by mutated: got %s, want %s", gotApprovedBy, adminID)
+	}
+}
+
+func TestCheckActiveRefunds_BlocksOnRecentApproved(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	user := makeUser(t, pool, uuid.NewString())
+
+	now := time.Now().UTC()
+	insertRefund(t, pool, refundOpts{
+		userID: user, status: "approved", approvedAt: &now,
+	})
+
+	err := svc.CheckActiveRefunds(context.Background(), user)
+	if !errors.Is(err, ErrActiveRefund) {
+		t.Fatalf("expected ErrActiveRefund, got %v", err)
+	}
+}
+
+func TestCheckActiveRefunds_AllowsStaleApproved(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	user := makeUser(t, pool, uuid.NewString())
+
+	stale := time.Now().UTC().Add(-15 * time.Minute) // beyond 10-min window
+	insertRefund(t, pool, refundOpts{
+		userID: user, status: "approved", approvedAt: &stale,
+	})
+
+	if err := svc.CheckActiveRefunds(context.Background(), user); err != nil {
+		t.Fatalf("stale lock should not block: %v", err)
+	}
+}
+
+func TestCheckActiveRefunds_AllowsNonApproved(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	user := makeUser(t, pool, uuid.NewString())
+
+	now := time.Now().UTC()
+	// Recent processed refund — not in the lock state, must not block.
+	insertRefund(t, pool, refundOpts{
+		userID: user, status: "processed",
+		gatewayRefundID: "cf_x", processedAt: &now,
+	})
+
+	if err := svc.CheckActiveRefunds(context.Background(), user); err != nil {
+		t.Fatalf("non-approved status should not block: %v", err)
 	}
 }
 

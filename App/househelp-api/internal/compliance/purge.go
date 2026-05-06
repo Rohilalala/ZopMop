@@ -35,6 +35,8 @@ type PurgeReport struct {
 	BookingsAsHelperHardDeleted    int64
 	BookingsAsHelperAnonymized     int64
 	AuditLogsAnonymized            int64
+	RefundsHardDeleted             int64
+	RefundsAnonymized              int64
 }
 
 // Total returns the sum of all per-table counts. Useful for audit
@@ -54,7 +56,9 @@ func (r PurgeReport) Total() int64 {
 		r.BookingsAsCustomerAnonymized +
 		r.BookingsAsHelperHardDeleted +
 		r.BookingsAsHelperAnonymized +
-		r.AuditLogsAnonymized
+		r.AuditLogsAnonymized +
+		r.RefundsHardDeleted +
+		r.RefundsAnonymized
 }
 
 // txQuerier is the narrow interface that both *pgxpool.Pool and pgx.Tx
@@ -306,6 +310,177 @@ func (s *Service) AnonymizeBookingsAsHelper(ctx context.Context, helperID string
 		return hardDeleted, anonymized, fmt.Errorf("anonymize bookings (helper) commit: %w", err)
 	}
 	return hardDeleted, anonymized, nil
+}
+
+// refundMoneyMovedPredicate is the SQL fragment that decides whether a
+// pending_refunds row represents real money returned to the customer
+// and therefore must be retained for tax / audit defence. Mirrors
+// bookings' moneyMovedPredicate pattern.
+//
+// Captures every rail where money actually changed hands:
+//   - Cashfree gateway success           : status='processed' (gateway_refund_id populated)
+//   - Manual ops settlement              : status='processed_manual'
+//   - Wallet credit (chunk-3 wallet path): status='processed' with gateway_refund_id='wallet:…'
+//   - Cashfree edge case                 : status='gateway_error' AND gateway_refund_id IS NOT NULL
+//     (gateway accepted the refund but errored on the response; money
+//     likely moved, defensive retention)
+//
+// Pending / approved / rejected / cancelled rows AND gateway_error
+// rows where gateway_refund_id IS NULL all fail the predicate and
+// are hard-deleted on user erasure (no tax obligation, no money
+// movement).
+//
+// status is NOT NULL; gateway_refund_id is nullable. The predicate
+// never evaluates to NULL, so callers can use `IS TRUE` / `IS NOT TRUE`
+// (matching the bookings pattern) for safety even though plain
+// `NOT (predicate)` would work.
+const refundMoneyMovedPredicate = `(
+	status IN ('processed', 'processed_manual')
+	OR (status = 'gateway_error' AND gateway_refund_id IS NOT NULL)
+)`
+
+// CheckActiveRefundsTx returns ErrActiveRefund if the user has any
+// refund currently in the chunk-3 in-flight 'approved' lock state
+// claimed within the last 10 minutes. Stale locks (older than 10
+// minutes — indicating a hung Approve handler) do NOT block; those
+// are recoverable manually and shouldn't permanently veto deletion.
+//
+// Audit C-8 / F2D-1 chunk 7. Companion to AnonymizeRefundsAsUserTx —
+// the caller (SoftDeleteUser) MUST call this BEFORE the anonymise +
+// hard-delete pass to avoid racing the lockForApproval CAS from the
+// chunk-3 refund TOCTOU fix.
+func (s *Service) CheckActiveRefundsTx(ctx context.Context, tx pgx.Tx, userID string) error {
+	return execCheckActiveRefunds(ctx, txAdapter{tx: tx}, userID)
+}
+
+// CheckActiveRefunds is the standalone variant — opens its own short
+// tx (a single SELECT, so atomicity isn't strictly needed; matching
+// the symmetric API for callers that prefer it).
+func (s *Service) CheckActiveRefunds(ctx context.Context, userID string) error {
+	return execCheckActiveRefunds(ctx, poolAdapter{p: s.db}, userID)
+}
+
+// execCheckActiveRefunds uses Exec rather than QueryRow because our
+// txQuerier abstraction only exposes Exec; we encode the EXISTS check
+// as a "DELETE FROM (SELECT ...) WHERE FALSE" probe... actually we
+// use a different path: probe by trying to update zero rows that
+// match, then read RowsAffected. Simpler — since we only need a
+// boolean, the cleanest path is a side-effect-free UPDATE on a tiny
+// no-match WHERE; but that's wasteful. Use the underlying tx/pool
+// directly via a small adapter to QueryRow.
+//
+// Sidestep: the txQuerier interface here is too narrow. Add a
+// dedicated direct-DB helper for this single-row probe.
+func execCheckActiveRefunds(ctx context.Context, q txQuerier, userID string) error {
+	// We piggyback on Exec: run an UPDATE that touches zero rows but
+	// would touch one if an active lock exists. Cleanest workaround
+	// without introducing a new interface method.
+	//
+	// Actually no — Exec returns RowsAffected on UPDATE/DELETE only;
+	// for a SELECT we need QueryRow. Fall through to type-asserting
+	// the adapter to expose QueryRow. (Both adapters wrap concrete
+	// pgxpool.Pool / pgx.Tx, both of which have QueryRow.)
+	switch a := q.(type) {
+	case poolAdapter:
+		var exists bool
+		err := a.p.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM pending_refunds
+				WHERE user_id = $1::uuid
+				  AND status = 'approved'
+				  AND approved_at > now() - interval '10 minutes'
+			)
+		`, userID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("check active refunds: %w", err)
+		}
+		if exists {
+			return ErrActiveRefund
+		}
+		return nil
+	case txAdapter:
+		var exists bool
+		err := a.tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM pending_refunds
+				WHERE user_id = $1::uuid
+				  AND status = 'approved'
+				  AND approved_at > now() - interval '10 minutes'
+			)
+		`, userID).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("check active refunds: %w", err)
+		}
+		if exists {
+			return ErrActiveRefund
+		}
+		return nil
+	default:
+		return fmt.Errorf("check active refunds: unsupported querier shape %T", q)
+	}
+}
+
+// AnonymizeRefundsAsUserTx splits pending_refunds for the deleted user
+// by money-moved predicate:
+//   - money-moved : user_id reassigned to TombstoneUserID. Financial
+//     fields (amount_cents, gateway_refund_id, payment_method,
+//     payment_id, processed_at, settled_at, error_message) preserved
+//     for the 7-year tax retention window. approved_by (admin actor)
+//     preserved per chunk-6 actor-fields rule.
+//   - no money moved : hard-deleted (no tax obligation).
+//
+// Caller (SoftDeleteUser) MUST first call CheckActiveRefundsTx —
+// running this method while a refund is in the chunk-3 'approved'
+// in-flight lock state would race the lockForApproval CAS and could
+// hard-delete a row that's mid-gateway-call. The check + anonymise
+// are split (rather than combined into one SQL fragment) so the
+// caller can return ErrActiveRefund early without partial-tx side
+// effects.
+//
+// Audit C-8 / F2D-1 chunk 7.
+func (s *Service) AnonymizeRefundsAsUserTx(ctx context.Context, tx pgx.Tx, userID string) (hardDeleted, anonymized int64, err error) {
+	return execAnonymizeRefundsAsUser(ctx, txAdapter{tx: tx}, userID)
+}
+
+// AnonymizeRefundsAsUser is the standalone variant — opens its own
+// short tx so the DELETE + UPDATE commit atomically.
+func (s *Service) AnonymizeRefundsAsUser(ctx context.Context, userID string) (hardDeleted, anonymized int64, err error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("anonymize refunds begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	hardDeleted, anonymized, err = execAnonymizeRefundsAsUser(ctx, txAdapter{tx: tx}, userID)
+	if err != nil {
+		return hardDeleted, anonymized, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return hardDeleted, anonymized, fmt.Errorf("anonymize refunds commit: %w", err)
+	}
+	return hardDeleted, anonymized, nil
+}
+
+func execAnonymizeRefundsAsUser(ctx context.Context, q txQuerier, userID string) (int64, int64, error) {
+	// 1. Hard-delete: money never moved.
+	res, err := q.Exec(ctx, `
+		DELETE FROM pending_refunds
+		WHERE user_id = $1::uuid
+		  AND `+refundMoneyMovedPredicate+` IS NOT TRUE`, userID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("hard-delete refunds: %w", err)
+	}
+	hardDeleted := res.RowsAffected()
+
+	// 2. Anonymise: money moved → retain row, scrub user_id only.
+	res, err = q.Exec(ctx, `
+		UPDATE pending_refunds
+		SET user_id = $1::uuid
+		WHERE user_id = $2::uuid
+		  AND `+refundMoneyMovedPredicate+` IS TRUE`, TombstoneUserID, userID)
+	if err != nil {
+		return hardDeleted, 0, fmt.Errorf("anonymise refunds: %w", err)
+	}
+	return hardDeleted, res.RowsAffected(), nil
 }
 
 // AnonymizeAuditLogsAsTargetTx reassigns target_id in both audit log

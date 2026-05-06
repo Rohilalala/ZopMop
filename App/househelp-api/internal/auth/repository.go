@@ -238,6 +238,17 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		return ErrActiveBooking
 	}
 
+	// Chunk-7 active-refund guard: block deletion if the user has a
+	// refund in the chunk-3 'approved' in-flight lock state claimed
+	// within the last 10 minutes. Stale locks do NOT block. Returns
+	// compliance.ErrActiveRefund so callers can render a "try again
+	// in a minute" UX.
+	if r.compliance != nil {
+		if err := r.compliance.CheckActiveRefundsTx(queryCtx, tx, userID); err != nil {
+			return err
+		}
+	}
+
 	// Compliance: anonymise child PII + purge trivial child rows BEFORE
 	// the user-row scrub so everything commits atomically. The CASCADE
 	// FKs on the trivial tables never fire today (we soft-delete, don't
@@ -289,6 +300,15 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			return fmt.Errorf("compliance anonymise audit logs: %w", err)
 		}
 
+		// Refunds (chunk 7): hard-delete refunds that never moved
+		// money; anonymise user_id on money-moved refunds for the
+		// 7-year tax retention window. Active in-flight refunds are
+		// already blocked above by CheckActiveRefundsTx.
+		refundsHard, refundsAnon, err := r.compliance.AnonymizeRefundsAsUserTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise refunds: %w", err)
+		}
+
 		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance purge trivial: %w", err)
@@ -300,6 +320,8 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		report.BookingsAsHelperHardDeleted = bookingsHelpHard
 		report.BookingsAsHelperAnonymized = bookingsHelpAnon
 		report.AuditLogsAnonymized = auditLogsAnon
+		report.RefundsHardDeleted = refundsHard
+		report.RefundsAnonymized = refundsAnon
 		log.Info().
 			Str("user_id", userID).
 			Int64("rows_purged", report.Total()).
@@ -317,6 +339,8 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			Int64("bookings_help_hard", report.BookingsAsHelperHardDeleted).
 			Int64("bookings_help_anon", report.BookingsAsHelperAnonymized).
 			Int64("audit_logs", report.AuditLogsAnonymized).
+			Int64("refunds_hard", report.RefundsHardDeleted).
+			Int64("refunds_anon", report.RefundsAnonymized).
 			Msg("compliance purge complete")
 	}
 

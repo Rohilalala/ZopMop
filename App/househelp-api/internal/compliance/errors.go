@@ -24,3 +24,12 @@ var ErrUserHasOpenObligations = errors.New("compliance: user has open obligation
 // retry is safe. Wraps the underlying per-table error so callers can
 // log the proximate cause.
 var ErrPurgeIncomplete = errors.New("compliance: purge could not complete; transaction rolled back")
+
+// ErrActiveRefund is returned by CheckActiveRefunds when the user has
+// a refund currently in the chunk-3 in-flight `approved` lock state
+// (status='approved' with approved_at within the last 10 minutes).
+// Hard-deleting that row would race the gateway call; the caller
+// should retry shortly. Stale locks (older than 10 minutes — typically
+// hung Approve handlers) do NOT raise this — they're recoverable
+// manually and shouldn't permanently block account deletion.
+var ErrActiveRefund = errors.New("compliance: refund is in flight; deletion temporarily blocked")

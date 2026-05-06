@@ -99,6 +99,25 @@ func RegisterDefaultPolicies(r *Registry) {
 		LegalBasis:   "security_audit_retention_legacy",
 	})
 
+	// pending_refunds — financial records. Decision (chunk 7): refunds
+	// where money actually returned to the customer are retained 7
+	// years from processed_at to satisfy GST / income-tax audit
+	// windows (matches the bookings policy). Refunds that never moved
+	// money (pending / approved-but-not-processed / rejected /
+	// cancelled / gateway_error without a gateway_refund_id) are
+	// hard-deleted on user erasure — no tax obligation.
+	//
+	// SoftDeleteUser blocks deletion via ErrActiveRefund when the user
+	// has a refund in the chunk-3 'approved' in-flight lock state
+	// claimed within the last 10 minutes; stale locks do NOT block.
+	r.Register(RetentionPolicy{
+		Table:        "pending_refunds",
+		Action:       ActionDelete,
+		Window:       7 * 365 * 24 * time.Hour, // 7 years
+		UserIDColumn: "processed_at",
+		LegalBasis:   "gst_income_tax_audit_defence_refund",
+	})
+
 	// crm_login_attempts — forensic record of CRM admin auth events
 	// (success + every failure reason, including attempts against
 	// emails that never existed). Retention: 90 days from created_at
