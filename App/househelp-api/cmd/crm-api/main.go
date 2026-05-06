@@ -22,6 +22,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
 	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/crm/analytics"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
@@ -270,16 +271,70 @@ func main() {
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
 
+	// Rate limiters (audit A1-F2 + A5-01). Two bands:
+	//   1. Login (per-IP, strict): 5 attempts / 15 minutes. Suppresses
+	//      X-RateLimit-* headers so attackers can't probe the cap.
+	//      Audit-logged on 429 with target_id=ip.
+	//   2. Authenticated (per-admin): 60 / minute, fail-closed.
+	//      Audit-logged on 429 with target_id=adminID.
+	// Both use the customer-side mw.NamedRateLimiter (Redis sliding-
+	// window with Lua atomicity, in-process token-bucket pre-filter,
+	// fail-closed when Redis is unreachable). Bucket names keep CRM
+	// counters in their own namespace (ratelimit:crm-login:*,
+	// ratelimit:crm-admin:*).
+	crmLoginLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
+		MaxRequests:     5,
+		Window:          15 * time.Minute,
+		FailureMode:     "fail-closed",
+		SuppressHeaders: true,
+		OnReject: func(c *fiber.Ctx) {
+			auditRecorder.Log(c.UserContext(), audit.Entry{
+				Action:     "ratelimit.exceeded",
+				Module:     "crm-auth",
+				TargetType: "ip",
+				TargetID:   c.IP(),
+				IPAddress:  c.IP(),
+				UserAgent:  c.Get("User-Agent"),
+				RequestID:  c.Get("X-Request-ID"),
+			})
+		},
+	}, "ip", "crm-login")
+	crmAdminLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
+		MaxRequests: 60,
+		Window:      time.Minute,
+		FailureMode: "fail-closed",
+		OnReject: func(c *fiber.Ctx) {
+			adminID, _ := c.Locals("crmAdminID").(string)
+			adminEmail, _ := c.Locals("crmAdminEmail").(string)
+			auditRecorder.Log(c.UserContext(), audit.Entry{
+				AdminID:    adminID,
+				AdminEmail: adminEmail,
+				Action:     "ratelimit.exceeded",
+				Module:     "crm",
+				TargetType: "admin",
+				TargetID:   adminID,
+				IPAddress:  c.IP(),
+				UserAgent:  c.Get("User-Agent"),
+				RequestID:  c.Get("X-Request-ID"),
+			})
+		},
+	}, "crmAdmin", "crm-admin")
+
 	// Public auth endpoints (login, totp/verify, refresh, logout). These do
 	// NOT pass through the JWT middleware — login must work without one.
-	authPublic := api.Group("/auth")
+	// Login limiter chained here so brute-force / credential-stuffing get
+	// 429'd before they reach the bcrypt verify.
+	authPublic := api.Group("/auth", crmLoginLimiter)
 	authHandler.RegisterPublicRoutes(authPublic)
 
 	// Authed group. Every write below must call the audit recorder; the
 	// handlers do this individually rather than via a global decorator so
 	// the before/after diff is precise.
+	//
+	// Limiter ordering: jwtMW first so c.Locals("crmAdminID") is set
+	// before the limiter reads it; chain the per-admin limiter after.
 	jwtMW := crmmw.JWT(crmmw.JWTConfig{Secret: cfg.JWTSecret, DB: dbPool})
-	authed := api.Group("", jwtMW)
+	authed := api.Group("", jwtMW, crmAdminLimiter)
 
 	// Same /auth prefix, but the authenticated subset (sessions, /me).
 	authedAuthGroup := authed.Group("/auth")

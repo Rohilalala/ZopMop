@@ -18,6 +18,22 @@ type RateLimitConfig struct {
 	MaxRequests int
 	Window      time.Duration
 	FailureMode string
+
+	// OnReject is called immediately before the limiter sends a 429
+	// response. Lets callers fire audit-log entries or metric counters
+	// without baking those concerns into the limiter itself. Receives
+	// the request *fiber.Ctx so the callback can read locals
+	// (crmAdminID, userID, request_id, etc.). nil means "no hook" and
+	// is the default.
+	OnReject func(c *fiber.Ctx)
+
+	// SuppressHeaders skips the X-RateLimit-Limit, X-RateLimit-Remaining
+	// and X-RateLimit-Policy response headers on rejection. Used for
+	// login / sensitive-auth endpoints to avoid leaking the cap and
+	// remaining-attempts to scripted attackers. Retry-After is still
+	// emitted on rejection regardless — it's required by the HTTP spec
+	// for 429s and useful to legitimate clients backing off.
+	SuppressHeaders bool
 }
 
 var (
@@ -226,6 +242,17 @@ func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket
 			} else {
 				identifier = c.IP()
 			}
+		case "crmAdmin":
+			// CRM admin identity, populated by crm/middleware.JWT into
+			// c.Locals("crmAdminID"). Fall back to IP when absent so a
+			// request sneaking past JWT (mis-mounted route) still gets
+			// SOMETHING bucketed rather than colliding all into the
+			// empty-string namespace.
+			if adminID, ok := c.Locals("crmAdminID").(string); ok && adminID != "" {
+				identifier = adminID
+			} else {
+				identifier = c.IP()
+			}
 		default:
 			identifier = c.IP()
 		}
@@ -255,15 +282,7 @@ func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket
 			refill := capacity / windowSecs
 			if !getLocalBucket(key).tryConsume(now, capacity, refill) {
 				rateLimiterLocalSkipsRedis.Add(1)
-				retryAfter := int(windowSecs)
-				c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
-				c.Set("X-RateLimit-Remaining", "0")
-				c.Set("X-RateLimit-Policy", "local-prefilter")
-				c.Set("Retry-After", strconv.Itoa(retryAfter))
-				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-					"error":       "rate limit exceeded",
-					"retry_after": retryAfter,
-				})
+				return reject429(c, config, int(windowSecs), "local-prefilter")
 			}
 		}
 
@@ -302,25 +321,17 @@ func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket
 			switch config.FailureMode {
 			case "fail-closed":
 				rateLimiterFailClosedRejects.Add(1)
-				c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
-				c.Set("X-RateLimit-Remaining", "0")
-				c.Set("Retry-After", strconv.Itoa(int(config.Window.Seconds())))
-				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-					"error":       "rate limiter unavailable",
-					"retry_after": int(config.Window.Seconds()),
-				})
+				return reject429(c, config, int(config.Window.Seconds()), "fail-closed")
 			case "local-fallback":
 				allowed, remaining, retryAfter := allowWithLocalFallback(key, config, now)
-				c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
-				c.Set("X-RateLimit-Remaining", strconv.Itoa(max(0, remaining)))
-				c.Set("X-RateLimit-Policy", "local-fallback")
 				if !allowed {
 					rateLimiterLocalFallbackReject.Add(1)
-					c.Set("Retry-After", strconv.Itoa(retryAfter))
-					return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-						"error":       "rate limit exceeded",
-						"retry_after": retryAfter,
-					})
+					return reject429(c, config, retryAfter, "local-fallback")
+				}
+				if !config.SuppressHeaders {
+					c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
+					c.Set("X-RateLimit-Remaining", strconv.Itoa(max(0, remaining)))
+					c.Set("X-RateLimit-Policy", "local-fallback")
 				}
 				rateLimiterLocalFallbackAllows.Add(1)
 				return c.Next()
@@ -333,31 +344,61 @@ func NamedRateLimiter(rdb *redis.Client, config RateLimitConfig, keyType, bucket
 		allowed := result[0].(int64)
 		remaining := result[1].(int64)
 
-		// Set rate limit headers.
-		c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
-		c.Set("X-RateLimit-Remaining", strconv.Itoa(max(0, int(remaining))))
-
 		if allowed == 0 {
 			// Get oldest entry timestamp to calculate retry-after.
 			oldest, err := rdb.ZRangeWithScores(ctx, key, 0, 0).Result()
-			if err != nil || len(oldest) == 0 {
-				c.Set("Retry-After", strconv.Itoa(int(config.Window.Seconds())))
-				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-					"error":       "rate limit exceeded",
-					"retry_after": int(config.Window.Seconds()),
-				})
+			retryAfter := int(config.Window.Seconds())
+			if err == nil && len(oldest) > 0 {
+				ms := int(oldest[0].Score) + int(config.Window.Seconds()*1000) - int(nowMilli)
+				if ms > 0 {
+					retryAfter = ms / 1000
+				}
 			}
-			retryAfter := int(oldest[0].Score) + int(config.Window.Seconds()*1000) - int(nowMilli)
-			if retryAfter < 0 {
-				retryAfter = int(config.Window.Seconds())
-			}
-			c.Set("Retry-After", strconv.Itoa(retryAfter/1000))
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error":       "rate limit exceeded",
-				"retry_after": retryAfter / 1000,
-			})
+			return reject429(c, config, retryAfter, "")
 		}
 
+		// Allow path: emit informational headers unless caller asked for
+		// suppression. Login limiters set SuppressHeaders=true so even
+		// successful probes don't leak the cap.
+		if !config.SuppressHeaders {
+			c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
+			c.Set("X-RateLimit-Remaining", strconv.Itoa(max(0, int(remaining))))
+		}
 		return c.Next()
 	}
+}
+
+// reject429 emits the standard rate-limit rejection: status 429,
+// JSON body with code=RATE_LIMITED, Retry-After header, optional
+// X-RateLimit-* informational headers when SuppressHeaders is false,
+// and the OnReject hook fired before the response is written.
+//
+// Centralized so every rejection path (local prefilter, fail-closed
+// Redis hiccup, local-fallback overage, Redis sliding-window cap)
+// emits identical shape. policy is the X-RateLimit-Policy value
+// ("local-prefilter" / "local-fallback" / "fail-closed" / "" for the
+// normal Redis-allowed-but-over path).
+func reject429(c *fiber.Ctx, config RateLimitConfig, retryAfter int, policy string) error {
+	if retryAfter < 1 {
+		retryAfter = int(config.Window.Seconds())
+		if retryAfter < 1 {
+			retryAfter = 60
+		}
+	}
+	c.Set("Retry-After", strconv.Itoa(retryAfter))
+	if !config.SuppressHeaders {
+		c.Set("X-RateLimit-Limit", strconv.Itoa(config.MaxRequests))
+		c.Set("X-RateLimit-Remaining", "0")
+		if policy != "" {
+			c.Set("X-RateLimit-Policy", policy)
+		}
+	}
+	if config.OnReject != nil {
+		config.OnReject(c)
+	}
+	return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+		"error":       "rate limit exceeded",
+		"code":        "RATE_LIMITED",
+		"retry_after": retryAfter,
+	})
 }
