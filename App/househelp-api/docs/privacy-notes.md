@@ -242,6 +242,14 @@ Things they cannot yet do:
 
 ## Things to revisit before launch
 
+- **Schedule `cmd/retention-worker`**: chunk 10 landed the worker, 
+  but invocation is the deployer's job. Wire as a cron / k8s 
+  CronJob / systemd-timer to run nightly. Recommended first prod 
+  deployment: run with `--dry-run` once, eyeball the per-table 
+  would-delete counts, then enable real sweeps. Alert on exit code 
+  != 0 (any per-policy failure). Consider per-run lock (advisory 
+  lock or CronJob `concurrencyPolicy: Forbid`) so two simultaneous 
+  invocations don't fight for the same rows.
 - Location data outside helper_status_log: live tracking flows via 
   `internal/booking/tracking_ws.go` and the `helpers.location` 
   GEOGRAPHY column may have other persistent surfaces (mobile 
