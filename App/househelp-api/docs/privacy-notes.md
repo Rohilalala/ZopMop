@@ -123,8 +123,17 @@ What's still being built (audit C-8 / F2D-1):
   (chunk 10; `cmd/retention-worker` with `--dry-run` flag, batched 
   DELETE LIMIT 1000 with `FOR UPDATE SKIP LOCKED`, per-policy 
   transactions, exit-non-zero on any per-policy failure).
-- Real /me/export endpoint (currently stubbed at 501 Not Implemented)
-- Proper consent versioning (currently a single boolean)
+- ✅ `GET /me/export` returns a streaming JSON portability dump 
+  (chunk 11; rate-limited 1/hour per user via Redis SETNX, audited 
+  via `crm_audit_log` action `user.data_export`, other-party PII 
+  redacted, FCM tokens stubbed to first 8 chars). Bounded heap: rows 
+  scanned and written one at a time, never accumulated. Excludes 
+  `crm_login_attempts` (admin-only) and `crm_push_messages` 
+  (campaign-level; per-user IDs only inside `target_filter` JSONB 
+  on `target_kind='specific'`, JSONB scrubbing deferred).
+- Proper consent versioning (schema landed in chunk-1 migration 073; 
+  user-app accept-flow still writes the legacy boolean; auth handler 
+  cutover pending).
 
 ---
 
@@ -133,10 +142,13 @@ What's still being built (audit C-8 / F2D-1):
 Things users can do today:
 - Request account deletion (works partially — see above)
 - View their addresses, bookings, payment history (in-app)
+- Download their full data in a portable JSON format via 
+  `GET /me/export` (DPDP §11 / GDPR Art 20). Rate-limited to once 
+  per hour per user. Other parties' UUIDs are redacted; FCM tokens 
+  are stubbed to the first 8 chars. Each request is recorded in 
+  `crm_audit_log` so we have a forensic trail of access requests.
 
 Things they cannot yet do:
-- Download their full data in a portable format (TODO — endpoint 
-  exists as stub)
 - Withdraw specific consents (TODO — current consent is all-or-nothing 
   boolean)
 - See an audit trail of who accessed their data (TODO)
@@ -227,6 +239,19 @@ Things they cannot yet do:
   `ON DELETE CASCADE` FK to `helpers(id)` (the SoftDeleteUser tx 
   already drops the helpers row, cascading status-log entries 
   away). Policy-only chunk. Decision date: 2026-05-06.
+- [x] **`/me/export` data portability (chunk 11)**: streaming JSON 
+  document, single synchronous response, no ZIP. Rate-limited 1/hour 
+  per user via Redis SETNX (TTL 3600s). Audit-logged via 
+  `crm_audit_log` action `user.data_export`. Other-party UUIDs 
+  redacted to `<other_party>`; FCM tokens stubbed to first 8 chars 
+  + `...`. CRM admin actor identifiers omitted (NULL) on audit-trail 
+  rows about the user. Excludes `crm_login_attempts` (admin-only 
+  table; customer/helper users never appear) and `crm_push_messages` 
+  (campaign-level; per-user IDs only inside `target_filter` JSONB on 
+  `target_kind='specific'`, deferred per the chunk-8 JSONB-scrubbing 
+  pattern). Helper-only sections (`helper_profile`, 
+  `helper_status_log`, `pro_leaves`) included only when the user 
+  has a `helpers` row. Decision date: 2026-05-06.
 - [BLOCKED] **roomies wallet history**: deferred until the 
   prepaid-balance settlement worker lands. The roomies module 
   carries 5 explicit TODO comments noting that user-erasure with 

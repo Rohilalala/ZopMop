@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/internal/compliance"
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
@@ -20,6 +22,8 @@ type Handler struct {
 	service      *Service
 	rdb          *redis.Client
 	isProduction bool
+	compliance   *compliance.Service
+	audit        *audit.Recorder
 }
 
 // NewHandler creates a new auth handler.
@@ -31,6 +35,16 @@ type Handler struct {
 func NewHandler(service *Service, rdb *redis.Client, isProduction bool) *Handler {
 	return &Handler{service: service, rdb: rdb, isProduction: isProduction}
 }
+
+// SetCompliance wires the compliance service so /me/export can stream
+// user data and SoftDeleteUser flows can call into compliance helpers.
+// Optional — handler degrades to 501 from /me/export when nil.
+func (h *Handler) SetCompliance(c *compliance.Service) { h.compliance = c }
+
+// SetAudit wires the CRM audit recorder so /me/export and other DSAR
+// requests can record an "access request" trail per DPDP §11. Optional —
+// handler skips audit logging silently when nil.
+func (h *Handler) SetAudit(r *audit.Recorder) { h.audit = r }
 
 // setAuthCookie writes the JWT as an HttpOnly+SameSite=Strict cookie so that
 // cookie-based browser clients (test client / admin dashboard) never expose
@@ -81,18 +95,95 @@ func (h *Handler) RegisterMeRoutes(router fiber.Router) {
 	router.Get("/export", h.ExportMe)
 }
 
-// ExportMe handles GET /me/export — DSAR (audit C-8 / F2D-1). Returns
-// 501 today as a placeholder so the route exists for client / docs /
-// app-store compliance reviewers; subsequent compliance chunks fill in
-// the real ZIP-of-user-data implementation once retention policies are
-// registered for every table that holds the caller's PII.
+// exportRateLimitWindow is the per-user gap enforced between successive
+// /me/export requests. 1 hour is strict enough to prevent abuse (export
+// is a heavy DB read) and lenient enough that a user who lost their
+// download can re-fetch within the same workday.
+const exportRateLimitWindow = time.Hour
+
+// ExportMe handles GET /me/export — DPDP §11 / GDPR Art 20 data
+// portability. Streams a JSON document containing all PII ZopMop
+// holds about the authenticated user. Audit C-8 / F2D-1 chunk 11.
+//
+// Rate limit: 1 export per user per hour, enforced via Redis SETNX on
+// `export:user:<id>` with a 3600s TTL. Returns 429 with Retry-After
+// when the lock is held.
+//
+// Audit: each accepted export writes a `user.data_export` row to
+// crm_audit_log via the injected Recorder so DPDP §11 access requests
+// have a forensic trail.
+//
+// Falls back to 501 if the compliance service was never wired in —
+// keeps existing tests + tooling that exercise the route alive without
+// the full dependency graph.
 func (h *Handler) ExportMe(c *fiber.Ctx) error {
-	c.Set("Retry-After", "604800") // 7 days — coarse hint while feature is in development
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error":  "data export endpoint is in development",
-		"code":   "EXPORT_NOT_IMPLEMENTED",
-		"detail": "the /me/export DSAR endpoint is wired but not yet returning data; track audit C-8 / F2D-1 for status",
-	})
+	if h.compliance == nil {
+		c.Set("Retry-After", "604800")
+		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
+			"error": "data export not yet wired in this binary",
+			"code":  "EXPORT_NOT_IMPLEMENTED",
+		})
+	}
+	userID, _ := c.Locals(middleware.LocalsKeyUserID).(string)
+	if userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "authentication required",
+		})
+	}
+
+	// Rate limit: 1 export per hour per user. Redis hiccup → fail open
+	// (let the export through). Consistent with the idempotency
+	// middleware's fail-open posture; better than 5xx-ing a legit DSAR.
+	if h.rdb != nil {
+		key := "export:user:" + userID
+		ctx, cancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
+		defer cancel()
+		acquired, err := h.rdb.SetNX(ctx, key, "1", exportRateLimitWindow).Result()
+		if err == nil && !acquired {
+			ttl, _ := h.rdb.TTL(ctx, key).Result()
+			retryAfter := int(ttl.Seconds())
+			if retryAfter < 1 {
+				retryAfter = 60
+			}
+			c.Set("Retry-After", strconv.Itoa(retryAfter))
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":       "data export already requested recently; please wait before retrying",
+				"code":        "EXPORT_RATE_LIMITED",
+				"retry_after": retryAfter,
+			})
+		}
+	}
+
+	// Audit before streaming. If the request later errors mid-stream,
+	// the audit row still records that an export was requested — DPDP
+	// §11 cares about the access request, not the success.
+	if h.audit != nil {
+		h.audit.Log(c.UserContext(), audit.Entry{
+			Action:     "user.data_export",
+			Module:     "me",
+			TargetType: "user",
+			TargetID:   userID,
+			IPAddress:  c.IP(),
+			UserAgent:  c.Get("User-Agent"),
+			RequestID:  c.Get("X-Request-ID"),
+		})
+	}
+
+	c.Set("Content-Type", "application/json")
+	c.Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="zopmop-export-%s.json"`, time.Now().UTC().Format("2006-01-02")))
+	c.Status(fiber.StatusOK)
+
+	rows, err := h.compliance.ExportUserData(c.UserContext(), userID, c.Response().BodyWriter())
+	if err != nil {
+		// Headers are already on the wire; we can't switch to 5xx now.
+		// Truncated body will surface as JSON parse failure on the
+		// client. Log loudly so ops can investigate.
+		log.Error().Err(err).Str("user_id", userID).Int("rows_so_far", rows).Msg("[me.export] streaming failed mid-payload")
+		return nil
+	}
+	log.Info().Str("user_id", userID).Int("rows_exported", rows).Msg("[me.export] complete")
+	return nil
 }
 
 // RegisterDeviceRoutes mounts authenticated device-scoped routes

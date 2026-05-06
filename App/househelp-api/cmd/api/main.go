@@ -21,6 +21,8 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/bff"
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
+	"github.com/adityarohilla/househelp-api/internal/compliance"
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/localities"
 	"github.com/adityarohilla/househelp-api/internal/experts"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
@@ -219,6 +221,18 @@ func main() {
 	authRepo := auth.NewRepository(dbPool)
 	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment())
 	authHandler := auth.NewHandler(authService, rdb, cfg.IsProduction())
+
+	// Compliance + audit. The compliance service backs DSAR endpoints
+	// (GET /me/export streams a JSON portability dump). The audit
+	// recorder writes a `user.data_export` row to crm_audit_log on
+	// every accepted request so DPDP §11 access requests have a
+	// forensic trail.
+	complianceRegistry := compliance.NewRegistry()
+	compliance.RegisterDefaultPolicies(complianceRegistry)
+	complianceService := compliance.NewService(dbPool, complianceRegistry)
+	auditRecorder := audit.NewRecorder(dbPool)
+	authHandler.SetCompliance(complianceService)
+	authHandler.SetAudit(auditRecorder)
 
 	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+1)
 	for _, key := range cfg.JWTVerificationSecrets() {
