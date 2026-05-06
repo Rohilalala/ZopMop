@@ -293,3 +293,125 @@ func TestSoftDeleteUser_PurgesHelperLocation_E2E(t *testing.T) {
 		t.Fatalf("active marker key still present after soft-delete")
 	}
 }
+
+// TestIsSuspended_LiveDBRead asserts the chunk-16 SuspensionChecker
+// reads users.is_suspended live. Audit C-8 / A5-06.
+//
+// Sub-tests cover the four cases from the PHASE B contract:
+//   - active user → (false, nil)
+//   - suspended user → (true, nil)
+//   - missing row → (true, nil) (fail-closed)
+//   - DB error path is exercised by the middleware unit tests via
+//     a stub; not reproducible against a real pool here.
+func TestIsSuspended_LiveDBRead(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL unset; skipping DB-backed repo test")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	defer pool.Close()
+
+	repo := NewRepository(pool)
+	ctx := context.Background()
+
+	// Active user.
+	activeID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, phone, role, is_suspended) VALUES ($1::uuid, $2, 'customer', FALSE)`,
+		activeID, "del:c16-act-"+activeID[:6]); err != nil {
+		t.Fatalf("insert active: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1::uuid`, activeID) })
+
+	// Suspended user.
+	suspID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, phone, role, is_suspended) VALUES ($1::uuid, $2, 'customer', TRUE)`,
+		suspID, "del:c16-sus-"+suspID[:6]); err != nil {
+		t.Fatalf("insert suspended: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1::uuid`, suspID) })
+
+	t.Run("ActiveUserReturnsFalse", func(t *testing.T) {
+		got, err := repo.IsSuspended(ctx, uuid.MustParse(activeID))
+		if err != nil {
+			t.Fatalf("IsSuspended: %v", err)
+		}
+		if got {
+			t.Fatalf("IsSuspended for active user = true, want false")
+		}
+	})
+
+	t.Run("SuspendedUserReturnsTrue", func(t *testing.T) {
+		got, err := repo.IsSuspended(ctx, uuid.MustParse(suspID))
+		if err != nil {
+			t.Fatalf("IsSuspended: %v", err)
+		}
+		if !got {
+			t.Fatalf("IsSuspended for suspended user = false, want true")
+		}
+	})
+
+	t.Run("MissingUserFailsClosed", func(t *testing.T) {
+		// Random UUID with no row — repo contract is (true, nil).
+		got, err := repo.IsSuspended(ctx, uuid.New())
+		if err != nil {
+			t.Fatalf("IsSuspended: %v", err)
+		}
+		if !got {
+			t.Fatalf("IsSuspended for missing user = false, want true (fail-closed)")
+		}
+	})
+}
+
+// TestSuspendedUserBlockedImmediatelyOnNextRequest is THE end-to-end
+// proof the audit A5-06 staleness gap is closed. Pre-fix, the user's
+// existing JWT (with is_suspended=false baked in at login) would have
+// allowed the request through. Post-fix, the live DB read blocks on
+// the next request.
+func TestSuspendedUserBlockedImmediatelyOnNextRequest(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL unset; skipping E2E suspension test")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	defer pool.Close()
+
+	repo := NewRepository(pool)
+	ctx := context.Background()
+	userID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, phone, role, is_suspended) VALUES ($1::uuid, $2, 'customer', FALSE)`,
+		userID, "del:c16-e2e-"+userID[:6]); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1::uuid`, userID) })
+
+	// Step 1: live read says not-suspended (request passes).
+	got, err := repo.IsSuspended(ctx, uuid.MustParse(userID))
+	if err != nil || got {
+		t.Fatalf("pre-suspend: got=(%v, %v), want (false, nil)", got, err)
+	}
+
+	// Step 2: admin suspends the user (simulates the CRM PATCH).
+	if _, err := pool.Exec(ctx,
+		`UPDATE users SET is_suspended = TRUE WHERE id = $1::uuid`, userID); err != nil {
+		t.Fatalf("admin suspend: %v", err)
+	}
+
+	// Step 3: very next call returns true. No JWT refresh needed —
+	// the staleness gap is zero.
+	got, err = repo.IsSuspended(ctx, uuid.MustParse(userID))
+	if err != nil {
+		t.Fatalf("post-suspend: %v", err)
+	}
+	if !got {
+		t.Fatalf("post-suspend: IsSuspended=false, want true (audit A5-06 not closed)")
+	}
+}

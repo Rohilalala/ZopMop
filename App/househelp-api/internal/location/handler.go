@@ -9,6 +9,7 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -25,15 +26,19 @@ const wsAuthDeadline = 5 * time.Second
 
 // Handler handles HTTP/WebSocket requests for the location module.
 type Handler struct {
-	service *Service
-	jwtKeys []middleware.JWTKey
-	db      *pgxpool.Pool
+	service        *Service
+	jwtKeys        []middleware.JWTKey
+	db             *pgxpool.Pool
+	suspensionCheck middleware.SuspensionChecker
 }
 
 // NewHandler creates a new location handler. db is required to authorize
 // GetHelperLocation against an active booking between caller and helper.
-func NewHandler(service *Service, jwtKeys []middleware.JWTKey, db *pgxpool.Pool) *Handler {
-	return &Handler{service: service, jwtKeys: jwtKeys, db: db}
+// suspensionCheck performs the live is_suspended DB read at WS handshake
+// (audit C-8 / A5-06 chunk 16). Optional — nil falls back to the legacy
+// JWT-claim check; tests + older binaries unaffected.
+func NewHandler(service *Service, jwtKeys []middleware.JWTKey, db *pgxpool.Pool, suspensionCheck middleware.SuspensionChecker) *Handler {
+	return &Handler{service: service, jwtKeys: jwtKeys, db: db, suspensionCheck: suspensionCheck}
 }
 
 // RegisterRoutes mounts location routes onto the given router group.
@@ -112,8 +117,31 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 		return
 	}
 	role, _ := claims["role"].(string)
-	if isSuspended, ok := claims["is_suspended"].(bool); ok && isSuspended {
-		_ = c.WriteJSON(fiber.Map{"error": "account suspended"})
+	// Live suspension check at WS handshake (audit A5-06). Falls back
+	// to JWT-claim read when no checker wired (tests / legacy).
+	if h.suspensionCheck != nil {
+		uid, parseErr := uuid.Parse(userID)
+		if parseErr != nil {
+			_ = c.WriteJSON(fiber.Map{"error": "authentication required"})
+			c.Close()
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		suspended, err := h.suspensionCheck.IsSuspended(ctx, uid)
+		cancel()
+		if err != nil {
+			log.Error().Err(err).Str("user_id", userID).Msg("[location.ws] suspension check failed; failing closed")
+			_ = c.WriteJSON(fiber.Map{"error": "service temporarily unavailable", "code": "AUTH_CHECK_FAILED"})
+			c.Close()
+			return
+		}
+		if suspended {
+			_ = c.WriteJSON(fiber.Map{"error": "account suspended", "code": "ACCOUNT_SUSPENDED"})
+			c.Close()
+			return
+		}
+	} else if isSuspended, ok := claims["is_suspended"].(bool); ok && isSuspended {
+		_ = c.WriteJSON(fiber.Map{"error": "account suspended", "code": "ACCOUNT_SUSPENDED"})
 		c.Close()
 		return
 	}

@@ -1,11 +1,28 @@
 package middleware
 
 import (
+	"context"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
+
+// SuspensionChecker is the narrow interface AuthMiddleware uses to
+// verify a user's suspension status on each authenticated request.
+// auth.Repository satisfies this — passing the repo into
+// AuthMiddleware via this interface keeps the middleware free of an
+// auth-package import (avoids the import cycle the middleware
+// package would otherwise hit).
+//
+// Audit C-8 / A5-06 chunk 16. The previous implementation read
+// is_suspended from the JWT claim baked at login time; suspensions
+// took up to JWT_EXPIRY_HOURS to take effect. Live DB read closes
+// the gap.
+type SuspensionChecker interface {
+	IsSuspended(ctx context.Context, userID uuid.UUID) (bool, error)
+}
 
 // AuthCookieName is the name of the HttpOnly cookie used by browser clients
 // to carry the JWT. Mobile clients (React Native / Expo SecureStore) continue
@@ -39,7 +56,14 @@ func IsUnauthenticatedPath(path string) bool {
 // (mobile / Bearer flow) or the HttpOnly auth_token cookie (browser flow).
 // On success, stores userID and role in Fiber locals.
 // On failure, returns 401 with a generic error message (never stack traces).
-func AuthMiddleware(jwtKeys []JWTKey) fiber.Handler {
+//
+// checker performs a live DB read of users.is_suspended on every
+// request — the previous implementation read the bool from the JWT
+// claim, which goes stale up to JWT_EXPIRY_HOURS after admin
+// suspension. Audit C-8 / A5-06 chunk 16. checker may be nil only
+// in tests / older binaries; nil-checker degrades to the legacy
+// JWT-claim path with a one-time warning.
+func AuthMiddleware(jwtKeys []JWTKey, checker SuspensionChecker) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Server-to-server webhook endpoints authenticate via HMAC signature
 		// on the body — JWT auth is meaningless there. See IsUnauthenticatedPath.
@@ -77,8 +101,8 @@ func AuthMiddleware(jwtKeys []JWTKey) fiber.Handler {
 		}
 
 		// Extract user ID and role from claims.
-		userID, ok := claims["user_id"].(string)
-		if !ok || userID == "" {
+		userIDStr, ok := claims["user_id"].(string)
+		if !ok || userIDStr == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "authentication required",
 			})
@@ -86,15 +110,42 @@ func AuthMiddleware(jwtKeys []JWTKey) fiber.Handler {
 
 		role, _ := claims["role"].(string)
 
-		// Check if user is suspended.
-		if isSuspended, ok := claims["is_suspended"].(bool); ok && isSuspended {
+		// Live suspension check — closes the JWT-staleness gap that
+		// audit A5-06 flagged. PK lookup against users.is_suspended.
+		if checker != nil {
+			userID, err := uuid.Parse(userIDStr)
+			if err != nil {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "authentication required",
+				})
+			}
+			suspended, err := checker.IsSuspended(c.UserContext(), userID)
+			if err != nil {
+				// Fail closed: this is the auth path; never pass on
+				// uncertainty. 503 signals "transient — retry" while
+				// not leaking the underlying DB error.
+				log.Error().Err(err).Str("user_id", userIDStr).Msg("[auth] suspension check failed; failing closed")
+				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+					"error": "service temporarily unavailable",
+					"code":  "AUTH_CHECK_FAILED",
+				})
+			}
+			if suspended {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+					"error": "account suspended",
+					"code":  "ACCOUNT_SUSPENDED",
+				})
+			}
+		} else if isSuspended, ok := claims["is_suspended"].(bool); ok && isSuspended {
+			// Legacy JWT-claim fallback for nil-checker. Tests only.
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"error": "account suspended",
+				"code":  "ACCOUNT_SUSPENDED",
 			})
 		}
 
 		// Store in Fiber locals for downstream handlers.
-		c.Locals(LocalsKeyUserID, userID)
+		c.Locals(LocalsKeyUserID, userIDStr)
 		c.Locals("role", role)
 
 		return c.Next()

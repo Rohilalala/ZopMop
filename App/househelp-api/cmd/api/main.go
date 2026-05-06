@@ -334,7 +334,7 @@ func main() {
 
 	// Location.
 	locationService := location.NewService(rdb)
-	locationHandler := location.NewHandler(locationService, jwtVerificationKeys, dbPool)
+	locationHandler := location.NewHandler(locationService, jwtVerificationKeys, dbPool, authRepo)
 
 	// Addresses.
 	addressRepo := addresses.NewRepository(dbPool)
@@ -383,7 +383,7 @@ func main() {
 	configHandler.RegisterPublicRoutes(appGroup)
 
 	// Authenticated routes with rate limiting by user ID.
-	authMiddleware := mw.AuthMiddleware(jwtVerificationKeys)
+	authMiddleware := mw.AuthMiddleware(jwtVerificationKeys, authRepo)
 	authLimiter := mw.RateLimiter(rdb, mw.AuthRateLimit, "user")
 
 	// Booking routes (requires JWT).
@@ -397,7 +397,7 @@ func main() {
 	// Auth is enforced inside the WS via {"type":"auth","token":...} so no
 	// JWT header middleware here; we only need the public limiter to soak up
 	// pre-upgrade abuse.
-	bookingTrackWS := booking.NewTrackingWSHandler(bookingService, jwtVerificationKeys)
+	bookingTrackWS := booking.NewTrackingWSHandler(bookingService, jwtVerificationKeys, authRepo)
 	bookingTrackWS.RegisterTrackingWS(api.Group("/bookings", publicLimiter))
 
 	// Location routes (requires JWT).

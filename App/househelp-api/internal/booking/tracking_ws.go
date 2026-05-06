@@ -8,6 +8,7 @@ import (
 	"github.com/adityarohilla/househelp-api/pkg/validator"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -28,13 +29,17 @@ const trackingWSAuthDeadline = 5 * time.Second
 //   2. Server replies {"status":"authenticated"} on success.
 //   3. Server pushes a TrackingResponse JSON every trackingWSPushInterval.
 type TrackingWSHandler struct {
-	service *Service
-	jwtKeys []middleware.JWTKey
+	service         *Service
+	jwtKeys         []middleware.JWTKey
+	suspensionCheck middleware.SuspensionChecker
 }
 
 // NewTrackingWSHandler builds the handler used by RegisterTrackingWS.
-func NewTrackingWSHandler(service *Service, jwtKeys []middleware.JWTKey) *TrackingWSHandler {
-	return &TrackingWSHandler{service: service, jwtKeys: jwtKeys}
+// suspensionCheck performs the live is_suspended DB read at WS
+// handshake (audit C-8 / A5-06 chunk 16). Optional — nil falls back
+// to the legacy JWT-claim check.
+func NewTrackingWSHandler(service *Service, jwtKeys []middleware.JWTKey, suspensionCheck middleware.SuspensionChecker) *TrackingWSHandler {
+	return &TrackingWSHandler{service: service, jwtKeys: jwtKeys, suspensionCheck: suspensionCheck}
 }
 
 // RegisterTrackingWS mounts GET /:id/track/ws on the supplied router. Caller is
@@ -95,8 +100,31 @@ func (h *TrackingWSHandler) handle(c *websocket.Conn) {
 		c.Close()
 		return
 	}
-	if suspended, ok := claims["is_suspended"].(bool); ok && suspended {
-		_ = c.WriteJSON(fiber.Map{"error": "account suspended"})
+	// Live suspension check at WS handshake (audit A5-06). Falls back
+	// to JWT-claim read when no checker wired (tests / legacy).
+	if h.suspensionCheck != nil {
+		uid, parseErr := uuid.Parse(userID)
+		if parseErr != nil {
+			_ = c.WriteJSON(fiber.Map{"error": "authentication required"})
+			c.Close()
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		suspended, err := h.suspensionCheck.IsSuspended(ctx, uid)
+		cancel()
+		if err != nil {
+			log.Error().Err(err).Str("user_id", userID).Msg("[booking.tracking_ws] suspension check failed; failing closed")
+			_ = c.WriteJSON(fiber.Map{"error": "service temporarily unavailable", "code": "AUTH_CHECK_FAILED"})
+			c.Close()
+			return
+		}
+		if suspended {
+			_ = c.WriteJSON(fiber.Map{"error": "account suspended", "code": "ACCOUNT_SUSPENDED"})
+			c.Close()
+			return
+		}
+	} else if suspended, ok := claims["is_suspended"].(bool); ok && suspended {
+		_ = c.WriteJSON(fiber.Map{"error": "account suspended", "code": "ACCOUNT_SUSPENDED"})
 		c.Close()
 		return
 	}

@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
@@ -102,6 +104,36 @@ func (r *Repository) GetUserByPhone(ctx context.Context, phone string) (*User, e
 }
 
 // GetUserByID retrieves a user by their ID. Returns nil, nil if not found.
+// IsSuspended returns true when the user's is_suspended column is
+// set, false when clear. Sub-millisecond PK lookup; called by
+// AuthMiddleware on every authenticated request to close the
+// staleness gap that the JWT-baked is_suspended snapshot had (a
+// stale token kept passing for up to JWT_EXPIRY_HOURS after admin
+// suspension). Audit C-8 / A5-06 chunk 16.
+//
+// Failure-mode contract:
+//   - User row exists: returns the live boolean, nil error.
+//   - User row missing (pgx.ErrNoRows): returns (true, nil) — fail
+//     closed. A valid JWT for a deleted user must be rejected.
+//   - Any other DB error: returns (false, err). Caller is required
+//     to fail closed at the middleware level (auth context — never
+//     pass on uncertainty).
+func (r *Repository) IsSuspended(ctx context.Context, userID uuid.UUID) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var suspended bool
+	err := r.db.QueryRow(ctx,
+		`SELECT is_suspended FROM users WHERE id = $1`, userID,
+	).Scan(&suspended)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, err
+	}
+	return suspended, nil
+}
+
 func (r *Repository) GetUserByID(ctx context.Context, userID string) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
