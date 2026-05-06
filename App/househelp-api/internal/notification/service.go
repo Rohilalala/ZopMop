@@ -555,7 +555,13 @@ func (s *Service) sendDataToTokens(ctx context.Context, tokens []string, data ma
 		return nil
 	}
 	if s.fcmClient == nil {
-		log.Info().Int("count", len(tokens)).Interface("data", data).Msg("[notif] data-only multicast mocked (FCM offline)")
+		// Don't dump the full data payload — it contains helper names and
+		// booking details. Log shape only (audit NEW-F1-001 / F1-D3).
+		log.Info().
+			Int("count", len(tokens)).
+			Int("data_field_count", len(data)).
+			Str("type", data["type"]).
+			Msg("[notif] data-only multicast mocked (FCM offline)")
 		return nil
 	}
 	_, err := s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
