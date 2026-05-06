@@ -85,6 +85,7 @@ This section grows as we make retention decisions. Last updated:
 | Bookings (money moved) | 7 years from completed_at | customer_id + helper_id anonymised to tombstone, address text cleared, address_id detached, lat/lng rounded to ~11km (1 decimal), locality preserved, all financial fields preserved. Hard-deleted after 7 years. |
 | Bookings (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation) |
 | Reviews | 3 years from review date | Customer-side anonymized to tombstone (rating + comment retained); helper-side anonymized to tombstone helper (prevents rating-reset exploit); hard-deleted after 3 years |
+| CRM admin login attempts | 90 days from attempt | (No customer-facing user impact — admin auth log) |
 | Refunds | TODO: decide |  |
 | Audit logs | TODO: decide |  |
 | Push notification history | TODO: decide |  |
@@ -169,7 +170,16 @@ Things they cannot yet do:
 - [ ] **audit_log**: ?  Security records — typical retention 1-7 
   years.
 - [ ] **crm_audit_log**: ?
-- [ ] **crm_login_attempts**: ?  Security — short retention typical.
+- [x] **crm_login_attempts**: 90-day retention from created_at. 
+  Industry-standard security investigation window. On (future) 
+  CRM admin deletion, the admin's email is anonymised to 
+  `<deleted>@tombstone.local` and ip_address NULLed; success/reason 
+  forensic counters preserved. Hard-deleted by retention worker 
+  after 90 days. Note: no customer-facing user impact — this is 
+  the CRM admin auth log, separate from customer/helper users. 
+  AnonymizeLoginAttemptsByEmail method exists but has no live 
+  caller; CRM admin deletion flow is not yet implemented and is 
+  tracked as future work. Decision date: 2026-05-06.
 - [ ] **crm_push_messages**: ?  Push content can contain PII.
 - [ ] **helper_status_log**: ?  Location pings; could be considered 
   customer PII because pings are usually near customer addresses.
@@ -180,6 +190,10 @@ Things they cannot yet do:
 
 ## Things to revisit before launch
 
+- Implement the CRM admin deletion flow. When built, it should call 
+  `compliance.AnonymizeLoginAttemptsByEmail(adminEmail)` to scrub 
+  per-account history at deletion time. The 90-day retention sweep 
+  is the immediate forensic-window guarantee in the meantime.
 - When the refund flow starts writing `payment_status='refunded'` 
   to bookings (currently the value is documented but no code path 
   sets it), expand the "money moved" predicate in 
