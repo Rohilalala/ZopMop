@@ -91,8 +91,8 @@ This section grows as we make retention decisions. Last updated:
 | Refunds (money moved) | 7 years from processed_at | user_id anonymised to tombstone; financial fields preserved (amount, gateway_refund_id, payment_method, processed_at, etc.); approved_by admin actor preserved within window |
 | Refunds (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation). Active in-flight refunds (status='approved' < 10 min ago) block deletion temporarily. |
 | CRM push notification campaigns | 90 days from creation | No user-deletion hook (campaign-level schema, no per-user rows). User IDs may appear in target_filter JSONB on 'specific'-target campaigns; bounded by 90-day retention. Body/title text PII deferred per audit-log JSONB pattern. |
-| Helper status pings | TODO: decide |  |
-| Roomies wallet history | TODO: decide |  |
+| Helper status log (online/offline) | 90 days from recorded_at | CASCADE on helper deletion handles helper-side cleanup automatically. No customer surface. Schema is availability-toggle only — does NOT contain location data. |
+| Roomies wallet history | [BLOCKED] — pending settlement | Counterparty's ledger view + open prepaid balances make user erasure non-trivial. Blocked on the prepaid-balance settlement worker TODO; see roomies/* TODO comments. Tracked separately. |
 
 ---
 
@@ -215,15 +215,41 @@ Things they cannot yet do:
   audit-log JSONB pattern. `created_by` admin actor preserved 
   automatically (no code touches the row on user deletion). 
   Decision date: 2026-05-06.
-- [ ] **helper_status_log**: ?  Location pings; could be considered 
-  customer PII because pings are usually near customer addresses.
-- [ ] **roomies wallet history**: ?  Counterparty's ledger view 
-  needs to be preserved.
+- [x] **helper_status_log**: 90-day retention from `recorded_at`. 
+  Phase A revealed the audit's "location pings" framing was 
+  inaccurate for this table — the schema is `(id, helper_id, 
+  status, recorded_at)` with `status ∈ {'online','offline'}` only. 
+  No lat/lng, no booking_id, no customer surface. Helper deletion 
+  is handled automatically by the existing 
+  `ON DELETE CASCADE` FK to `helpers(id)` (the SoftDeleteUser tx 
+  already drops the helpers row, cascading status-log entries 
+  away). Policy-only chunk. Decision date: 2026-05-06.
+- [BLOCKED] **roomies wallet history**: deferred until the 
+  prepaid-balance settlement worker lands. The roomies module 
+  carries 5 explicit TODO comments noting that user-erasure with 
+  open prepaid balances is unsafe — a counterparty's ledger view 
+  needs to be preserved, and zeroing balances without crediting 
+  back to the user's main wallet would be a financial bug. The 
+  settlement worker is unbuilt; until it lands, user-deletion 
+  must either be blocked when the user has open roomies obligations, 
+  or accept the data-integrity gap. Tracked outside the C-8 
+  retention queue.
 
 ---
 
 ## Things to revisit before launch
 
+- Location data outside helper_status_log: live tracking flows via 
+  `internal/booking/tracking_ws.go` and the `helpers.location` 
+  GEOGRAPHY column may have other persistent surfaces (mobile 
+  telemetry queues, backend WS logs, analytics events that 
+  capture coordinates) not yet audited. Phase A of chunk 9 
+  confirmed `helper_status_log` itself is NOT a location surface 
+  — the audit's earlier framing pointed at the wrong table. 
+  `helpers.location` is overwrite-in-place (no history kept) and 
+  is wiped when the chunk-1 SoftDeleteUser path drops the helpers 
+  row. The remaining surfaces (tracking_ws ephemeral state, 
+  mobile telemetry) are scoped for separate investigation.
 - crm_push_messages target_filter JSONB scrubbing: user IDs may 
   persist in `target_filter.user_ids` for `target_kind='specific'` 
   campaigns. 90-day retention bounds the exposure. Selective JSONB 
