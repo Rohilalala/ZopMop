@@ -7,40 +7,78 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// StartMonthlyResetCron runs an hourly background goroutine that refills every
-// helper's leave_balance to their monthly_leave_quota at the start of each
-// IST calendar month. The underlying SQL is idempotent — only rows whose
-// leave_balance_reset_at is older than the current IST month-start get
-// touched, so calling this every hour is cheap (zero updates inside the
-// month, full refill in the first hour after the 1st rolls over).
+// Worker runs the monthly-reset cron in the background and exposes a
+// Stop hook so SIGTERM can drain it cleanly (audit NEW-B1-001).
 //
-// We intentionally do not use `time.Until(nextMidnight)`: the lazy-reset path
-// in Service.Balance already keeps individual reads fresh, and the hourly
-// tick guarantees CRM aggregate views (which read all helpers, not via the
-// per-pro path) see the new balance within an hour of midnight. This trades
-// a tiny lag at the start of the month for resilience against drift if the
-// process restarts during the cron window.
-func StartMonthlyResetCron(repo *Repository) {
+// The underlying SQL is idempotent — only rows whose
+// leave_balance_reset_at is older than the current IST month-start get
+// touched, so the hourly tick is cheap (zero updates inside the month,
+// full refill in the first hour after the 1st rolls over). The lazy-
+// reset path in Service.Balance keeps individual reads fresh; the cron
+// guarantees CRM aggregate views see the new balance within an hour
+// of midnight.
+type Worker struct {
+	repo   *Repository
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// NewWorker constructs (but does not start) a leave cron worker.
+func NewWorker(repo *Repository) *Worker {
+	return &Worker{repo: repo, done: make(chan struct{})}
+}
+
+// Start spawns the goroutine. Calling Start a second time is a no-op
+// (cancel != nil).
+func (w *Worker) Start(parent context.Context) {
+	if w.cancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	w.cancel = cancel
+
 	go func() {
-		// One immediate run at startup catches the case where the process was
-		// down through the actual month rollover.
-		runOnce(repo)
+		defer close(w.done)
+		// One immediate run at startup catches the case where the process
+		// was down through the actual month rollover.
+		w.runOnce(ctx)
 
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 
 		log.Info().Msg("leave: monthly-reset cron started (interval: 1h)")
 
-		for range ticker.C {
-			runOnce(repo)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info().Msg("leave: monthly-reset cron stopping")
+				return
+			case <-ticker.C:
+				w.runOnce(ctx)
+			}
 		}
 	}()
 }
 
-func runOnce(repo *Repository) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// Stop cancels the worker and waits for it to drain or the context to
+// fire, whichever comes first.
+func (w *Worker) Stop(ctx context.Context) error {
+	if w.cancel == nil {
+		return nil
+	}
+	w.cancel()
+	select {
+	case <-w.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *Worker) runOnce(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	n, err := repo.ResetExpiredBalances(ctx)
+	n, err := w.repo.ResetExpiredBalances(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("leave: monthly-reset cron failed")
 		return

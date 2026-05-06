@@ -553,7 +553,9 @@ func main() {
 		mw.RequireRole("pro"), proApprovedMW)
 	leaveHandler.RegisterRoutes(leaveGroup)
 	// Hourly cron — idempotent monthly balance refill for every helper.
-	leave.StartMonthlyResetCron(leaveRepo)
+	// Stop hook wired below the server-listen block (audit NEW-B1-001).
+	leaveWorker := leave.NewWorker(leaveRepo)
+	leaveWorker.Start(ctx)
 
 	// Admin routes (requires JWT + admin role + specific permissions).
 	adminMiddleware := mw.AdminMiddleware(dbPool, rdb)
@@ -666,7 +668,9 @@ func main() {
 	roomiesHandler := roomies.NewHandler(roomiesService)
 	roomiesGroup := api.Group("/roomies", authMiddleware, authLimiter, dbBoundLimiter)
 	roomiesHandler.RegisterRoutes(roomiesGroup)
-	roomies.StartAutoSettleCron(roomiesService)
+	// Stop hook wired below the server-listen block (audit NEW-B1-001).
+	roomiesWorker := roomies.NewWorker(roomiesService)
+	roomiesWorker.Start(ctx)
 
 	// --- Start server with graceful shutdown ---
 	go func() {
@@ -695,6 +699,18 @@ func main() {
 	defer dispatcherCancel()
 	if err := webhookDispatcher.Close(dispatcherCtx); err != nil {
 		log.Error().Err(err).Msg("webhook dispatcher drain error")
+	}
+
+	// Drain background cron workers (audit NEW-B1-001). Each gets up to 5s
+	// to finish an in-flight DB call; ctx-cancel itself is immediate so the
+	// next ticker iteration never starts.
+	cronCtx, cronCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cronCancel()
+	if err := leaveWorker.Stop(cronCtx); err != nil {
+		log.Warn().Err(err).Msg("leave worker stop deadline exceeded")
+	}
+	if err := roomiesWorker.Stop(cronCtx); err != nil {
+		log.Warn().Err(err).Msg("roomies worker stop deadline exceeded")
 	}
 
 	log.Info().Msg("server stopped")
