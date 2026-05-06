@@ -20,14 +20,16 @@ const TombstoneUserID = "00000000-0000-0000-0000-000000000000"
 // pass per table. Returned to the caller so the audit log can capture
 // what was actually deleted, not just "purge ran".
 type PurgeReport struct {
-	UserAddresses             int64
-	DeviceTokensAsUser        int64
-	DeviceTokensAsWorker      int64
-	Cart                      int64
+	UserAddresses                int64
+	DeviceTokensAsUser           int64
+	DeviceTokensAsWorker         int64
+	Cart                         int64
 	UserPreferredHelpersAsUser   int64
 	UserPreferredHelpersAsHelper int64
-	ReengagementNotifications int64
-	BookingMessagesAnonymized int64
+	ReengagementNotifications    int64
+	BookingMessagesAnonymized    int64
+	ReviewsAnonymizedAsCustomer  int64
+	ReviewsAnonymizedAsHelper    int64
 }
 
 // Total returns the sum of all per-table counts. Useful for audit
@@ -40,7 +42,9 @@ func (r PurgeReport) Total() int64 {
 		r.UserPreferredHelpersAsUser +
 		r.UserPreferredHelpersAsHelper +
 		r.ReengagementNotifications +
-		r.BookingMessagesAnonymized
+		r.BookingMessagesAnonymized +
+		r.ReviewsAnonymizedAsCustomer +
+		r.ReviewsAnonymizedAsHelper
 }
 
 // txQuerier is the narrow interface that both *pgxpool.Pool and pgx.Tx
@@ -101,6 +105,78 @@ func execAnonymizeBookingMessages(ctx context.Context, q txQuerier, userID strin
 	`, TombstoneUserID, userID)
 	if err != nil {
 		return 0, fmt.Errorf("anonymize booking_messages: %w", err)
+	}
+	return res.RowsAffected(), nil
+}
+
+// AnonymizeReviewsAsCustomerTx reassigns every review authored by the
+// given user to the tombstone customer. Rating + comment body are
+// preserved per the chunk-3 retention decision (privacy-notes.md):
+// helper's reputation should still reflect the past customer's vote
+// even after the account is gone. The retention worker (chunk 4+)
+// will hard-delete these rows 3 years after created_at.
+//
+// The reviews trigger fn_reviews_recompute_helper_rating fires only
+// on UPDATE OF rating; touching customer_id alone does NOT recompute
+// helpers.rating. That is the intended behaviour — anonymising the
+// reviewer must not move the helper's rating.
+func (s *Service) AnonymizeReviewsAsCustomerTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
+	return execAnonymizeReviewsAsCustomer(ctx, txAdapter{tx: tx}, userID)
+}
+
+// AnonymizeReviewsAsCustomer is the standalone variant — opens its
+// own short tx. Use the *Tx variant when running inside SoftDeleteUser.
+func (s *Service) AnonymizeReviewsAsCustomer(ctx context.Context, userID string) (int64, error) {
+	return execAnonymizeReviewsAsCustomer(ctx, poolAdapter{p: s.db}, userID)
+}
+
+func execAnonymizeReviewsAsCustomer(ctx context.Context, q txQuerier, userID string) (int64, error) {
+	res, err := q.Exec(ctx, `
+		UPDATE reviews
+		SET customer_id = $1::uuid
+		WHERE customer_id = $2::uuid
+	`, TombstoneUserID, userID)
+	if err != nil {
+		return 0, fmt.Errorf("anonymize reviews (customer): %w", err)
+	}
+	return res.RowsAffected(), nil
+}
+
+// AnonymizeReviewsAsHelperTx reassigns every review received by the
+// given helper to the tombstone helper. Prevents a rating-reset
+// exploit: a helper with bad reviews cannot delete-and-recreate to
+// wipe history — the reviews persist under the tombstone, orphaned
+// (no live helper profile) but counted toward the 3-year retention
+// window.
+//
+// MUST be called BEFORE the SoftDeleteUser DELETE FROM helpers …
+// statement. reviews.helper_id has ON DELETE CASCADE to helpers(id),
+// so deleting the helpers row first would wipe the very reviews we
+// are trying to retain. Sequencing is enforced by the caller.
+//
+// The reviews trigger fires only on UPDATE OF rating; touching
+// helper_id alone does NOT recompute either helper's rating —
+// the deleted helper's rating is moot (their helpers row is about
+// to be deleted) and the tombstone helper's rating stays at the
+// schema default (orphaned reviews aren't displayed).
+func (s *Service) AnonymizeReviewsAsHelperTx(ctx context.Context, tx pgx.Tx, helperID string) (int64, error) {
+	return execAnonymizeReviewsAsHelper(ctx, txAdapter{tx: tx}, helperID)
+}
+
+// AnonymizeReviewsAsHelper is the standalone variant — opens its
+// own short tx. Use the *Tx variant when running inside SoftDeleteUser.
+func (s *Service) AnonymizeReviewsAsHelper(ctx context.Context, helperID string) (int64, error) {
+	return execAnonymizeReviewsAsHelper(ctx, poolAdapter{p: s.db}, helperID)
+}
+
+func execAnonymizeReviewsAsHelper(ctx context.Context, q txQuerier, helperID string) (int64, error) {
+	res, err := q.Exec(ctx, `
+		UPDATE reviews
+		SET helper_id = $1::uuid
+		WHERE helper_id = $2::uuid
+	`, TombstoneUserID, helperID)
+	if err != nil {
+		return 0, fmt.Errorf("anonymize reviews (helper): %w", err)
 	}
 	return res.RowsAffected(), nil
 }

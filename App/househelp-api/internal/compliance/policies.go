@@ -31,4 +31,21 @@ func RegisterDefaultPolicies(r *Registry) {
 		UserIDColumn: "sender_id",
 		LegalBasis:   "trust_and_safety_review_window",
 	})
+
+	// reviews — customer's text rating of a helper. Decision (chunk 3):
+	// retain rating + comment for 3 years from created_at, then hard-
+	// delete. Customer-side anonymisation reassigns customer_id to the
+	// tombstone user; helper-side anonymisation reassigns helper_id to
+	// the tombstone helper (prevents the rating-reset exploit). Both
+	// happen at SoftDeleteUser time. The retention sweep is purely
+	// time-based — UserIDColumn is set to the timestamp column so the
+	// retention worker (chunk 4+) reads it as the sweep predicate
+	// rather than as a per-user FK.
+	r.Register(RetentionPolicy{
+		Table:        "reviews",
+		Action:       ActionDelete,
+		Window:       3 * 365 * 24 * time.Hour, // 3 years
+		UserIDColumn: "created_at",
+		LegalBasis:   "reputation_signal_with_data_minimization",
+	})
 }

@@ -58,8 +58,8 @@ func TestSoftDeleteUser_AnonymizesAndPurges(t *testing.T) {
 	// Insert a booking + 2 booking_messages from this user.
 	bookingID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO bookings (id, customer_id, service_category_id, address, lat, lng, amount_paise)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, 'addr', 12.9, 77.6, 1000)
+		INSERT INTO bookings (id, customer_id, service_category_id, address, lat, lng, amount_paise, status)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'addr', 12.9, 77.6, 1000, 'completed')
 	`, bookingID, userID, serviceCategoryID); err != nil {
 		t.Fatalf("insert booking: %v", err)
 	}
@@ -71,6 +71,56 @@ func TestSoftDeleteUser_AnonymizesAndPurges(t *testing.T) {
 			t.Fatalf("insert booking_message: %v", err)
 		}
 	}
+
+	// Promote the user to helper so the helper-side compliance paths
+	// have a row to anonymise + delete.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO helpers (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING
+	`, userID); err != nil {
+		t.Fatalf("insert helper row: %v", err)
+	}
+
+	// Seed two reviews: one where userID is the CUSTOMER (review of
+	// some other helper), one where userID is the HELPER (received
+	// from some other customer). Verifies bidirectional anonymisation
+	// in a single soft-delete transaction.
+	otherCustomerID := uuid.NewString()
+	otherHelperUserID := uuid.NewString()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, phone, role) VALUES
+		 ($1::uuid, $2, 'customer'),
+		 ($3::uuid, $4, 'customer')`,
+		otherCustomerID, "del:oc-"+otherCustomerID[:6],
+		otherHelperUserID, "del:oh-"+otherHelperUserID[:6]); err != nil {
+		t.Fatalf("insert other users: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO helpers (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING`, otherHelperUserID); err != nil {
+		t.Fatalf("insert other helper row: %v", err)
+	}
+	bookingAsCustomer := uuid.NewString()
+	bookingAsHelper := uuid.NewString()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO bookings (id, customer_id, service_category_id, address, lat, lng, amount_paise, status) VALUES
+		($1::uuid, $2::uuid, $3::uuid, 'a', 12.9, 77.6, 1000, 'completed'),
+		($4::uuid, $5::uuid, $3::uuid, 'a', 12.9, 77.6, 1000, 'completed')
+	`, bookingAsCustomer, userID, serviceCategoryID, bookingAsHelper, otherCustomerID); err != nil {
+		t.Fatalf("insert review-bookings: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO reviews (booking_id, customer_id, helper_id, rating, comment) VALUES
+		($1::uuid, $2::uuid, $3::uuid, 5, 'as customer'),
+		($4::uuid, $5::uuid, $6::uuid, 4, 'as helper')
+	`, bookingAsCustomer, userID, otherHelperUserID,
+		bookingAsHelper, otherCustomerID, userID); err != nil {
+		t.Fatalf("insert reviews: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM reviews WHERE customer_id IN ($1::uuid, $2::uuid) OR helper_id IN ($1::uuid, $2::uuid)`, otherCustomerID, otherHelperUserID)
+		_, _ = pool.Exec(ctx, `DELETE FROM bookings WHERE customer_id IN ($1::uuid, $2::uuid)`, otherCustomerID, otherHelperUserID)
+		_, _ = pool.Exec(ctx, `DELETE FROM helpers WHERE id=$1::uuid`, otherHelperUserID)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id IN ($1::uuid, $2::uuid)`, otherCustomerID, otherHelperUserID)
+	})
 
 	// Insert trivial-table rows.
 	if _, err := pool.Exec(ctx, `
@@ -133,6 +183,26 @@ func TestSoftDeleteUser_AnonymizesAndPurges(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%s still has %d rows for purged user; expected 0", q.name, n)
 		}
+	}
+
+	// 2b. reviews bidirectionally anonymised — both edges point at the
+	// tombstone, neither references the deleted user.
+	var reviewsAsUserAuthored, reviewsAsUserAboutHelper, reviewsTombC, reviewsTombH int
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE customer_id=$1::uuid`, userID).Scan(&reviewsAsUserAuthored)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE helper_id=$1::uuid`, userID).Scan(&reviewsAsUserAboutHelper)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE customer_id='00000000-0000-0000-0000-000000000000'::uuid AND booking_id=$1::uuid`, bookingAsCustomer).Scan(&reviewsTombC)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM reviews WHERE helper_id='00000000-0000-0000-0000-000000000000'::uuid AND booking_id=$1::uuid`, bookingAsHelper).Scan(&reviewsTombH)
+	if reviewsAsUserAuthored != 0 {
+		t.Errorf("user still has %d reviews as customer; expected 0", reviewsAsUserAuthored)
+	}
+	if reviewsAsUserAboutHelper != 0 {
+		t.Errorf("user still has %d reviews as helper; expected 0", reviewsAsUserAboutHelper)
+	}
+	if reviewsTombC != 1 {
+		t.Errorf("tombstone customer reviews = %d, want 1", reviewsTombC)
+	}
+	if reviewsTombH != 1 {
+		t.Errorf("tombstone helper reviews = %d, want 1", reviewsTombH)
 	}
 
 	// 3. users.deleted_at stamped, name cleared, phone anonymised.

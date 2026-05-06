@@ -59,9 +59,14 @@ func makeBooking(t *testing.T, pool *pgxpool.Pool, customerID string) string {
 		`SELECT id::text FROM service_categories LIMIT 1`).Scan(&serviceCategoryID); err != nil {
 		t.Skipf("no service_categories row to FK to: %v", err)
 	}
+	// status='completed' bypasses the within-2-minutes dedup trigger
+	// (fn_bookings_reject_dup_within_hour fires on pending only). Tests
+	// frequently insert multiple bookings per customer in quick
+	// succession — completed semantics fit (reviews require completed
+	// bookings anyway).
 	_, err := pool.Exec(context.Background(), `
-		INSERT INTO bookings (id, customer_id, service_category_id, address, lat, lng, amount_paise)
-		VALUES ($1::uuid, $2::uuid, $3::uuid, 'test addr', 12.9, 77.6, 1000)
+		INSERT INTO bookings (id, customer_id, service_category_id, address, lat, lng, amount_paise, status)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'test addr', 12.9, 77.6, 1000, 'completed')
 	`, id, customerID, serviceCategoryID)
 	if err != nil {
 		t.Fatalf("insert booking: %v", err)
@@ -225,6 +230,151 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// makeReview inserts a review tying a customer to a helper for a given
+// booking and returns the new review id. Cleaned up by t.Cleanup.
+func makeReview(t *testing.T, pool *pgxpool.Pool, bookingID, customerID, helperID string, rating int) string {
+	t.Helper()
+	var id string
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO reviews (booking_id, customer_id, helper_id, rating, comment)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'great work')
+		RETURNING id::text
+	`, bookingID, customerID, helperID, rating).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert review: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM reviews WHERE id=$1::uuid`, id)
+	})
+	return id
+}
+
+// makeHelper ensures a helpers row exists for the given user (helpers.id
+// 1:1 with users.id). Returns the same id. Cleaned up by t.Cleanup.
+func makeHelper(t *testing.T, pool *pgxpool.Pool, userID string) string {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO helpers (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING
+	`, userID)
+	if err != nil {
+		t.Fatalf("insert helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM helpers WHERE id=$1::uuid`, userID)
+	})
+	return userID
+}
+
+func TestAnonymizeReviewsAsCustomer_ReassignsCustomerID(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	customerA := makeUser(t, pool, uuid.NewString())
+	customerB := makeUser(t, pool, uuid.NewString())
+	helperUser := makeUser(t, pool, uuid.NewString())
+	helperID := makeHelper(t, pool, helperUser)
+
+	bookingA := makeBooking(t, pool, customerA)
+	bookingB := makeBooking(t, pool, customerB)
+	makeReview(t, pool, bookingA, customerA, helperID, 5)
+	makeReview(t, pool, bookingB, customerB, helperID, 4)
+
+	got, err := svc.AnonymizeReviewsAsCustomer(context.Background(), customerA)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("rows reassigned = %d, want 1", got)
+	}
+
+	var aRem, bRem, tomb int
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE customer_id=$1::uuid`, customerA).Scan(&aRem)
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE customer_id=$1::uuid`, customerB).Scan(&bRem)
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE customer_id=$1::uuid AND helper_id=$2::uuid`, TombstoneUserID, helperID).Scan(&tomb)
+
+	if aRem != 0 {
+		t.Fatalf("customer A still has %d reviews", aRem)
+	}
+	if bRem != 1 {
+		t.Fatalf("customer B has %d reviews; expected untouched (1)", bRem)
+	}
+	if tomb != 1 {
+		t.Fatalf("tombstone has %d reviews against helper; expected 1", tomb)
+	}
+}
+
+func TestAnonymizeReviewsAsHelper_ReassignsHelperID(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	customer := makeUser(t, pool, uuid.NewString())
+	helperUserA := makeUser(t, pool, uuid.NewString())
+	helperUserB := makeUser(t, pool, uuid.NewString())
+	helperA := makeHelper(t, pool, helperUserA)
+	helperB := makeHelper(t, pool, helperUserB)
+
+	bookingA := makeBooking(t, pool, customer)
+	bookingB := makeBooking(t, pool, customer)
+	makeReview(t, pool, bookingA, customer, helperA, 5)
+	makeReview(t, pool, bookingB, customer, helperB, 4)
+
+	got, err := svc.AnonymizeReviewsAsHelper(context.Background(), helperA)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("rows reassigned = %d, want 1", got)
+	}
+
+	var aRem, bRem, tomb int
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE helper_id=$1::uuid`, helperA).Scan(&aRem)
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE helper_id=$1::uuid`, helperB).Scan(&bRem)
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM reviews WHERE helper_id=$1::uuid AND customer_id=$2::uuid`, TombstoneUserID, customer).Scan(&tomb)
+
+	if aRem != 0 {
+		t.Fatalf("helper A still has %d reviews", aRem)
+	}
+	if bRem != 1 {
+		t.Fatalf("helper B has %d reviews; expected untouched (1)", bRem)
+	}
+	if tomb != 1 {
+		t.Fatalf("tombstone helper has %d reviews; expected 1", tomb)
+	}
+}
+
+func TestAnonymizeReviewsAsCustomer_RatingUnchanged(t *testing.T) {
+	// Trigger fn_reviews_recompute_helper_rating fires only on UPDATE OF
+	// rating; touching customer_id alone must not move helpers.rating.
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	customer := makeUser(t, pool, uuid.NewString())
+	helperUser := makeUser(t, pool, uuid.NewString())
+	helperID := makeHelper(t, pool, helperUser)
+
+	bookingID := makeBooking(t, pool, customer)
+	makeReview(t, pool, bookingID, customer, helperID, 4) // triggers initial recompute → 4.00
+
+	var beforeRating float64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT rating FROM helpers WHERE id=$1::uuid`, helperID).Scan(&beforeRating); err != nil {
+		t.Fatalf("read rating before: %v", err)
+	}
+
+	if _, err := svc.AnonymizeReviewsAsCustomer(context.Background(), customer); err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+
+	var afterRating float64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT rating FROM helpers WHERE id=$1::uuid`, helperID).Scan(&afterRating); err != nil {
+		t.Fatalf("read rating after: %v", err)
+	}
+	if beforeRating != afterRating {
+		t.Fatalf("rating moved on customer-only anonymise: before=%v after=%v", beforeRating, afterRating)
+	}
 }
 
 // Compile-time guard so the file refers to the time import even in

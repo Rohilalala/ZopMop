@@ -238,19 +238,37 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		return ErrActiveBooking
 	}
 
-	// Compliance: anonymise booking_messages + purge trivial child rows
-	// BEFORE the user-row scrub so everything commits atomically. The
-	// CASCADE FKs on the trivial tables never fire today (we soft-delete,
-	// don't hard-delete the parent), so without these explicit calls the
-	// child PII would persist indefinitely. Audit C-8 / F2D-1.
+	// Compliance: anonymise child PII + purge trivial child rows BEFORE
+	// the user-row scrub so everything commits atomically. The CASCADE
+	// FKs on the trivial tables never fire today (we soft-delete, don't
+	// hard-delete the parent); for booking_messages and reviews we
+	// retain the row with the FK reassigned to a tombstone sentinel.
+	// Audit C-8 / F2D-1 chunks 2–3.
+	//
+	// Order is load-bearing: AnonymizeReviewsAsHelperTx MUST run before
+	// the DELETE FROM helpers below. reviews.helper_id has ON DELETE
+	// CASCADE to helpers(id); deleting the helpers row first would
+	// wipe the reviews we want to retain.
 	if r.compliance != nil {
 		if _, err := r.compliance.AnonymizeBookingMessagesTx(queryCtx, tx, userID); err != nil {
 			return fmt.Errorf("compliance anonymise booking_messages: %w", err)
+		}
+		reviewsAsCustomer, err := r.compliance.AnonymizeReviewsAsCustomerTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise reviews (customer): %w", err)
+		}
+		// Helper-side anonymisation runs unconditionally — if the user
+		// was never a helper, zero rows match and the call is a no-op.
+		reviewsAsHelper, err := r.compliance.AnonymizeReviewsAsHelperTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise reviews (helper): %w", err)
 		}
 		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance purge trivial: %w", err)
 		}
+		report.ReviewsAnonymizedAsCustomer = reviewsAsCustomer
+		report.ReviewsAnonymizedAsHelper = reviewsAsHelper
 		log.Info().
 			Str("user_id", userID).
 			Int64("rows_purged", report.Total()).
@@ -261,6 +279,8 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			Int64("preferred_helpers_user", report.UserPreferredHelpersAsUser).
 			Int64("preferred_helpers_helper", report.UserPreferredHelpersAsHelper).
 			Int64("reengagement", report.ReengagementNotifications).
+			Int64("reviews_as_customer", report.ReviewsAnonymizedAsCustomer).
+			Int64("reviews_as_helper", report.ReviewsAnonymizedAsHelper).
 			Msg("compliance purge complete")
 	}
 
