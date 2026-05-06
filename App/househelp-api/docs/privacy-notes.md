@@ -86,6 +86,8 @@ This section grows as we make retention decisions. Last updated:
 | Bookings (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation) |
 | Reviews | 3 years from review date | Customer-side anonymized to tombstone (rating + comment retained); helper-side anonymized to tombstone helper (prevents rating-reset exploit); hard-deleted after 3 years |
 | CRM admin login attempts | 90 days from attempt | (No customer-facing user impact — admin auth log) |
+| Audit log (legacy) | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB old_value/new_value not scrubbed (3-year retention is the bound). |
+| CRM audit log | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB before_value/after_value not scrubbed (3-year retention is the bound). |
 | Refunds | TODO: decide |  |
 | Audit logs | TODO: decide |  |
 | Push notification history | TODO: decide |  |
@@ -167,9 +169,16 @@ Things they cannot yet do:
   deleted on user erasure — no tax obligation. Decision date: 
   2026-05-06.
 - [ ] **refunds**: ?  Same as bookings — financial.
-- [ ] **audit_log**: ?  Security records — typical retention 1-7 
-  years.
-- [ ] **crm_audit_log**: ?
+- [x] **audit_log** (legacy migration 008): 3-year retention from 
+  row creation. On user erasure, `target_id` for rows where the 
+  deleted user is the action target is anonymised to TombstoneUserID. 
+  Admin actor fields (admin_id, ip_address) preserved within the 
+  window for accountability — they age out with the row at 3 years. 
+  JSONB `old_value` / `new_value` payloads NOT scrubbed (see follow-
+  up note below). Decision date: 2026-05-06.
+- [x] **crm_audit_log**: same policy as legacy audit_log. 3-year 
+  retention; user-target-side anonymised; admin actor preserved 
+  within window. Decision date: 2026-05-06.
 - [x] **crm_login_attempts**: 90-day retention from created_at. 
   Industry-standard security investigation window. On (future) 
   CRM admin deletion, the admin's email is anonymised to 
@@ -190,6 +199,15 @@ Things they cannot yet do:
 
 ## Things to revisit before launch
 
+- Audit log JSONB scrubbing: `before_value` / `after_value` (and 
+  legacy `old_value` / `new_value`) payloads may contain user PII 
+  baked in by the recording module — for example, an admin 
+  user-suspension action might log the full users row, including 
+  phone and name. The chunk-6 structured-column anonymisation does 
+  NOT scrub these blobs. The 3-year retention window is the bound — 
+  PII ages out via the retention worker. JSONB-key-level recursive 
+  redaction (with a known-PII-keys allowlist) is dedicated follow-up 
+  work for the compliance sprint.
 - Implement the CRM admin deletion flow. When built, it should call 
   `compliance.AnonymizeLoginAttemptsByEmail(adminEmail)` to scrub 
   per-account history at deletion time. The 90-day retention sweep 
