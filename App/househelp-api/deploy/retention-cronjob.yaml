@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retention-worker
+  labels:
+    app.kubernetes.io/name: retention-worker
+    app.kubernetes.io/part-of: zopmop
+spec:
+  # 03:00 IST daily — runs in low-traffic window. Schedule is in cluster
+  # timezone; if cluster runs UTC, adjust to "30 21 * * *" for 03:00 IST.
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: retention-worker
+              image: zopmop/api:latest
+              imagePullPolicy: IfNotPresent
+              command: ["/app/bin/retention-worker"]
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: zopmop-secrets
+                      key: database-url
+                - name: REDIS_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: zopmop-secrets
+                      key: redis-url
+                      optional: true
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
