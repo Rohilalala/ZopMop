@@ -138,6 +138,28 @@ func RegisterDefaultPolicies(r *Registry) {
 		LegalBasis:   "marketing_analytics_window",
 	})
 
+	// helper_status_log — online/offline availability-toggle log.
+	// Schema is intentionally narrow: (id, helper_id, status,
+	// recorded_at) with status ∈ {'online','offline'}. NOT a location
+	// log — no lat/lng / booking_id / customer surface. Helper deletion
+	// is already handled by the table's ON DELETE CASCADE FK to
+	// helpers(id); the SoftDeleteUser tx drops the helpers row and the
+	// cascade wipes status entries automatically. No compliance method
+	// hookup needed.
+	//
+	// Decision (chunk 9): policy-only. 90-day window matches typical
+	// activity-log retention. The audit's "location pings near customer
+	// addresses" framing referred to a different surface (tracking_ws
+	// ephemeral state / helpers.location overwrite-in-place column);
+	// see privacy-notes.md follow-up.
+	r.Register(RetentionPolicy{
+		Table:        "helper_status_log",
+		Action:       ActionDelete,
+		Window:       90 * 24 * time.Hour, // 90 days
+		UserIDColumn: "recorded_at",
+		LegalBasis:   "operational_activity_log",
+	})
+
 	// crm_login_attempts — forensic record of CRM admin auth events
 	// (success + every failure reason, including attempts against
 	// emails that never existed). Retention: 90 days from created_at

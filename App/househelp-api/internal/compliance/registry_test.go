@@ -78,6 +78,36 @@ func TestRegistry_RegisterReplaces(t *testing.T) {
 	}
 }
 
+// TestPolicyRegistry_HelperStatusLogRegistered confirms the chunk-9
+// retention policy for helper_status_log is wired with the right
+// window (90 days), action (Delete), time-based UserIDColumn
+// (recorded_at, not user_id — the table has no user surface), and
+// legal basis. Helper deletion is handled by the existing CASCADE FK
+// to helpers, so there's no compliance.Service method to test
+// alongside this — policy registration is the entire chunk-9 surface.
+func TestPolicyRegistry_HelperStatusLogRegistered(t *testing.T) {
+	r := NewRegistry()
+	RegisterDefaultPolicies(r)
+
+	got, ok := r.Lookup("helper_status_log")
+	if !ok {
+		t.Fatalf("helper_status_log policy not registered")
+	}
+	if got.Action != ActionDelete {
+		t.Errorf("Action = %s, want %s", got.Action, ActionDelete)
+	}
+	const want = 90 * 24 * time.Hour
+	if got.Window != want {
+		t.Errorf("Window = %s, want %s (90 days)", got.Window, want)
+	}
+	if got.UserIDColumn != "recorded_at" {
+		t.Errorf("UserIDColumn = %q, want recorded_at (time-based sweep)", got.UserIDColumn)
+	}
+	if got.LegalBasis != "operational_activity_log" {
+		t.Errorf("LegalBasis = %q, want operational_activity_log", got.LegalBasis)
+	}
+}
+
 // TestPolicyRegistry_PushMessagesRegistered confirms the chunk-8
 // retention policy for crm_push_messages is wired with the right
 // window + action + legal basis. This is the only verifiable
