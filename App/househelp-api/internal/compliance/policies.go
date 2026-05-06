@@ -72,6 +72,33 @@ func RegisterDefaultPolicies(r *Registry) {
 		LegalBasis:   "gst_income_tax_audit_defence",
 	})
 
+	// crm_audit_log — CRM v2 admin action audit trail. 3-year retention
+	// matches typical security-audit-defence windows. On user erasure,
+	// target_id of rows where the deleted user was the action target
+	// is anonymised to TombstoneUserID; actor fields (admin_id,
+	// admin_email) preserved within the window.
+	//
+	// JSONB before_value/after_value scrubbing is a documented follow-up
+	// — see AnonymizeAuditLogsAsTargetTx and privacy-notes.md.
+	r.Register(RetentionPolicy{
+		Table:        "crm_audit_log",
+		Action:       ActionDelete,
+		Window:       3 * 365 * 24 * time.Hour, // 3 years
+		UserIDColumn: "created_at",
+		LegalBasis:   "security_audit_retention",
+	})
+
+	// audit_log (legacy migration 008) — older admin action trail still
+	// being written by internal/admin/repository.go. Same 3-year
+	// retention; same target-side anonymisation rule.
+	r.Register(RetentionPolicy{
+		Table:        "audit_log",
+		Action:       ActionDelete,
+		Window:       3 * 365 * 24 * time.Hour, // 3 years
+		UserIDColumn: "created_at",
+		LegalBasis:   "security_audit_retention_legacy",
+	})
+
 	// crm_login_attempts — forensic record of CRM admin auth events
 	// (success + every failure reason, including attempts against
 	// emails that never existed). Retention: 90 days from created_at

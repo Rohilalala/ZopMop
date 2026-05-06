@@ -34,6 +34,7 @@ type PurgeReport struct {
 	BookingsAsCustomerAnonymized   int64
 	BookingsAsHelperHardDeleted    int64
 	BookingsAsHelperAnonymized     int64
+	AuditLogsAnonymized            int64
 }
 
 // Total returns the sum of all per-table counts. Useful for audit
@@ -52,7 +53,8 @@ func (r PurgeReport) Total() int64 {
 		r.BookingsAsCustomerHardDeleted +
 		r.BookingsAsCustomerAnonymized +
 		r.BookingsAsHelperHardDeleted +
-		r.BookingsAsHelperAnonymized
+		r.BookingsAsHelperAnonymized +
+		r.AuditLogsAnonymized
 }
 
 // txQuerier is the narrow interface that both *pgxpool.Pool and pgx.Tx
@@ -304,6 +306,79 @@ func (s *Service) AnonymizeBookingsAsHelper(ctx context.Context, helperID string
 		return hardDeleted, anonymized, fmt.Errorf("anonymize bookings (helper) commit: %w", err)
 	}
 	return hardDeleted, anonymized, nil
+}
+
+// AnonymizeAuditLogsAsTargetTx reassigns target_id in both audit log
+// tables — crm_audit_log (CRM v2 path) and audit_log (legacy admin
+// path) — for rows where the deleted user was the target of an admin
+// action. Action history (admin_id, admin_email, action, module,
+// ip_address, user_agent, request_id) is preserved: actors stay
+// accountable for what they did within the 3-year retention window.
+//
+// Match predicate is `target_id = $userID::text` only. target_id is
+// TEXT in both schemas; for user-as-target rows it holds the user's
+// UUID as a string. We do NOT filter by target_type because UUID
+// uniqueness makes target_id alone sufficient and the target_type
+// label is inconsistent across modules ('user' / 'worker' / 'customer'
+// in different writers).
+//
+// KNOWN GAP — JSONB Before/After (audit C-8 follow-up): the
+// before_value / after_value (legacy: old_value / new_value) JSONB
+// columns may contain user PII baked in by the recording module
+// (e.g. admin user-suspension actions log the full user row,
+// including phone and name). This method does NOT scrub those
+// payloads. The 3-year retention window registered in policies.go
+// is the hard bound — PII ages out via the retention worker. Per-key
+// recursive redaction is documented as follow-up in privacy-notes.md.
+//
+// Returns total rows updated across both tables.
+func (s *Service) AnonymizeAuditLogsAsTargetTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
+	return execAnonymizeAuditLogsAsTarget(ctx, txAdapter{tx: tx}, userID)
+}
+
+// AnonymizeAuditLogsAsTarget is the standalone variant — opens its
+// own short tx so the two UPDATEs (crm_audit_log + audit_log) commit
+// atomically.
+func (s *Service) AnonymizeAuditLogsAsTarget(ctx context.Context, userID string) (int64, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("anonymize audit logs begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	n, err := execAnonymizeAuditLogsAsTarget(ctx, txAdapter{tx: tx}, userID)
+	if err != nil {
+		return n, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return n, fmt.Errorf("anonymize audit logs commit: %w", err)
+	}
+	return n, nil
+}
+
+func execAnonymizeAuditLogsAsTarget(ctx context.Context, q txQuerier, userID string) (int64, error) {
+	var total int64
+
+	res, err := q.Exec(ctx, `
+		UPDATE crm_audit_log
+		SET target_id = $1
+		WHERE target_id = $2::text
+	`, TombstoneUserID, userID)
+	if err != nil {
+		return 0, fmt.Errorf("anonymize crm_audit_log: %w", err)
+	}
+	total += res.RowsAffected()
+
+	res, err = q.Exec(ctx, `
+		UPDATE audit_log
+		SET target_id = $1
+		WHERE target_id = $2::text
+	`, TombstoneUserID, userID)
+	if err != nil {
+		return total, fmt.Errorf("anonymize audit_log (legacy): %w", err)
+	}
+	total += res.RowsAffected()
+
+	return total, nil
 }
 
 // AnonymizeLoginAttemptsByEmailTx scrubs CRM login-attempt records for

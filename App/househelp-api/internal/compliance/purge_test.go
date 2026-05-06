@@ -814,6 +814,218 @@ func TestAnonymizeLoginAttemptsByEmail_NoMatchReturnsZero(t *testing.T) {
 	}
 }
 
+// ── audit_log + crm_audit_log (chunk 6) ────────────────────────────────
+
+// makeCRMAdmin inserts a crm_admins row so audit-log writes can
+// satisfy the admin_id FK. Email is unique per UUID. Cleaned up by
+// t.Cleanup.
+func makeCRMAdmin(t *testing.T, pool *pgxpool.Pool, id, email string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO crm_admins (id, email, password_hash, display_name, role, is_active)
+		VALUES ($1::uuid, $2, '$2a$10$dummy', 'Test Admin', 'admin', TRUE)
+		ON CONFLICT (id) DO NOTHING
+	`, id, email)
+	if err != nil {
+		t.Fatalf("insert crm_admin: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM crm_audit_log WHERE admin_id=$1::uuid`, id)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM crm_admins WHERE id=$1::uuid`, id)
+	})
+}
+
+// insertCRMAuditRow inserts a row into crm_audit_log and returns its
+// id. Cleaned up by t.Cleanup.
+func insertCRMAuditRow(t *testing.T, pool *pgxpool.Pool, adminID, adminEmail, action, module, targetType, targetID string, before, after string) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO crm_audit_log (
+			admin_id, admin_email, action, module, target_type, target_id,
+			before_value, after_value
+		)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+		RETURNING id
+	`, nullableUUID(adminID), nullableString(adminEmail),
+		action, module,
+		nullableString(targetType), nullableString(targetID),
+		nullableString(before), nullableString(after)).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert crm_audit_log: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM crm_audit_log WHERE id=$1`, id)
+	})
+	return id
+}
+
+// insertLegacyAuditRow inserts a row into the legacy audit_log
+// table. The admin_id is FK to users(id) so a real user must exist.
+func insertLegacyAuditRow(t *testing.T, pool *pgxpool.Pool, adminID, action, targetType, targetID string) string {
+	t.Helper()
+	var id string
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO audit_log (admin_id, action, target_type, target_id)
+		VALUES ($1::uuid, $2, $3, $4)
+		RETURNING id::text
+	`, adminID, action, nullableString(targetType), nullableString(targetID)).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert audit_log: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM audit_log WHERE id=$1::uuid`, id)
+	})
+	return id
+}
+
+func TestAnonymizeAuditLogsAsTarget_BothTablesUpdated(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	// User X is the deletion target. User Y is a control whose rows
+	// must remain untouched. Admin A is the actor for new-CRM rows.
+	// For legacy audit_log, admin_id FK to users(id), so we use Y as
+	// the actor of legacy rows (any real user works).
+	userX := makeUser(t, pool, uuid.NewString())
+	userY := makeUser(t, pool, uuid.NewString())
+	adminA := uuid.NewString()
+	adminAEmail := "admin-a-" + adminA[:8] + "@zopmop.local"
+	makeCRMAdmin(t, pool, adminA, adminAEmail)
+
+	// 2 crm_audit_log rows targeting X (different actions); 1 row
+	// targeting Y (control).
+	xRow1 := insertCRMAuditRow(t, pool, adminA, adminAEmail,
+		"users.suspend", "users", "user", userX,
+		`{"phone":"+91999"}`, `{"is_suspended":true}`)
+	xRow2 := insertCRMAuditRow(t, pool, adminA, adminAEmail,
+		"users.note_added", "users", "user", userX,
+		`null`, `{"note":"flagged"}`)
+	yRow := insertCRMAuditRow(t, pool, adminA, adminAEmail,
+		"users.note_added", "users", "user", userY,
+		`null`, `{"note":"vip"}`)
+
+	// 1 legacy audit_log row targeting X; 1 targeting Y. Use userY as
+	// admin to satisfy the FK to users(id) without needing a special
+	// admin row.
+	legacyX := insertLegacyAuditRow(t, pool, userY, "user.suspend", "user", userX)
+	legacyY := insertLegacyAuditRow(t, pool, userY, "user.suspend", "user", userY)
+
+	got, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("rows updated = %d, want 3 (2 crm + 1 legacy)", got)
+	}
+
+	// X's CRM rows: target_id is now tombstone, everything else
+	// preserved.
+	for _, id := range []int64{xRow1, xRow2} {
+		var (
+			adminID, adminEmail, action, module, targetType, targetID *string
+			beforeJSON, afterJSON                                      []byte
+		)
+		err := pool.QueryRow(context.Background(), `
+			SELECT admin_id::text, admin_email, action, module,
+			       target_type, target_id, before_value::text, after_value::text
+			FROM crm_audit_log WHERE id=$1
+		`, id).Scan(&adminID, &adminEmail, &action, &module,
+			&targetType, &targetID, &beforeJSON, &afterJSON)
+		if err != nil {
+			t.Fatalf("read crm row %d: %v", id, err)
+		}
+		if targetID == nil || *targetID != TombstoneUserID {
+			t.Errorf("crm row %d target_id = %v, want tombstone", id, targetID)
+		}
+		if adminID == nil || *adminID != adminA {
+			t.Errorf("crm row %d admin_id mutated: %v, want %s", id, adminID, adminA)
+		}
+		if adminEmail == nil || *adminEmail != adminAEmail {
+			t.Errorf("crm row %d admin_email mutated: %v", id, adminEmail)
+		}
+		if action == nil || *action == "" {
+			t.Errorf("crm row %d action lost", id)
+		}
+		if module == nil || *module != "users" {
+			t.Errorf("crm row %d module mutated: %v", id, module)
+		}
+		// JSONB before/after intentionally untouched (chunk 6 known gap).
+		if len(beforeJSON) == 0 && len(afterJSON) == 0 && id == xRow1 {
+			t.Errorf("crm row %d before/after were both empty (expected the seeded payload)", id)
+		}
+	}
+
+	// Y's CRM row: untouched.
+	var yTarget *string
+	pool.QueryRow(context.Background(),
+		`SELECT target_id FROM crm_audit_log WHERE id=$1`, yRow).Scan(&yTarget)
+	if yTarget == nil || *yTarget != userY {
+		t.Errorf("control crm row mutated: target_id = %v, want %s", yTarget, userY)
+	}
+
+	// Legacy X row: target_id anonymised; admin_id preserved.
+	var legacyXTarget, legacyXAdmin *string
+	pool.QueryRow(context.Background(),
+		`SELECT target_id, admin_id::text FROM audit_log WHERE id=$1::uuid`, legacyX,
+	).Scan(&legacyXTarget, &legacyXAdmin)
+	if legacyXTarget == nil || *legacyXTarget != TombstoneUserID {
+		t.Errorf("legacy X target_id = %v, want tombstone", legacyXTarget)
+	}
+	if legacyXAdmin == nil || *legacyXAdmin != userY {
+		t.Errorf("legacy X admin_id mutated: got %v, want %s", legacyXAdmin, userY)
+	}
+
+	// Legacy Y row: untouched.
+	var legacyYTarget *string
+	pool.QueryRow(context.Background(),
+		`SELECT target_id FROM audit_log WHERE id=$1::uuid`, legacyY,
+	).Scan(&legacyYTarget)
+	if legacyYTarget == nil || *legacyYTarget != userY {
+		t.Errorf("control legacy row mutated: target_id = %v, want %s", legacyYTarget, userY)
+	}
+}
+
+func TestAnonymizeAuditLogsAsTarget_PreservesAdminFields(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	userX := makeUser(t, pool, uuid.NewString())
+	adminID := uuid.NewString()
+	adminEmail := "admin-b-" + adminID[:8] + "@zopmop.local"
+	makeCRMAdmin(t, pool, adminID, adminEmail)
+
+	id := insertCRMAuditRow(t, pool, adminID, adminEmail,
+		"users.suspend", "users", "user", userX, `null`, `null`)
+
+	if _, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX); err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+
+	var gotAdminID, gotAdminEmail *string
+	pool.QueryRow(context.Background(),
+		`SELECT admin_id::text, admin_email FROM crm_audit_log WHERE id=$1`, id,
+	).Scan(&gotAdminID, &gotAdminEmail)
+	if gotAdminID == nil || *gotAdminID != adminID {
+		t.Errorf("admin_id mutated: got %v, want %s", gotAdminID, adminID)
+	}
+	if gotAdminEmail == nil || *gotAdminEmail != adminEmail {
+		t.Errorf("admin_email mutated: got %v, want %s", gotAdminEmail, adminEmail)
+	}
+}
+
+func TestAnonymizeAuditLogsAsTarget_NoMatchReturnsZero(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	nonexistent := uuid.NewString()
+	got, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), nonexistent)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("rows updated = %d, want 0", got)
+	}
+}
+
 // Compile-time guard so the file refers to the time import even in
 // reduced builds.
 var _ = time.Second

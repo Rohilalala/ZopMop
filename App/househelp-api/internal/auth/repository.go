@@ -279,6 +279,16 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			return fmt.Errorf("compliance anonymise bookings (helper): %w", err)
 		}
 
+		// Audit logs (chunk 6): anonymise target_id where the deleted
+		// user was the target of an admin action. Actor fields and
+		// JSONB Before/After payloads are preserved within the 3-year
+		// retention window registered for both tables. JSONB scrubbing
+		// is documented as follow-up.
+		auditLogsAnon, err := r.compliance.AnonymizeAuditLogsAsTargetTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise audit logs: %w", err)
+		}
+
 		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance purge trivial: %w", err)
@@ -289,6 +299,7 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		report.BookingsAsCustomerAnonymized = bookingsCustAnon
 		report.BookingsAsHelperHardDeleted = bookingsHelpHard
 		report.BookingsAsHelperAnonymized = bookingsHelpAnon
+		report.AuditLogsAnonymized = auditLogsAnon
 		log.Info().
 			Str("user_id", userID).
 			Int64("rows_purged", report.Total()).
@@ -305,6 +316,7 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			Int64("bookings_cust_anon", report.BookingsAsCustomerAnonymized).
 			Int64("bookings_help_hard", report.BookingsAsHelperHardDeleted).
 			Int64("bookings_help_anon", report.BookingsAsHelperAnonymized).
+			Int64("audit_logs", report.AuditLogsAnonymized).
 			Msg("compliance purge complete")
 	}
 
