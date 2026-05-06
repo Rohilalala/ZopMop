@@ -290,14 +290,25 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			return fmt.Errorf("compliance anonymise bookings (helper): %w", err)
 		}
 
-		// Audit logs (chunk 6): anonymise target_id where the deleted
-		// user was the target of an admin action. Actor fields and
-		// JSONB Before/After payloads are preserved within the 3-year
-		// retention window registered for both tables. JSONB scrubbing
-		// is documented as follow-up.
-		auditLogsAnon, err := r.compliance.AnonymizeAuditLogsAsTargetTx(queryCtx, tx, userID)
+		// Audit logs (chunk 6 + chunk 12): anonymise target_id where
+		// the deleted user was the target of an admin action AND
+		// scrub PII from JSONB Before/After payloads. Actor fields
+		// (admin_id, admin_email, action, module, ip_address) stay
+		// intact within the 3-year retention window so admins remain
+		// accountable for what they did.
+		auditLogsAnon, auditLogsJSONB, err := r.compliance.AnonymizeAuditLogsAsTargetTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance anonymise audit logs: %w", err)
+		}
+
+		// Campaign targets (chunk 12): remove deleted user from any
+		// push-campaign user_ids JSONB array and from any promotions
+		// audience_user_ids UUID[] column. Closes the chunk-8 JSONB
+		// deferral and the promotions surface discovered during
+		// chunk-12 Phase A investigation.
+		campaignTargets, err := r.compliance.ScrubUserFromCampaignTargetsTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance scrub campaign targets: %w", err)
 		}
 
 		// Refunds (chunk 7): hard-delete refunds that never moved
@@ -320,8 +331,10 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		report.BookingsAsHelperHardDeleted = bookingsHelpHard
 		report.BookingsAsHelperAnonymized = bookingsHelpAnon
 		report.AuditLogsAnonymized = auditLogsAnon
+		report.AuditLogsJSONBScrubbed = auditLogsJSONB
 		report.RefundsHardDeleted = refundsHard
 		report.RefundsAnonymized = refundsAnon
+		report.CampaignTargetsScrubbed = campaignTargets
 		log.Info().
 			Str("user_id", userID).
 			Int64("rows_purged", report.Total()).
@@ -339,8 +352,10 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			Int64("bookings_help_hard", report.BookingsAsHelperHardDeleted).
 			Int64("bookings_help_anon", report.BookingsAsHelperAnonymized).
 			Int64("audit_logs", report.AuditLogsAnonymized).
+			Int64("audit_logs_jsonb", report.AuditLogsJSONBScrubbed).
 			Int64("refunds_hard", report.RefundsHardDeleted).
 			Int64("refunds_anon", report.RefundsAnonymized).
+			Int64("campaign_targets", report.CampaignTargetsScrubbed).
 			Msg("compliance purge complete")
 	}
 

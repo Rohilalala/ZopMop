@@ -35,8 +35,10 @@ type PurgeReport struct {
 	BookingsAsHelperHardDeleted    int64
 	BookingsAsHelperAnonymized     int64
 	AuditLogsAnonymized            int64
+	AuditLogsJSONBScrubbed         int64
 	RefundsHardDeleted             int64
 	RefundsAnonymized              int64
+	CampaignTargetsScrubbed        int64
 }
 
 // Total returns the sum of all per-table counts. Useful for audit
@@ -57,8 +59,10 @@ func (r PurgeReport) Total() int64 {
 		r.BookingsAsHelperHardDeleted +
 		r.BookingsAsHelperAnonymized +
 		r.AuditLogsAnonymized +
+		r.AuditLogsJSONBScrubbed +
 		r.RefundsHardDeleted +
-		r.RefundsAnonymized
+		r.RefundsAnonymized +
+		r.CampaignTargetsScrubbed
 }
 
 // txQuerier is the narrow interface that both *pgxpool.Pool and pgx.Tx
@@ -497,37 +501,45 @@ func execAnonymizeRefundsAsUser(ctx context.Context, q txQuerier, userID string)
 // label is inconsistent across modules ('user' / 'worker' / 'customer'
 // in different writers).
 //
-// KNOWN GAP — JSONB Before/After (audit C-8 follow-up): the
-// before_value / after_value (legacy: old_value / new_value) JSONB
-// columns may contain user PII baked in by the recording module
-// (e.g. admin user-suspension actions log the full user row,
-// including phone and name). This method does NOT scrub those
-// payloads. The 3-year retention window registered in policies.go
-// is the hard bound — PII ages out via the retention worker. Per-key
-// recursive redaction is documented as follow-up in privacy-notes.md.
+// JSONB Before/After payloads are also scrubbed — the before_value /
+// after_value (legacy: old_value / new_value) columns may contain user
+// PII baked in by the recording module (rare today; defensive against
+// future modules that log row snapshots). chunk-12 ScrubJSONB walks
+// the payloads with a denylist of PII keys before the target_id
+// reassignment so the rows leaving this transaction carry neither
+// user-UUID nor user-PII.
 //
-// Returns total rows updated across both tables.
-func (s *Service) AnonymizeAuditLogsAsTargetTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
-	return execAnonymizeAuditLogsAsTarget(ctx, txAdapter{tx: tx}, userID)
+// Returns total rows updated across both tables (target_id reassign
+// only). JSONB scrub counts are returned via the second return value.
+func (s *Service) AnonymizeAuditLogsAsTargetTx(ctx context.Context, tx pgx.Tx, userID string) (int64, int64, error) {
+	jsonbScrubbed, err := execScrubAuditLogJSONBForUser(ctx, tx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	idReassigned, err := execAnonymizeAuditLogsAsTarget(ctx, txAdapter{tx: tx}, userID)
+	if err != nil {
+		return idReassigned, jsonbScrubbed, err
+	}
+	return idReassigned, jsonbScrubbed, nil
 }
 
 // AnonymizeAuditLogsAsTarget is the standalone variant — opens its
-// own short tx so the two UPDATEs (crm_audit_log + audit_log) commit
-// atomically.
-func (s *Service) AnonymizeAuditLogsAsTarget(ctx context.Context, userID string) (int64, error) {
+// own short tx so the JSONB scrub + the two target_id UPDATEs
+// (crm_audit_log + audit_log) commit atomically.
+func (s *Service) AnonymizeAuditLogsAsTarget(ctx context.Context, userID string) (int64, int64, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("anonymize audit logs begin tx: %w", err)
+		return 0, 0, fmt.Errorf("anonymize audit logs begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	n, err := execAnonymizeAuditLogsAsTarget(ctx, txAdapter{tx: tx}, userID)
+	idReassigned, jsonbScrubbed, err := s.AnonymizeAuditLogsAsTargetTx(ctx, tx, userID)
 	if err != nil {
-		return n, err
+		return idReassigned, jsonbScrubbed, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return n, fmt.Errorf("anonymize audit logs commit: %w", err)
+		return idReassigned, jsonbScrubbed, fmt.Errorf("anonymize audit logs commit: %w", err)
 	}
-	return n, nil
+	return idReassigned, jsonbScrubbed, nil
 }
 
 func execAnonymizeAuditLogsAsTarget(ctx context.Context, q txQuerier, userID string) (int64, error) {

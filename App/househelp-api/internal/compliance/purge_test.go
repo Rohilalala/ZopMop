@@ -912,7 +912,7 @@ func TestAnonymizeAuditLogsAsTarget_BothTablesUpdated(t *testing.T) {
 	legacyX := insertLegacyAuditRow(t, pool, userY, "user.suspend", "user", userX)
 	legacyY := insertLegacyAuditRow(t, pool, userY, "user.suspend", "user", userY)
 
-	got, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX)
+	got, _, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX)
 	if err != nil {
 		t.Fatalf("anonymize: %v", err)
 	}
@@ -998,7 +998,7 @@ func TestAnonymizeAuditLogsAsTarget_PreservesAdminFields(t *testing.T) {
 	id := insertCRMAuditRow(t, pool, adminID, adminEmail,
 		"users.suspend", "users", "user", userX, `null`, `null`)
 
-	if _, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX); err != nil {
+	if _, _, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), userX); err != nil {
 		t.Fatalf("anonymize: %v", err)
 	}
 
@@ -1018,7 +1018,7 @@ func TestAnonymizeAuditLogsAsTarget_NoMatchReturnsZero(t *testing.T) {
 	pool := openComplianceTestDB(t)
 	svc := NewService(pool, NewRegistry())
 	nonexistent := uuid.NewString()
-	got, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), nonexistent)
+	got, _, err := svc.AnonymizeAuditLogsAsTarget(context.Background(), nonexistent)
 	if err != nil {
 		t.Fatalf("anonymize: %v", err)
 	}
