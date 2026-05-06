@@ -88,7 +88,8 @@ This section grows as we make retention decisions. Last updated:
 | CRM admin login attempts | 90 days from attempt | (No customer-facing user impact — admin auth log) |
 | Audit log (legacy) | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB old_value/new_value not scrubbed (3-year retention is the bound). |
 | CRM audit log | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB before_value/after_value not scrubbed (3-year retention is the bound). |
-| Refunds | TODO: decide |  |
+| Refunds (money moved) | 7 years from processed_at | user_id anonymised to tombstone; financial fields preserved (amount, gateway_refund_id, payment_method, processed_at, etc.); approved_by admin actor preserved within window |
+| Refunds (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation). Active in-flight refunds (status='approved' < 10 min ago) block deletion temporarily. |
 | Audit logs | TODO: decide |  |
 | Push notification history | TODO: decide |  |
 | Helper status pings | TODO: decide |  |
@@ -168,7 +169,22 @@ Things they cannot yet do:
   money never moved (cancelled / abandoned / failed-pay) are hard-
   deleted on user erasure — no tax obligation. Decision date: 
   2026-05-06.
-- [ ] **refunds**: ?  Same as bookings — financial.
+- [x] **refunds (pending_refunds)**: 7-year retention from 
+  processed_at on rows where money actually returned to the customer. 
+  Money-moved predicate captures all rails — Cashfree gateway 
+  success, manual ops settlement, wallet credit, plus the edge 
+  case `gateway_error` with a non-NULL `gateway_refund_id` 
+  (Cashfree errored on response after money moved). Refunds where 
+  no money moved (pending / approved-without-process / rejected / 
+  cancelled / gateway_error without a gateway_refund_id) are 
+  hard-deleted on user erasure. Anonymisation: `user_id` reassigned 
+  to tombstone; `approved_by` admin actor preserved within window 
+  (mirrors the audit-log actor-preservation rule). 
+  `error_message` left as-is (low PII risk; 7-year window bounds it). 
+  Active in-flight refunds (status='approved' with approved_at 
+  within last 10 minutes — the chunk-3 lockForApproval CAS state) 
+  block deletion via `ErrActiveRefund`; stale locks (>10 min) do 
+  NOT block. Decision date: 2026-05-06.
 - [x] **audit_log** (legacy migration 008): 3-year retention from 
   row creation. On user erasure, `target_id` for rows where the 
   deleted user is the action target is anonymised to TombstoneUserID. 
