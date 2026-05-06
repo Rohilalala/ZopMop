@@ -38,13 +38,26 @@ func NewHandler(service *Service, rdb *redis.Client, isProduction bool) *Handler
 
 // SetCompliance wires the compliance service so /me/export can stream
 // user data and SoftDeleteUser flows can call into compliance helpers.
-// Optional — handler degrades to 501 from /me/export when nil.
-func (h *Handler) SetCompliance(c *compliance.Service) { h.compliance = c }
+// Required for /me/export — RegisterMeRoutes panics if not set. Panics
+// on nil so a deploy mistake fails loud at construction rather than
+// silently disabling DPDP §11 data portability.
+func (h *Handler) SetCompliance(c *compliance.Service) {
+	if c == nil {
+		panic("auth.Handler.SetCompliance: compliance.Service must not be nil (DPDP §11 /me/export requires it)")
+	}
+	h.compliance = c
+}
 
 // SetAudit wires the CRM audit recorder so /me/export and other DSAR
-// requests can record an "access request" trail per DPDP §11. Optional —
-// handler skips audit logging silently when nil.
-func (h *Handler) SetAudit(r *audit.Recorder) { h.audit = r }
+// requests can record an "access request" trail per DPDP §11. Required
+// for /me/export — RegisterMeRoutes panics if not set. Panics on nil
+// for the same loud-fail reason as SetCompliance.
+func (h *Handler) SetAudit(r *audit.Recorder) {
+	if r == nil {
+		panic("auth.Handler.SetAudit: audit.Recorder must not be nil (DPDP §11 access-request audit trail requires it)")
+	}
+	h.audit = r
+}
 
 // setAuthCookie writes the JWT as an HttpOnly+SameSite=Strict cookie so that
 // cookie-based browser clients (test client / admin dashboard) never expose
@@ -85,8 +98,19 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/logout", h.Logout)
 }
 
-// RegisterMeRoutes mounts authenticated profile routes (requires JWT middleware applied by caller).
+// RegisterMeRoutes mounts authenticated profile routes (requires JWT
+// middleware applied by caller). Panics at startup if /me/export
+// dependencies (compliance.Service + audit.Recorder) are not wired —
+// silently disabling a compliance feature on a misconfigured deploy
+// is worse than refusing to start. Catches the case where a developer
+// forgets to call SetCompliance / SetAudit before mounting the route.
 func (h *Handler) RegisterMeRoutes(router fiber.Router) {
+	if h.compliance == nil {
+		panic("auth.Handler.RegisterMeRoutes: compliance.Service not wired; call SetCompliance before mounting /me/export (DPDP §11)")
+	}
+	if h.audit == nil {
+		panic("auth.Handler.RegisterMeRoutes: audit.Recorder not wired; call SetAudit before mounting /me/export (DPDP §11)")
+	}
 	router.Get("/", h.Me)
 	router.Put("/", h.UpdateMe)
 	router.Delete("/", h.DeleteMe)
@@ -107,23 +131,15 @@ const exportRateLimitWindow = time.Hour
 //
 // Rate limit: 1 export per user per hour, enforced via Redis SETNX on
 // `export:user:<id>` with a 3600s TTL. Returns 429 with Retry-After
-// when the lock is held.
+// when the lock is held. Fails CLOSED on Redis unavailability — an
+// export hits ~18 DB queries, so a Redis-outage attack vector that
+// bypassed rate-limiting could DoS the DB. Refuse service (503) over
+// silently allowing unbounded exports.
 //
 // Audit: each accepted export writes a `user.data_export` row to
 // crm_audit_log via the injected Recorder so DPDP §11 access requests
-// have a forensic trail.
-//
-// Falls back to 501 if the compliance service was never wired in —
-// keeps existing tests + tooling that exercise the route alive without
-// the full dependency graph.
+// have a forensic trail. Required (RegisterMeRoutes asserts non-nil).
 func (h *Handler) ExportMe(c *fiber.Ctx) error {
-	if h.compliance == nil {
-		c.Set("Retry-After", "604800")
-		return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-			"error": "data export not yet wired in this binary",
-			"code":  "EXPORT_NOT_IMPLEMENTED",
-		})
-	}
 	userID, _ := c.Locals(middleware.LocalsKeyUserID).(string)
 	if userID == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -131,43 +147,57 @@ func (h *Handler) ExportMe(c *fiber.Ctx) error {
 		})
 	}
 
-	// Rate limit: 1 export per hour per user. Redis hiccup → fail open
-	// (let the export through). Consistent with the idempotency
-	// middleware's fail-open posture; better than 5xx-ing a legit DSAR.
-	if h.rdb != nil {
-		key := "export:user:" + userID
-		ctx, cancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
-		defer cancel()
-		acquired, err := h.rdb.SetNX(ctx, key, "1", exportRateLimitWindow).Result()
-		if err == nil && !acquired {
-			ttl, _ := h.rdb.TTL(ctx, key).Result()
-			retryAfter := int(ttl.Seconds())
-			if retryAfter < 1 {
-				retryAfter = 60
-			}
-			c.Set("Retry-After", strconv.Itoa(retryAfter))
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error":       "data export already requested recently; please wait before retrying",
-				"code":        "EXPORT_RATE_LIMITED",
-				"retry_after": retryAfter,
-			})
+	// Rate limit: 1 export per hour per user. Fail CLOSED on Redis
+	// errors — an unbounded export is a much bigger blast radius than
+	// a brief 503 during a Redis outage. h.rdb is required for this
+	// route; the route group at cmd/api wires the same client used by
+	// /auth/send-otp's throttle, and SetCompliance/SetAudit assertions
+	// guarantee the rest of the dependency graph.
+	if h.rdb == nil {
+		log.Error().Str("user_id", userID).Msg("[me.export] redis client missing — refusing to serve without rate-limit")
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "data export rate limiter unavailable; please retry later",
+			"code":  "RATE_LIMIT_UNAVAILABLE",
+		})
+	}
+	key := "export:user:" + userID
+	rlCtx, rlCancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
+	defer rlCancel()
+	acquired, err := h.rdb.SetNX(rlCtx, key, "1", exportRateLimitWindow).Result()
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("[me.export] rate-limit SETNX failed; refusing to serve fail-closed")
+		c.Set("Retry-After", "60")
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "data export rate limiter unavailable; please retry later",
+			"code":  "RATE_LIMIT_UNAVAILABLE",
+		})
+	}
+	if !acquired {
+		ttl, _ := h.rdb.TTL(rlCtx, key).Result()
+		retryAfter := int(ttl.Seconds())
+		if retryAfter < 1 {
+			retryAfter = 60
 		}
+		c.Set("Retry-After", strconv.Itoa(retryAfter))
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error":       "data export already requested recently; please wait before retrying",
+			"code":        "EXPORT_RATE_LIMITED",
+			"retry_after": retryAfter,
+		})
 	}
 
 	// Audit before streaming. If the request later errors mid-stream,
 	// the audit row still records that an export was requested — DPDP
 	// §11 cares about the access request, not the success.
-	if h.audit != nil {
-		h.audit.Log(c.UserContext(), audit.Entry{
-			Action:     "user.data_export",
-			Module:     "me",
-			TargetType: "user",
-			TargetID:   userID,
-			IPAddress:  c.IP(),
-			UserAgent:  c.Get("User-Agent"),
-			RequestID:  c.Get("X-Request-ID"),
-		})
-	}
+	h.audit.Log(c.UserContext(), audit.Entry{
+		Action:     "user.data_export",
+		Module:     "me",
+		TargetType: "user",
+		TargetID:   userID,
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+		RequestID:  c.Get("X-Request-ID"),
+	})
 
 	c.Set("Content-Type", "application/json")
 	c.Set("Content-Disposition",

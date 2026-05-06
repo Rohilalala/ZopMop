@@ -6,38 +6,78 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 )
 
-func TestExportMe_StubReturns501(t *testing.T) {
+// TestRegisterMeRoutes_PanicsWithoutCompliance asserts that mounting
+// /me without wiring compliance.Service is a startup failure rather
+// than a silent runtime degradation. Catches the deploy mistake of
+// forgetting to call SetCompliance before RegisterMeRoutes — DPDP §11
+// data portability is a compliance feature, fail-loud > fail-quiet.
+func TestRegisterMeRoutes_PanicsWithoutCompliance(t *testing.T) {
 	t.Parallel()
-
-	// Audit C-8 / F2D-1 chunk 1: /me/export is wired but returns 501 with
-	// a documented error code. The stub must respond 501 with the expected
-	// body shape and a Retry-After hint so client / app-store reviewers
-	// can confirm the endpoint exists.
-	app := fiber.New()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when compliance.Service not wired")
+		}
+	}()
 	h := NewHandler(nil, nil, false)
-	app.Get("/me/export", h.ExportMe)
+	h.RegisterMeRoutes(fiber.New())
+}
+
+// TestSetCompliance_PanicsOnNil asserts the setter itself rejects nil
+// rather than silently accepting it (which would resurface later as a
+// nil-deref deep inside ExportMe).
+func TestSetCompliance_PanicsOnNil(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic on SetCompliance(nil)")
+		}
+	}()
+	h := NewHandler(nil, nil, false)
+	h.SetCompliance(nil)
+}
+
+// TestExportMe_RateLimitFailsClosedOnRedisDown asserts that when Redis
+// is unreachable, the handler refuses service (503) rather than
+// proceeding with an unbounded export. Each export is ~18 DB queries —
+// silent fail-open during a Redis outage is a DoS vector.
+func TestExportMe_RateLimitFailsClosedOnRedisDown(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	h := NewHandler(nil, rdb, false)
+
+	app := fiber.New()
+	app.Get("/me/export", func(c *fiber.Ctx) error {
+		c.Locals("userID", "11111111-1111-1111-1111-111111111111")
+		return h.ExportMe(c)
+	})
+
+	// Kill miniredis to simulate outage. Subsequent SETNX errors out.
+	mr.Close()
 
 	req := httptest.NewRequest("GET", "/me/export", nil)
-	resp, err := app.Test(req)
+	resp, err := app.Test(req, int(2*time.Second/time.Millisecond))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	if resp.StatusCode != fiber.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	if resp.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (fail-closed)", resp.StatusCode)
 	}
-	if resp.Header.Get("Retry-After") == "" {
-		t.Fatalf("Retry-After header missing")
-	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["code"] != "EXPORT_NOT_IMPLEMENTED" {
-		t.Fatalf("code = %q, want EXPORT_NOT_IMPLEMENTED", body["code"])
+	if body["code"] != "RATE_LIMIT_UNAVAILABLE" {
+		t.Fatalf("code = %q, want RATE_LIMIT_UNAVAILABLE", body["code"])
 	}
 }
 
