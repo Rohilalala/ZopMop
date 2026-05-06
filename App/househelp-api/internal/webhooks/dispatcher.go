@@ -122,8 +122,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, event string, payload any) {
 		return
 	}
 	for _, s := range subs {
+		// Acquire BEFORE spawn so a large fan-out doesn't briefly create
+		// goroutines beyond the cap (audit NEW-B1-002). The blocking
+		// receive on a full channel applies natural back-pressure to
+		// Dispatch instead of letting the goroutine count balloon.
+		d.sem <- struct{}{}
+		s := s
 		d.wg.Go(func() {
-			d.sem <- struct{}{}
 			defer func() { <-d.sem }()
 			if _, err := d.deliver(context.Background(), s, event, body, 1, false); err != nil {
 				log.Error().Err(err).Str("event", event).Str("webhook_id", s.ID).Msg("[webhooks] delivery persist failed")
