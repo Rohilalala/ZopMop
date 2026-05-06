@@ -78,6 +78,34 @@ func TestRegistry_RegisterReplaces(t *testing.T) {
 	}
 }
 
+// TestPolicyRegistry_PushMessagesRegistered confirms the chunk-8
+// retention policy for crm_push_messages is wired with the right
+// window + action + legal basis. This is the only verifiable
+// behaviour for chunk 8 since the campaign-level schema admits no
+// runtime SoftDeleteUser hook (no per-recipient row to scrub).
+func TestPolicyRegistry_PushMessagesRegistered(t *testing.T) {
+	r := NewRegistry()
+	RegisterDefaultPolicies(r)
+
+	got, ok := r.Lookup("crm_push_messages")
+	if !ok {
+		t.Fatalf("crm_push_messages policy not registered")
+	}
+	if got.Action != ActionDelete {
+		t.Errorf("Action = %s, want %s", got.Action, ActionDelete)
+	}
+	const want = 90 * 24 * time.Hour
+	if got.Window != want {
+		t.Errorf("Window = %s, want %s (90 days)", got.Window, want)
+	}
+	if got.LegalBasis != "marketing_analytics_window" {
+		t.Errorf("LegalBasis = %q, want marketing_analytics_window", got.LegalBasis)
+	}
+	if got.UserIDColumn != "created_at" {
+		t.Errorf("UserIDColumn = %q, want created_at (time-based sweep)", got.UserIDColumn)
+	}
+}
+
 func TestRegistry_AllSnapshotsCopy(t *testing.T) {
 	r := NewRegistry()
 	r.Register(RetentionPolicy{Table: "a", Action: ActionDelete})

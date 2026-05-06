@@ -118,6 +118,26 @@ func RegisterDefaultPolicies(r *Registry) {
 		LegalBasis:   "gst_income_tax_audit_defence_refund",
 	})
 
+	// crm_push_messages — campaign-level marketing-push table. Each row
+	// represents one campaign (broadcast or 'specific'-target), not
+	// one push to one user. There is no per-recipient delivery log,
+	// so user-deletion has no row-level scrub target — user IDs can
+	// appear only inside target_filter JSONB on target_kind='specific'
+	// campaigns (a small fraction of rows). The 90-day window bounds
+	// that exposure.
+	//
+	// Decision (chunk 8): no SoftDeleteUser hook; rely on the
+	// time-based sweep alone. Selective JSONB scrubbing for the
+	// `target_filter.user_ids` key is a viable follow-up if a
+	// stricter posture is desired — see privacy-notes.md.
+	r.Register(RetentionPolicy{
+		Table:        "crm_push_messages",
+		Action:       ActionDelete,
+		Window:       90 * 24 * time.Hour, // 90 days
+		UserIDColumn: "created_at",
+		LegalBasis:   "marketing_analytics_window",
+	})
+
 	// crm_login_attempts — forensic record of CRM admin auth events
 	// (success + every failure reason, including attempts against
 	// emails that never existed). Retention: 90 days from created_at
