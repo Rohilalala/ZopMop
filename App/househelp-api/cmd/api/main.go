@@ -357,7 +357,8 @@ func main() {
 	helperService := helpermod.NewService(helperRepo, locationService, matchEngine, rdb)
 	helperService.SetWebhooks(webhookDispatcher)
 	helperService.SetAnalytics(analyticsSvc)
-	helperHandler := helpermod.NewHandler(helperService)
+	helperHandler := helpermod.NewHandler(helperService, helperRepo)
+	proApprovedMW := helpermod.RequireApproved(helperRepo)
 
 	// Time slots.
 	slotsRepo := slotsmod.NewRepository(dbPool)
@@ -389,7 +390,7 @@ func main() {
 	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
 	bookingIdem := mw.Idempotency(rdb, 60*time.Second, 10*time.Minute)
 	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
-	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter)
+	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter, proApprovedMW)
 	reviews.NewHandler(reviews.NewService(dbPool, analyticsSvc)).RegisterRoutes(bookingGroup)
 
 	// Tracking WebSocket — replaces the 5s REST poll on the customer side.
@@ -518,7 +519,12 @@ func main() {
 	leaveSvc := leave.NewService(leaveRepo, leaveCRMNotifier, leaveCustNotifier)
 	leaveSvc.SetWebhooks(webhookDispatcher)
 	leaveHandler := leave.NewHandler(leaveSvc)
-	leaveGroup := api.Group("/pro/leave", authMiddleware, authLimiter, dbBoundLimiter)
+	// Leave routes: chain RequireRole("pro") + RequireApproved.
+	// Audit A1-F7 (leave routes lacked role gate) + A1-F3 (approval
+	// gate). Customers hitting /pro/leave/* now 403 from RequireRole;
+	// pending/rejected helpers 403 from RequireApproved.
+	leaveGroup := api.Group("/pro/leave", authMiddleware, authLimiter, dbBoundLimiter,
+		mw.RequireRole("pro"), proApprovedMW)
 	leaveHandler.RegisterRoutes(leaveGroup)
 	// Hourly cron — idempotent monthly balance refill for every helper.
 	leave.StartMonthlyResetCron(leaveRepo)

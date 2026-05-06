@@ -233,6 +233,30 @@ func (r *Repository) UpdateLocation(ctx context.Context, helperID string, lat, l
 	return nil
 }
 
+// GetApprovalStatus returns the helper's current approval status —
+// 'pending', 'approved', or 'rejected'. Used by RequireApproved
+// middleware on every protected helper route.
+//
+// Sub-millisecond PK lookup; the schema's idx_helpers_approval_status
+// index is incidental (the WHERE clause uses the PK). Returns
+// pgx.ErrNoRows wrapped if the helpers row doesn't exist — unusual
+// for an authenticated pro role, indicates data drift, must be
+// failed closed at the middleware level.
+//
+// Audit C-8 / A1-F3 chunk 15.
+func (r *Repository) GetApprovalStatus(ctx context.Context, helperID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var status string
+	err := r.db.QueryRow(ctx,
+		`SELECT approval_status FROM helpers WHERE id = $1::uuid`, helperID,
+	).Scan(&status)
+	if err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
 // UpdateLocality validates the locality against active localities (case
 // insensitive). Empty/whitespace clears the field. Returns a friendly
 // error if the locality isn't on the active list.

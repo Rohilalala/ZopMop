@@ -35,8 +35,19 @@ func validateBookingIDParam(bookingID string) bool {
 // only to the booking-creation POST routes; tighter than the group-wide
 // authLimiter because each create fans out to matching, notifications,
 // and DB writes.
-func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, createLimiter fiber.Handler) {
+// RegisterRoutes mounts booking routes. proApproved (typically
+// helper.RequireApproved(repo)) gates pro-side operational routes
+// — accept/arrived/start/complete plus the helper invite/active/today
+// reads — so unapproved helpers can't perform pro work even with a
+// valid JWT and role='pro'. Audit A1-F3 chunk 15. proApproved may be
+// nil in tests / older binaries; nil-callers degrade to RequireRole
+// gating only.
+func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, createLimiter fiber.Handler, proApproved fiber.Handler) {
 	proOnly := middleware.RequireRole("pro")
+	proChain := []fiber.Handler{proOnly}
+	if proApproved != nil {
+		proChain = append(proChain, proApproved)
+	}
 
 	createChain := []fiber.Handler{}
 	if createLimiter != nil {
@@ -47,9 +58,9 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	}
 	router.Post("/", append(createChain, h.CreateBooking)...)
 	router.Post("/scheduled", append(createChain, h.CreateScheduledBooking)...)
-	router.Get("/helper/invites", proOnly, h.GetHelperInvites)
-	router.Get("/helper/active", proOnly, h.GetHelperActive)
-	router.Get("/helper/today", proOnly, h.GetHelperToday)
+	router.Get("/helper/invites", append(proChain, h.GetHelperInvites)...)
+	router.Get("/helper/active", append(proChain, h.GetHelperActive)...)
+	router.Get("/helper/today", append(proChain, h.GetHelperToday)...)
 	router.Get("/", h.GetBookings)
 	router.Get("/:id/match-status", h.GetMatchStatus)
 	router.Get("/:id/tracking", h.GetTracking)
@@ -60,10 +71,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Delete("/:id", h.CancelBooking)
 	router.Post("/:id/reschedule", h.RescheduleBooking)
 	router.Post("/:id/keep-looking", h.KeepLookingBooking)
-	router.Post("/:id/accept", proOnly, h.AcceptBooking)
-	router.Post("/:id/arrived", proOnly, h.MarkArrived)
-	router.Post("/:id/start", proOnly, h.StartBooking)
-	router.Post("/:id/complete", proOnly, h.CompleteBooking)
+	router.Post("/:id/accept", append(proChain, h.AcceptBooking)...)
+	router.Post("/:id/arrived", append(proChain, h.MarkArrived)...)
+	router.Post("/:id/start", append(proChain, h.StartBooking)...)
+	router.Post("/:id/complete", append(proChain, h.CompleteBooking)...)
 }
 
 // CreateBooking handles POST /bookings.

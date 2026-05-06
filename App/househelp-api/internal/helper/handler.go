@@ -12,24 +12,41 @@ import (
 // Handler handles HTTP requests for the helper module.
 type Handler struct {
 	service *Service
+	repo    *Repository
 }
 
-// NewHandler creates a new helper handler.
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// NewHandler creates a new helper handler. The repo is exposed so
+// chunk-15 RequireApproved middleware can read helpers.approval_status
+// without a separate service indirection (read-only PK lookup).
+func NewHandler(service *Service, repo *Repository) *Handler {
+	return &Handler{service: service, repo: repo}
 }
 
-// RegisterRoutes mounts helper routes (all require JWT auth + pro role).
-// Customer JWTs must not reach helper workflows (location broadcasts,
-// invite queues, online/offline toggle).
+// RegisterRoutes mounts helper routes. All require JWT auth + pro role.
+// Routes are split into two bands per audit A1-F3 (chunk 15):
+//
+//   - Pending-allowed: GET /me/profile and PATCH /me. Pending helpers
+//     need to see their own status and update locality / minor fields
+//     while waiting for admin review.
+//   - Approved-only: invites, location broadcast, online/offline
+//     toggle. Operational pro actions; pending helpers must not
+//     reach these because the matching engine doesn't dispatch to
+//     them anyway and any work done is wasted noise + Redis writes.
+//
+// Customer JWTs are blocked at RequireRole("pro") on both bands.
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Use(middleware.RequireRole("pro"))
+
+	// Pending-allowed.
 	router.Get("/me/profile", h.GetProfile)
-	router.Get("/me/invites", h.GetInvites)
-	router.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
-	router.Put("/me/location", h.UpdateLocation)
-	router.Put("/me/status", h.SetStatus)
 	router.Patch("/me", h.UpdateProfile)
+
+	// Approved-only.
+	approved := router.Group("", RequireApproved(h.repo))
+	approved.Get("/me/invites", h.GetInvites)
+	approved.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
+	approved.Put("/me/location", h.UpdateLocation)
+	approved.Put("/me/status", h.SetStatus)
 }
 
 // updateProfileRequest is the editable subset of helper profile fields. Add
