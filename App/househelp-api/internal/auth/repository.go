@@ -263,12 +263,32 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		if err != nil {
 			return fmt.Errorf("compliance anonymise reviews (helper): %w", err)
 		}
+
+		// Bookings (chunk 4): hard-delete unpaid rows + anonymise
+		// money-moved rows. MUST run before PurgeTrivialUserDataTx —
+		// bookings.address_id has a RESTRICT FK to user_addresses, so
+		// we have to detach the address_id reference (anonymise) or
+		// remove the booking row (hard-delete) before the trivial
+		// purge tries to delete user_addresses.
+		bookingsCustHard, bookingsCustAnon, err := r.compliance.AnonymizeBookingsAsCustomerTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise bookings (customer): %w", err)
+		}
+		bookingsHelpHard, bookingsHelpAnon, err := r.compliance.AnonymizeBookingsAsHelperTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance anonymise bookings (helper): %w", err)
+		}
+
 		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance purge trivial: %w", err)
 		}
 		report.ReviewsAnonymizedAsCustomer = reviewsAsCustomer
 		report.ReviewsAnonymizedAsHelper = reviewsAsHelper
+		report.BookingsAsCustomerHardDeleted = bookingsCustHard
+		report.BookingsAsCustomerAnonymized = bookingsCustAnon
+		report.BookingsAsHelperHardDeleted = bookingsHelpHard
+		report.BookingsAsHelperAnonymized = bookingsHelpAnon
 		log.Info().
 			Str("user_id", userID).
 			Int64("rows_purged", report.Total()).
@@ -281,6 +301,10 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			Int64("reengagement", report.ReengagementNotifications).
 			Int64("reviews_as_customer", report.ReviewsAnonymizedAsCustomer).
 			Int64("reviews_as_helper", report.ReviewsAnonymizedAsHelper).
+			Int64("bookings_cust_hard", report.BookingsAsCustomerHardDeleted).
+			Int64("bookings_cust_anon", report.BookingsAsCustomerAnonymized).
+			Int64("bookings_help_hard", report.BookingsAsHelperHardDeleted).
+			Int64("bookings_help_anon", report.BookingsAsHelperAnonymized).
 			Msg("compliance purge complete")
 	}
 

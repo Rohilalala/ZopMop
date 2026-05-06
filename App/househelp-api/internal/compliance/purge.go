@@ -20,16 +20,20 @@ const TombstoneUserID = "00000000-0000-0000-0000-000000000000"
 // pass per table. Returned to the caller so the audit log can capture
 // what was actually deleted, not just "purge ran".
 type PurgeReport struct {
-	UserAddresses                int64
-	DeviceTokensAsUser           int64
-	DeviceTokensAsWorker         int64
-	Cart                         int64
-	UserPreferredHelpersAsUser   int64
-	UserPreferredHelpersAsHelper int64
-	ReengagementNotifications    int64
-	BookingMessagesAnonymized    int64
-	ReviewsAnonymizedAsCustomer  int64
-	ReviewsAnonymizedAsHelper    int64
+	UserAddresses                  int64
+	DeviceTokensAsUser             int64
+	DeviceTokensAsWorker           int64
+	Cart                           int64
+	UserPreferredHelpersAsUser     int64
+	UserPreferredHelpersAsHelper   int64
+	ReengagementNotifications      int64
+	BookingMessagesAnonymized      int64
+	ReviewsAnonymizedAsCustomer    int64
+	ReviewsAnonymizedAsHelper      int64
+	BookingsAsCustomerHardDeleted  int64
+	BookingsAsCustomerAnonymized   int64
+	BookingsAsHelperHardDeleted    int64
+	BookingsAsHelperAnonymized     int64
 }
 
 // Total returns the sum of all per-table counts. Useful for audit
@@ -44,7 +48,11 @@ func (r PurgeReport) Total() int64 {
 		r.ReengagementNotifications +
 		r.BookingMessagesAnonymized +
 		r.ReviewsAnonymizedAsCustomer +
-		r.ReviewsAnonymizedAsHelper
+		r.ReviewsAnonymizedAsHelper +
+		r.BookingsAsCustomerHardDeleted +
+		r.BookingsAsCustomerAnonymized +
+		r.BookingsAsHelperHardDeleted +
+		r.BookingsAsHelperAnonymized
 }
 
 // txQuerier is the narrow interface that both *pgxpool.Pool and pgx.Tx
@@ -179,6 +187,149 @@ func execAnonymizeReviewsAsHelper(ctx context.Context, q txQuerier, helperID str
 		return 0, fmt.Errorf("anonymize reviews (helper): %w", err)
 	}
 	return res.RowsAffected(), nil
+}
+
+// moneyMovedPredicate is the SQL fragment that decides whether a
+// booking represents a real money movement and therefore must be
+// retained 7 years for tax / audit defence (GST, income tax). Mirrors
+// the existing in-code predicate at internal/booking/repository.go:509,663
+// so "money moved" stays consistently defined across the codebase.
+//
+// Captures all three payment rails:
+//   - Cashfree direct-pay  : payment_status='paid' once webhook stamps it
+//   - COD                  : payment_method='cod', status='completed' (cash collected)
+//   - Wallet               : payment_method='wallet', status='completed' (closed-loop debit)
+//
+// IS DISTINCT FROM rather than != for payment_method because the column
+// is nullable; NULL behaves as "not cashfree" in this predicate.
+//
+// NOTE: payment_status='refunded' is documented in migration 046 but no
+// code path writes it today. When the refund flow starts setting that
+// value, this predicate must be expanded to include it (refunded
+// bookings are still tax records — money moved both directions). See
+// privacy-notes.md "Things to revisit before launch".
+//
+// Three-valued logic: payment_status is nullable, so `payment_status =
+// 'paid'` returns NULL (not FALSE) when the column is NULL. Callers
+// MUST use `predicate IS TRUE` for keep-and-anonymise and `predicate
+// IS NOT TRUE` for hard-delete; these collapse NULL to FALSE the way
+// the WHERE clause needs.
+const moneyMovedPredicate = `(
+	(payment_method IS DISTINCT FROM 'cashfree' AND status = 'completed')
+	OR payment_status = 'paid'
+)`
+
+// AnonymizeBookingsAsCustomerTx splits the customer's bookings into:
+//   - hard-delete: rows where money never moved (cancelled / abandoned /
+//     never-completed). No tax obligation, no retention need.
+//   - anonymise:   rows where money moved on any rail. customer_id →
+//     TombstoneUserID, address text cleared, address_id FK detached,
+//     lat/lng rounded to 1-decimal (~11km, "metropolitan area" grain).
+//     locality preserved, financial fields preserved for 7-year window.
+//
+// Sequencing: MUST run before PurgeTrivialUserDataTx — bookings.address_id
+// references user_addresses(id) with default RESTRICT; if user_addresses
+// is deleted while bookings still reference it the trivial purge fails.
+func (s *Service) AnonymizeBookingsAsCustomerTx(ctx context.Context, tx pgx.Tx, userID string) (hardDeleted, anonymized int64, err error) {
+	return execAnonymizeBookingsAsCustomer(ctx, txAdapter{tx: tx}, userID)
+}
+
+// AnonymizeBookingsAsCustomer is the standalone variant — opens its own
+// short tx. Use the *Tx variant when running inside SoftDeleteUser.
+func (s *Service) AnonymizeBookingsAsCustomer(ctx context.Context, userID string) (hardDeleted, anonymized int64, err error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("anonymize bookings (customer) begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	hardDeleted, anonymized, err = execAnonymizeBookingsAsCustomer(ctx, txAdapter{tx: tx}, userID)
+	if err != nil {
+		return hardDeleted, anonymized, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return hardDeleted, anonymized, fmt.Errorf("anonymize bookings (customer) commit: %w", err)
+	}
+	return hardDeleted, anonymized, nil
+}
+
+func execAnonymizeBookingsAsCustomer(ctx context.Context, q txQuerier, userID string) (int64, int64, error) {
+	// 1. Hard-delete: money never moved.
+	res, err := q.Exec(ctx, `
+		DELETE FROM bookings
+		WHERE customer_id = $1::uuid
+		  AND `+moneyMovedPredicate+` IS NOT TRUE`, userID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("hard-delete bookings (customer): %w", err)
+	}
+	hardDeleted := res.RowsAffected()
+
+	// 2. Anonymise: money moved → retain row, scrub PII columns.
+	res, err = q.Exec(ctx, `
+		UPDATE bookings
+		SET customer_id = $1::uuid,
+		    address     = '',
+		    address_id  = NULL,
+		    lat         = ROUND(lat, 1),
+		    lng         = ROUND(lng, 1),
+		    updated_at  = NOW()
+		WHERE customer_id = $2::uuid
+		  AND `+moneyMovedPredicate+` IS TRUE`, TombstoneUserID, userID)
+	if err != nil {
+		return hardDeleted, 0, fmt.Errorf("anonymise bookings (customer): %w", err)
+	}
+	return hardDeleted, res.RowsAffected(), nil
+}
+
+// AnonymizeBookingsAsHelperTx mirrors AnonymizeBookingsAsCustomerTx for
+// the helper edge. Helper-side anonymisation reassigns helper_id to
+// TombstoneUserID (not a tombstone-helper-row, because bookings.helper_id
+// FK is to users(id), not helpers(id) — confirmed Phase A.4).
+func (s *Service) AnonymizeBookingsAsHelperTx(ctx context.Context, tx pgx.Tx, helperID string) (hardDeleted, anonymized int64, err error) {
+	return execAnonymizeBookingsAsHelper(ctx, txAdapter{tx: tx}, helperID)
+}
+
+// AnonymizeBookingsAsHelper is the standalone variant — opens its own
+// short tx. Use the *Tx variant when running inside SoftDeleteUser.
+func (s *Service) AnonymizeBookingsAsHelper(ctx context.Context, helperID string) (hardDeleted, anonymized int64, err error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("anonymize bookings (helper) begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	hardDeleted, anonymized, err = execAnonymizeBookingsAsHelper(ctx, txAdapter{tx: tx}, helperID)
+	if err != nil {
+		return hardDeleted, anonymized, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return hardDeleted, anonymized, fmt.Errorf("anonymize bookings (helper) commit: %w", err)
+	}
+	return hardDeleted, anonymized, nil
+}
+
+func execAnonymizeBookingsAsHelper(ctx context.Context, q txQuerier, helperID string) (int64, int64, error) {
+	res, err := q.Exec(ctx, `
+		DELETE FROM bookings
+		WHERE helper_id = $1::uuid
+		  AND `+moneyMovedPredicate+` IS NOT TRUE`, helperID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("hard-delete bookings (helper): %w", err)
+	}
+	hardDeleted := res.RowsAffected()
+
+	res, err = q.Exec(ctx, `
+		UPDATE bookings
+		SET helper_id   = $1::uuid,
+		    address     = '',
+		    address_id  = NULL,
+		    lat         = ROUND(lat, 1),
+		    lng         = ROUND(lng, 1),
+		    updated_at  = NOW()
+		WHERE helper_id = $2::uuid
+		  AND `+moneyMovedPredicate+` IS TRUE`, TombstoneUserID, helperID)
+	if err != nil {
+		return hardDeleted, 0, fmt.Errorf("anonymise bookings (helper): %w", err)
+	}
+	return hardDeleted, res.RowsAffected(), nil
 }
 
 // PurgeTrivialUserDataTx hard-deletes user-owned rows with no cross-

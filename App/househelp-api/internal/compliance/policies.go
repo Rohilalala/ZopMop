@@ -48,4 +48,27 @@ func RegisterDefaultPolicies(r *Registry) {
 		UserIDColumn: "created_at",
 		LegalBasis:   "reputation_signal_with_data_minimization",
 	})
+
+	// bookings — financial records. Decision (chunk 4): completed
+	// bookings on any payment rail (Cashfree-paid, COD-completed, or
+	// wallet-completed) are retained for 7 years from completed_at to
+	// satisfy GST / income-tax audit windows. Pending / cancelled rows
+	// where money never moved are hard-deleted on user erasure (no tax
+	// obligation). PII redaction at anonymisation time: customer_id /
+	// helper_id → tombstone, address text cleared, address_id detached,
+	// lat/lng rounded to 1 decimal (~11km). locality (city) and all
+	// financial fields are preserved.
+	//
+	// Time anchor for the retention sweep is completed_at (only set on
+	// status='completed' bookings, which are the only rows that survive
+	// past anonymisation). The retention worker (chunk 4+ execution
+	// loop, deferred) will hard-delete WHERE completed_at older than
+	// the window.
+	r.Register(RetentionPolicy{
+		Table:        "bookings",
+		Action:       ActionDelete,
+		Window:       7 * 365 * 24 * time.Hour, // 7 years
+		UserIDColumn: "completed_at",
+		LegalBasis:   "gst_income_tax_audit_defence",
+	})
 }

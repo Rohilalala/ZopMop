@@ -377,6 +377,311 @@ func TestAnonymizeReviewsAsCustomer_RatingUnchanged(t *testing.T) {
 	}
 }
 
+// makeBookingFull is a richer makeBooking that lets the test set
+// payment_method, payment_status, status, lat/lng, locality, and helper.
+// Cleaned up by t.Cleanup.
+func makeBookingFull(t *testing.T, pool *pgxpool.Pool, opts bookingOpts) string {
+	t.Helper()
+	id := uuid.NewString()
+	var serviceCategoryID string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT id::text FROM service_categories LIMIT 1`).Scan(&serviceCategoryID); err != nil {
+		t.Skipf("no service_categories row to FK to: %v", err)
+	}
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO bookings (
+			id, customer_id, helper_id, service_category_id,
+			status, address, lat, lng, amount_paise,
+			payment_method, payment_status, locality, completed_at
+		)
+		VALUES (
+			$1::uuid, $2::uuid, $3,    $4::uuid,
+			$5,      $6,     $7,  $8,  1000,
+			$9,      $10,    $11,    $12
+		)
+	`, id, opts.customerID, nullableUUID(opts.helperID), serviceCategoryID,
+		opts.status, opts.address, opts.lat, opts.lng,
+		nullableString(opts.paymentMethod), nullableString(opts.paymentStatus),
+		nullableString(opts.locality), nullableTime(opts.completedAt))
+	if err != nil {
+		t.Fatalf("insert booking (%s): %v", opts.label, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM bookings WHERE id=$1::uuid`, id)
+	})
+	return id
+}
+
+type bookingOpts struct {
+	label         string
+	customerID    string
+	helperID      string // empty = NULL
+	status        string
+	address       string
+	lat           float64
+	lng           float64
+	paymentMethod string // empty = NULL
+	paymentStatus string // empty = NULL
+	locality      string // empty = NULL
+	completedAt   *time.Time
+}
+
+func nullableUUID(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+func nullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
+// TestAnonymizeBookingsAsCustomer_Bucketing covers the predicate split
+// across all three payment rails. Inserts one paid + one pending row
+// per rail; asserts hard-deleted counts match the predicate's
+// "money never moved" branch and anonymised counts match the kept branch.
+func TestAnonymizeBookingsAsCustomer_Bucketing(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	customer := makeUser(t, pool, uuid.NewString())
+
+	now := time.Now().UTC()
+	// 6 rows: 3 rails × {money-moved, money-not-moved}.
+	cashfreePaid := makeBookingFull(t, pool, bookingOpts{
+		label: "cashfree-paid", customerID: customer,
+		status: "completed", address: "real address", lat: 12.91, lng: 77.61,
+		paymentMethod: "cashfree", paymentStatus: "paid", locality: "BLR-East",
+		completedAt: &now,
+	})
+	// Use status='cancelled' rather than 'pending' for the money-not-
+	// moved rail rows: the within-2-minutes dedup trigger
+	// (fn_bookings_reject_dup_within_hour) fires only on pending +
+	// same customer + same category, and the test-only INSERT path
+	// triggers it across multiple money-not-moved rails. Cancelled
+	// rows bypass the trigger and still satisfy "money never moved".
+	cashfreePending := makeBookingFull(t, pool, bookingOpts{
+		label: "cashfree-cancelled", customerID: customer,
+		status: "cancelled", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "cashfree", paymentStatus: "pending", locality: "BLR-East",
+	})
+	codCompleted := makeBookingFull(t, pool, bookingOpts{
+		label: "cod-completed", customerID: customer,
+		status: "completed", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "cod", locality: "BLR-East", completedAt: &now,
+	})
+	codCancelled := makeBookingFull(t, pool, bookingOpts{
+		label: "cod-cancelled", customerID: customer,
+		status: "cancelled", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "cod", locality: "BLR-East",
+	})
+	walletCompleted := makeBookingFull(t, pool, bookingOpts{
+		label: "wallet-completed", customerID: customer,
+		status: "completed", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "wallet", locality: "BLR-East", completedAt: &now,
+	})
+	walletPending := makeBookingFull(t, pool, bookingOpts{
+		label: "wallet-cancelled", customerID: customer,
+		status: "cancelled", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "wallet", locality: "BLR-East",
+	})
+
+	hardDel, anon, err := svc.AnonymizeBookingsAsCustomer(context.Background(), customer)
+	if err != nil {
+		t.Fatalf("anonymize bookings: %v", err)
+	}
+	if hardDel != 3 {
+		t.Errorf("hard-deleted = %d, want 3 (cashfree-pending + cod-cancelled + wallet-pending)", hardDel)
+	}
+	if anon != 3 {
+		t.Errorf("anonymised = %d, want 3 (cashfree-paid + cod-completed + wallet-completed)", anon)
+	}
+
+	// Money-moved rows must persist with customer_id reassigned.
+	for _, id := range []string{cashfreePaid, codCompleted, walletCompleted} {
+		var custID string
+		err := pool.QueryRow(context.Background(),
+			`SELECT customer_id::text FROM bookings WHERE id=$1::uuid`, id).Scan(&custID)
+		if err != nil {
+			t.Fatalf("expected booking %s to persist: %v", id, err)
+		}
+		if custID != TombstoneUserID {
+			t.Errorf("booking %s customer_id = %s, want tombstone", id, custID)
+		}
+	}
+	// Money-not-moved rows must be gone.
+	for _, id := range []string{cashfreePending, codCancelled, walletPending} {
+		var n int
+		_ = pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM bookings WHERE id=$1::uuid`, id).Scan(&n)
+		if n != 0 {
+			t.Errorf("booking %s should be hard-deleted, still present", id)
+		}
+	}
+}
+
+// TestAnonymizeBookingsAsCustomer_AnonymizationShape verifies the per-
+// column edits applied to retained (money-moved) rows: address text
+// nulled to '', address_id detached, lat/lng rounded to 1 decimal,
+// locality preserved, amount_paise + completed_at preserved.
+func TestAnonymizeBookingsAsCustomer_AnonymizationShape(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	customer := makeUser(t, pool, uuid.NewString())
+
+	// Insert a user_address so we can set bookings.address_id to a real
+	// FK target (and confirm we detach it on anonymise).
+	var addressID string
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO user_addresses (user_id, tag, title, flat_no, building_name, full_address, lat, lon)
+		VALUES ($1::uuid, 'Home', 'home', '1', 'b', 'addr', 12.91, 77.61)
+		RETURNING id::text
+	`, customer).Scan(&addressID)
+	if err != nil {
+		t.Fatalf("insert user_address: %v", err)
+	}
+
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	var sc string
+	pool.QueryRow(context.Background(), `SELECT id::text FROM service_categories LIMIT 1`).Scan(&sc)
+	_, err = pool.Exec(context.Background(), `
+		INSERT INTO bookings (
+			id, customer_id, service_category_id, status,
+			address, lat, lng, amount_paise, address_id,
+			payment_method, payment_status, locality, completed_at
+		) VALUES (
+			$1::uuid, $2::uuid, $3::uuid, 'completed',
+			'1234 evil real address', 12.97123456, 77.61234567, 5000, $4::uuid,
+			'cashfree', 'paid', 'Bangalore-East', $5
+		)
+	`, id, customer, sc, addressID, now)
+	if err != nil {
+		t.Fatalf("insert booking: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM bookings WHERE id=$1::uuid`, id)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM user_addresses WHERE id=$1::uuid`, addressID)
+	})
+
+	if _, _, err := svc.AnonymizeBookingsAsCustomer(context.Background(), customer); err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+
+	var (
+		gotCust, gotAddress, gotLocality, gotPaymentStatus *string
+		gotAddrID                                          *string
+		gotLat, gotLng                                     float64
+		gotAmount                                          int64
+		gotCompletedAt                                     *time.Time
+	)
+	err = pool.QueryRow(context.Background(), `
+		SELECT customer_id::text, address, locality, payment_status,
+		       address_id::text, lat::float8, lng::float8,
+		       amount_paise, completed_at
+		FROM bookings WHERE id=$1::uuid
+	`, id).Scan(&gotCust, &gotAddress, &gotLocality, &gotPaymentStatus,
+		&gotAddrID, &gotLat, &gotLng, &gotAmount, &gotCompletedAt)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+
+	if gotCust == nil || *gotCust != TombstoneUserID {
+		t.Errorf("customer_id not tombstone: %v", gotCust)
+	}
+	if gotAddress == nil || *gotAddress != "" {
+		t.Errorf("address not cleared: %q", deref(gotAddress))
+	}
+	if gotAddrID != nil {
+		t.Errorf("address_id not detached: %s", *gotAddrID)
+	}
+	// lat 12.97123456 → ROUND(_,1) = 13.0
+	if gotLat != 13.0 {
+		t.Errorf("lat not rounded: got %v, want 13.0", gotLat)
+	}
+	// lng 77.61234567 → ROUND(_,1) = 77.6
+	if gotLng != 77.6 {
+		t.Errorf("lng not rounded: got %v, want 77.6", gotLng)
+	}
+	if gotLocality == nil || *gotLocality != "Bangalore-East" {
+		t.Errorf("locality not preserved: %v", gotLocality)
+	}
+	if gotAmount != 5000 {
+		t.Errorf("amount_paise not preserved: %d", gotAmount)
+	}
+	if gotCompletedAt == nil {
+		t.Errorf("completed_at not preserved")
+	}
+	if gotPaymentStatus == nil || *gotPaymentStatus != "paid" {
+		t.Errorf("payment_status not preserved: %v", gotPaymentStatus)
+	}
+}
+
+// TestAnonymizeBookingsAsHelper_Bucketing mirrors the customer
+// bucketing test for the helper edge.
+func TestAnonymizeBookingsAsHelper_Bucketing(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	customer := makeUser(t, pool, uuid.NewString())
+	helperUser := makeUser(t, pool, uuid.NewString())
+	helperID := makeHelper(t, pool, helperUser)
+
+	now := time.Now().UTC()
+	completedID := makeBookingFull(t, pool, bookingOpts{
+		label: "completed", customerID: customer, helperID: helperID,
+		status: "completed", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "cashfree", paymentStatus: "paid", locality: "BLR",
+		completedAt: &now,
+	})
+	pendingID := makeBookingFull(t, pool, bookingOpts{
+		label: "cancelled", customerID: customer, helperID: helperID,
+		status: "cancelled", address: "x", lat: 12.91, lng: 77.61,
+		paymentMethod: "cashfree", paymentStatus: "pending", locality: "BLR",
+	})
+
+	hardDel, anon, err := svc.AnonymizeBookingsAsHelper(context.Background(), helperID)
+	if err != nil {
+		t.Fatalf("anonymize bookings (helper): %v", err)
+	}
+	if hardDel != 1 {
+		t.Errorf("hard-deleted = %d, want 1", hardDel)
+	}
+	if anon != 1 {
+		t.Errorf("anonymised = %d, want 1", anon)
+	}
+
+	var custHelper *string
+	err = pool.QueryRow(context.Background(),
+		`SELECT helper_id::text FROM bookings WHERE id=$1::uuid`, completedID).Scan(&custHelper)
+	if err != nil {
+		t.Fatalf("read completed: %v", err)
+	}
+	if custHelper == nil || *custHelper != TombstoneUserID {
+		t.Errorf("completed booking helper_id = %v, want tombstone", custHelper)
+	}
+
+	var n int
+	pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM bookings WHERE id=$1::uuid`, pendingID).Scan(&n)
+	if n != 0 {
+		t.Errorf("pending booking should be hard-deleted")
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}
+
 // Compile-time guard so the file refers to the time import even in
 // reduced builds.
 var _ = time.Second
