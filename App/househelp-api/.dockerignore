@@ -6,3 +6,12 @@ secrets/
 .worktrees/
 docs/
 *.md
+
+# Build artefacts and audit working dirs (audit NEW-E3-002).
+bin/
+loadtest/
+sim
+report/
+*.test
+.audit/
+deploy/
