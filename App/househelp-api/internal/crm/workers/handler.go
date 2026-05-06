@@ -93,7 +93,8 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Get handles GET /workers/:id.
 func (h *Handler) Get(c *fiber.Ctx) error {
-	d, err := h.repo.Get(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	d, err := h.repo.Get(c.UserContext(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "worker not found"})
@@ -101,6 +102,8 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		log.Error().Err(err).Msg("[crm.workers] get failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit single-worker PII reads (audit NEW-A1-002 partial).
+	h.audit(c, "worker.view", id, nil, nil)
 	return c.JSON(d)
 }
 

@@ -67,7 +67,8 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Get handles GET /users/:id.
 func (h *Handler) Get(c *fiber.Ctx) error {
-	d, err := h.repo.Get(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	d, err := h.repo.Get(c.UserContext(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
@@ -75,6 +76,10 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		log.Error().Err(err).Msg("[crm.users] get failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit single-user PII reads (audit NEW-A1-002 partial). List / orders
+	// / notes endpoints are intentionally NOT audited — high volume would
+	// drown signal. The single-record drawer is where the PII surface lives.
+	h.audit(c, "user.view", id, nil, nil)
 	return c.JSON(d)
 }
 
