@@ -306,6 +306,45 @@ func (s *Service) AnonymizeBookingsAsHelper(ctx context.Context, helperID string
 	return hardDeleted, anonymized, nil
 }
 
+// AnonymizeLoginAttemptsByEmailTx scrubs CRM login-attempt records for
+// the given email. Replaces `email` with the fixed sentinel
+// `<deleted>@tombstone.local` and NULLs `ip_address`. `success` and
+// `reason` are forensic counters with no PII content and are
+// preserved so per-row record-counts (e.g. "how many bad_password
+// attempts in the 90 days before the account was deleted?") survive
+// for the retention window.
+//
+// CITEXT column: comparison is case-insensitive automatically;
+// `Admin@Example.COM` matches `admin@example.com`.
+//
+// No live caller today. CRM admin deletion is not yet implemented;
+// this method is the compliance scrub hook ready for that future
+// flow. The 90-day retention sweep registered in policies.go is the
+// immediate forensic-window guarantee. Audit C-8 / F2D-1 chunk 5.
+func (s *Service) AnonymizeLoginAttemptsByEmailTx(ctx context.Context, tx pgx.Tx, email string) (int64, error) {
+	return execAnonymizeLoginAttemptsByEmail(ctx, txAdapter{tx: tx}, email)
+}
+
+// AnonymizeLoginAttemptsByEmail is the standalone variant — opens its
+// own short tx. Use the *Tx variant when wired into a CRM admin
+// deletion flow (none exists today).
+func (s *Service) AnonymizeLoginAttemptsByEmail(ctx context.Context, email string) (int64, error) {
+	return execAnonymizeLoginAttemptsByEmail(ctx, poolAdapter{p: s.db}, email)
+}
+
+func execAnonymizeLoginAttemptsByEmail(ctx context.Context, q txQuerier, email string) (int64, error) {
+	res, err := q.Exec(ctx, `
+		UPDATE crm_login_attempts
+		SET email      = '<deleted>@tombstone.local',
+		    ip_address = NULL
+		WHERE email = $1
+	`, email)
+	if err != nil {
+		return 0, fmt.Errorf("anonymize crm_login_attempts: %w", err)
+	}
+	return res.RowsAffected(), nil
+}
+
 func execAnonymizeBookingsAsHelper(ctx context.Context, q txQuerier, helperID string) (int64, int64, error) {
 	res, err := q.Exec(ctx, `
 		DELETE FROM bookings

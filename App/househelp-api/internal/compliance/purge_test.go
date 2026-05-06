@@ -3,6 +3,7 @@ package compliance
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -680,6 +681,137 @@ func deref(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+// ── crm_login_attempts (chunk 5) ────────────────────────────────────────
+
+const tombstoneEmail = "<deleted>@tombstone.local"
+
+func insertLoginAttempt(t *testing.T, pool *pgxpool.Pool, email, ip, reason string, success bool) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		INSERT INTO crm_login_attempts (email, ip_address, success, reason)
+		VALUES ($1, $2::inet, $3, $4)
+		RETURNING id
+	`, email, nullableString(ip), success, nullableString(reason)).Scan(&id)
+	if err != nil {
+		t.Fatalf("insert login attempt: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM crm_login_attempts WHERE id=$1`, id)
+	})
+	return id
+}
+
+func TestAnonymizeLoginAttemptsByEmail_ReassignsEmailAndNullsIP(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	// Use unique-per-test emails so concurrent test runs don't trip on
+	// each other.
+	target := "test-" + uuid.NewString()[:8] + "@zopmop.local"
+	other := "other-" + uuid.NewString()[:8] + "@zopmop.local"
+
+	idA := insertLoginAttempt(t, pool, target, "10.0.0.1", "bad_password", false)
+	idB := insertLoginAttempt(t, pool, target, "10.0.0.2", "ok", true)
+	idC := insertLoginAttempt(t, pool, target, "", "bad_totp", false) // null ip
+	idOther := insertLoginAttempt(t, pool, other, "10.0.0.3", "ok", true)
+
+	got, err := svc.AnonymizeLoginAttemptsByEmail(context.Background(), target)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("rows updated = %d, want 3", got)
+	}
+
+	// All three target rows now point at the tombstone email + NULL IP.
+	for _, id := range []int64{idA, idB, idC} {
+		var email, ip *string
+		err := pool.QueryRow(context.Background(),
+			`SELECT email::text, host(ip_address)::text FROM crm_login_attempts WHERE id=$1`, id,
+		).Scan(&email, &ip)
+		if err != nil {
+			t.Fatalf("read row %d: %v", id, err)
+		}
+		if email == nil || *email != tombstoneEmail {
+			t.Errorf("row %d email = %v, want %s", id, email, tombstoneEmail)
+		}
+		if ip != nil {
+			t.Errorf("row %d ip_address not nulled: %s", id, *ip)
+		}
+	}
+
+	// success / reason on a sample row should be preserved (forensic
+	// counters survive the scrub).
+	var success bool
+	var reason *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT success, reason FROM crm_login_attempts WHERE id=$1`, idA,
+	).Scan(&success, &reason); err != nil {
+		t.Fatalf("read counters: %v", err)
+	}
+	if success != false {
+		t.Errorf("success not preserved: got %v", success)
+	}
+	if reason == nil || *reason != "bad_password" {
+		t.Errorf("reason not preserved: %v", reason)
+	}
+
+	// Unrelated row untouched.
+	var otherEmail string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT email::text FROM crm_login_attempts WHERE id=$1`, idOther,
+	).Scan(&otherEmail); err != nil {
+		t.Fatalf("read other row: %v", err)
+	}
+	if otherEmail != other {
+		t.Errorf("unrelated row mutated: %s vs %s", otherEmail, other)
+	}
+}
+
+func TestAnonymizeLoginAttemptsByEmail_CaseInsensitive(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	mixedCase := "Admin-" + uuid.NewString()[:8] + "@Example.COM"
+	id := insertLoginAttempt(t, pool, mixedCase, "10.0.0.5", "ok", true)
+
+	// Look up the same email lower-cased — CITEXT comparison should
+	// still match.
+	got, err := svc.AnonymizeLoginAttemptsByEmail(context.Background(),
+		strings.ToLower(mixedCase))
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("rows updated = %d, want 1 (CITEXT must be case-insensitive)", got)
+	}
+
+	var email *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT email::text FROM crm_login_attempts WHERE id=$1`, id,
+	).Scan(&email); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if email == nil || *email != tombstoneEmail {
+		t.Errorf("email not anonymised: %v", email)
+	}
+}
+
+func TestAnonymizeLoginAttemptsByEmail_NoMatchReturnsZero(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+
+	nonexistent := "ghost-" + uuid.NewString()[:8] + "@nowhere.local"
+	got, err := svc.AnonymizeLoginAttemptsByEmail(context.Background(), nonexistent)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("rows updated = %d, want 0", got)
+	}
 }
 
 // Compile-time guard so the file refers to the time import even in

@@ -71,4 +71,20 @@ func RegisterDefaultPolicies(r *Registry) {
 		UserIDColumn: "completed_at",
 		LegalBasis:   "gst_income_tax_audit_defence",
 	})
+
+	// crm_login_attempts — forensic record of CRM admin auth events
+	// (success + every failure reason, including attempts against
+	// emails that never existed). Retention: 90 days from created_at
+	// — industry-standard security investigation window. Hard-deleted
+	// by the retention worker. CRM admin deletion (when implemented)
+	// will additionally call AnonymizeLoginAttemptsByEmail to scrub
+	// per-account history before the time-based sweep would otherwise
+	// catch it.
+	r.Register(RetentionPolicy{
+		Table:        "crm_login_attempts",
+		Action:       ActionDelete,
+		Window:       90 * 24 * time.Hour, // 90 days
+		UserIDColumn: "created_at",
+		LegalBasis:   "security_forensic_window",
+	})
 }
