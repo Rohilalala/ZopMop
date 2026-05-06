@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -235,7 +236,18 @@ func (s *Scheduler) dispatchOne(ctx context.Context, id string) {
 	defer func() {
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic: %v", r)
-			log.Error().Str("push_id", id).Str("panic", msg).Msg("[crm.push.cron] SendPush panicked")
+			// Capture stack so the panic surface isn't silently swallowed
+			// (audit NEW-B2-001). Re-panic is unsafe here: dispatchOne is
+			// called serially from Tick and a re-panic would unwind the
+			// scheduler goroutine, blocking Wait() in Stop(). Stack trace
+			// in the log is the minimal observability fix; alerting on
+			// "[crm.push.cron] SendPush panicked" should be wired in the
+			// log aggregator.
+			log.Error().
+				Str("push_id", id).
+				Str("panic", msg).
+				Bytes("stack", debug.Stack()).
+				Msg("[crm.push.cron] SendPush panicked")
 			s.markPanicFailure(ctx, id, msg)
 		}
 	}()
