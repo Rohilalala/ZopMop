@@ -90,8 +90,7 @@ This section grows as we make retention decisions. Last updated:
 | CRM audit log | 3 years from row creation | Target user identifiers anonymized on user deletion; admin actor identifiers preserved within window. JSONB before_value/after_value not scrubbed (3-year retention is the bound). |
 | Refunds (money moved) | 7 years from processed_at | user_id anonymised to tombstone; financial fields preserved (amount, gateway_refund_id, payment_method, processed_at, etc.); approved_by admin actor preserved within window |
 | Refunds (money never moved) | n/a | Hard-deleted on user erasure (no tax obligation). Active in-flight refunds (status='approved' < 10 min ago) block deletion temporarily. |
-| Audit logs | TODO: decide |  |
-| Push notification history | TODO: decide |  |
+| CRM push notification campaigns | 90 days from creation | No user-deletion hook (campaign-level schema, no per-user rows). User IDs may appear in target_filter JSONB on 'specific'-target campaigns; bounded by 90-day retention. Body/title text PII deferred per audit-log JSONB pattern. |
 | Helper status pings | TODO: decide |  |
 | Roomies wallet history | TODO: decide |  |
 
@@ -205,7 +204,17 @@ Things they cannot yet do:
   AnonymizeLoginAttemptsByEmail method exists but has no live 
   caller; CRM admin deletion flow is not yet implemented and is 
   tracked as future work. Decision date: 2026-05-06.
-- [ ] **crm_push_messages**: ?  Push content can contain PII.
+- [x] **crm_push_messages**: 90-day retention from `created_at`. 
+  Schema is campaign-level, not per-recipient — each row represents 
+  one marketing campaign (broadcast or 'specific'-target), not one 
+  push to one user. There is no separate per-user delivery log. 
+  Therefore no user-deletion anonymisation hook is wired: a deleted 
+  user's identifier can appear only inside `target_filter` JSONB 
+  for `target_kind='specific'` campaigns, and is bounded by the 
+  90-day retention sweep. Body/title text PII deferred per the 
+  audit-log JSONB pattern. `created_by` admin actor preserved 
+  automatically (no code touches the row on user deletion). 
+  Decision date: 2026-05-06.
 - [ ] **helper_status_log**: ?  Location pings; could be considered 
   customer PII because pings are usually near customer addresses.
 - [ ] **roomies wallet history**: ?  Counterparty's ledger view 
@@ -215,6 +224,13 @@ Things they cannot yet do:
 
 ## Things to revisit before launch
 
+- crm_push_messages target_filter JSONB scrubbing: user IDs may 
+  persist in `target_filter.user_ids` for `target_kind='specific'` 
+  campaigns. 90-day retention bounds the exposure. Selective JSONB 
+  scrubbing for this one well-defined key 
+  (`UPDATE crm_push_messages SET target_filter = jsonb_set(...)
+  WHERE target_filter->'user_ids' ? $userID`) is a viable follow-up 
+  if a stricter posture is required.
 - Audit log JSONB scrubbing: `before_value` / `after_value` (and 
   legacy `old_value` / `new_value`) payloads may contain user PII 
   baked in by the recording module — for example, an admin 
