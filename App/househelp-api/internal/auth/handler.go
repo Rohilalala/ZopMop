@@ -78,6 +78,21 @@ func (h *Handler) RegisterMeRoutes(router fiber.Router) {
 	router.Delete("/", h.DeleteMe)
 	router.Post("/onboard-pro", h.OnboardPro)
 	router.Put("/fcm-token", h.UpdateFCMToken)
+	router.Get("/export", h.ExportMe)
+}
+
+// ExportMe handles GET /me/export — DSAR (audit C-8 / F2D-1). Returns
+// 501 today as a placeholder so the route exists for client / docs /
+// app-store compliance reviewers; subsequent compliance chunks fill in
+// the real ZIP-of-user-data implementation once retention policies are
+// registered for every table that holds the caller's PII.
+func (h *Handler) ExportMe(c *fiber.Ctx) error {
+	c.Set("Retry-After", "604800") // 7 days — coarse hint while feature is in development
+	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
+		"error":  "data export endpoint is in development",
+		"code":   "EXPORT_NOT_IMPLEMENTED",
+		"detail": "the /me/export DSAR endpoint is wired but not yet returning data; track audit C-8 / F2D-1 for status",
+	})
 }
 
 // RegisterDeviceRoutes mounts authenticated device-scoped routes

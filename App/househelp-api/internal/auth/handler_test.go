@@ -10,6 +10,37 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+func TestExportMe_StubReturns501(t *testing.T) {
+	t.Parallel()
+
+	// Audit C-8 / F2D-1 chunk 1: /me/export is wired but returns 501 with
+	// a documented error code. The stub must respond 501 with the expected
+	// body shape and a Retry-After hint so client / app-store reviewers
+	// can confirm the endpoint exists.
+	app := fiber.New()
+	h := NewHandler(nil, nil, false)
+	app.Get("/me/export", h.ExportMe)
+
+	req := httptest.NewRequest("GET", "/me/export", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("Retry-After header missing")
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["code"] != "EXPORT_NOT_IMPLEMENTED" {
+		t.Fatalf("code = %q, want EXPORT_NOT_IMPLEMENTED", body["code"])
+	}
+}
+
 func TestSendOTP_InvalidJSON_ReturnsBadRequest(t *testing.T) {
 	t.Parallel()
 
