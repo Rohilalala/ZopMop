@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	_ "net/http/pprof"
+	// pprof handlers are registered onto http.DefaultServeMux only when
+	// the binary is built with `-tags pprof` (see pprof_dev.go). The
+	// ENABLE_PPROF=1 listener below still starts in either case but
+	// serves nothing useful without the build tag (audit E3D-2 / NEW-F3-002).
 	"os"
 	"os/signal"
 	"path/filepath"
