@@ -16,9 +16,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.zopmop.app",
       "googleServicesFile": "./GoogleService-Info.plist",
-      "entitlements": {
-        "aps-environment": "development"
-      },
+      "entitlements": {},
       "infoPlist": {
         "CFBundleDisplayName": "ZopMop",
         "ITSAppUsesNonExemptEncryption": false,
@@ -41,7 +39,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "package": "com.zopmop.app"
     },
