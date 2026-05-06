@@ -19,6 +19,9 @@ bin/
 /report.json
 /report/
 
+# Load-test outputs — k6 reports, stress summaries (audit E3-3).
+loadtest/results/
+
 # Vendor
 vendor/
 
