@@ -245,6 +245,9 @@ func main() {
 
 	// Notification.
 	notificationService := notification.NewService(context.Background(), dbPool)
+	// Wire the token resolver so dead FCM tokens get pruned on send.
+	// Audit C-8 / B2-03 chunk 18 — mirrors the cmd/crm-api wiring.
+	notificationService.SetTokenResolver(notification.NewTokenResolver(dbPool))
 
 	// Outbound webhook dispatcher (shared with cmd/crm-api). Domain services
 	// call webhookDispatcher.Dispatch(ctx, event, payload) for fan-out;

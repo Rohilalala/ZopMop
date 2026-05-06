@@ -18,7 +18,21 @@ import (
 type Service struct {
 	fcmClient *messaging.Client
 	db        *pgxpool.Pool
+	// resolver is optional; when wired, the service prunes
+	// device_tokens rows whose FCM token Firebase reports as
+	// "unregistered" (uninstalled app, OS revoked token, token
+	// rotated). nil-safe across all internal callers — production
+	// deploys should call SetTokenResolver. Audit C-8 / B2-03
+	// chunk 18.
+	resolver *TokenResolver
 }
+
+// SetTokenResolver wires the resolver used to prune dead FCM tokens
+// on Firebase "unregistered" errors. Nil is OK (pruning silently
+// skipped) but production deploys should call this — without it,
+// dead tokens accumulate forever and every push attempt to those
+// tokens fails silently.
+func (s *Service) SetTokenResolver(r *TokenResolver) { s.resolver = r }
 
 // NewService initialises FCM and wires a DB pool for token lookup.
 func NewService(ctx context.Context, db *pgxpool.Pool) *Service {
@@ -106,7 +120,58 @@ func (s *Service) sendToToken(ctx context.Context, token, title, body string, da
 		Data:         data,
 		Token:        token,
 	})
+	// Prune dead tokens before propagating the error. The caller
+	// still gets the original err — this is a side-effect cleanup,
+	// not a recovery. Audit C-8 / B2-03 chunk 18.
+	s.pruneIfDead(ctx, token, err)
 	return err
+}
+
+// isUnregisteredErr is the test seam for messaging.IsUnregistered.
+// Production assigns the real Firebase helper; tests override this
+// var to exercise the prune path without synthesising a
+// *internal.FirebaseError (which lives in firebase-admin-go's
+// internal package and can't be constructed from outside).
+var isUnregisteredErr = messaging.IsUnregistered
+
+// tokenStub returns the first 8 characters of an FCM token followed
+// by "...". Full tokens are stable cross-session identifiers in
+// Google's push system; logging them in plain text leaves a trail
+// that anyone with log-aggregator access can use to silence-push a
+// device. Matches the chunk-11 /me/export redaction shape.
+func tokenStub(token string) string {
+	if len(token) <= 8 {
+		return token + "..."
+	}
+	return token[:8] + "..."
+}
+
+// pruneIfDead checks whether err is Firebase's "unregistered token"
+// sentinel and, if so, deletes the token from device_tokens. Nil-safe
+// on resolver, token, and err. Failures to prune are logged but not
+// propagated — best-effort cleanup, not a critical path. Caller's
+// original err is unaffected.
+//
+// Used by both single-recipient (sendToToken) and customer-side
+// multicast (sendToTokensWithReport, post-collection) paths so dead
+// tokens get removed regardless of which send shape was used. Audit
+// C-8 / B2-03 chunk 18.
+func (s *Service) pruneIfDead(ctx context.Context, token string, err error) {
+	if s.resolver == nil || token == "" || err == nil {
+		return
+	}
+	if !isUnregisteredErr(err) {
+		return
+	}
+	if delErr := s.resolver.DeleteToken(ctx, token); delErr != nil {
+		log.Warn().Err(delErr).
+			Str("token_stub", tokenStub(token)).
+			Msg("[notif] failed to prune unregistered FCM token")
+		return
+	}
+	log.Info().
+		Str("token_stub", tokenStub(token)).
+		Msg("[notif] pruned unregistered FCM token")
 }
 
 func (s *Service) sendToTokens(ctx context.Context, tokens []string, title, body string, data map[string]string) error {
@@ -159,6 +224,24 @@ func (s *Service) sendToTokensWithReport(ctx context.Context, tokens []string, t
 				rep.InvalidTokens = append(rep.InvalidTokens, tokens[i])
 			}
 		}
+	}
+	// Actually delete the dead tokens. Pre-chunk-18, the multicast
+	// path collected InvalidTokens into the report but customer-side
+	// callers (sendToTokens, NotifyProNewBookingInvite, etc.)
+	// discarded the report — dead tokens leaked forever. The report
+	// is still returned so explicit consumers (CRM growth campaigns)
+	// can do their own bookkeeping; pruning here is the default
+	// behaviour. Audit C-8 / B2-03 chunk 18.
+	if s.resolver != nil && len(rep.InvalidTokens) > 0 {
+		for _, deadToken := range rep.InvalidTokens {
+			if delErr := s.resolver.DeleteToken(ctx, deadToken); delErr != nil {
+				log.Warn().Err(delErr).
+					Str("token_stub", tokenStub(deadToken)).
+					Msg("[notif] failed to prune unregistered FCM token (multicast)")
+			}
+		}
+		log.Info().Int("count", len(rep.InvalidTokens)).
+			Msg("[notif] pruned unregistered FCM tokens (multicast)")
 	}
 	log.Info().Int("success", rep.Success).Int("failure", rep.Failure).Int("invalid", len(rep.InvalidTokens)).Msg("[notif] multicast sent")
 	return rep, nil
