@@ -287,6 +287,23 @@ func (r *Repository) lockForApproval(ctx context.Context, id string, allowedPrio
 		return fmt.Errorf("lock refund for approval: %w", err)
 	}
 	if res.RowsAffected() == 0 {
+		// Disambiguate: races with another admin approve will leave status
+		// in {'approved','processed','failed','rejected'}; an unexpected
+		// status (NULL row, schema drift) is a louder signal worth a WARN
+		// (audit NEW-B3-001).
+		var current string
+		if qerr := r.write.QueryRow(ctx, `SELECT status FROM pending_refunds WHERE id = $1::uuid`, id).Scan(&current); qerr != nil {
+			log.Warn().Err(qerr).Str("refund_id", id).Msg("[refunds] lockForApproval: status lookup after CAS miss failed")
+		} else {
+			expected := map[string]struct{}{
+				"pending": {}, "approved": {}, "processed": {},
+				"processed_manual": {}, "gateway_error": {}, "rejected": {},
+				"failed": {}, "settled": {},
+			}
+			if _, ok := expected[current]; !ok {
+				log.Warn().Str("refund_id", id).Str("invalid_status", current).Msg("[refunds] lockForApproval: refund row has unrecognised status")
+			}
+		}
 		return ErrAlreadyClaimed
 	}
 	return nil
