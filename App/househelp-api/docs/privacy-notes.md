@@ -83,7 +83,7 @@ This section grows as we make retention decisions. Last updated:
 | Reengagement notifications | While account is active | Hard-deleted on account deletion |
 | In-app chat (booking_messages) | 24 months from message date | Sender anonymized, body retained for dispute investigation, hard-deleted after 24 months |
 | Bookings | TODO: decide |  |
-| Reviews | TODO: decide |  |
+| Reviews | 3 years from review date | Customer-side anonymized to tombstone (rating + comment retained); helper-side anonymized to tombstone helper (prevents rating-reset exploit); hard-deleted after 3 years |
 | Refunds | TODO: decide |  |
 | Audit logs | TODO: decide |  |
 | Push notification history | TODO: decide |  |
@@ -102,6 +102,10 @@ What works today (as of 2026-05-06):
   cart, preferred helpers, reengagement notifications)
 - In-app chat anonymized (sender_id replaced with tombstone, body 
   retained for trust & safety review)
+- Reviews bidirectionally anonymized: outbound reviews reassign 
+  customer_id to the tombstone user; inbound reviews (when the 
+  deleted user was a helper) reassign helper_id to the tombstone 
+  helper. Rating + comment preserved.
 
 What's still being built (audit C-8 / F2D-1):
 - TODO: decide retention for bookings, reviews, refunds, etc.
@@ -132,9 +136,15 @@ Things they cannot yet do:
   retention. Reasoning: trust & safety needs ability to review 
   disputes; 24 months is industry-standard window. Decision date: 
   2026-05-06.
-- [ ] **reviews**: ?  Four sub-decisions: customer delete × helper 
-  delete × delete-vs-anonymize × comment retention. Affects helper's 
-  public rating which is income-impacting.
+- [x] **reviews**: 3-year retention from created_at. Customer-side 
+  anonymises customer_id to tombstone (rating + comment retained — 
+  helper's reputation still reflects past customer's vote). Helper-
+  side anonymises helper_id to tombstone helper (prevents rating-
+  reset exploit — a helper with bad reviews cannot delete-and-
+  recreate to wipe history). Comment body kept as-is (PII risk in 
+  body accepted in exchange for dispute-investigation utility). 
+  Hard-deleted after 3 years by retention worker. Decision date: 
+  2026-05-06.
 - [ ] **bookings**: ?  Financial records, GST law typically requires 
   7 years for tax — likely anonymize customer/helper IDs but retain 
   the row.
