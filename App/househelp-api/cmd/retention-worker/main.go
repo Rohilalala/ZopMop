@@ -67,7 +67,7 @@ func main() {
 				Str("table", p.Table).
 				Str("action", string(p.Action)).
 				Dur("window", p.Window).
-				Str("user_id_column", p.UserIDColumn).
+				Str("time_column", p.TimeColumn).
 				Str("legal_basis", p.LegalBasis).
 				Msg("retention-worker: policy registered")
 		}

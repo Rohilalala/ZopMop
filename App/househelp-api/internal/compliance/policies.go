@@ -25,11 +25,11 @@ func RegisterDefaultPolicies(r *Registry) {
 	// worker once Window elapses"; the anonymise step is applied at
 	// purge time by AnonymizeBookingMessagesTx (chunk 2).
 	r.Register(RetentionPolicy{
-		Table:        "booking_messages",
-		Action:       ActionDelete,
-		Window:       24 * 30 * 24 * time.Hour, // ~24 months
-		UserIDColumn: "sender_id",
-		LegalBasis:   "trust_and_safety_review_window",
+		Table:      "booking_messages",
+		Action:     ActionDelete,
+		Window:     24 * 30 * 24 * time.Hour, // ~24 months
+		TimeColumn: "created_at",
+		LegalBasis: "trust_and_safety_review_window",
 	})
 
 	// reviews — customer's text rating of a helper. Decision (chunk 3):
@@ -38,14 +38,14 @@ func RegisterDefaultPolicies(r *Registry) {
 	// tombstone user; helper-side anonymisation reassigns helper_id to
 	// the tombstone helper (prevents the rating-reset exploit). Both
 	// happen at SoftDeleteUser time. The retention sweep is purely
-	// time-based — UserIDColumn is set to the timestamp column so the
+	// time-based — TimeColumn is set to the timestamp column so the
 	// retention worker (chunk 4+) reads it as the sweep predicate
 	// rather than as a per-user FK.
 	r.Register(RetentionPolicy{
 		Table:        "reviews",
 		Action:       ActionDelete,
 		Window:       3 * 365 * 24 * time.Hour, // 3 years
-		UserIDColumn: "created_at",
+		TimeColumn: "created_at",
 		LegalBasis:   "reputation_signal_with_data_minimization",
 	})
 
@@ -68,7 +68,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "bookings",
 		Action:       ActionDelete,
 		Window:       7 * 365 * 24 * time.Hour, // 7 years
-		UserIDColumn: "completed_at",
+		TimeColumn: "completed_at",
 		LegalBasis:   "gst_income_tax_audit_defence",
 	})
 
@@ -84,7 +84,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "crm_audit_log",
 		Action:       ActionDelete,
 		Window:       3 * 365 * 24 * time.Hour, // 3 years
-		UserIDColumn: "created_at",
+		TimeColumn: "created_at",
 		LegalBasis:   "security_audit_retention",
 	})
 
@@ -95,7 +95,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "audit_log",
 		Action:       ActionDelete,
 		Window:       3 * 365 * 24 * time.Hour, // 3 years
-		UserIDColumn: "created_at",
+		TimeColumn: "created_at",
 		LegalBasis:   "security_audit_retention_legacy",
 	})
 
@@ -114,7 +114,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "pending_refunds",
 		Action:       ActionDelete,
 		Window:       7 * 365 * 24 * time.Hour, // 7 years
-		UserIDColumn: "processed_at",
+		TimeColumn: "processed_at",
 		LegalBasis:   "gst_income_tax_audit_defence_refund",
 	})
 
@@ -134,7 +134,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "crm_push_messages",
 		Action:       ActionDelete,
 		Window:       90 * 24 * time.Hour, // 90 days
-		UserIDColumn: "created_at",
+		TimeColumn: "created_at",
 		LegalBasis:   "marketing_analytics_window",
 	})
 
@@ -156,7 +156,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "helper_status_log",
 		Action:       ActionDelete,
 		Window:       90 * 24 * time.Hour, // 90 days
-		UserIDColumn: "recorded_at",
+		TimeColumn: "recorded_at",
 		LegalBasis:   "operational_activity_log",
 	})
 
@@ -172,7 +172,7 @@ func RegisterDefaultPolicies(r *Registry) {
 		Table:        "crm_login_attempts",
 		Action:       ActionDelete,
 		Window:       90 * 24 * time.Hour, // 90 days
-		UserIDColumn: "created_at",
+		TimeColumn: "created_at",
 		LegalBasis:   "security_forensic_window",
 	})
 }

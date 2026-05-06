@@ -38,13 +38,19 @@ const (
 // "no legal basis, pure UX state — delete on request"). Logged on every
 // purge / retention sweep so a compliance review can trace why each
 // decision was made.
+//
+// TimeColumn is the TIMESTAMPTZ column that the retention-worker sweep
+// compares against `now() - Window`. Examples: 'created_at', 'processed_at',
+// 'completed_at', 'recorded_at'. NULL values in this column are skipped
+// by the sweep — useful for tables where the column is set only on
+// terminal-state rows (e.g. bookings.completed_at, pending_refunds.processed_at).
 type RetentionPolicy struct {
-	Table       string
-	Action      RetentionAction
-	Window      time.Duration   // age threshold for retention crons; 0 = no time-bound (only purge-on-request)
-	Columns     []string        // columns to anonymize when Action=ActionAnonymize
-	UserIDColumn string         // FK to users.id — the registry validates this is present
-	LegalBasis  string
+	Table      string
+	Action     RetentionAction
+	Window     time.Duration   // age threshold for retention crons; 0 = no time-bound (only purge-on-request)
+	Columns    []string        // columns to anonymize when Action=ActionAnonymize
+	TimeColumn string          // TIMESTAMPTZ column the retention sweep compares against now()-Window
+	LegalBasis string
 }
 
 // Registry holds the active set of RetentionPolicy entries. Goroutine-

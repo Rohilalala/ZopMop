@@ -38,7 +38,7 @@ func TestRegistry_RegisterLookupRoundtrip(t *testing.T) {
 	policy := RetentionPolicy{
 		Table:        "user_addresses",
 		Action:       ActionDelete,
-		UserIDColumn: "user_id",
+		TimeColumn: "user_id",
 		LegalBasis:   "test scaffold",
 	}
 	prev, replaced := r.Register(policy)
@@ -80,7 +80,7 @@ func TestRegistry_RegisterReplaces(t *testing.T) {
 
 // TestPolicyRegistry_HelperStatusLogRegistered confirms the chunk-9
 // retention policy for helper_status_log is wired with the right
-// window (90 days), action (Delete), time-based UserIDColumn
+// window (90 days), action (Delete), time-based TimeColumn
 // (recorded_at, not user_id — the table has no user surface), and
 // legal basis. Helper deletion is handled by the existing CASCADE FK
 // to helpers, so there's no compliance.Service method to test
@@ -100,8 +100,8 @@ func TestPolicyRegistry_HelperStatusLogRegistered(t *testing.T) {
 	if got.Window != want {
 		t.Errorf("Window = %s, want %s (90 days)", got.Window, want)
 	}
-	if got.UserIDColumn != "recorded_at" {
-		t.Errorf("UserIDColumn = %q, want recorded_at (time-based sweep)", got.UserIDColumn)
+	if got.TimeColumn != "recorded_at" {
+		t.Errorf("TimeColumn = %q, want recorded_at (time-based sweep)", got.TimeColumn)
 	}
 	if got.LegalBasis != "operational_activity_log" {
 		t.Errorf("LegalBasis = %q, want operational_activity_log", got.LegalBasis)
@@ -131,8 +131,8 @@ func TestPolicyRegistry_PushMessagesRegistered(t *testing.T) {
 	if got.LegalBasis != "marketing_analytics_window" {
 		t.Errorf("LegalBasis = %q, want marketing_analytics_window", got.LegalBasis)
 	}
-	if got.UserIDColumn != "created_at" {
-		t.Errorf("UserIDColumn = %q, want created_at (time-based sweep)", got.UserIDColumn)
+	if got.TimeColumn != "created_at" {
+		t.Errorf("TimeColumn = %q, want created_at (time-based sweep)", got.TimeColumn)
 	}
 }
 
