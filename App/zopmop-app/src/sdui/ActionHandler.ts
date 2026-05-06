@@ -12,6 +12,7 @@ import { apiFetch } from '../api/client';
 import { BASE_URL } from '../api/config';
 import { logEvent } from '../analytics/impressionTracker';
 import { analyticsContext } from '../analytics/context';
+import { sanitizeAction } from './safeguards';
 import type { SduiAction } from './types';
 
 export interface ActionContext {
@@ -28,6 +29,25 @@ export async function executeAction(
   action: SduiAction,
   ctx: ActionContext,
 ): Promise<void> {
+  // Defense in depth: re-validate the action against the client-side
+  // allowlist at execute time, even though safeSection already filters
+  // server-supplied actions at parse time. Lazy section loads, cached
+  // configs from older client versions, and any future call site that
+  // forgets to pre-sanitise still hit this guard. Closes audit C-7 /
+  // E1D-2 / A2-1.
+  const safe = sanitizeAction(action);
+  if (safe === null) {
+    // eslint-disable-next-line no-console
+    console.warn('[sdui] action blocked by allowlist', { original: action });
+    logEvent('sdui_action_blocked', {
+      action_type: (action as { type?: unknown })?.type ?? 'unknown',
+      reason: 'allowlist',
+      ...analyticsContext,
+    });
+    return;
+  }
+  action = safe;
+
   // Audit log first so we capture the intent even if the side-effect throws.
   logEvent('sdui_action', {
     action_type: action.type,
