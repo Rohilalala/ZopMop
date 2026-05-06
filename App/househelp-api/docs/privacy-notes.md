@@ -118,8 +118,11 @@ What works today (as of 2026-05-06):
   hard-deleted.
 
 What's still being built (audit C-8 / F2D-1):
-- TODO: decide retention for bookings, reviews, refunds, etc.
-- Retention crons that automatically purge old data after windows
+- ✅ Per-table retention decisions (chunks 2–9; nine tables covered).
+- ✅ Retention worker that automatically purges old rows per policy 
+  (chunk 10; `cmd/retention-worker` with `--dry-run` flag, batched 
+  DELETE LIMIT 1000 with `FOR UPDATE SKIP LOCKED`, per-policy 
+  transactions, exit-non-zero on any per-policy failure).
 - Real /me/export endpoint (currently stubbed at 501 Not Implemented)
 - Proper consent versioning (currently a single boolean)
 

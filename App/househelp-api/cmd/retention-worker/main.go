@@ -2,22 +2,33 @@
 // and applies registered RetentionPolicy sweeps over append-only PII
 // tables — crm_audit_log, crm_login_attempts, crm_push_messages, etc.
 //
-// Audit C-8 / F2D-1 / F2D-2 background: the codebase has zero retention
-// crons today. This binary is the home for them. As of chunk 1 the
-// registry is empty and this worker is a stub that proves the wiring
-// works end-to-end without committing to retention windows on any
-// specific table — those decisions are made by the user inline as each
-// chunk lands.
+// Audit C-8 / F2D-1 / F2D-2 background: the codebase had zero retention
+// crons before this worker was wired up. This binary is the home for
+// them. The worker is single-pass-and-exit by design — wrap in `cron`,
+// Kubernetes CronJob, or systemd-timer for periodicity. That keeps
+// the binary stateless and idempotent.
 //
-// The worker is meant to run as a sidecar / Kubernetes CronJob — it
-// does NOT keep its own scheduler, it does ONE pass and exits. Wrap in
-// `cron` / Kubernetes / systemd-timer for periodicity. That keeps the
-// binary simple and idempotent.
+// Flags:
+//
+//	--dry-run    : count-only mode. Logs "would delete N rows" per
+//	               table. No DELETE statements run. Useful for first-
+//	               deployment sanity checks.
+//
+// Exit code:
+//
+//	0  : every registered policy ran cleanly (or dry-run completed)
+//	1  : at least one policy returned an error, OR the process was
+//	     cancelled via SIGINT / SIGTERM mid-sweep
+//
+// Per-policy work runs in its own short transaction with batched
+// DELETE (LIMIT 1000 per batch via id-IN-subselect) so a large catch-up
+// sweep doesn't block concurrent writers.
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -32,6 +43,9 @@ import (
 )
 
 func main() {
+	dryRun := flag.Bool("dry-run", false, "count-only mode; no DELETEs are executed")
+	flag.Parse()
+
 	zerolog.TimeFieldFormat = time.RFC3339
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 
@@ -40,8 +54,6 @@ func main() {
 		log.Fatal().Msg("DATABASE_URL is required")
 	}
 
-	// Cancel on SIGINT / SIGTERM so the worker exits cleanly even when
-	// it's mid-sweep. Wraps the lifetime of the DB pool too.
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -54,30 +66,66 @@ func main() {
 	registry := compliance.NewRegistry()
 	compliance.RegisterDefaultPolicies(registry)
 	svc := compliance.NewService(pool, registry)
-	_ = svc // chunks 4+ will call svc.RunRetentionPass(ctx) once execution lands.
 
 	if registry.Len() == 0 {
-		log.Info().Msg("retention-worker: no policies registered; scaffold — exiting")
-	} else {
-		// Chunk 2: policies are registered but the per-table sweep loop
-		// is intentionally deferred to a later chunk. Log what we'd run
-		// so ops can confirm the wiring without yet acting on the data.
-		for _, p := range registry.All() {
-			log.Info().
-				Str("table", p.Table).
-				Str("action", string(p.Action)).
-				Dur("window", p.Window).
-				Str("time_column", p.TimeColumn).
-				Str("legal_basis", p.LegalBasis).
-				Msg("retention-worker: policy registered")
-		}
-		log.Info().
-			Int("policy_count", registry.Len()).
-			Msg("retention-worker: found policies; execution deferred to chunk 4")
+		log.Info().Msg("retention-worker: no policies registered; nothing to do — exiting")
+		return
 	}
 
-	// If we received a shutdown signal during init, surface it as a
-	// non-zero exit so cron / k8s can record the cancellation cleanly.
+	log.Info().
+		Int("policy_count", registry.Len()).
+		Bool("dry_run", *dryRun).
+		Msg("retention-worker: starting")
+
+	results := svc.RunRetentionPass(rootCtx, *dryRun)
+
+	var (
+		successes  int
+		failures   int
+		totalRows  int64
+		totalDur   time.Duration
+	)
+	for _, r := range results {
+		totalDur += r.Duration
+		if r.Err != nil {
+			failures++
+			log.Error().
+				Err(r.Err).
+				Str("table", r.Table).
+				Int64("rows_so_far", r.RowsDeleted).
+				Dur("duration", r.Duration).
+				Bool("dry_run", r.DryRun).
+				Msg("retention-worker: sweep failed")
+			continue
+		}
+		successes++
+		totalRows += r.RowsDeleted
+
+		verb := "swept"
+		if r.DryRun {
+			verb = "would-delete (dry-run)"
+		}
+		log.Info().
+			Str("table", r.Table).
+			Int64("rows_deleted", r.RowsDeleted).
+			Dur("duration", r.Duration).
+			Bool("dry_run", r.DryRun).
+			Msgf("retention-worker: %s", verb)
+	}
+
+	log.Info().
+		Int("successes", successes).
+		Int("failures", failures).
+		Int64("total_rows", totalRows).
+		Dur("total_duration", totalDur).
+		Bool("dry_run", *dryRun).
+		Msg("retention-worker: complete")
+
+	// Exit non-zero if any policy errored or if the root ctx was
+	// cancelled (signal handler caught SIGINT/SIGTERM mid-pass).
+	if compliance.AnyFailed(results) {
+		os.Exit(1)
+	}
 	if err := rootCtx.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(os.Stderr, "retention-worker: terminated: %v\n", err)
 		os.Exit(1)
