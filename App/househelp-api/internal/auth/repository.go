@@ -8,17 +8,26 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/compliance"
 )
 
 // Repository handles all database operations for the auth module.
 type Repository struct {
-	db *pgxpool.Pool
+	db         *pgxpool.Pool
+	compliance *compliance.Service
 }
 
 // NewRepository creates a new auth repository.
 func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
+
+// SetCompliance wires the compliance service so SoftDeleteUser can purge
+// trivial child tables and anonymise booking_messages atomically inside
+// the soft-delete transaction. Optional — Repository falls back to its
+// pre-compliance behaviour when nil. Audit C-8 / F2D-1.
+func (r *Repository) SetCompliance(c *compliance.Service) { r.compliance = c }
 
 const userSelectFields = `id, phone, name, role, is_suspended, has_accepted_privacy_policy, created_at, updated_at`
 
@@ -227,6 +236,32 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 	}
 	if hasActive {
 		return ErrActiveBooking
+	}
+
+	// Compliance: anonymise booking_messages + purge trivial child rows
+	// BEFORE the user-row scrub so everything commits atomically. The
+	// CASCADE FKs on the trivial tables never fire today (we soft-delete,
+	// don't hard-delete the parent), so without these explicit calls the
+	// child PII would persist indefinitely. Audit C-8 / F2D-1.
+	if r.compliance != nil {
+		if _, err := r.compliance.AnonymizeBookingMessagesTx(queryCtx, tx, userID); err != nil {
+			return fmt.Errorf("compliance anonymise booking_messages: %w", err)
+		}
+		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
+		if err != nil {
+			return fmt.Errorf("compliance purge trivial: %w", err)
+		}
+		log.Info().
+			Str("user_id", userID).
+			Int64("rows_purged", report.Total()).
+			Int64("addresses", report.UserAddresses).
+			Int64("device_tokens_user", report.DeviceTokensAsUser).
+			Int64("device_tokens_worker", report.DeviceTokensAsWorker).
+			Int64("cart", report.Cart).
+			Int64("preferred_helpers_user", report.UserPreferredHelpersAsUser).
+			Int64("preferred_helpers_helper", report.UserPreferredHelpersAsHelper).
+			Int64("reengagement", report.ReengagementNotifications).
+			Msg("compliance purge complete")
 	}
 
 	// Anonymise phone to free it for re-registration while keeping UNIQUE.
