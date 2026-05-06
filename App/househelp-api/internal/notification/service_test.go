@@ -22,8 +22,9 @@ func TestTokenStub_PreservesPrefix(t *testing.T) {
 }
 
 func TestTokenStub_ShortTokenHandled(t *testing.T) {
-	t.Parallel()
-	// <=8 chars: full string + "..." (still doesn't leak past what's already there).
+	// Serialised: shares execution with TestPruneIfDead_* which mutate
+	// the package-level isUnregisteredErr seam. Race detector otherwise
+	// flags this test (audit NEW-B1-007).
 	got := tokenStub("abc")
 	if got != "abc..." {
 		t.Fatalf("tokenStub(short) = %q, want %q", got, "abc...")
@@ -38,8 +39,10 @@ func TestTokenStub_EmptyTokenHandled(t *testing.T) {
 	}
 }
 
+// PruneIfDead tests are serialised because they share the package-level
+// isUnregisteredErr seam (audit NEW-B1-007). Adding t.Parallel() back here
+// reintroduces a data race the detector caught.
 func TestPruneIfDead_NilResolverNoCrash(t *testing.T) {
-	t.Parallel()
 	s := &Service{} // resolver = nil
 	// Force isUnregisteredErr=true so the only thing keeping us from
 	// crashing is the resolver-nil guard.
@@ -51,7 +54,6 @@ func TestPruneIfDead_NilResolverNoCrash(t *testing.T) {
 }
 
 func TestPruneIfDead_NilErrorNoOp(t *testing.T) {
-	t.Parallel()
 	s := &Service{resolver: &TokenResolver{}}
 	// nil err: must short-circuit before touching the resolver
 	// (resolver has nil pool and would panic on DeleteToken).
@@ -59,14 +61,12 @@ func TestPruneIfDead_NilErrorNoOp(t *testing.T) {
 }
 
 func TestPruneIfDead_EmptyTokenNoOp(t *testing.T) {
-	t.Parallel()
 	s := &Service{resolver: &TokenResolver{}}
 	// Empty token short-circuits before touching the resolver.
 	s.pruneIfDead(context.Background(), "", errors.New("boom"))
 }
 
 func TestPruneIfDead_NonUnregisteredErrorNoOp(t *testing.T) {
-	t.Parallel()
 	s := &Service{resolver: &TokenResolver{}}
 	// Default isUnregisteredErr is messaging.IsUnregistered, which
 	// returns false for a generic error — so DeleteToken won't be
