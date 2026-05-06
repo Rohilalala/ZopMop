@@ -75,6 +75,13 @@ var ErrInstantBookingClosed = errors.New("instant booking is closed overnight")
 
 // isInstantBookingClosed reports whether `t` (in IST) falls inside the
 // nightly closed window.
+// roundLogCoord rounds a lat/lng to 2 decimals (~1.1 km precision)
+// for safe structured logging. Audit C-8 / F2D-1 chunk 13 — log
+// retention now governs only city-block-level coordinates rather
+// than home-pinpoint GPS coords. Mirrors the pattern in
+// internal/matching/engine.go and internal/insights/handler.go.
+func roundLogCoord(x float64) float64 { return math.Round(x*100) / 100 }
+
 func isInstantBookingClosed(t time.Time) bool {
 	hr := t.In(indiaLocation()).Hour()
 	return hr >= instantBookingNightStartHour || hr < instantBookingNightEndHour
@@ -1204,7 +1211,7 @@ func (s *Service) CreateInstantBookingFromCart(
 		Str("customer_id", customerID).
 		Int("services", len(cartItems)).
 		Int("amount_paise", totalPriceCents).
-		Float64("lat", lat).Float64("lng", lng).
+		Float64("lat", roundLogCoord(lat)).Float64("lng", roundLogCoord(lng)).
 		Msg("instant booking created via cart")
 
 	return booking, nil

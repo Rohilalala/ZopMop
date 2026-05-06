@@ -2,6 +2,7 @@ package location
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/middleware"
@@ -11,6 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
+
+// roundLogCoord rounds a lat/lng to 2 decimals (~1.1 km precision)
+// for safe structured logging. Audit C-8 / F2D-1 chunk 13. Mirrors
+// the pattern already in matching/insights/zones.
+func roundLogCoord(x float64) float64 { return math.Round(x*100) / 100 }
 
 // wsAuthDeadline bounds how long an unauthenticated WebSocket connection may
 // sit idle before we drop it. Prevents socket exhaustion by callers that
@@ -165,8 +171,8 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 
 			log.Debug().
 				Str("user_id", userID).
-				Float64("lat", update.Lat).
-				Float64("lng", update.Lng).
+				Float64("lat", roundLogCoord(update.Lat)).
+				Float64("lng", roundLogCoord(update.Lng)).
 				Msg("helper location updated")
 		} else {
 			c.WriteJSON(fiber.Map{"error": "only helpers can update locations"})

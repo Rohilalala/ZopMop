@@ -39,6 +39,12 @@ type PurgeReport struct {
 	RefundsHardDeleted             int64
 	RefundsAnonymized              int64
 	CampaignTargetsScrubbed        int64
+	// HelperLocationPurged is true when SoftDeleteUser attempted a
+	// Redis ZREM/DEL on the helper's GEO entry + active marker.
+	// Boolean (not int64) because the operation is idempotent and
+	// targets at most one entry per user; counting rows would conflate
+	// "user wasn't a helper" with "Redis was down".
+	HelperLocationPurged bool
 }
 
 // Total returns the sum of all per-table counts. Useful for audit

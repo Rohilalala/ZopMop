@@ -390,6 +390,19 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		return fmt.Errorf("failed to commit tx: %w", err)
 	}
 
+	// Chunk 13: purge the deleted helper's residue from the live
+	// Redis GEO index (helpers:locations) + active-marker key. The
+	// Postgres helpers row is gone, but Redis is not transactional
+	// with Postgres — without this step the deleted helper's UUID +
+	// last-known lat/lng persist in the matching cache indefinitely.
+	// Errors are logged inside the call and intentionally swallowed:
+	// Redis being unreachable must not unwind a successful Postgres
+	// deletion. Runs after Commit so a Redis hiccup can't roll back
+	// the user-row scrub.
+	if r.compliance != nil {
+		_ = r.compliance.PurgeHelperLocationFromRedis(queryCtx, userID)
+	}
+
 	log.Info().Str("user_id", userID).Msg("user account soft-deleted")
 	return nil
 }

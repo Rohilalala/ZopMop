@@ -5,8 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/adityarohilla/househelp-api/internal/compliance"
 )
@@ -222,5 +224,72 @@ func TestSoftDeleteUser_AnonymizesAndPurges(t *testing.T) {
 	}
 	if len(anonPhone) < 4 || anonPhone[:4] != "del:" {
 		t.Fatalf("phone not anonymised: %q", anonPhone)
+	}
+}
+
+// TestSoftDeleteUser_PurgesHelperLocation_E2E asserts the chunk-13
+// Redis cleanup hook fires inside SoftDeleteUser. Seeds the helper's
+// entry into the live GEO index + active-marker key, runs the
+// soft-delete, then confirms both Redis keys are gone.
+//
+// Audit C-8 / F2D-1 chunk 13. Skipped when TEST_DATABASE_URL is unset.
+func TestSoftDeleteUser_PurgesHelperLocation_E2E(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL unset; skipping DB-backed soft-delete e2e")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("connect db: %v", err)
+	}
+	defer pool.Close()
+
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	phone := "del:c13-" + userID[:6]
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, phone, role) VALUES ($1::uuid, $2, 'pro')`,
+		userID, phone); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO helpers (id, current_lat, current_lng) VALUES ($1::uuid, 12.97, 77.59) ON CONFLICT (id) DO NOTHING`,
+		userID); err != nil {
+		t.Fatalf("insert helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1::uuid`, userID)
+	})
+
+	// In-process Redis. Seed the GEO entry + active marker.
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	if err := rdb.GeoAdd(ctx, "helpers:locations", &redis.GeoLocation{
+		Name: userID, Latitude: 12.97, Longitude: 77.59,
+	}).Err(); err != nil {
+		t.Fatalf("seed GEO: %v", err)
+	}
+	if err := rdb.Set(ctx, "helper:active:"+userID, "1", 0).Err(); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+
+	repo := NewRepository(pool)
+	cmpl := compliance.NewService(pool, compliance.NewRegistry())
+	cmpl.SetRedis(rdb)
+	repo.SetCompliance(cmpl)
+
+	if err := repo.SoftDeleteUser(ctx, userID, "test"); err != nil {
+		t.Fatalf("SoftDeleteUser: %v", err)
+	}
+
+	// GEO entry should be gone (ZSCORE returns redis.Nil).
+	if _, err := rdb.ZScore(ctx, "helpers:locations", userID).Result(); err == nil {
+		t.Fatalf("GEO entry for deleted helper still present")
+	}
+	// Active marker key should be gone.
+	if mr.Exists("helper:active:" + userID) {
+		t.Fatalf("active marker key still present after soft-delete")
 	}
 }

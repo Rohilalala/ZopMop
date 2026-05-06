@@ -116,6 +116,11 @@ What works today (as of 2026-05-06):
   rounded to ~11km, locality + financial fields preserved, retained 
   7 years from completed_at. Rows where money never moved are 
   hard-deleted.
+- Live Redis cache cleaned (chunk 13): the deleted helper's entry
+  in `helpers:locations` (GEO sorted set used by the matching
+  engine) and `helper:active:<id>` (online-marker key) are removed
+  on deletion, so the deleted helper's last-known coordinates do
+  not linger in the operational cache after the Postgres row drop.
 
 What's still being built (audit C-8 / F2D-1):
 - ✅ Per-table retention decisions (chunks 2–9; nine tables covered).
@@ -281,6 +286,28 @@ Things they cannot yet do:
     than user-row snapshots; walker is defensive infrastructure for
     future modules).
   - Decision date: 2026-05-06.
+- [x] **Location residue sweep (chunk 13)**: closes the location-
+  surfaces follow-up tracked since chunk 9.
+  - Live Redis cache cleanup: `SoftDeleteUser` calls
+    `compliance.PurgeHelperLocationFromRedis` after the helpers-row
+    DELETE. `ZREM helpers:locations <userID>` removes the GEO entry
+    used by the matching engine; `DEL helper:active:<userID>`
+    removes the online-marker key. Errors are logged + swallowed —
+    a Redis outage must not block user deletion (stale residue in
+    a live cache is a much smaller compliance issue than refusing
+    to delete the user). Runs after Postgres commit so a Redis
+    hiccup cannot roll back the user-row scrub.
+  - Backend log rounding: `internal/booking/service.go:1207`
+    (info-level, ships to log aggregation) and
+    `internal/location/handler.go:168` (debug-level) now round
+    coordinates to 2dp (~1.1km) before logging, matching the
+    pattern already in matching/insights/zones. Log retention now
+    governs only city-block precision, not home-pinpoint GPS.
+  - Mobile-side AsyncStorage `@zopmop/location-ping-queue`: out of
+    scope. Device-local storage holds the user's own pending pings;
+    cleared by app uninstall / OS clear. DPDP §11 access right
+    covers data the controller holds, not the user's own device.
+  - Decision date: 2026-05-06.
 - [BLOCKED] **roomies wallet history**: deferred until the 
   prepaid-balance settlement worker lands. The roomies module 
   carries 5 explicit TODO comments noting that user-erasure with 
@@ -312,17 +339,24 @@ Things they cannot yet do:
   != 0 (any per-policy failure). Consider per-run lock (advisory 
   lock or CronJob `concurrencyPolicy: Forbid`) so two simultaneous 
   invocations don't fight for the same rows.
-- Location data outside helper_status_log: live tracking flows via 
-  `internal/booking/tracking_ws.go` and the `helpers.location` 
-  GEOGRAPHY column may have other persistent surfaces (mobile 
-  telemetry queues, backend WS logs, analytics events that 
-  capture coordinates) not yet audited. Phase A of chunk 9 
-  confirmed `helper_status_log` itself is NOT a location surface 
-  — the audit's earlier framing pointed at the wrong table. 
-  `helpers.location` is overwrite-in-place (no history kept) and 
-  is wiped when the chunk-1 SoftDeleteUser path drops the helpers 
-  row. The remaining surfaces (tracking_ws ephemeral state, 
-  mobile telemetry) are scoped for separate investigation.
+- ~~Location data outside helper_status_log~~ ✅ Closed by chunk 13.
+  Phase A swept all location/address surfaces: `helpers` row drop
+  (chunk 1), `bookings.lat/lng/address` (chunk 4), `user_addresses`
+  (chunk 2 trivial purge), `analytics_events.properties.location_*`
+  (rounded 3dp at ingest + user_id ON DELETE SET NULL),
+  `tracking_ws.go` (pure read-side push, no persistence), and
+  `service_zones` (operator-defined, not user data) all already
+  handled. Two newly identified gaps closed in chunk 13:
+  - **Redis `helpers:locations` GEO set + `helper:active:<id>`
+    marker**: `SoftDeleteUser` now calls
+    `compliance.PurgeHelperLocationFromRedis` which `ZREM`s the
+    GEO entry and `DEL`s the active marker. Errors logged + 
+    swallowed (Redis outage must not block deletion).
+  - **Backend log sites emitting unrounded coords**: rounded to 2dp
+    (~1.1km) in `internal/booking/service.go:1207` (info-level)
+    and `internal/location/handler.go:168` (debug-level). Matches
+    pattern in matching/insights/zones. Log retention now governs
+    only city-block precision, not home-pinpoint GPS.
 - ~~crm_push_messages target_filter JSONB scrubbing~~ ✅ Closed
   by chunk 12. SoftDeleteUser now calls
   `ScrubUserFromCampaignTargetsTx`, which removes the deleted user's

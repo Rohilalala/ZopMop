@@ -230,6 +230,7 @@ func main() {
 	complianceRegistry := compliance.NewRegistry()
 	compliance.RegisterDefaultPolicies(complianceRegistry)
 	complianceService := compliance.NewService(dbPool, complianceRegistry)
+	complianceService.SetRedis(rdb)
 	auditRecorder := audit.NewRecorder(dbPool)
 	authHandler.SetCompliance(complianceService)
 	authHandler.SetAudit(auditRecorder)

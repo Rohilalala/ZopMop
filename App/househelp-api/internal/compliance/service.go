@@ -15,6 +15,7 @@ package compliance
 
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // Service is the compliance entry point. It depends on a write pool (the
@@ -29,6 +30,13 @@ import (
 type Service struct {
 	db       *pgxpool.Pool
 	policies *Registry
+	// rdb is optional. Wired via SetRedis from cmd/api so the
+	// user-deletion flow can purge the helper's entry from the live
+	// Redis GEO index (helpers:locations) on top of dropping the
+	// Postgres row. Nil-tolerant: tests / binaries that don't need
+	// Redis (e.g. retention-worker, jsonb-scrub-backfill) construct
+	// the Service without it.
+	rdb *redis.Client
 }
 
 // NewService constructs a Service. policies may be nil — the Service
@@ -40,6 +48,12 @@ func NewService(db *pgxpool.Pool, policies *Registry) *Service {
 	}
 	return &Service{db: db, policies: policies}
 }
+
+// SetRedis wires a Redis client for the user-deletion Redis purge
+// step (PurgeHelperLocationFromRedis). Optional — when unset the
+// purge step is a no-op and SoftDeleteUser proceeds without touching
+// Redis.
+func (s *Service) SetRedis(rdb *redis.Client) { s.rdb = rdb }
 
 // DB returns the write pool. Exposed so future chunks can run multi-table
 // transactions inline; not used today.
