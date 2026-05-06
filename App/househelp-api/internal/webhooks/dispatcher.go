@@ -250,6 +250,14 @@ func (d *Dispatcher) subscribers(ctx context.Context, event string) ([]subscribe
 // Errors returned here are persistence errors; HTTP-layer errors are recorded
 // in the row itself (status 0, body=err.Error()).
 func (d *Dispatcher) deliver(ctx context.Context, s subscriber, event string, body []byte, attempt int, isTest bool) (Delivery, error) {
+	// SSRF gate (audit NEW-A2-001): reject obvious private targets before
+	// the HTTP call. Persist the rejection so admins can see the failure
+	// in the CRM delivery list. DNS-rebinding still requires network-level
+	// egress filtering — see ssrf.go comment.
+	if err := validateWebhookTarget(s.URL); err != nil {
+		log.Warn().Err(err).Str("webhook_id", s.ID).Str("url", s.URL).Msg("[webhooks] SSRF rejected")
+		return d.persist(ctx, s.ID, event, body, 0, truncate(err.Error(), defaultBodyCap), nil, attempt, false)
+	}
 	deliveryUUID := uuid.NewString()
 	reqCtx, cancel := context.WithTimeout(ctx, d.httpTimeout)
 	defer cancel()
