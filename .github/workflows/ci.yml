@@ -18,6 +18,14 @@ jobs:
       # -race catches the concurrency bugs the audit dug up; -short skips
       # the integration tests that need testcontainers (audit NEW-E3-003).
       - run: go test ./... -short -race
+      # govulncheck reports known CVEs in compiled-in deps. Non-blocking
+      # for now so the alert surfaces without breaking unrelated PRs;
+      # promote to failing once known issues are addressed.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
+        continue-on-error: true
   crm:
     name: CRM (Vite/React)
     runs-on: ubuntu-latest
@@ -29,6 +37,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      # Non-blocking npm audit — promote to failing once known issues
+      # are resolved (audit NEW-A4-001).
+      - name: npm audit (CRM)
+        run: npm audit --production --audit-level=moderate
+        continue-on-error: true
   migrations:
     name: Migration filename pattern
     runs-on: ubuntu-latest
@@ -60,3 +73,7 @@ jobs:
         with: { node-version: '20', cache: 'npm', cache-dependency-path: App/zopmop-app/package-lock.json }
       - run: npm ci
       - run: npx tsc --noEmit
+      # Non-blocking npm audit (audit NEW-A4-001).
+      - name: npm audit (RN)
+        run: npm audit --production --audit-level=moderate
+        continue-on-error: true
