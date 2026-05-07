@@ -183,7 +183,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 		       b.created_at, b.completed_at
 		FROM bookings b
 		JOIN users cu ON cu.id = b.customer_id
-		LEFT JOIN users hu ON hu.id = b.helper_id
+		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		%s
 		ORDER BY %s %s
@@ -216,7 +216,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	countSQL := fmt.Sprintf(`
 		SELECT COUNT(*) FROM bookings b
 		JOIN users cu ON cu.id = b.customer_id
-		LEFT JOIN users hu ON hu.id = b.helper_id
+		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		%s
 	`, whereSQL)
@@ -240,7 +240,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		       b.started_at, b.arrived_at, b.cancelled_at, b.cancelled_by
 		FROM bookings b
 		JOIN users cu ON cu.id = b.customer_id
-		LEFT JOIN users hu ON hu.id = b.helper_id
+		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		WHERE b.id = $1::uuid
 	`
@@ -369,7 +369,7 @@ func (r *Repository) AvailableWorkersNear(ctx context.Context, orderID string, r
 	rows, err := r.read.Query(ctx, `
 		SELECT h.id::text, COALESCE(u.name, '—'), COALESCE(h.rating, 5.0), h.services
 		FROM helpers h
-		JOIN users u ON u.id = h.id
+		JOIN users u ON u.id = h.id AND u.deleted_at IS NULL
 		WHERE h.id = ANY($1::uuid[])
 		  AND h.is_available = true
 		  AND h.approval_status = 'approved'

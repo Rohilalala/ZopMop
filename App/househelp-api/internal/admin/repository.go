@@ -331,8 +331,8 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 	err := r.db.QueryRow(queryCtx, `
 		SELECT COUNT(*)
 		FROM bookings b
-		LEFT JOIN users cu ON b.customer_id = cu.id
-		LEFT JOIN users hu ON b.helper_id = hu.id
+		LEFT JOIN users cu ON b.customer_id = cu.id AND cu.deleted_at IS NULL
+		LEFT JOIN users hu ON b.helper_id = hu.id AND hu.deleted_at IS NULL
 		WHERE ($1 = '' OR b.status = $1)
 		  AND ($2 = '' OR b.id::text ILIKE $2 ESCAPE '\' OR cu.phone ILIKE $2 ESCAPE '\' OR hu.phone ILIKE $2 ESCAPE '\')
 	`, status, searchVal).Scan(&totalCount)
@@ -344,8 +344,8 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 		WITH page AS (
 			SELECT b.id, b.created_at
 			FROM bookings b
-			LEFT JOIN users cu ON b.customer_id = cu.id
-			LEFT JOIN users hu ON b.helper_id = hu.id
+			LEFT JOIN users cu ON b.customer_id = cu.id AND cu.deleted_at IS NULL
+			LEFT JOIN users hu ON b.helper_id = hu.id AND hu.deleted_at IS NULL
 			WHERE ($1 = '' OR b.status = $1)
 			  AND ($4 = '' OR b.id::text ILIKE $4 ESCAPE '\' OR cu.phone ILIKE $4 ESCAPE '\' OR hu.phone ILIKE $4 ESCAPE '\')
 			ORDER BY b.created_at DESC
@@ -357,7 +357,7 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 		FROM page p
 		JOIN bookings b ON b.id = p.id
 		JOIN users cu ON b.customer_id = cu.id
-		LEFT JOIN users hu ON b.helper_id = hu.id
+		LEFT JOIN users hu ON b.helper_id = hu.id AND hu.deleted_at IS NULL
 		JOIN service_categories sc ON b.service_category_id = sc.id
 		ORDER BY b.created_at DESC
 	`, status, limit, offset, searchVal)

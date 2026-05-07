@@ -187,7 +187,7 @@ func (r *Repository) ListProBookingsOnDate(ctx context.Context, proID string, da
 		       b.lat::float8, b.lng::float8
 		FROM bookings b
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
-		LEFT JOIN users u ON u.id = b.customer_id
+		LEFT JOIN users u ON u.id = b.customer_id AND u.deleted_at IS NULL
 		WHERE b.helper_id = $1
 		  AND b.scheduled_time IS NOT NULL
 		  AND b.scheduled_time::date = $2

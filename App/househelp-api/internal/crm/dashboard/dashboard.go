@@ -125,8 +125,8 @@ func (s *Service) LiveOrders(ctx context.Context, limit int) ([]LiveOrder, error
 		       b.status,
 		       b.created_at
 		FROM bookings b
-		LEFT JOIN users u ON u.id = b.customer_id
-		LEFT JOIN users h ON h.id = b.helper_id
+		LEFT JOIN users u ON u.id = b.customer_id AND u.deleted_at IS NULL
+		LEFT JOIN users h ON h.id = b.helper_id AND h.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		ORDER BY b.created_at DESC
 		LIMIT $1

@@ -30,7 +30,7 @@ func (r *Repository) ListPendingRefunds(ctx context.Context, status string, page
 
 	offset := (page - 1) * limit
 
-	baseQuery := `FROM pending_refunds pr LEFT JOIN users u ON u.id = pr.user_id WHERE 1=1`
+	baseQuery := `FROM pending_refunds pr LEFT JOIN users u ON u.id = pr.user_id AND u.deleted_at IS NULL WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
 

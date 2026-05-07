@@ -116,7 +116,7 @@ func (r *Repository) List(ctx context.Context, f ListFilters) ([]LeaveRow, int, 
 		       pl.bookings_affected, pl.reassignment_outcome,
 		       COALESCE(pl.cancelled_booking_ids::text[], '{}'::text[])
 		FROM pro_leaves pl
-		LEFT JOIN users u ON u.id = pl.pro_id
+		LEFT JOIN users u ON u.id = pl.pro_id AND u.deleted_at IS NULL
 		WHERE %s
 		ORDER BY pl.date DESC, pl.declared_at DESC
 		LIMIT $%d OFFSET $%d`, whereSQL, limitIdx, offsetIdx)
@@ -161,7 +161,7 @@ func (r *Repository) Balances(ctx context.Context, proID string) ([]Balance, err
 		           AND pl.date <  date_trunc('month', now()) + INTERVAL '1 month'
 		       ), 0) AS used_this_month
 		FROM helpers h
-		LEFT JOIN users u ON u.id = h.id
+		LEFT JOIN users u ON u.id = h.id AND u.deleted_at IS NULL
 		%s
 		ORDER BY u.name NULLS LAST
 		LIMIT 500`, where)
