@@ -55,7 +55,6 @@ type OrderRow struct {
 	ID       string `json:"id"`
 	Category string `json:"category"`
 	Status   string `json:"status"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
 	AmountPaise int        `json:"price_cents"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`

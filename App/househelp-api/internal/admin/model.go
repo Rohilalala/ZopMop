@@ -74,10 +74,8 @@ type BookingListItem struct {
 	HelperID          *string   `json:"helper_id,omitempty"`
 	HelperPhone       *string   `json:"helper_phone,omitempty"`
 	ServiceCategory   string    `json:"service_category"`
-	Status string `json:"status"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int `json:"price_cents"`
-	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	Status        string    `json:"status"`
+	AmountPaise   int       `json:"price_cents"`
 	DiscountPaise int       `json:"discount_cents"`
 	CreatedAt     time.Time `json:"created_at"`
 }

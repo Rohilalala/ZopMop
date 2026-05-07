@@ -377,8 +377,8 @@ counter-parties redacted. See `internal/compliance/export.go`.
   inserts a `gateway='cod'` row that stays `pending` forever when the customer
   pays via Cashfree. Pre-existing; needs a sweep.
 - JSON-tag back-compat — Go field names are `AmountPaise` / `DiscountPaise`
-  but JSON tags still read `price_cents` / `discount_cents`. TODO comment on
-  every site says "rename after mobile v2 ships."
+  but JSON tags still read `price_cents` / `discount_cents`. Rename gated on
+  mobile v2 client adoption — see `App/househelp-api/docs/jsontag-rename-tracking.md`.
 - Naming drift on `*_cents` columns outside `bookings` (see Migrations section).
 - Outbox drainer worker — `event_outbox` accumulates rows with no consumer.
   Will write when the CRM swap or analytics pipeline lands.

@@ -21,9 +21,8 @@ type Invite struct {
 	Lat          float64   `json:"lat"`
 	Lng          float64   `json:"lng"`
 	Services     []string  `json:"services"`
-	TotalMinutes int `json:"total_minutes"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int       `json:"price_cents"`
+	TotalMinutes int       `json:"total_minutes"`
+	AmountPaise  int       `json:"price_cents"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

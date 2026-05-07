@@ -393,10 +393,8 @@ type SafeBooking struct {
 	AddressLabel         string               `json:"address_label,omitempty"`
 	AddressTag           string               `json:"address_tag,omitempty"`
 	AddressTitle         string               `json:"address_title,omitempty"`
-	PriceRupees int `json:"price_rupees,omitempty"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int `json:"price_cents,omitempty"`
-	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
+	PriceRupees          int                  `json:"price_rupees,omitempty"`
+	AmountPaise          int                  `json:"price_cents,omitempty"`
 	DiscountPaise        int                  `json:"discount_cents,omitempty"`
 	TotalDurationMinutes int                  `json:"total_duration_minutes,omitempty"`
 	Services             []SafeBookingService `json:"services,omitempty"`

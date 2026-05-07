@@ -38,9 +38,8 @@ type OrderEvent struct {
 	Status            string    `json:"status"`
 	CustomerID        string    `json:"customer_id"`
 	HelperID          *string   `json:"helper_id,omitempty"`
-	ServiceCategoryID string `json:"service_category_id,omitempty"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int64     `json:"price_cents,omitempty"`
+	ServiceCategoryID string    `json:"service_category_id,omitempty"`
+	AmountPaise       int64     `json:"price_cents,omitempty"`
 	OccurredAt  time.Time `json:"occurred_at"`
 }
 

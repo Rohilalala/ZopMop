@@ -38,11 +38,9 @@ type ListItem struct {
 	WorkerName     *string    `json:"worker_name,omitempty"`
 	WorkerPhone    *string    `json:"worker_phone,omitempty"`
 	Category       string     `json:"category"`
-	Status string `json:"status"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int `json:"price_cents"`
-	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
-	DiscountPaise int `json:"discount_cents"`
+	Status         string     `json:"status"`
+	AmountPaise    int        `json:"price_cents"`
+	DiscountPaise  int        `json:"discount_cents"`
 	PromoCode      *string    `json:"promo_code,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`

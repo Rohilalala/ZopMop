@@ -24,11 +24,9 @@ type Booking struct {
 	Address                string        `json:"address"`
 	Lat                    float64       `json:"lat"`
 	Lng                    float64       `json:"lng"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int     `json:"price_cents"`
-	PromoCode   *string `json:"promo_code,omitempty"`
-	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
-	DiscountPaise int `json:"discount_cents"`
+	AmountPaise            int           `json:"price_cents"`
+	PromoCode              *string       `json:"promo_code,omitempty"`
+	DiscountPaise          int           `json:"discount_cents"`
 	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
@@ -90,10 +88,8 @@ type ScheduledBooking struct {
 	TotalDurationMinutes int                  `json:"total_duration_minutes"`
 	Services             []BookingServiceItem `json:"services"`
 	Status               BookingStatus        `json:"status"`
-	// TODO: rename JSON tag to amount_paise after mobile v2 ships.
-	AmountPaise int `json:"price_cents"`
-	// TODO: rename JSON tag to discount_paise after mobile v2 ships.
-	DiscountPaise int                 `json:"discount_cents"`
+	AmountPaise          int                  `json:"price_cents"`
+	DiscountPaise        int                  `json:"discount_cents"`
 	PromoCode     *string             `json:"promo_code,omitempty"`
 	CreatedAt     time.Time           `json:"created_at"`
 }
