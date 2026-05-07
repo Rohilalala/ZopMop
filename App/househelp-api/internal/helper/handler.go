@@ -67,8 +67,10 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	}
 	if req.Locality != nil {
 		if err := h.service.UpdateLocality(c.UserContext(), helperID, *req.Locality); err != nil {
+			// Repo errors can include raw DB strings (audit B2-05). Log
+			// the full err and return a generic message + code.
 			log.Warn().Err(err).Str("helper_id", helperID).Msg("[helper] update locality failed")
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "could not update locality", "code": "LOCALITY_UPDATE_FAILED"})
 		}
 	}
 	return c.JSON(fiber.Map{"ok": true})

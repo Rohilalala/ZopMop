@@ -150,7 +150,10 @@ func (h *TrackingWSHandler) handle(c *websocket.Conn) {
 		resp, terr := h.service.GetTracking(ctx, bookingID, userID)
 		if terr != nil {
 			// Authorisation / not-yet-active errors terminate the stream.
-			_ = c.WriteJSON(fiber.Map{"error": terr.Error()})
+			// Don't leak terr.Error() — could expose DB internals to the
+			// websocket client (audit B2-05).
+			log.Warn().Err(terr).Str("booking_id", bookingID).Str("user_id", userID).Msg("[booking.track-ws] tracking fetch failed")
+			_ = c.WriteJSON(fiber.Map{"error": "tracking unavailable", "code": "TRACKING_UNAVAILABLE"})
 			return false
 		}
 		if werr := c.WriteJSON(resp); werr != nil {

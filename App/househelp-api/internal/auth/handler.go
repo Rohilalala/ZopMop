@@ -532,10 +532,15 @@ func mapVerifyOTPError(c *fiber.Ctx, err error) error {
 	}
 
 	switch {
-	case errors.Is(err, ErrInvalidOTP), errors.Is(err, ErrOTPExpiredOrNotFound):
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, ErrInvalidOTP):
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid OTP", "code": "INVALID_OTP"})
+	case errors.Is(err, ErrOTPExpiredOrNotFound):
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "OTP expired or not found", "code": "OTP_EXPIRED"})
 	default:
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to verify OTP"})
+		// Avoid leaking raw err.Error() (audit B2-05). Log it; client gets
+		// a generic message.
+		log.Error().Err(err).Msg("[auth] verifyOTP unexpected error")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to verify OTP", "code": "INTERNAL_ERROR"})
 	}
 }
 
