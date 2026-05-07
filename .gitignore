@@ -59,3 +59,14 @@ App/zopmop-crm/tsconfig.tsbuildinfo
 # fingerprints, and are regenerated each audit pass.
 .audit/
 /report/
+
+# Per-fix-run summary + deferred-items working notes. Untracked so they
+# are visible in the working tree (the user reads them on wake) but
+# never committed.
+/NEEDS_REVIEW.md
+/NEEDS_REVIEW-*.md
+/SUMMARY.md
+/SUMMARY-*.md
+
+# Marketing website — separate publish target, not part of the app repo.
+/website/
