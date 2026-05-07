@@ -479,7 +479,14 @@ func (h *Handler) DeleteWebhook(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListDeliveries(c *fiber.Ctx) error {
-	out, err := h.svc.ListDeliveries(c.UserContext(), c.Params("id"))
+	webhookID := c.Params("id")
+	out, err := h.svc.ListDeliveries(c.UserContext(), webhookID)
+	if err == nil {
+		// Audit single read of a webhook's full delivery history.
+		// Payloads carry indirect PII via embedded booking/refund events
+		// (audit A5-02 follow-up).
+		h.audit(c, "webhook.delivery.list", webhookID, nil, fiber.Map{"count": len(out)})
+	}
 	return jsonOrErr(c, fiber.Map{"items": out}, err)
 }
 
