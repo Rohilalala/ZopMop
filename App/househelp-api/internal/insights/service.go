@@ -65,14 +65,33 @@ func (s *Service) NearbyStats(ctx context.Context, lat, lng float64) (*NearbySta
 	}
 
 	// Filter to only helpers with a fresh active marker (≤ 5 min stale).
+	// Pipeline the EXISTS calls so up to 50 candidates resolve in one
+	// Redis round-trip instead of N (audit D3-F2). LivePill polls every
+	// 5s so this dropped from 50 RTT/poll to 1.
 	var liveIDs []string
 	distByID := make(map[string]float64)
-	for _, r := range geoResults {
-		markerKey := fmt.Sprintf("helper:active:%s", r.Name)
-		exists, _ := s.rdb.Exists(ctx, markerKey).Result()
-		if exists == 1 {
-			liveIDs = append(liveIDs, r.Name)
-			distByID[r.Name] = r.Dist
+	if len(geoResults) > 0 {
+		pipe := s.rdb.Pipeline()
+		existCmds := make([]*redis.IntCmd, len(geoResults))
+		for i, r := range geoResults {
+			existCmds[i] = pipe.Exists(ctx, fmt.Sprintf("helper:active:%s", r.Name))
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			// Pipeline error: fall back to including everything as live.
+			// GEOSEARCH already filtered to within-radius; missing the
+			// activity-marker check is preferable to returning 0 pros.
+			log.Warn().Err(err).Msg("[insights] EXISTS pipeline failed — returning all GEOSEARCH hits")
+			for _, r := range geoResults {
+				liveIDs = append(liveIDs, r.Name)
+				distByID[r.Name] = r.Dist
+			}
+		} else {
+			for i, r := range geoResults {
+				if existCmds[i].Val() == 1 {
+					liveIDs = append(liveIDs, r.Name)
+					distByID[r.Name] = r.Dist
+				}
+			}
 		}
 	}
 
