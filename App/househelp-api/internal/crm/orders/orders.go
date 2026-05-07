@@ -606,13 +606,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Get handles GET /orders/:id.
 func (h *Handler) Get(c *fiber.Ctx) error {
-	d, err := h.repo.Get(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	d, err := h.repo.Get(c.UserContext(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "order not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit single-order PII reads (audit NEW-A1-002 partial).
+	// List endpoint intentionally NOT audited — high volume.
+	h.audit(c, "order.view", id, nil, nil)
 	return c.JSON(d)
 }
 

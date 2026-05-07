@@ -461,13 +461,16 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	out, err := h.repo.Get(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	out, err := h.repo.Get(c.UserContext(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "refund not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit single-refund PII reads (audit NEW-A1-002 partial).
+	h.audit(c, "refund.view", id, nil, nil)
 	return c.JSON(out)
 }
 
