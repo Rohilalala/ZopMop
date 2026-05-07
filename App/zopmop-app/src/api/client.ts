@@ -27,6 +27,18 @@ function generateRequestId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Generate an idempotency key sent as the Idempotency-Key header on every
+ * apiFetch request (audit D4-N4). The server middleware
+ * (internal/middleware/idempotency.go) namespaces by user_id and uses SETNX
+ * to dedup — collision-resistance only needs to hold per-(user, 10-min
+ * window), not cryptographically. Same homegrown shape as
+ * generateRequestId, with extra entropy for the longer dedup window.
+ */
+function generateIdempotencyKey(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -45,15 +57,21 @@ function sleep(ms: number): Promise<void> {
  */
 export async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
   // Merge headers without dropping caller-supplied ones; add X-Request-ID
-  // unless the caller already provided one. Computed once so all retries
-  // share the same request ID for log correlation.
+  // and Idempotency-Key unless the caller already provided them. Computed
+  // once so all retries share the same values — the server-side dedup at
+  // internal/middleware/idempotency.go relies on retried POSTs reusing the
+  // same Idempotency-Key (audit D4-N4).
   const incoming = (options?.headers ?? {}) as Record<string, string>;
   const hasRequestId = Object.keys(incoming).some(
     (k) => k.toLowerCase() === 'x-request-id',
   );
+  const hasIdempotencyKey = Object.keys(incoming).some(
+    (k) => k.toLowerCase() === 'idempotency-key',
+  );
   const headers: Record<string, string> = {
     ...incoming,
     ...(hasRequestId ? {} : { 'X-Request-ID': generateRequestId() }),
+    ...(hasIdempotencyKey ? {} : { 'Idempotency-Key': generateIdempotencyKey() }),
   };
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
