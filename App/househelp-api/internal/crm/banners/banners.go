@@ -201,10 +201,11 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/banners")
-	g.Get("/",          h.List)
+	read := middleware.RequirePermission("banners.read")
+	g.Get("/",          read, h.List)
 	g.Post("/",         middleware.RequirePermission("banners.create"), h.Create)
 	g.Post("/reorder",  middleware.RequirePermission("banners.reorder"), h.Reorder)
-	g.Get("/:id",       h.Get)
+	g.Get("/:id",       read, h.Get)
 	g.Put("/:id",       middleware.RequirePermission("banners.update"), h.Update)
 	g.Delete("/:id",    middleware.RequirePermission("banners.delete"), h.Delete)
 }

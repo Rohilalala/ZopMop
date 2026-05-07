@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 type Handler struct {
@@ -61,5 +63,5 @@ func (h *Handler) probe(ctx context.Context) string {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/health")
-	g.Get("/metrics", h.Metrics)
+	g.Get("/metrics", middleware.RequirePermission("healthmetrics.read"), h.Metrics)
 }

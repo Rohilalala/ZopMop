@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 type Service struct{ db *pgxpool.Pool }
@@ -176,11 +178,12 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/analytics")
-	g.Get("/summary",       h.Summary)
-	g.Get("/revenue-daily", h.RevenueDaily)
-	g.Get("/orders-daily",  h.OrdersDaily)
-	g.Get("/signups-daily", h.SignupsDaily)
-	g.Get("/by-category",   h.ByCategory)
+	read := middleware.RequirePermission("analytics.read")
+	g.Get("/summary",       read, h.Summary)
+	g.Get("/revenue-daily", read, h.RevenueDaily)
+	g.Get("/orders-daily",  read, h.OrdersDaily)
+	g.Get("/signups-daily", read, h.SignupsDaily)
+	g.Get("/by-category",   read, h.ByCategory)
 }
 
 func (h *Handler) Summary(c *fiber.Ctx) error {

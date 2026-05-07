@@ -197,12 +197,12 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/zones")
-	g.Get("/",       h.ListZones)
+	g.Get("/",       middleware.RequirePermission("zones.read"), h.ListZones)
 	g.Post("/",      middleware.RequirePermission("zones.create"), h.CreateZone)
 	g.Put("/:id",    middleware.RequirePermission("zones.update"), h.UpdateZone)
 	g.Post("/:id/toggle", middleware.RequirePermission("zones.toggle"), h.ToggleZone)
 
-	g.Get("/surge",       h.ListSurge)
+	g.Get("/surge",       middleware.RequirePermission("surge.read"), h.ListSurge)
 	g.Post("/surge",      middleware.RequirePermission("surge.create"), h.CreateSurge)
 	g.Delete("/surge/:id", middleware.RequirePermission("surge.delete"), h.DeleteSurge)
 }

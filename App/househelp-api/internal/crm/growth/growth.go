@@ -669,18 +669,19 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/growth")
-	g.Get("/push",                h.ListPush)
+	read := middleware.RequirePermission("growth.read")
+	g.Get("/push",                read, h.ListPush)
 	g.Post("/push",               middleware.RequirePermission("push.create"), h.CreatePush)
 	g.Get("/push/reach",          middleware.RequirePermission("push.create"), h.PushReach)
 	g.Post("/push/:id/send",      middleware.RequirePermission("push.send"), h.SendPush)
 	g.Post("/push/:id/cancel",    middleware.RequirePermission("push.create"), h.CancelPush)
 	g.Post("/push/:id/retry",     middleware.RequirePermission("push.send"), h.RetryPush)
-	g.Get("/lost-user",           h.ListLostUser)
+	g.Get("/lost-user",           read, h.ListLostUser)
 	g.Post("/lost-user",          middleware.RequirePermission("lost_user.create"), h.CreateLostUser)
 	g.Post("/lost-user/:id/toggle", middleware.RequirePermission("lost_user.toggle"), h.ToggleLostUser)
-	g.Get("/loyalty",             h.GetLoyalty)
+	g.Get("/loyalty",             read, h.GetLoyalty)
 	g.Put("/loyalty",             middleware.RequirePermission("loyalty.update"), h.SetLoyalty)
-	g.Get("/waitlist",            h.ListWaitlists)
+	g.Get("/waitlist",            read, h.ListWaitlists)
 	g.Post("/waitlist",           middleware.RequirePermission("waitlist.create"), h.CreateWaitlist)
 }
 

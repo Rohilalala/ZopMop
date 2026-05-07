@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 // KPIs is the top-row metric bundle.
@@ -215,10 +217,11 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // RegisterRoutes mounts /dashboard/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
-	r.Get("/dashboard/kpis", h.KPIs)
-	r.Get("/dashboard/live-orders", h.LiveOrders)
-	r.Get("/dashboard/revenue-7d", h.Revenue7d)
-	r.Get("/dashboard/category-share", h.CategoryShareToday)
+	read := middleware.RequirePermission("dashboard.read")
+	r.Get("/dashboard/kpis", read, h.KPIs)
+	r.Get("/dashboard/live-orders", read, h.LiveOrders)
+	r.Get("/dashboard/revenue-7d", read, h.Revenue7d)
+	r.Get("/dashboard/category-share", read, h.CategoryShareToday)
 }
 
 // KPIs returns dashboard top-row metrics.

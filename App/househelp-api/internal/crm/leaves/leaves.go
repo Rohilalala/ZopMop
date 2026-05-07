@@ -248,8 +248,9 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 //   GET  /leaves/balances           — per-pro balance
 //   POST /pro/:id/leave/allocate    — allocate extra days (audited)
 func (h *Handler) RegisterRoutes(r fiber.Router) {
-	r.Get("/leaves", h.List)
-	r.Get("/leaves/balances", h.Balances)
+	read := middleware.RequirePermission("leaves.read")
+	r.Get("/leaves", read, h.List)
+	r.Get("/leaves/balances", read, h.Balances)
 	r.Post("/pro/:id/leave/allocate", middleware.RequirePermission("workers.update"), h.Allocate)
 }
 

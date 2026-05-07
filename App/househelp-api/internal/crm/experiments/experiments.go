@@ -191,9 +191,10 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/experiments")
-	g.Get("/",        h.List)
+	read := middleware.RequirePermission("experiments.read")
+	g.Get("/",        read, h.List)
 	g.Post("/",       middleware.RequirePermission("experiments.create"), h.Create)
-	g.Get("/:id",     h.Get)
+	g.Get("/:id",     read, h.Get)
 	g.Post("/:id/start",  middleware.RequirePermission("experiments.start"), h.Start)
 	g.Post("/:id/pause",  middleware.RequirePermission("experiments.pause"), h.Pause)
 	g.Post("/:id/stop",   middleware.RequirePermission("experiments.stop"), h.Stop)

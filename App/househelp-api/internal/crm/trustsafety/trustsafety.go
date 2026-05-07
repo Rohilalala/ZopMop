@@ -297,21 +297,21 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	d := r.Group("/disputes")
-	d.Get("/",        h.ListDisputes)
+	d.Get("/",        middleware.RequirePermission("disputes.read"), h.ListDisputes)
 	d.Post("/",       middleware.RequirePermission("disputes.create"), h.CreateDispute)
 	d.Post("/:id/resolve", middleware.RequirePermission("disputes.resolve"), h.ResolveDispute)
 
 	f := r.Group("/fraud")
-	f.Get("/",        h.ListFraud)
+	f.Get("/",        middleware.RequirePermission("fraud.read"), h.ListFraud)
 	f.Post("/:id/review", middleware.RequirePermission("fraud.review"), h.ReviewFraud)
 
 	b := r.Group("/blacklist")
-	b.Get("/",        h.ListBlacklist)
+	b.Get("/",        middleware.RequirePermission("blacklist.read"), h.ListBlacklist)
 	b.Post("/",       middleware.RequirePermission("blacklist.add"), h.AddBlacklist)
 	b.Delete("/:id",  middleware.RequirePermission("blacklist.remove"), h.RemoveBlacklist)
 
 	in := r.Group("/incidents")
-	in.Get("/",       h.ListIncidents)
+	in.Get("/",       middleware.RequirePermission("incidents.read"), h.ListIncidents)
 	in.Post("/",      middleware.RequirePermission("incidents.create"), h.CreateIncident)
 	in.Post("/:id/resolve", middleware.RequirePermission("incidents.resolve"), h.ResolveIncident)
 }

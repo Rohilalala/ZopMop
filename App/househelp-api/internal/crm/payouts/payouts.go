@@ -137,7 +137,7 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/payouts")
-	g.Get("/",            h.List)
+	g.Get("/",            middleware.RequirePermission("payouts.read"), h.List)
 	g.Post("/",           middleware.RequirePermission("payouts.create"), h.Create)
 	g.Post("/:id/paid",   middleware.RequirePermission("payouts.mark_paid"), h.MarkPaid)
 	g.Post("/:id/failed", middleware.RequirePermission("payouts.mark_failed"), h.MarkFailed)

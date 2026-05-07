@@ -421,33 +421,33 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	w := r.Group("/webhooks")
-	w.Get("/",                h.ListWebhooks)
+	w.Get("/",                middleware.RequirePermission("webhooks.read"), h.ListWebhooks)
 	w.Post("/",               middleware.RequirePermission("webhooks.create"), h.CreateWebhook)
 	w.Delete("/:id",          middleware.RequirePermission("webhooks.delete"), h.DeleteWebhook)
-	w.Get("/:id/deliveries",  h.ListDeliveries)
+	w.Get("/:id/deliveries",  middleware.RequirePermission("webhooks.read"), h.ListDeliveries)
 	w.Post("/:id/test",       middleware.RequirePermission("webhooks.create"), h.TestWebhook)
 	w.Post("/deliveries/:id/retry", middleware.RequirePermission("webhooks.create"), h.RetryDelivery)
 
 	t := r.Group("/templates")
-	t.Get("/",     h.ListTemplates)
+	t.Get("/",     middleware.RequirePermission("templates.read"), h.ListTemplates)
 	t.Post("/",    middleware.RequirePermission("templates.create"), h.CreateTemplate)
 	t.Put("/:id",  middleware.RequirePermission("templates.update"), h.UpdateTemplate)
 	t.Delete("/:id", middleware.RequirePermission("templates.delete"), h.DeleteTemplate)
 
 	s := r.Group("/support")
-	s.Get("/",            h.ListTickets)
+	s.Get("/",            middleware.RequirePermission("tickets.read"), h.ListTickets)
 	s.Post("/:id/resolve", middleware.RequirePermission("tickets.resolve"), h.ResolveTicket)
 
 	v := r.Group("/app-versions")
-	v.Get("/",     h.ListAppVersions)
+	v.Get("/",     middleware.RequirePermission("app_version.read"), h.ListAppVersions)
 	v.Post("/",    middleware.RequirePermission("app_version.update"), h.SetAppVersion)
 
 	cl := r.Group("/changelog")
-	cl.Get("/",  h.ListChangelog)
+	cl.Get("/",  middleware.RequirePermission("changelog.read"), h.ListChangelog)
 	cl.Post("/", middleware.RequirePermission("changelog.publish"), h.CreateChangelog)
 
 	a := r.Group("/audit")
-	a.Get("/", h.ListAudit)
+	a.Get("/", middleware.RequirePermission("audit.read"), h.ListAudit)
 }
 
 func (h *Handler) ListWebhooks(c *fiber.Ctx) error {

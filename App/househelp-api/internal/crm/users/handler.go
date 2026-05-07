@@ -41,12 +41,13 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 // RegisterRoutes mounts /users/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/users")
-	g.Get("/",            h.List)
-	g.Get("/:id",         h.Get)
-	g.Get("/:id/orders",  h.Orders)
-	g.Get("/:id/notes",   h.ListNotes)
+	read := middleware.RequirePermission("users.read")
+	g.Get("/",            read, h.List)
+	g.Get("/:id",         read, h.Get)
+	g.Get("/:id/orders",  read, h.Orders)
+	g.Get("/:id/notes",   read, h.ListNotes)
 	g.Post("/:id/notes",  middleware.RequirePermission("users.add_note"), h.AddNote)
-	g.Get("/:id/active-orders", h.ActiveOrders)
+	g.Get("/:id/active-orders", read, h.ActiveOrders)
 	g.Post("/:id/suspend",   middleware.RequirePermission("users.suspend"), h.Suspend)
 	g.Post("/:id/unsuspend", middleware.RequirePermission("users.unsuspend"), h.Unsuspend)
 	g.Post("/:id/ban",       middleware.RequirePermission("users.ban"), h.Ban)

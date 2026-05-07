@@ -556,9 +556,10 @@ func (h *Handler) SetDispatcher(d *webhooks.Dispatcher) { h.dispatcher = d }
 // RegisterRoutes mounts /orders/* on the authed group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/orders")
-	g.Get("/",                       h.List)
-	g.Get("/:id",                    h.Get)
-	g.Get("/:id/available-workers",  h.AvailableWorkers)
+	read := middleware.RequirePermission("orders.read")
+	g.Get("/",                       read, h.List)
+	g.Get("/:id",                    read, h.Get)
+	g.Get("/:id/available-workers",  read, h.AvailableWorkers)
 	g.Post("/:id/cancel",            middleware.RequirePermission("orders.cancel"), h.Cancel)
 	g.Post("/:id/complete",          middleware.RequirePermission("orders.complete"), h.Complete)
 	g.Post("/:id/reassign",          middleware.RequirePermission("orders.reassign"), h.Reassign)

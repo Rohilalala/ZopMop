@@ -441,8 +441,9 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/refunds")
-	g.Get("/", h.List)
-	g.Get("/:id", h.Get)
+	read := middleware.RequirePermission("refunds.read")
+	g.Get("/", read, h.List)
+	g.Get("/:id", read, h.Get)
 	g.Post("/:id/approve", middleware.RequirePermission("refunds.approve_full"), h.Approve)
 	g.Post("/:id/reject", middleware.RequirePermission("refunds.reject"), h.Reject)
 	g.Post("/:id/retry", middleware.RequirePermission("refunds.approve_full"), h.Retry)

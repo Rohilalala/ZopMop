@@ -36,8 +36,9 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 
 // RegisterRoutes mounts /flags/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
-	r.Get("/flags", h.List)
-	r.Get("/flags/snapshots", h.ListSnapshots)
+	read := middleware.RequirePermission("flags.read")
+	r.Get("/flags", read, h.List)
+	r.Get("/flags/snapshots", read, h.ListSnapshots)
 	r.Put("/flags/:key", middleware.RequirePermission("flags.update"), h.Update)
 	r.Post("/flags/snapshots/:id/rollback", middleware.RequirePermission("flags.rollback"), h.Rollback)
 }

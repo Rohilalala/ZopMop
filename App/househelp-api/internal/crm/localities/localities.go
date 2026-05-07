@@ -13,6 +13,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -164,7 +166,7 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 
 // RegisterRoutes mounts /localities under the (already-authed) admin group.
 func (h *Handler) RegisterRoutes(router fiber.Router) {
-	router.Get("/localities", h.List)
+	router.Get("/localities", middleware.RequirePermission("localities.read"), h.List)
 	router.Post("/localities", h.Create)
 	router.Patch("/localities/:id", h.Update)
 	router.Delete("/localities/:id", h.Delete)

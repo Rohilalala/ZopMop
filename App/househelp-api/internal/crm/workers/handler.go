@@ -40,11 +40,12 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 // RegisterRoutes mounts /workers/* on the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/workers")
-	g.Get("/",                   h.List)
-	g.Get("/live",               h.LivePins)
-	g.Get("/:id",                h.Get)
-	g.Get("/:id/jobs",           h.Jobs)
-	g.Get("/:id/active-job",     h.ActiveJob)
+	read := middleware.RequirePermission("workers.read")
+	g.Get("/",                   read, h.List)
+	g.Get("/live",               read, h.LivePins)
+	g.Get("/:id",                read, h.Get)
+	g.Get("/:id/jobs",           read, h.Jobs)
+	g.Get("/:id/active-job",     read, h.ActiveJob)
 	g.Post("/:id/approve",       middleware.RequirePermission("workers.approve"), h.Approve)
 	g.Post("/:id/reject",        middleware.RequirePermission("workers.reject"), h.Reject)
 	g.Post("/:id/suspend",       middleware.RequirePermission("workers.suspend"), h.Suspend)

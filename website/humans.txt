@@ -1,0 +1,15 @@
+/* TEAM */
+
+Built by: ZopMop
+Site: https://zopmop.com
+Contact: hello [at] zopmop.com
+Location: Gurugram, Haryana, India
+
+/* SITE */
+
+Last update: 2026/05/05
+Standards: HTML5, CSS3, ES2020+
+Components: GSAP, ScrollTrigger
+Software: Custom
+Stack: Vanilla HTML/CSS/JS, GSAP for animation
+Brand: ZopMop, mascot Zop

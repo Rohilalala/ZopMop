@@ -12,6 +12,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
 // Severity classifies an alert. Maps to colour in the UI.
@@ -132,7 +134,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // RegisterRoutes mounts /alerts/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
-	r.Get("/alerts", h.List)
+	r.Get("/alerts", middleware.RequirePermission("alerts.read"), h.List)
 	r.Post("/alerts/read-all", h.MarkAllRead)
 }
 

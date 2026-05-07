@@ -117,6 +117,42 @@ var permissions = map[string]string{
 	"loyalty.update":     RoleSuperadmin,
 	"lost_user.create":   RoleSuperadmin,
 	"lost_user.toggle":   RoleSuperadmin,
+
+	// Read permissions (audit NEW-A5-001 / A5-001).
+	// All initially at RoleViewer to match pre-gate behaviour (any
+	// authenticated CRM admin can read). Sensitive reads (users.read,
+	// workers.read, refunds.read, audit.read, flags.read,
+	// webhooks.read) should be tightened to RoleSupport/RoleAdmin in
+	// a follow-up after verifying role distribution in production.
+	"alerts.read":        RoleViewer,
+	"analytics.read":     RoleViewer,
+	"app_version.read":   RoleViewer,
+	"audit.read":         RoleViewer,
+	"banners.read":       RoleViewer,
+	"blacklist.read":     RoleViewer,
+	"changelog.read":     RoleViewer,
+	"dashboard.read":     RoleViewer,
+	"disputes.read":      RoleViewer,
+	"experiments.read":   RoleViewer,
+	"flags.read":         RoleViewer,
+	"fraud.read":         RoleViewer,
+	"growth.read":        RoleViewer,
+	"healthmetrics.read": RoleViewer,
+	"incidents.read":     RoleViewer,
+	"leaves.read":        RoleViewer,
+	"localities.read":    RoleViewer,
+	"notifications.read": RoleViewer,
+	"orders.read":        RoleViewer,
+	"payouts.read":       RoleViewer,
+	"promos.read":        RoleViewer,
+	"refunds.read":       RoleViewer,
+	"surge.read":         RoleViewer,
+	"templates.read":     RoleViewer,
+	"tickets.read":       RoleViewer,
+	"users.read":         RoleViewer,
+	"webhooks.read":      RoleViewer,
+	"workers.read":       RoleViewer,
+	"zones.read":         RoleViewer,
 }
 
 // HasPermission returns true if role meets or exceeds the minimum role for perm.
