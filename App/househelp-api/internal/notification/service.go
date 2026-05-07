@@ -112,7 +112,10 @@ func (s *Service) fcmTokens(ctx context.Context, userIDs []string) []string {
 
 func (s *Service) sendToToken(ctx context.Context, token, title, body string, data map[string]string) error {
 	if s.fcmClient == nil {
-		log.Info().Str("title", title).Str("body", body).Msg("[notif] mocked (FCM offline)")
+		// Don't log title/body — embed helper names + booking refs in
+		// some templates (audit X10 / F2-3). Lengths are enough to verify
+		// the mock fired for the right shape.
+		log.Info().Int("title_len", len(title)).Int("body_len", len(body)).Msg("[notif] mocked (FCM offline)")
 		return nil
 	}
 	_, err := s.fcmClient.Send(ctx, &messaging.Message{
@@ -198,7 +201,7 @@ func (s *Service) sendToTokensWithReport(ctx context.Context, tokens []string, t
 		return rep, nil
 	}
 	if s.fcmClient == nil {
-		log.Info().Int("count", len(tokens)).Str("title", title).Msg("[notif] multicast mocked (FCM offline)")
+		log.Info().Int("count", len(tokens)).Int("title_len", len(title)).Msg("[notif] multicast mocked (FCM offline)")
 		rep.Success = len(tokens)
 		return rep, nil
 	}

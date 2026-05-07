@@ -136,10 +136,13 @@ func (s *Service) CreateGroup(ctx context.Context, hostUserID, addressID, name s
 		return nil, fmt.Errorf("failed to commit group creation: %w", err)
 	}
 
+	// Group "name" is user-chosen free text and may include addresses
+	// or personal references (audit F1-D cluster). Drop the field;
+	// group_id is enough for ops correlation.
 	log.Info().
 		Str("group_id", g.ID).
 		Str("host_user_id", hostUserID).
-		Str("name", name).
+		Int("name_len", len(name)).
 		Msg("roomies: address group created")
 
 	return g, nil

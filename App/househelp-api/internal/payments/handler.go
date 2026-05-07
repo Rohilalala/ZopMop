@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/pkg/logger"
 )
 
 // Handler exposes payment-helper endpoints. Two distinct surfaces share the
@@ -171,7 +173,9 @@ func (h *Handler) ValidateVPA(c *fiber.Ctx) error {
 
 	name, err := h.validateVPACashfree(ctx, vpa, strings.TrimSpace(body.Name))
 	if err != nil {
-		log.Warn().Err(err).Str("vpa", vpa).Msg("vpa validation gateway error")
+		// Audit F1-D3: never log raw VPA. MaskVPA preserves the domain
+		// (gateway-side fraud signal) while hiding the user-chosen handle.
+		log.Warn().Err(err).Str("vpa_mask", logger.MaskVPA(vpa)).Msg("vpa validation gateway error")
 		if errors.Is(err, errCashfreeVPAInvalid) {
 			return c.Status(fiber.StatusOK).JSON(validateVPAResponse{
 				VPA: vpa, Valid: false, Error: "vpa not found",

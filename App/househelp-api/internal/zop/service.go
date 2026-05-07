@@ -1705,22 +1705,14 @@ func (s *Service) ZopAgentLoop(ctx context.Context, userID, firstName, cleanedMe
 
 	messages = append(messages, openRouterMessage{Role: "user", Content: cleanedMessage})
 
-	// Debug: log the role + content (truncated) of every message in the
-	// array so we can verify [CONTEXT — ...] wrapping in tests. Off in
-	// production once verified.
+	// Operational shape only — never log chat content (audit F1-D1).
+	// chat_id + message count let us correlate against traces without
+	// shipping conversations to the log aggregator.
 	if len(history) > 0 {
-		shape := make([]string, 0, len(messages))
-		for _, m := range messages {
-			c := m.Content
-			if len(c) > 120 {
-				c = c[:120] + "…"
-			}
-			shape = append(shape, fmt.Sprintf("[%s] %s", m.Role, c))
-		}
 		log.Info().
 			Int("history_count", len(history)).
-			Str("dump", strings.Join(shape, " || ")).
-			Msg("[zop] agent input dump")
+			Int("messages_count", len(messages)).
+			Msg("[zop] agent input prepared")
 	}
 
 	var lastAction string

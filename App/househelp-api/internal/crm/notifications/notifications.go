@@ -79,7 +79,7 @@ func (r *Recorder) Push(ctx context.Context, sev Severity, title, body, entityTy
 		INSERT INTO crm_notifications (title, body, severity, entity_type, entity_id)
 		VALUES ($1, $2, $3, $4, $5)
 	`, title, body, string(sev), etArg, eiArg); err != nil {
-		log.Error().Err(err).Str("title", title).Msg("[crm.notifications] push failed")
+		log.Error().Err(err).Int("title_len", len(title)).Msg("[crm.notifications] push failed")
 	}
 }
 

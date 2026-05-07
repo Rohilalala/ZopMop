@@ -281,7 +281,10 @@ func (s *Service) Broadcast(ctx context.Context, title, body, target string) err
 		return nil
 	}
 
-	log.Info().Str("target", target).Int("recipients", len(tokens)).Str("title", title).Msg("[admin] broadcasting notification")
+	// Don't log raw title — admin broadcasts often embed helper or booking
+	// info in marketing copy (audit F1-D cluster). Length suffices for
+	// triage; the full text lives in crm_push_messages already.
+	log.Info().Str("target", target).Int("recipients", len(tokens)).Int("title_len", len(title)).Msg("[admin] broadcasting notification")
 	return s.notifSvc.SendToTokens(ctx, tokens, title, body, map[string]string{
 		"type":   "broadcast",
 		"target": target,
