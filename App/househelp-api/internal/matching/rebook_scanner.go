@@ -78,10 +78,12 @@ func (r *RebookScanner) RunOnce(ctx context.Context) (int, error) {
 		if !hasPro {
 			// Mark visited so we don't re-probe the same booking every 5 min.
 			// The 2h lookback in claimNext also bounds the queue size.
-			_, _ = r.dispatcher.db.Exec(ctx, `
+			if _, err := r.dispatcher.db.Exec(ctx, `
 				UPDATE bookings SET rebook_pushed_at = now()
 				WHERE id = $1::uuid AND rebook_pushed_at IS NULL
-			`, bookingID)
+			`, bookingID); err != nil {
+				log.Warn().Err(err).Str("booking_id", bookingID).Msg("[rebook-scan] mark-visited exec failed")
+			}
 			continue
 		}
 
@@ -93,10 +95,12 @@ func (r *RebookScanner) RunOnce(ctx context.Context) (int, error) {
 				"body":       "Pros are now available in your area. Tap to rebook your cancelled slot.",
 			})
 		}
-		_, _ = r.dispatcher.db.Exec(ctx, `
+		if _, err := r.dispatcher.db.Exec(ctx, `
 			UPDATE bookings SET rebook_pushed_at = now()
 			WHERE id = $1::uuid AND rebook_pushed_at IS NULL
-		`, bookingID)
+		`, bookingID); err != nil {
+			log.Warn().Err(err).Str("booking_id", bookingID).Msg("[rebook-scan] mark-pushed exec failed")
+		}
 		pushed++
 	}
 }

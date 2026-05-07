@@ -96,10 +96,12 @@ func (s *StealthDispatcher) RunOnce(ctx context.Context) (int, error) {
 			// Move out of 'searching' back to 'accepted' — InviteChain has
 			// already set helper_id via the AcceptBooking endpoint, so the
 			// status field needs catch-up.
-			_, _ = s.dispatcher.db.Exec(ctx, `
+			if _, err := s.dispatcher.db.Exec(ctx, `
 				UPDATE bookings SET status = 'accepted', updated_at = now()
 				WHERE id = $1::uuid AND status = 'searching'
-			`, bookingID)
+			`, bookingID); err != nil {
+				log.Warn().Err(err).Str("booking_id", bookingID).Msg("[stealth-dispatch] status catch-up exec failed")
+			}
 			name := s.dispatcher.helperName(ctx, res.HelperID)
 			s.dispatcher.pushCustomerAccepted(ctx, customerID, bookingID, name, res.Phase == PhasePreferred)
 			continue
