@@ -129,8 +129,19 @@ func getLocalBucket(key string) *tokenBucket {
 		return b
 	}
 	if len(localBuckets) > 50000 {
+		// Bounded sweep — walk at most 2k entries per insert so a sustained
+		// botnet flood doesn't cause a multi-second mutex hold while we
+		// touch every bucket (audit D2-5). Map iteration order in Go is
+		// randomized, so cold entries get hit eventually across several
+		// inserts.
+		const maxScan = 2000
 		cutoff := time.Now().Add(-5 * time.Minute)
+		scanned := 0
 		for k, v := range localBuckets {
+			if scanned >= maxScan {
+				break
+			}
+			scanned++
 			v.mu.Lock()
 			cold := v.lastRefill.Before(cutoff)
 			v.mu.Unlock()
@@ -169,10 +180,18 @@ func allowWithLocalFallback(key string, config RateLimitConfig, now time.Time) (
 	localLimiterMu.Lock()
 	defer localLimiterMu.Unlock()
 
-	// Opportunistic cleanup to keep memory bounded.
+	// Opportunistic cleanup to keep memory bounded. Bounded sweep so a
+	// hot path call never walks more than maxScan entries under the
+	// mutex (audit D2-5).
 	if len(localLimiterBuckets) > 10000 {
+		const maxScan = 2000
 		cutoff := windowStart - 2
+		scanned := 0
 		for k, v := range localLimiterBuckets {
+			if scanned >= maxScan {
+				break
+			}
+			scanned++
 			if v.windowStart < cutoff {
 				delete(localLimiterBuckets, k)
 			}
