@@ -376,16 +376,19 @@ func main() {
 	platformHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
 
-	// Module stub handler — every other module of the CRM lands here until
-	// the dedicated package is wired in. Keeps the SPA's nav working even
-	// when the backend hasn't shipped that module yet.
-	authed.Get("/_stub/:module", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"module":  c.Params("module"),
-			"status":  "not_implemented",
-			"message": "this CRM module has not yet been shipped",
+	// Module stub handler — gated behind ENABLE_STUB_ENUMERATOR=1
+	// (audit E2-4). The route exposed the CRM module taxonomy to anyone
+	// with a CRM JWT, which is information leakage with no production
+	// purpose. Kept for dev convenience but disabled by default.
+	if os.Getenv("ENABLE_STUB_ENUMERATOR") == "1" {
+		authed.Get("/_stub/:module", func(c *fiber.Ctx) error {
+			return c.JSON(fiber.Map{
+				"module":  c.Params("module"),
+				"status":  "not_implemented",
+				"message": "this CRM module has not yet been shipped",
+			})
 		})
-	})
+	}
 
 	// ── Start server with graceful shutdown ────────────────────────
 	go func() {
