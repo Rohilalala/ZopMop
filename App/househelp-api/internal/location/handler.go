@@ -24,6 +24,13 @@ func roundLogCoord(x float64) float64 { return math.Round(x*100) / 100 }
 // upgrade but never send the auth message.
 const wsAuthDeadline = 5 * time.Second
 
+// wsReadDeadline / wsPingInterval — keep in sync with
+// internal/booking/tracking_ws.go.
+//
+// Audit trail: D2-2 / NEW-E2-003.
+const wsReadDeadline = 90 * time.Second
+const wsPingInterval = 45 * time.Second
+
 // Handler handles HTTP/WebSocket requests for the location module.
 type Handler struct {
 	service        *Service
@@ -146,11 +153,38 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 		return
 	}
 
-	// Clear the auth deadline — from here we rely on application-level
-	// heartbeats/idle timeouts rather than a hard read deadline.
-	if err := c.SetReadDeadline(time.Time{}); err != nil {
-		log.Warn().Err(err).Msg("WebSocket SetReadDeadline(clear) failed")
-	}
+	// Set initial read deadline + register pong handler that rotates the
+	// deadline on each pong (audit D2-2 / NEW-E2-003). Read loop below
+	// also rotates on every successful ReadJSON since healthy helpers
+	// send location every 10s — pongs are the fallback for stale clients.
+	_ = c.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	c.SetPongHandler(func(string) error {
+		return c.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	})
+
+	// Server-side ping ticker (audit D2-2). Closed via pingDone in defer
+	// so it exits when the handler returns (read-loop break unwinds
+	// through the websocket library's cleanup path).
+	pingDone := make(chan struct{})
+	defer close(pingDone)
+	go func() {
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingDone:
+				return
+			case <-ticker.C:
+				if err := c.WriteControl(
+					websocket.PingMessage,
+					nil,
+					time.Now().Add(5*time.Second),
+				); err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	_ = c.WriteJSON(fiber.Map{"status": "authenticated"})
 
@@ -167,6 +201,11 @@ func (h *Handler) HandleWebSocket(c *websocket.Conn) {
 			}
 			break
 		}
+
+		// Rotate the read deadline on every successful read (audit D2-2).
+		// Healthy helpers send a LocationUpdate every 10s; this keeps the
+		// deadline rolling on real traffic, not just pongs.
+		_ = c.SetReadDeadline(time.Now().Add(wsReadDeadline))
 
 		// Validate location data.
 		if update.Lat < -90 || update.Lat > 90 {

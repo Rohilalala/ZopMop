@@ -23,6 +23,19 @@ const trackingWSPushInterval = 5 * time.Second
 // internal/location/handler.go.
 const trackingWSAuthDeadline = 5 * time.Second
 
+// wsReadDeadline is the maximum time the server will wait for a read or
+// pong before treating the connection as dead. 90s is friendly to mobile
+// clients on flaky cellular: a single missed pong (45s ping interval)
+// still leaves 45s of grace before disconnect.
+//
+// Audit trail: D2-2 / NEW-E2-003.
+const wsReadDeadline = 90 * time.Second
+
+// wsPingInterval is how often the server sends a protocol-level WS ping.
+// Half of wsReadDeadline so a single missed pong doesn't immediately
+// disconnect healthy clients.
+const wsPingInterval = 45 * time.Second
+
 // TrackingWSHandler serves the customer-side tracking WebSocket.
 // Wire-format mirrors the helper WebSocket in internal/location:
 //   1. Client sends {"type":"auth","token":"<JWT>"} as the first message.
@@ -129,8 +142,14 @@ func (h *TrackingWSHandler) handle(c *websocket.Conn) {
 		return
 	}
 
-	// Clear auth deadline; long-lived push connection from here.
-	_ = c.SetReadDeadline(time.Time{})
+	// Set initial read deadline + register pong handler that rotates the
+	// deadline on each pong (audit D2-2). Stale clients fail to pong,
+	// ReadMessage hits the deadline, the read goroutine exits, done
+	// closes, the ping goroutine + write loop exit cleanly.
+	_ = c.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	c.SetPongHandler(func(string) error {
+		return c.SetReadDeadline(time.Now().Add(wsReadDeadline))
+	})
 	_ = c.WriteJSON(fiber.Map{"status": "authenticated"})
 
 	// Detect client-initiated close so the push loop exits promptly.
@@ -140,6 +159,32 @@ func (h *TrackingWSHandler) handle(c *websocket.Conn) {
 		for {
 			if _, _, rerr := c.ReadMessage(); rerr != nil {
 				return
+			}
+		}
+	}()
+
+	// Server-side ping ticker (audit D2-2). Sends WS protocol ping every
+	// wsPingInterval; pong handler above rotates the read deadline on
+	// response. Exits via <-done when the read goroutine returns.
+	go func() {
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				// 5s deadline on WriteControl itself — must not block
+				// forever on a wedged socket.
+				if err := c.WriteControl(
+					websocket.PingMessage,
+					nil,
+					time.Now().Add(5*time.Second),
+				); err != nil {
+					// Write failed → connection dead. Let the read
+					// goroutine's deadline-expiry close cleanup.
+					return
+				}
 			}
 		}
 	}()
