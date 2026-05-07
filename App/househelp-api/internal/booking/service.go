@@ -1369,15 +1369,37 @@ func (s *Service) GetHelperInvites(ctx context.Context, helperID string) ([]stri
 	validIDs := make([]string, 0, len(ids))
 	staleIDs := make([]string, 0)
 
-	for _, bookingID := range ids {
-		var status string
-		qErr := s.db.QueryRow(ctx,
-			`SELECT status FROM bookings WHERE id = $1`, bookingID,
-		).Scan(&status)
-		if qErr != nil || status != string(StatusPending) {
-			staleIDs = append(staleIDs, bookingID)
-		} else {
-			validIDs = append(validIDs, bookingID)
+	// Single round-trip batch validation (audit D3-F1). The previous
+	// implementation issued one SELECT per invite — for a 30-pending-
+	// invite helper that was 30 round-trips per poll tick. The query
+	// returns only IDs still in StatusPending; anything not returned
+	// (cancelled, accepted, taken, deleted) is stale.
+	validSet := make(map[string]struct{}, len(ids))
+	rows, qErr := s.db.Query(ctx,
+		`SELECT id::text FROM bookings WHERE id = ANY($1::uuid[]) AND status = $2`,
+		ids, string(StatusPending),
+	)
+	if qErr != nil {
+		// Treat all as stale on query failure — the caller's next poll
+		// will re-fetch the canonical Redis set anyway, so this fails
+		// safe rather than serving stale "valid" entries.
+		log.Warn().Err(qErr).Str("helper_id", helperID).Msg("[booking.GetHelperInvites] batch validation query failed")
+		staleIDs = append(staleIDs, ids...)
+	} else {
+		for rows.Next() {
+			var id string
+			if scanErr := rows.Scan(&id); scanErr == nil {
+				validSet[id] = struct{}{}
+			}
+		}
+		rows.Close()
+
+		for _, bookingID := range ids {
+			if _, ok := validSet[bookingID]; ok {
+				validIDs = append(validIDs, bookingID)
+			} else {
+				staleIDs = append(staleIDs, bookingID)
+			}
 		}
 	}
 
