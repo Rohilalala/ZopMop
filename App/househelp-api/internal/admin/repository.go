@@ -543,7 +543,7 @@ func (r *Repository) GetCustomerFCMTokens(ctx context.Context) ([]string, error)
 	defer cancel()
 
 	rows, err := r.db.Query(queryCtx,
-		`SELECT fcm_token FROM users WHERE role = 'customer' AND fcm_token IS NOT NULL AND fcm_token != ''`,
+		`SELECT fcm_token FROM users WHERE role = 'customer' AND fcm_token IS NOT NULL AND fcm_token != '' AND deleted_at IS NULL`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query customer FCM tokens: %w", err)
@@ -572,7 +572,7 @@ func (r *Repository) GetProFCMTokens(ctx context.Context) ([]string, error) {
 	defer cancel()
 
 	rows, err := r.db.Query(queryCtx,
-		`SELECT fcm_token FROM users WHERE role = 'pro' AND fcm_token IS NOT NULL AND fcm_token != ''`,
+		`SELECT fcm_token FROM users WHERE role = 'pro' AND fcm_token IS NOT NULL AND fcm_token != '' AND deleted_at IS NULL`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pro FCM tokens: %w", err)
@@ -596,7 +596,7 @@ func (r *Repository) GetAllFCMTokens(ctx context.Context) ([]string, error) {
 	defer cancel()
 
 	rows, err := r.db.Query(queryCtx,
-		`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != ''`,
+		`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL AND fcm_token != '' AND deleted_at IS NULL`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all FCM tokens: %w", err)

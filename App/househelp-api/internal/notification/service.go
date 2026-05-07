@@ -69,7 +69,7 @@ func (s *Service) fcmToken(ctx context.Context, userID string) string {
 
 	var token string
 	err := s.db.QueryRow(qCtx,
-		`SELECT COALESCE(fcm_token, '') FROM users WHERE id = $1`,
+		`SELECT COALESCE(fcm_token, '') FROM users WHERE id = $1 AND deleted_at IS NULL`,
 		userID,
 	).Scan(&token)
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *Service) fcmTokens(ctx context.Context, userIDs []string) []string {
 	defer cancel()
 
 	rows, err := s.db.Query(qCtx,
-		`SELECT fcm_token FROM users WHERE id = ANY($1::uuid[]) AND fcm_token IS NOT NULL AND fcm_token != ''`,
+		`SELECT fcm_token FROM users WHERE id = ANY($1::uuid[]) AND fcm_token IS NOT NULL AND fcm_token != '' AND deleted_at IS NULL`,
 		userIDs,
 	)
 	if err != nil {

@@ -475,6 +475,7 @@ func (s *Service) specificTokens(ctx context.Context, pushID string) ([]string, 
 	rows, err := s.read.Query(ctx, `
 		SELECT fcm_token FROM users
 		WHERE id = ANY($1::uuid[]) AND fcm_token IS NOT NULL AND fcm_token <> ''
+		  AND deleted_at IS NULL
 	`, ids)
 	if err != nil {
 		return nil, err
