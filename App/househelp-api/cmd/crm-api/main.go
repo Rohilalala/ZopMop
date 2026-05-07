@@ -163,10 +163,19 @@ func main() {
 	// ── Wire up CRM modules ────────────────────────────────────────
 	auditRecorder := audit.NewRecorder(dbPool)
 
+	// Convert the crmconfig rotation set (active + previous secrets) into
+	// the auth.JWTKey shape the parsers consume. Keeps neither package
+	// coupled to the other's struct internals (audit NEW-A3-001).
+	jwtKeys := make([]auth.JWTKey, 0, len(cfg.JWTPreviousSecrets)+1)
+	for _, e := range cfg.JWTVerificationSecrets() {
+		jwtKeys = append(jwtKeys, auth.JWTKey{ID: e.ID, Secret: e.Secret})
+	}
+
 	authRepo := auth.NewRepository(dbPool)
 	authSvc := auth.NewService(authRepo, auth.Config{
 		JWTSecret:        cfg.JWTSecret,
 		JWTSecretID:      cfg.JWTSecretID,
+		JWTKeys:          jwtKeys,
 		AccessTokenTTL:   cfg.AccessTokenTTL,
 		RefreshTokenTTL:  cfg.RefreshTokenTTL,
 		TOTPIssuer:       cfg.TOTPIssuer,
@@ -348,7 +357,7 @@ func main() {
 	//
 	// Limiter ordering: jwtMW first so c.Locals("crmAdminID") is set
 	// before the limiter reads it; chain the per-admin limiter after.
-	jwtMW := crmmw.JWT(crmmw.JWTConfig{Secret: cfg.JWTSecret, DB: dbPool})
+	jwtMW := crmmw.JWT(crmmw.JWTConfig{Keys: jwtKeys, DB: dbPool})
 	authed := api.Group("", jwtMW, crmAdminLimiter)
 
 	// Same /auth prefix, but the authenticated subset (sessions, /me).

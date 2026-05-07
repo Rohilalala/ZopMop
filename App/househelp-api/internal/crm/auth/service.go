@@ -33,6 +33,10 @@ const defaultRefreshGraceWindow = 5 * time.Second
 type Config struct {
 	JWTSecret           string
 	JWTSecretID         string
+	// JWTKeys is the rotation set used for verification (active key first,
+	// followed by any previous-secret entries from CRM_JWT_PREVIOUS_SECRETS).
+	// Issuance still uses JWTSecret + JWTSecretID exclusively (audit NEW-A3-001).
+	JWTKeys             []JWTKey
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
 	TOTPIssuer          string
@@ -135,7 +139,7 @@ type VerifyTOTPResult struct {
 // VerifyTOTPAndIssue validates challenge + code, creates a session row, and
 // returns the access JWT + refresh-token plaintext.
 func (s *Service) VerifyTOTPAndIssue(ctx context.Context, req TOTPVerifyRequest, userAgent, ip string) (*VerifyTOTPResult, error) {
-	cc, err := ParseChallengeToken(req.ChallengeToken, s.cfg.JWTSecret)
+	cc, err := ParseChallengeToken(req.ChallengeToken, s.cfg.JWTKeys)
 	if err != nil {
 		return nil, ErrInvalidChallenge
 	}

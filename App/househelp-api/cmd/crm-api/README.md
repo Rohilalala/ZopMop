@@ -16,6 +16,7 @@ with its own DB connection pool and JWT secret. The user-facing app
 | `CRM_DB_POOL_MAX_CONNS` | `15` | Capped low so CRM cannot starve user-app pool. |
 | `CRM_JWT_SECRET` | _required_ | **Must differ from `JWT_SECRET`.** ≥64 chars. |
 | `CRM_JWT_SECRET_ID` | `crm-active` | `kid` header value. |
+| `CRM_JWT_PREVIOUS_SECRETS` | _empty_ | Comma-separated `key_id:secret` rotation set for verifying tokens signed with previously-active secrets. Issuance always uses `CRM_JWT_SECRET`. Mirrors `JWT_PREVIOUS_SECRETS` for the user-API. Example: `v1:abc...64chars,v2:def...64chars`. |
 | `CRM_ACCESS_TOKEN_TTL_MINUTES` | `240` | 4 hours per spec. |
 | `CRM_REFRESH_TOKEN_TTL_HOURS` | `720` | 30 days. |
 | `CRM_TOTP_ISSUER` | `Zopmop CRM` | Shown in Google Authenticator. |

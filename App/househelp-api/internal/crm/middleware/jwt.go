@@ -19,9 +19,12 @@ import (
 )
 
 // JWTConfig is the runtime configuration of the JWT-validating middleware.
+// Keys is the rotation set: active CRM_JWT_SECRET first, followed by any
+// CRM_JWT_PREVIOUS_SECRETS entries. Tokens are verified against the
+// matching kid first; if no kid is present, every key is tried in order.
 type JWTConfig struct {
-	Secret string // CRM_JWT_SECRET
-	DB     *pgxpool.Pool
+	Keys []auth.JWTKey
+	DB   *pgxpool.Pool
 }
 
 // JWT returns a Fiber handler that validates the access token in the
@@ -41,7 +44,7 @@ func JWT(cfg JWTConfig) fiber.Handler {
 			return unauthorized(c)
 		}
 
-		claims, err := auth.ParseAccessToken(parts[1], cfg.Secret)
+		claims, err := auth.ParseAccessToken(parts[1], cfg.Keys)
 		if err != nil {
 			log.Debug().Err(err).Msg("[crm.mw] JWT parse failed")
 			return unauthorized(c)

@@ -11,6 +11,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// JWTKey is one verification entry in a CRM JWT rotation set. ID is the
+// JWT "kid" header value used to route verification to a specific key
+// during zero-downtime rotation. Mirrors middleware.JWTKey on the
+// user-facing API side (audit NEW-A3-001).
+type JWTKey struct {
+	ID     string
+	Secret string
+}
+
 // AccessClaims is the JWT claims shape used by the CRM access token.
 type AccessClaims struct {
 	AdminID   string `json:"admin_id"`
@@ -49,23 +58,77 @@ func IssueAccessToken(secret, kid, adminID, email, role, sessionID string, ttl t
 	return signed, exp, nil
 }
 
-// ParseAccessToken validates an access token. Returns claims on success.
-func ParseAccessToken(tokenStr, secret string) (*AccessClaims, error) {
+// ParseAccessToken validates an access token against a rotation key set.
+// If the token's header carries a "kid" claim, only the matching key is
+// tried (kid-mismatch rejects without a fallback loop). Otherwise every
+// key is tried in order until one verifies. Mirrors ParseJWTClaims on
+// the user-facing API side (internal/middleware/jwt.go) — audit
+// NEW-A3-001.
+func ParseAccessToken(tokenStr string, keys []JWTKey) (*AccessClaims, error) {
+	if tokenStr == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no JWT keys configured")
+	}
+
 	parser := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
-	claims := &AccessClaims{}
-	_, err := parser.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return []byte(secret), nil
-	})
+
+	candidates, err := selectKeyCandidates(parser, tokenStr, keys)
 	if err != nil {
 		return nil, err
 	}
-	if claims.Issuer != "zopmop-crm" {
-		return nil, fmt.Errorf("invalid issuer")
+
+	var lastErr error
+	for _, key := range candidates {
+		claims := &AccessClaims{}
+		token, err := parser.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(key.Secret), nil
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if token != nil && token.Valid {
+			if claims.Issuer != "zopmop-crm" {
+				return nil, fmt.Errorf("invalid issuer")
+			}
+			return claims, nil
+		}
+		lastErr = jwt.ErrSignatureInvalid
 	}
-	return claims, nil
+
+	if lastErr == nil {
+		lastErr = jwt.ErrSignatureInvalid
+	}
+	return nil, lastErr
+}
+
+// selectKeyCandidates peeks at the token's "kid" header to narrow the
+// verification key set. Returns the full set when no kid is present
+// (rotation fallback path). Returns an error when kid is set but doesn't
+// match any configured key — never falls back, since a kid claim is a
+// deterministic routing hint and ambiguity there indicates a forged or
+// stale token.
+func selectKeyCandidates(parser *jwt.Parser, tokenStr string, keys []JWTKey) ([]JWTKey, error) {
+	unverified := jwt.MapClaims{}
+	tok, _, err := parser.ParseUnverified(tokenStr, unverified)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token format: %w", err)
+	}
+	kid, ok := tok.Header["kid"].(string)
+	if !ok || kid == "" {
+		return keys, nil
+	}
+	for _, key := range keys {
+		if key.ID == kid {
+			return []JWTKey{key}, nil
+		}
+	}
+	return nil, jwt.ErrSignatureInvalid
 }
 
 // ChallengeClaims is a short-lived JWT issued after password verification but
@@ -95,23 +158,49 @@ func IssueChallengeToken(secret, kid, adminID string) (string, error) {
 	return tok.SignedString([]byte(secret))
 }
 
-// ParseChallengeToken validates a challenge token.
-func ParseChallengeToken(tokenStr, secret string) (*ChallengeClaims, error) {
+// ParseChallengeToken validates a challenge token against a rotation key
+// set. Same kid-routing semantics as ParseAccessToken (audit NEW-A3-001).
+func ParseChallengeToken(tokenStr string, keys []JWTKey) (*ChallengeClaims, error) {
+	if tokenStr == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no JWT keys configured")
+	}
+
 	parser := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
-	claims := &ChallengeClaims{}
-	_, err := parser.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return []byte(secret), nil
-	})
+
+	candidates, err := selectKeyCandidates(parser, tokenStr, keys)
 	if err != nil {
 		return nil, err
 	}
-	if claims.Issuer != "zopmop-crm-challenge" || !claims.PendingTOTP {
-		return nil, fmt.Errorf("invalid challenge token")
+
+	var lastErr error
+	for _, key := range candidates {
+		claims := &ChallengeClaims{}
+		token, err := parser.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(key.Secret), nil
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if token != nil && token.Valid {
+			if claims.Issuer != "zopmop-crm-challenge" || !claims.PendingTOTP {
+				return nil, fmt.Errorf("invalid challenge token")
+			}
+			return claims, nil
+		}
+		lastErr = jwt.ErrSignatureInvalid
 	}
-	return claims, nil
+
+	if lastErr == nil {
+		lastErr = jwt.ErrSignatureInvalid
+	}
+	return nil, lastErr
 }
 
 // GenerateRefreshToken returns a fresh 32-byte random token + its sha256 hex hash.
