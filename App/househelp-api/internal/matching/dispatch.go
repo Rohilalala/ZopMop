@@ -39,7 +39,11 @@ import (
 // Tunables — the numeric values in the spec.
 const (
 	perProInviteWait     = 25 * time.Second
-	pollInterval         = 2 * time.Second
+	// 5s poll halves the round-trip count vs the prior 2s default
+	// (audit D3-F5). Real fix is event-driven (subscribe to booking-
+	// accepted notifications); deferred. This is the cheap mechanical
+	// win — for a 30-pro chain RTTs drop from ~390 to ~150.
+	pollInterval         = 5 * time.Second
 	chainHardCap         = 30 * time.Minute
 	stealthSearchWindow  = 15 * time.Minute
 	generalPoolCap       = 60
