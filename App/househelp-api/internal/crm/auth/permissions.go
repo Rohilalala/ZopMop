@@ -119,22 +119,22 @@ var permissions = map[string]string{
 	"lost_user.toggle":   RoleSuperadmin,
 
 	// Read permissions (audit NEW-A5-001 / A5-001).
-	// All initially at RoleViewer to match pre-gate behaviour (any
-	// authenticated CRM admin can read). Sensitive reads (users.read,
-	// workers.read, refunds.read, audit.read, flags.read,
-	// webhooks.read) should be tightened to RoleSupport/RoleAdmin in
-	// a follow-up after verifying role distribution in production.
+	// Operational reads at RoleViewer (default). Sensitive reads
+	// tightened to RoleSupport (PII drawer: users/workers/refunds)
+	// and RoleAdmin (forensic + business strategy: audit/flags/webhooks).
+	// Mechanism landed in commit e6c9f32; tightening landed in the
+	// follow-up commit that closes A5-001.
 	"alerts.read":        RoleViewer,
 	"analytics.read":     RoleViewer,
 	"app_version.read":   RoleViewer,
-	"audit.read":         RoleViewer,
+	"audit.read":         RoleAdmin,   // forensic logs + indirect PII via JSONB
 	"banners.read":       RoleViewer,
 	"blacklist.read":     RoleViewer,
 	"changelog.read":     RoleViewer,
 	"dashboard.read":     RoleViewer,
 	"disputes.read":      RoleViewer,
 	"experiments.read":   RoleViewer,
-	"flags.read":         RoleViewer,
+	"flags.read":         RoleAdmin,   // rollout strategies, surge multipliers, AI prompts
 	"fraud.read":         RoleViewer,
 	"growth.read":        RoleViewer,
 	"healthmetrics.read": RoleViewer,
@@ -145,13 +145,13 @@ var permissions = map[string]string{
 	"orders.read":        RoleViewer,
 	"payouts.read":       RoleViewer,
 	"promos.read":        RoleViewer,
-	"refunds.read":       RoleViewer,
+	"refunds.read":       RoleSupport, // customer PII + refund amount
 	"surge.read":         RoleViewer,
 	"templates.read":     RoleViewer,
 	"tickets.read":       RoleViewer,
-	"users.read":         RoleViewer,
-	"webhooks.read":      RoleViewer,
-	"workers.read":       RoleViewer,
+	"users.read":         RoleSupport, // PII drawer: phone, email, address, LTV
+	"webhooks.read":      RoleAdmin,   // vendor URLs + event payloads
+	"workers.read":       RoleSupport, // PII + live GPS + earnings
 	"zones.read":         RoleViewer,
 }
 
