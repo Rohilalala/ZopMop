@@ -12,12 +12,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strconv"
 	"sync"
@@ -130,10 +132,50 @@ func (d *Dispatcher) Dispatch(ctx context.Context, event string, payload any) {
 		s := s
 		d.wg.Go(func() {
 			defer func() { <-d.sem }()
-			if _, err := d.deliver(context.Background(), s, event, body, 1, false); err != nil {
-				log.Error().Err(err).Str("event", event).Str("webhook_id", s.ID).Msg("[webhooks] delivery persist failed")
-			}
+			d.deliverWithRetry(context.Background(), s, event, body)
 		})
+	}
+}
+
+// deliverWithRetry runs deliver() up to maxDeliveryAttempts times, with
+// jittered exponential backoff between attempts (audit D4-N2). Each
+// attempt persists its own crm_webhook_deliveries row so the audit
+// trail shows the retry timeline. Stops on 2xx (success) or 4xx
+// (client errors won't be fixed by retry); retries 5xx, transport
+// errors, and timeouts.
+func (d *Dispatcher) deliverWithRetry(ctx context.Context, s subscriber, event string, body []byte) {
+	const (
+		maxDeliveryAttempts = 3
+		baseDelay           = 500 * time.Millisecond
+	)
+	for attempt := 1; attempt <= maxDeliveryAttempts; attempt++ {
+		dlv, err := d.deliver(ctx, s, event, body, attempt, false)
+		if err != nil {
+			log.Error().Err(err).Str("event", event).Str("webhook_id", s.ID).Int("attempt", attempt).Msg("[webhooks] delivery persist failed")
+			return
+		}
+		if dlv.Succeeded {
+			return
+		}
+		// 4xx: client error, retrying is futile. Persisted row already
+		// records the failure for the CRM history view.
+		if dlv.ResponseStatus >= 400 && dlv.ResponseStatus < 500 {
+			return
+		}
+		if attempt == maxDeliveryAttempts {
+			return
+		}
+		// Jittered exponential backoff: 500ms, 1s, 2s + 0-50% jitter.
+		delay := baseDelay * (1 << (attempt - 1))
+		jitterNanos, err := rand.Int(rand.Reader, big.NewInt(int64(delay/2)))
+		if err == nil {
+			delay += time.Duration(jitterNanos.Int64())
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
 	}
 }
 
