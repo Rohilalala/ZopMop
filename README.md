@@ -340,6 +340,37 @@ must hold the migration until all old replicas drain.
 **paise** despite the `_cents` suffix. The values are correct; the names lie.
 Do not multiply when reading. Future cleanup will rename in a separate sweep.
 
+## Compliance & retention
+
+ZopMop runs scheduled retention sweeps to comply with DPDP / GDPR
+data-minimization requirements. The retention worker
+(`cmd/retention-worker`) applies time-based DELETE / anonymize policies
+across:
+
+- `bookings` — money-rail anonymized after 7 years; unpaid hard-deleted
+- `booking_messages` — sender anonymized after 24 months
+- `reviews` — bidirectional anonymize after 3 years
+- `refunds` — 7-year retention from `processed_at` (with active-lock guard)
+- `audit_log` + `crm_audit_log` — 3-year retention; target-side anonymize on user delete
+- `crm_login_attempts`, `crm_push_messages`, `helper_status_log` — 90-day retention
+
+Soft-delete of a user (`SoftDeleteUser`) invokes anonymization hooks
+across booking_messages, reviews, addresses, refunds, audit logs, JSONB
+blobs, location residue (Redis), and campaign targets. See
+`internal/compliance/` for implementation.
+
+### Running retention
+
+See `App/househelp-api/deploy/README.md` for scheduling. Default:
+03:00 IST daily via Kubernetes CronJob. Use `-dry-run` for the first
+sweep to verify counts before enabling.
+
+### DSAR support
+
+Users can request a data export via `GET /me/export`. Streaming JSON,
+rate-limited to 1 export per hour per user, helper-id / customer-id of
+counter-parties redacted. See `internal/compliance/export.go`.
+
 ## Tech Debt
 
 - COD placeholder row in `payments` for direct-pay bookings — `recordPaymentIntent`
