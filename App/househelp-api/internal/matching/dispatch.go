@@ -34,6 +34,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
 // Tunables — the numeric values in the spec.
@@ -511,7 +513,7 @@ func (d *Dispatcher) pushCustomerAccepted(ctx context.Context, customerID, booki
 // the push always has a meaningful subject.
 func (d *Dispatcher) helperName(ctx context.Context, helperID string) string {
 	var name string
-	err := d.db.QueryRow(ctx, `SELECT COALESCE(name, '') FROM users WHERE id = $1::uuid`, helperID).Scan(&name)
+	err := d.db.QueryRow(ctx, `SELECT COALESCE(name, '') FROM users WHERE id = $1::uuid AND `+users.AliveCondition, helperID).Scan(&name)
 	if err != nil || name == "" {
 		return "Your pro"
 	}

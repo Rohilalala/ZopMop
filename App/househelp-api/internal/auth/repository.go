@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/compliance"
+	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
 // Repository handles all database operations for the auth module.
@@ -123,7 +124,7 @@ func (r *Repository) IsSuspended(ctx context.Context, userID uuid.UUID) (bool, e
 	defer cancel()
 	var suspended bool
 	err := r.db.QueryRow(ctx,
-		`SELECT is_suspended FROM users WHERE id = $1`, userID,
+		`SELECT is_suspended FROM users WHERE id = $1 AND `+users.AliveCondition, userID,
 	).Scan(&suspended)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

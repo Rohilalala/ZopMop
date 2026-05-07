@@ -18,6 +18,7 @@ import (
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/users"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -594,7 +595,7 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 	}
 
 	helperName := ""
-	helperRow := s.db.QueryRow(ctx, "SELECT COALESCE(name, '') FROM users WHERE id = $1", helperID)
+	helperRow := s.db.QueryRow(ctx, "SELECT COALESCE(name, '') FROM users WHERE id = $1 AND "+users.AliveCondition, helperID)
 	if err := helperRow.Scan(&helperName); err != nil {
 		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to fetch helper name for notification")
 		helperName = "a helper"

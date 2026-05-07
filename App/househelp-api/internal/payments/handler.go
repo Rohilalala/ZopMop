@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
+	"github.com/adityarohilla/househelp-api/internal/users"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 )
 
@@ -523,7 +524,7 @@ func (h *Handler) loadCustomerDetails(ctx context.Context, userID string) (phone
 		uEmail *string
 	)
 	if err := h.db.QueryRow(ctx,
-		`SELECT phone, name, email FROM users WHERE id = $1::uuid`,
+		`SELECT phone, name, email FROM users WHERE id = $1::uuid AND `+users.AliveCondition,
 		userID,
 	).Scan(&uPhone, &uName, &uEmail); err != nil {
 		log.Warn().Err(err).Str("user_id", userID).Msg("[cashfree] load customer details failed")

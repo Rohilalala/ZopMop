@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
 // Repository handles all analytics database reads and writes.
@@ -309,7 +311,7 @@ func (r *Repository) GetOverview(ctx context.Context, days int) (*OverviewRespon
 
 	// New users in the period.
 	if err := r.db.QueryRow(qCtx,
-		`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')`, days,
+		`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - ($1 * INTERVAL '1 day') AND `+users.AliveCondition, days,
 	).Scan(&resp.NewUsers); err != nil {
 		log.Warn().Err(err).Msg("[analytics] failed to count new users")
 	}

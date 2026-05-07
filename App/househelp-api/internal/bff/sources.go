@@ -10,6 +10,7 @@ import (
 
 	"github.com/adityarohilla/househelp-api/internal/insights"
 	"github.com/adityarohilla/househelp-api/internal/services"
+	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
 // SourceRegistry is the canonical map from $ref keys to SourceDef. Keys are
@@ -145,7 +146,7 @@ func fetchUserFirstName(db *pgxpool.Pool) func(ctx context.Context, rc RequestCo
 		// users table has a single 'name' column (no first/last split).
 		// SPLIT_PART preserves the API shape (BFF key "user.first_name")
 		// downstream consumers expect (audit D1-1).
-		err := db.QueryRow(ctx, `SELECT split_part(coalesce(name, ''), ' ', 1) FROM users WHERE id = $1`, rc.UserID).Scan(&name)
+		err := db.QueryRow(ctx, `SELECT split_part(coalesce(name, ''), ' ', 1) FROM users WHERE id = $1 AND `+users.AliveCondition, rc.UserID).Scan(&name)
 		if err != nil {
 			return nil, fmt.Errorf("user.first_name: %w", err)
 		}
