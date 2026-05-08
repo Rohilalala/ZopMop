@@ -30,7 +30,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
-import { getMe, updateMe, deleteMe } from '../../api/users';
+import { getMe, updateMe, deleteMe, UnpaidBookingsError } from '../../api/users';
 import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
@@ -133,6 +133,18 @@ export default function ProfileScreen() {
                       await deleteMe(token);
                       signOut();
                     } catch (err) {
+                      if (err instanceof UnpaidBookingsError) {
+                        const totalRupees = (err.totalPaise / 100).toFixed(2);
+                        Alert.alert(
+                          'Settle pending payments',
+                          `You have ${err.count} unpaid booking(s) totaling ₹${totalRupees}. Please settle them before deleting your account.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
+                          ],
+                        );
+                        return;
+                      }
                       showError(err instanceof Error ? err.message : 'Please try again.', { title: 'Delete failed' });
                     }
                   },

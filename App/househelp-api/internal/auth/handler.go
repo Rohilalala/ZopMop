@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/internal/booking"
 	"github.com/adityarohilla/househelp-api/internal/compliance"
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/middleware"
@@ -249,6 +250,19 @@ func (h *Handler) DeleteMe(c *fiber.Ctx) error {
 	if err := h.service.DeleteAccount(c.UserContext(), userID, req.Reason); err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+		}
+		// Customer has completed-but-unpaid Cashfree bookings — block deletion
+		// with a structured 409 so the app can show a "settle pending payments"
+		// prompt instead of a generic failure. App Store guideline 5.1.1(v)
+		// allows blocking deletion when there's a contractual obligation.
+		var unpaidErr *booking.ErrUnpaidBookings
+		if errors.As(err, &unpaidErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":       "unpaid bookings block deletion",
+				"code":        "UNPAID_BOOKINGS",
+				"count":       unpaidErr.Count,
+				"total_paise": unpaidErr.TotalPaise,
+			})
 		}
 		log.Error().Err(err).Str("user_id", userID).Msg("failed to delete account")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete account"})
