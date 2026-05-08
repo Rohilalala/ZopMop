@@ -1,4 +1,14 @@
 -- 073_consent_versions.sql
+-- Self-heal: ensure the privacy_policy columns exist before the backfill
+-- below references them. Original ordering bug: this migration referenced
+-- users.privacy_policy_accepted_at before migration 077 added it, so a
+-- fresh DB applying migrations in numerical order failed at 073 with
+-- "column does not exist". ADD COLUMN IF NOT EXISTS makes both this
+-- migration and 077 idempotent regardless of which ran first.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS has_accepted_privacy_policy BOOLEAN     NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS privacy_policy_accepted_at  TIMESTAMPTZ;
+
 -- Audit C-8 / F2D-1, CH1D-11: replace the single boolean
 -- users.has_accepted_privacy_policy with a versioned, per-purpose
 -- consent ledger. The boolean stays in place for now (read-compat); a
