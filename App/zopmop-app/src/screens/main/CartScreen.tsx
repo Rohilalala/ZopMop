@@ -34,6 +34,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
 import { createScheduledBooking, getBookings } from '../../api/bookings';
+import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal from '../../components/SchedulingModal';
 import AddressPickerModal from '../../components/AddressPickerModal';
@@ -272,6 +273,21 @@ export default function CartScreen() {
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
       });
     } catch (err: any) {
+      if (err instanceof UnpaidBookingsError) {
+        // Customer has completed-but-unpaid Cashfree bookings; route them
+        // to the bookings list to settle before re-trying.
+        const totalRupees = (err.totalPaise / 100).toFixed(2);
+        Alert.alert(
+          'Settle pending payments',
+          `You have ${err.count} unpaid booking(s) totaling ₹${totalRupees}. Please settle them before booking again.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
+          ],
+        );
+        return;
+      }
+
       const code: string | undefined = err?.response?.data?.code ?? err?.code;
       const msg: string =
         err?.response?.data?.error ??

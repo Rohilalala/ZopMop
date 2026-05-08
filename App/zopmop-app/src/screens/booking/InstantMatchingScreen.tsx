@@ -22,6 +22,7 @@ import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { useAuth } from '../../context/AuthContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
+import { UnpaidBookingsError } from '../../api/users';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 import { showError } from '../../utils/toast';
@@ -172,16 +173,37 @@ export default function InstantMatchingScreen({ route }: Props) {
           return;
         }
 
-        const booking = await createInstantBooking(
-          token,
-          serviceId,
-          'User Location',
-          lat,
-          lng,
-        );
-        bookingId = booking.id;
-        bookingIdRef.current = bookingId;
-        priceCentsRef.current = booking.price_cents ?? 0;
+        try {
+          const booking = await createInstantBooking(
+            token,
+            serviceId,
+            'User Location',
+            lat,
+            lng,
+          );
+          bookingId = booking.id;
+          bookingIdRef.current = bookingId;
+          priceCentsRef.current = booking.price_cents ?? 0;
+        } catch (err) {
+          if (err instanceof UnpaidBookingsError && !cancelled) {
+            const totalRupees = (err.totalPaise / 100).toFixed(2);
+            Alert.alert(
+              'Settle pending payments',
+              `You have ${err.count} unpaid booking(s) totaling ₹${totalRupees}. Please settle them before booking again.`,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => navigation.goBack() },
+                {
+                  text: 'View Bookings',
+                  onPress: () => {
+                    navigation.goBack();
+                    navigation.navigate('Bookings');
+                  },
+                },
+              ],
+            );
+          }
+          return;
+        }
       } catch {
         return;
       }

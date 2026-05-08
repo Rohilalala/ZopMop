@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import { BASE_URL, authHeaders, validateShape } from './config';
+import { UnpaidBookingsError } from './users';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -76,8 +77,16 @@ export async function createInstantBooking(
     }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? 'Failed to create instant booking');
+    const err = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      count?: number;
+      total_paise?: number;
+    };
+    if (res.status === 409 && err.code === 'UNPAID_BOOKINGS') {
+      throw new UnpaidBookingsError(err.count ?? 0, err.total_paise ?? 0);
+    }
+    throw new Error(err.error ?? 'Failed to create instant booking');
   }
   return validateShape<InstantBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_cents', 'created_at']);
 }

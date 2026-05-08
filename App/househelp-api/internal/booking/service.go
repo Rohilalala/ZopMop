@@ -361,6 +361,19 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		return nil, fmt.Errorf("maximum active bookings limit reached")
 	}
 
+	// Block re-booking when the customer has completed-but-unpaid Cashfree
+	// bookings. Same predicate as the SoftDeleteUser guard — single source
+	// of truth in Repository.GetUnpaidBookingsForCustomer. Revenue-leak
+	// prevention: without this, a customer whose Cashfree webhook silently
+	// failed could keep racking up bookings indefinitely.
+	unpaidCount, unpaidTotal, err := s.repo.GetUnpaidBookingsForCustomer(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("check unpaid bookings: %w", err)
+	}
+	if unpaidCount > 0 {
+		return nil, &ErrUnpaidBookings{Count: unpaidCount, TotalPaise: unpaidTotal}
+	}
+
 	// Validate that the service category exists and is active.
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -970,6 +983,17 @@ func (s *Service) CreateScheduledBooking(
 	}
 	if activeCount >= maxActive {
 		return nil, fmt.Errorf("maximum active bookings limit reached")
+	}
+
+	// Block re-booking when the customer has completed-but-unpaid Cashfree
+	// bookings. Mirror of the gate in CreateBooking — same predicate, same
+	// error type, same handler mapping.
+	unpaidCount, unpaidTotal, unpaidErr := s.repo.GetUnpaidBookingsForCustomer(ctx, customerID)
+	if unpaidErr != nil {
+		return nil, fmt.Errorf("check unpaid bookings: %w", unpaidErr)
+	}
+	if unpaidCount > 0 {
+		return nil, &ErrUnpaidBookings{Count: unpaidCount, TotalPaise: unpaidTotal}
 	}
 
 	isStealth, fireAt, schedErr := s.classifyScheduling(scheduledTime)
