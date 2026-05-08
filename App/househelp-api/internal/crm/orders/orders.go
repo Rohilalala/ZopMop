@@ -670,6 +670,9 @@ func (h *Handler) AvailableWorkers(c *fiber.Ctx) error {
 		log.Error().Err(err).Str("order_id", id).Msg("[crm.orders] available workers failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	// Audit candidate-worker reveal (audit A5-02 broader). Returns nearby
+	// worker names + location proxy; HIGH PII.
+	h.audit(c, "order.candidates.list", id, nil, fiber.Map{"count": len(workers), "radius_km": radiusKm})
 	return c.JSON(fiber.Map{"items": workers, "radius_km": radiusKm})
 }
 

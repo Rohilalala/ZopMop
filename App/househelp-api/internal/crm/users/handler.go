@@ -77,31 +77,41 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		log.Error().Err(err).Msg("[crm.users] get failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	// Audit single-user PII reads (audit NEW-A1-002 partial). List / orders
-	// / notes endpoints are intentionally NOT audited — high volume would
-	// drown signal. The single-record drawer is where the PII surface lives.
+	// Audit single-user PII reads (audit NEW-A1-002 + A5-02 broader).
+	// Top-level GET /users (list) intentionally NOT audited — high-volume
+	// admin browsing drowns signal. Scoped sub-routes (/orders, /notes) ARE
+	// audited via separate emissions in their handlers — same drawer access
+	// pattern, bounded volume.
 	h.audit(c, "user.view", id, nil, nil)
 	return c.JSON(d)
 }
 
 // Orders handles GET /users/:id/orders.
 func (h *Handler) Orders(c *fiber.Ctx) error {
+	id := c.Params("id")
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.repo.Orders(c.UserContext(), c.Params("id"), limit)
+	out, err := h.repo.Orders(c.UserContext(), id, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] orders failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit scoped PII read (audit A5-02 broader). Per-user booking history
+	// reveals financial detail; bounded volume (one drawer = one emission).
+	h.audit(c, "user.orders.list", id, nil, fiber.Map{"count": len(out)})
 	return c.JSON(fiber.Map{"orders": out})
 }
 
 // ListNotes handles GET /users/:id/notes.
 func (h *Handler) ListNotes(c *fiber.Ctx) error {
-	out, err := h.repo.ListNotes(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	out, err := h.repo.ListNotes(c.UserContext(), id)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.users] list notes failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit scoped PII read (audit A5-02 broader). Notes are the highest-PII
+	// surface in CRM — admin-curated free text. Audit emission is mandatory.
+	h.audit(c, "user.notes.list", id, nil, fiber.Map{"count": len(out)})
 	return c.JSON(fiber.Map{"notes": out})
 }
 

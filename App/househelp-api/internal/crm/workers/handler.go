@@ -110,12 +110,16 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 // Jobs handles GET /workers/:id/jobs.
 func (h *Handler) Jobs(c *fiber.Ctx) error {
+	id := c.Params("id")
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
-	out, err := h.repo.Jobs(c.UserContext(), c.Params("id"), limit)
+	out, err := h.repo.Jobs(c.UserContext(), id, limit)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.workers] jobs failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit scoped PII read (audit A5-02 broader). Per-worker job history
+	// reveals income detail; bounded volume.
+	h.audit(c, "worker.jobs.list", id, nil, fiber.Map{"count": len(out)})
 	return c.JSON(fiber.Map{"jobs": out})
 }
 

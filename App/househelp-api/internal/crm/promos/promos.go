@@ -306,13 +306,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c *fiber.Ctx) error {
-	out, err := h.repo.Get(c.UserContext(), c.Params("id"))
+	id := c.Params("id")
+	out, err := h.repo.Get(c.UserContext(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "promo not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
+	// Audit promo detail read (audit A5-02 broader). Response includes
+	// audience_user_ids — direct user-targeting surface.
+	h.audit(c, "promo.view", id, nil, nil)
 	return c.JSON(out)
 }
 
