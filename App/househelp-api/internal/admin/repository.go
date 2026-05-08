@@ -352,11 +352,11 @@ func (r *Repository) GetBookingsList(ctx context.Context, page, limit int, statu
 			LIMIT $2 OFFSET $3
 		)
 		SELECT
-			b.id, b.customer_id, cu.phone, b.helper_id, hu.phone,
+			b.id, b.customer_id, COALESCE(cu.phone, '(deleted)'), b.helper_id, hu.phone,
 			sc.name, b.status, b.amount_paise, b.discount_paise, b.created_at
 		FROM page p
 		JOIN bookings b ON b.id = p.id
-		JOIN users cu ON b.customer_id = cu.id
+		LEFT JOIN users cu ON b.customer_id = cu.id AND cu.deleted_at IS NULL
 		LEFT JOIN users hu ON b.helper_id = hu.id AND hu.deleted_at IS NULL
 		JOIN service_categories sc ON b.service_category_id = sc.id
 		ORDER BY b.created_at DESC

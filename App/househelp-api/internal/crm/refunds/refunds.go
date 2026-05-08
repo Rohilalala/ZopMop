@@ -83,11 +83,11 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 	args = append(args, limit, offset)
 	limitParam, offsetParam := len(args)-1, len(args)
 	rows, err := r.read.Query(ctx, fmt.Sprintf(`
-		SELECT pr.id::text, pr.user_id::text, u.name, u.phone,
+		SELECT pr.id::text, pr.user_id::text, u.name, COALESCE(u.phone, '(deleted)'),
 		       pr.amount_cents, pr.source, pr.source_ref, pr.status,
 		       pr.created_at, pr.settled_at
 		FROM pending_refunds pr
-		JOIN users u ON u.id = pr.user_id
+		LEFT JOIN users u ON u.id = pr.user_id AND u.deleted_at IS NULL
 		%s
 		ORDER BY pr.created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -120,11 +120,11 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 func (r *Repository) Get(ctx context.Context, id string) (*Item, error) {
 	var i Item
 	err := r.read.QueryRow(ctx, `
-		SELECT pr.id::text, pr.user_id::text, u.name, u.phone,
+		SELECT pr.id::text, pr.user_id::text, u.name, COALESCE(u.phone, '(deleted)'),
 		       pr.amount_cents, pr.source, pr.source_ref, pr.status,
 		       pr.created_at, pr.settled_at
 		FROM pending_refunds pr
-		JOIN users u ON u.id = pr.user_id
+		LEFT JOIN users u ON u.id = pr.user_id AND u.deleted_at IS NULL
 		WHERE pr.id = $1::uuid
 	`, id).Scan(&i.ID, &i.UserID, &i.UserName, &i.UserPhone,
 		&i.AmountCents, &i.Source, &i.SourceRef, &i.Status,

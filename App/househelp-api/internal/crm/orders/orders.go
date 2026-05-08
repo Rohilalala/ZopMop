@@ -177,12 +177,12 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	limitParam, offsetParam := len(args)-1, len(args)
 
 	pageSQL := fmt.Sprintf(`
-		SELECT b.id::text, cu.name, cu.phone, hu.name, hu.phone,
+		SELECT b.id::text, cu.name, COALESCE(cu.phone, '(deleted)'), hu.name, hu.phone,
 		       COALESCE(sc.name, '—'),
 		       b.status, b.amount_paise, b.discount_paise, b.promo_code,
 		       b.created_at, b.completed_at
 		FROM bookings b
-		JOIN users cu ON cu.id = b.customer_id
+		LEFT JOIN users cu ON cu.id = b.customer_id AND cu.deleted_at IS NULL
 		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		%s
@@ -215,7 +215,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	countArgs := args[:len(args)-2]
 	countSQL := fmt.Sprintf(`
 		SELECT COUNT(*) FROM bookings b
-		JOIN users cu ON cu.id = b.customer_id
+		LEFT JOIN users cu ON cu.id = b.customer_id AND cu.deleted_at IS NULL
 		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		%s
@@ -230,7 +230,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 // Get returns the per-order detail.
 func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	const q = `
-		SELECT b.id::text, cu.name, cu.phone, hu.name, hu.phone,
+		SELECT b.id::text, cu.name, COALESCE(cu.phone, '(deleted)'), hu.name, hu.phone,
 		       COALESCE(sc.name, '—'),
 		       b.status, b.amount_paise, b.discount_paise, b.promo_code,
 		       b.created_at, b.completed_at,
@@ -239,7 +239,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		       b.scheduled_time, b.matched_at, b.accepted_at,
 		       b.started_at, b.arrived_at, b.cancelled_at, b.cancelled_by
 		FROM bookings b
-		JOIN users cu ON cu.id = b.customer_id
+		LEFT JOIN users cu ON cu.id = b.customer_id AND cu.deleted_at IS NULL
 		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
 		WHERE b.id = $1::uuid
