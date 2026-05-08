@@ -459,7 +459,13 @@ func main() {
 	zopHandler := zop.NewHandler(zopService)
 	// Wipe Zop state (history, rate limit, session set) on account deletion.
 	authService.RegisterPostDeleteHook(zopService.DeleteUserData)
-	zopGroup := api.Group("/zop", mw.Timeout(90*time.Second), authMiddleware, authLimiter, dbBoundLimiter)
+	// Zop is a customer-facing assistant. All 12 tools are scoped to the
+	// caller's customer-side data (cart, bookings, addresses); helpers /
+	// admins authenticated with the same JWT scheme have no business hitting
+	// the chat endpoint and would only see empty data anyway. Gate the route
+	// to role=customer so the surface isn't reachable by other roles.
+	// Audit NEW-A2-002 item d.
+	zopGroup := api.Group("/zop", mw.Timeout(90*time.Second), authMiddleware, mw.RequireRole("customer"), authLimiter, dbBoundLimiter)
 	zopHandler.RegisterRoutes(zopGroup)
 
 	// Places autocomplete proxy (requires JWT — key must not be public).
