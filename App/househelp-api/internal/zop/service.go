@@ -38,6 +38,16 @@ const (
 	historyMaxReturned   = 10
 	historyTTL           = 24 * time.Hour
 	maxAgentIterations   = 8
+	// maxToolCallsPerIteration caps the number of parallel tool calls Zop
+	// will execute in one assistant turn. The OpenAI/Anthropic protocol
+	// allows a single assistant message to request many parallel tool calls;
+	// without a cap, an adversarial prompt could amplify cost
+	// (8 iterations × N parallel calls per iter = unbounded). 5 is generous
+	// for legitimate flows (a complete booking turn rarely exceeds 3 tools)
+	// and tight enough to cap abuse. Excess calls receive a synthetic
+	// refusal tool_result so the chat brain can re-plan on the next iter.
+	// Audit NEW-A2-002 item b.
+	maxToolCallsPerIteration = 5
 	cleanerMaxTokens     = 200
 	chatMaxTokens        = 4096
 	llmCallTimeout       = 30 * time.Second
@@ -1788,7 +1798,27 @@ func (s *Service) ZopAgentLoop(ctx context.Context, userID, firstName, cleanedMe
 			// Echo the assistant's tool-call message into history so the
 			// model can correlate tool results with its requests.
 			messages = append(messages, choice.Message)
-			for _, tc := range choice.Message.ToolCalls {
+			if len(choice.Message.ToolCalls) > maxToolCallsPerIteration {
+				log.Warn().
+					Int("iter", i).
+					Int("requested", len(choice.Message.ToolCalls)).
+					Int("cap", maxToolCallsPerIteration).
+					Msg("[zop] tool-call cap exceeded; refusing excess")
+			}
+			for idx, tc := range choice.Message.ToolCalls {
+				if idx >= maxToolCallsPerIteration {
+					// Synthesise a refusal tool_result for the excess call.
+					// Protocol requires a matching tool_result for every
+					// tool_use, so we can't simply drop the call. Refusal
+					// content lets the chat brain see the cap and re-plan.
+					messages = append(messages, openRouterMessage{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Name:       tc.Function.Name,
+						Content:    `{"error":"tool_call_cap_exceeded_per_iteration","max":5,"hint":"please request fewer tools per turn and try again"}`,
+					})
+					continue
+				}
 				var args map[string]interface{}
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 				toolResult := s.ZopToolExecutor(ctx, userID, tc.Function.Name, args)
