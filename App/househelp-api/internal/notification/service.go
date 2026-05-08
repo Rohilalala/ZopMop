@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 	"google.golang.org/api/option"
+
+	"github.com/adityarohilla/househelp-api/internal/credentials"
 )
 
 // Service handles push notification delivery via Firebase Cloud Messaging.
@@ -37,8 +39,8 @@ func (s *Service) SetTokenResolver(r *TokenResolver) { s.resolver = r }
 // NewService initialises FCM and wires a DB pool for token lookup.
 func NewService(ctx context.Context, db *pgxpool.Pool) *Service {
 	var opts []option.ClientOption
-	if creds := os.Getenv("FIREBASE_CREDENTIALS_JSON"); creds != "" {
-		opts = append(opts, option.WithCredentialsFile(creds))
+	if opt := credentials.FirebaseOption(os.Getenv("FIREBASE_CREDENTIALS_JSON")); opt != nil {
+		opts = append(opts, opt)
 	}
 
 	app, err := firebase.NewApp(ctx, nil, opts...)
