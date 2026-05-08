@@ -22,6 +22,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/auth"
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	"github.com/adityarohilla/househelp-api/internal/cart"
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/slots"
 	"github.com/redis/go-redis/v9"
@@ -241,16 +242,22 @@ type ZopAgentResult struct {
 // Service is the Zop assistant service. All external dependencies are
 // injected via the constructor; the service itself holds no other state.
 type Service struct {
-	rdb         *redis.Client
-	bookingSvc  *booking.Service
-	addressSvc  *addresses.Service
-	slotsSvc    *slots.Service
-	cartSvc     *cart.Service
-	servicesSvc *services.Catalog
-	authSvc     *auth.Service
-	httpClient  *http.Client
-	apiKey      string
+	rdb           *redis.Client
+	bookingSvc    *booking.Service
+	addressSvc    *addresses.Service
+	slotsSvc      *slots.Service
+	cartSvc       *cart.Service
+	servicesSvc   *services.Catalog
+	authSvc       *auth.Service
+	httpClient    *http.Client
+	apiKey        string
+	auditRecorder *audit.Recorder
 }
+
+// SetAuditRecorder wires the CRM audit recorder so every Zop tool dispatch
+// produces a persistent audit row (action="zop.tool.<name>"). Optional —
+// nil recorder no-ops. Audit NEW-A2-002 item a.
+func (s *Service) SetAuditRecorder(r *audit.Recorder) { s.auditRecorder = r }
 
 // NewService constructs a Zop service. The OpenRouter API key is read from
 // OPENROUTER_API_KEY at the call site and passed in. cartSvc and servicesSvc
@@ -1181,16 +1188,57 @@ func looksLikeConfirmation(s string) bool {
 	return false
 }
 
+// truncateForAudit caps a string at maxLen runes for safe persistence. Used
+// to keep audit row payloads bounded.
+func truncateForAudit(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
+}
+
+// recordToolDispatch persists a single tool-call event to the CRM audit log.
+// Args + result are PII-redacted via redactPII and truncated to 500 chars.
+// Best-effort: nil recorder no-ops. Audit NEW-A2-002 item a.
+func (s *Service) recordToolDispatch(ctx context.Context, userID, toolName string, args map[string]interface{}, result string, latencyMs int64) {
+	if s.auditRecorder == nil {
+		return
+	}
+	argsRaw, _ := json.Marshal(args)
+	resultStatus := "success"
+	if strings.Contains(result, `"error"`) {
+		resultStatus = "error"
+	}
+	s.auditRecorder.Log(ctx, audit.Entry{
+		Action:     "zop.tool." + toolName,
+		Module:     "zop",
+		TargetType: "user",
+		TargetID:   userID,
+		After: map[string]any{
+			"tool":          toolName,
+			"args":          redactPII(truncateForAudit(string(argsRaw), 500)),
+			"result":        redactPII(truncateForAudit(result, 500)),
+			"result_status": resultStatus,
+			"latency_ms":    latencyMs,
+		},
+	})
+}
+
 // ZopToolExecutor dispatches an LLM tool call to the right service and
 // returns a JSON string for the model to read. Always returns valid JSON;
-// never panics.
-func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, args map[string]interface{}) string {
+// never panics. Every dispatch is audit-logged via recordToolDispatch
+// (uses named return + defer so every code path emits exactly one row).
+func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, args map[string]interface{}) (result string) {
 	// Gemini sometimes prefixes tool names with "default_api." (its internal
 	// namespace for OpenAI-format tools). Strip any leading namespace so
 	// bare names match.
 	if i := strings.LastIndex(toolName, "."); i >= 0 {
 		toolName = toolName[i+1:]
 	}
+	start := time.Now()
+	defer func() {
+		s.recordToolDispatch(ctx, userID, toolName, args, result, time.Since(start).Milliseconds())
+	}()
 	// Enforce the confirmation gate at the executor for destructive tools —
 	// prompt rules alone don't reliably bind smaller models. The user's most
 	// recent message must read as a confirmation; otherwise we refuse and

@@ -456,6 +456,9 @@ func main() {
 	// OPENROUTER_API_KEY; if unset Zop still mounts but falls open on cleans
 	// and the chat loop will surface an error reply.
 	zopService := zop.NewService(rdb, bookingService, addressService, slotsService, cartService, servicesCatalog, authService, os.Getenv("OPENROUTER_API_KEY"))
+	// Wire the CRM audit recorder so every Zop tool dispatch produces a
+	// persistent audit row. Audit NEW-A2-002 item a.
+	zopService.SetAuditRecorder(auditRecorder)
 	zopHandler := zop.NewHandler(zopService)
 	// Wipe Zop state (history, rate limit, session set) on account deletion.
 	authService.RegisterPostDeleteHook(zopService.DeleteUserData)
