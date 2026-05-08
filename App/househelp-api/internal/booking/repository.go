@@ -409,6 +409,32 @@ func (r *Repository) GetActiveBookingsCount(ctx context.Context, customerID stri
 	return count, nil
 }
 
+// GetUnpaidBookingsForCustomer returns the count and net amount (after
+// discount) of completed-but-unpaid Cashfree bookings for a customer.
+// The predicate inverts compliance.moneyMovedPredicate — single source of
+// truth for "money owed but not collected." Used by the soft-delete guard
+// (App Store 5.1.1(v) compliance) and the re-booking guard (revenue-leak
+// prevention).
+func (r *Repository) GetUnpaidBookingsForCustomer(ctx context.Context, customerID string) (count int, totalPaise int64, err error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	err = r.db.QueryRow(queryCtx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(amount_paise - COALESCE(discount_paise, 0)), 0)
+		FROM bookings
+		WHERE customer_id = $1
+		  AND status = 'completed'
+		  AND payment_method = 'cashfree'
+		  AND payment_status IS DISTINCT FROM 'paid'
+	`, customerID).Scan(&count, &totalPaise)
+	if err != nil {
+		return 0, 0, fmt.Errorf("query unpaid bookings: %w", err)
+	}
+	return count, totalPaise, nil
+}
+
 // GetHelperActiveBookings returns bookings assigned to this helper that are
 // currently accepted or in_progress (instant or scheduled). Newest first.
 func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID string) ([]Booking, error) {

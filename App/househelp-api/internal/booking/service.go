@@ -138,6 +138,26 @@ type WalletDebiter interface {
 // Handler maps this to 402 with code "insufficient_wallet_balance".
 var ErrInsufficientWalletBalance = errors.New("insufficient wallet balance")
 
+// ErrUnpaidBookings is returned when a customer has completed-but-unpaid
+// bookings that block another action (account deletion, new booking
+// creation). Carries the count and total amount so callers can render a
+// user-actionable error.
+//
+// The "unpaid" predicate matches the inverse of compliance.moneyMovedPredicate
+// — bookings where service was rendered but payment never settled. Today
+// this means Cashfree bookings whose webhook never fired (payment_status=NULL)
+// or where the gateway rejected the card post-service (payment_status='failed').
+//
+// Audit trail: Apple 5.1.1(v) deletion compliance + revenue leakage prevention.
+type ErrUnpaidBookings struct {
+	Count      int
+	TotalPaise int64
+}
+
+func (e *ErrUnpaidBookings) Error() string {
+	return fmt.Sprintf("customer has %d unpaid booking(s) totaling %d paise", e.Count, e.TotalPaise)
+}
+
 // Service handles booking business logic.
 type Service struct {
 	repo         *Repository

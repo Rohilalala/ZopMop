@@ -132,6 +132,19 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 			})
 		}
 
+		// Customer has completed-but-unpaid Cashfree bookings — 409 with
+		// count + total so the app can render a "settle pending payments"
+		// prompt and deep-link to the bookings list.
+		var unpaidErr *ErrUnpaidBookings
+		if errors.As(err, &unpaidErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":       "unpaid bookings block this action",
+				"code":        "UNPAID_BOOKINGS",
+				"count":       unpaidErr.Count,
+				"total_paise": unpaidErr.TotalPaise,
+			})
+		}
+
 		log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
 
 		status := fiber.StatusInternalServerError
@@ -273,6 +286,15 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
 				"error": "insufficient wallet balance",
 				"code":  "INSUFFICIENT_WALLET_BALANCE",
+			})
+		}
+		var unpaidErr *ErrUnpaidBookings
+		if errors.As(err, &unpaidErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":       "unpaid bookings block this action",
+				"code":        "UNPAID_BOOKINGS",
+				"count":       unpaidErr.Count,
+				"total_paise": unpaidErr.TotalPaise,
 			})
 		}
 		status := fiber.StatusInternalServerError
