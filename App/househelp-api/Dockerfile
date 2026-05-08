@@ -9,8 +9,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+WORKDIR /app
 COPY --from=build /out/api /usr/local/bin/api
-COPY migrations /migrations
+COPY schemas /app/schemas
+COPY migrations /app/migrations
 USER app
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/api"]
