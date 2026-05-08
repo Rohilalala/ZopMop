@@ -58,11 +58,11 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 	args = append(args, limit, offset)
 	limitParam, offsetParam := len(args)-1, len(args)
 	rows, err := r.read.Query(ctx, fmt.Sprintf(`
-		SELECT p.id::text, p.worker_id::text, u.name, u.phone,
+		SELECT p.id::text, p.worker_id::text, u.name, COALESCE(u.phone, '(deleted)'),
 		       p.period_start, p.period_end, p.amount_cents, p.status,
 		       p.paid_at, p.external_ref, p.notes, p.created_at
 		FROM crm_payouts p
-		JOIN users u ON u.id = p.worker_id
+		LEFT JOIN users u ON u.id = p.worker_id AND u.deleted_at IS NULL
 		%s
 		ORDER BY p.created_at DESC
 		LIMIT $%d OFFSET $%d

@@ -72,7 +72,7 @@ func (r *Repository) GetBookingInviteDetails(ctx context.Context, bookingIDs []s
 		   b.amount_paise,
 		   b.created_at
 		 FROM bookings b
-		 JOIN users u ON u.id = b.customer_id
+		 LEFT JOIN users u ON u.id = b.customer_id AND u.deleted_at IS NULL
 		 LEFT JOIN user_addresses a ON a.id = b.address_id
 		 WHERE b.id = ANY($1::uuid[])
 		   AND b.status = 'pending'
