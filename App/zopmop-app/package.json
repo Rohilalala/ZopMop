@@ -36,6 +36,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.17",
     "gsap": "^3.15.0",
     "lottie-react-native": "~7.3.1",
     "nativewind": "^4.2.3",
