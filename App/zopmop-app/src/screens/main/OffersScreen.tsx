@@ -49,6 +49,9 @@ type Offer = {
   terms: string[];
 };
 
+// TODO(backend): replace with GET /offers so coupons can be added/expired
+// without an app update. Backend must also validate codes at booking time —
+// today an unmarked offer can be applied indefinitely. Tracked as S23.
 const OFFERS: Offer[] = [
   {
     id: 'WARDROBE10',

@@ -19,10 +19,12 @@ const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 export function HomeFooter() {
+  // Trust strip ("8,400+ verified pros / 100% / 60 sec avg booking") is
+  // hidden until backend exposes a real /stats endpoint (S20–S22). The
+  // figures were fabricated for a brand-new app and would mislead users.
   return (
     <View style={{ marginTop: 14, paddingBottom: 16 }}>
       <ScheduleCard />
-      <TrustStrip />
       <Signoff />
     </View>
   );

@@ -10,10 +10,12 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  
+  Linking,
+
   Animated,
   Easing,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SkeletonBox } from '../../components/SkeletonBox';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,14 +33,23 @@ import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { getMe, updateMe, deleteMe, UnpaidBookingsError } from '../../api/users';
+import { listAddresses } from '../../api/addresses';
+import { listExperts } from '../../api/experts';
+import { useRoomies } from '../../context/RoomiesContext';
 import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
 
+// Brand legal URLs — matched with auth/OTPVerificationScreen.tsx.
+const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
+const TERMS_URL = 'https://zopmop.com/terms';
+
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
-const APP_VERSION = '1.0.0';
+// Pull from Expo manifest so the About modal + footer track the shipped version.
+const APP_VERSION =
+  (Constants?.expoConfig?.version as string | undefined) ?? '1.0.0';
 const H_PAD = 20;
 
 const C = {
@@ -86,10 +97,16 @@ export default function ProfileScreen() {
   const { token, user, signOut, updateUser } = useAuth();
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
+  const { myGroup } = useRoomies();
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
   const [darkOn, setDarkOn] = useState(true);
   const [remindersOn, setRemindersOn] = useState(true);
+
+  // Real meta wired to the existing per-user endpoints. We only render meta
+  // strings once a value resolves — undefined collapses the row's subtitle.
+  const [addressMeta, setAddressMeta] = useState<string | undefined>();
+  const [expertsMeta, setExpertsMeta] = useState<string | undefined>();
 
   useEffect(() => {
     if (!token || token === '__guest__') return;
@@ -99,6 +116,41 @@ export default function ProfileScreen() {
       .catch(() => {})
       .finally(() => setFetchingProfile(false));
   }, []);
+
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    let alive = true;
+    listAddresses(token)
+      .then((rows) => {
+        if (!alive) return;
+        if (!rows || rows.length === 0) { setAddressMeta(undefined); return; }
+        const tags = rows.map((r) => r.tag).filter(Boolean) as string[];
+        const uniqueTags = Array.from(new Set(tags));
+        if (uniqueTags.length === 0) {
+          setAddressMeta(`${rows.length} saved`);
+          return;
+        }
+        const shown = uniqueTags.slice(0, 2).join(' · ');
+        const extra = rows.length - Math.min(uniqueTags.length, 2);
+        setAddressMeta(extra > 0 ? `${shown} · +${extra} more` : shown);
+      })
+      .catch(() => {});
+    listExperts(token)
+      .then((res) => {
+        if (!alive) return;
+        const n = res?.experts?.length ?? 0;
+        setExpertsMeta(n > 0 ? `${n} favorite${n === 1 ? '' : 's'}` : undefined);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [token]);
+
+  const roomiesMeta = useMemo(() => {
+    const n = myGroup?.members?.length ?? 0;
+    if (!myGroup) return 'Not joined yet';
+    if (n === 0) return 'Not joined yet';
+    return `${n} member${n === 1 ? '' : 's'} · split bills automatically`;
+  }, [myGroup]);
 
   const handleLogout = () => {
     haptics.warning();
@@ -168,7 +220,7 @@ export default function ProfileScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={s.iconBtn}
-            onPress={() => showInfo('Reach support from the Help screen.', { title: 'Help' })}
+            onPress={() => navigation.navigate('HelpSupport')}
             activeOpacity={0.75}
             hitSlop={10}
           >
@@ -191,11 +243,8 @@ export default function ProfileScreen() {
 
           <ActionRail navigation={navigation} />
 
-          <ReferralTicket
-            onPress={() =>
-              showInfo('Share ZopMop with friends — you both earn ₹100 in wallet credit. Coming soon.', { title: 'Refer & earn ₹100' })
-            }
-          />
+          {/* Referral ticket hidden until the referral program ships end-to-end
+              (S14, S15). Re-enable when /me/referrals + share intent are wired. */}
 
           <SectionHeader>Preferences</SectionHeader>
           <Card>
@@ -205,10 +254,11 @@ export default function ProfileScreen() {
               meta={darkOn ? 'Dark mode' : 'Light mode'}
               right={<Toggle on={darkOn} onChange={setDarkOn} />}
             />
+            {/* Reminder timing is locally toggled today; meta hidden until
+                backend exposes a reminder-prefs endpoint (S8). */}
             <Row
               icon={<Feather name="bell" size={17} color={C.amber} />}
               label="Reminders"
-              meta="30 min before booking"
               right={<Toggle on={remindersOn} onChange={setRemindersOn} />}
               last
             />
@@ -219,30 +269,30 @@ export default function ProfileScreen() {
             <Row
               icon={<Feather name="map-pin" size={17} color={C.amber} />}
               label="Saved Addresses"
-              meta="Home · Work · 1 more"
+              meta={addressMeta}
               chev
               onPress={() => navigation.navigate('Addresses')}
             />
             <Row
               icon={<Feather name="home" size={17} color={C.amber} />}
               label="Roomies"
-              meta="3 members · split bills automatically"
+              meta={roomiesMeta}
               chev
               onPress={() => navigation.navigate('RoomiesSetup')}
             />
             <Row
               icon={<Feather name="users" size={17} color={C.amber} />}
               label="Your Experts"
-              meta="5 favorite pros"
+              meta={expertsMeta}
               chev
               onPress={() => navigation.navigate('YourExperts')}
             />
+            {/* Notifications meta hidden until /me/notification-prefs ships (S7). */}
             <Row
               icon={<Feather name="bell" size={17} color={C.amber} />}
               label="Notifications"
-              meta="Push · WhatsApp · Email"
               chev
-              onPress={() => showInfo('Notification settings are coming soon.', { title: 'Notifications' })}
+              onPress={() => showInfo("We'll let you know when channel preferences are configurable.", { title: 'Notifications' })}
               last
             />
           </Card>
@@ -254,21 +304,21 @@ export default function ProfileScreen() {
               icon={<Feather name="info" size={17} color="rgba(255,255,255,0.6)" />}
               label="About ZopMop"
               chev
-              onPress={() => showInfo('ZopMop · v1.0.0\nHome, handled.', { title: 'About ZopMop' })}
+              onPress={() => showInfo(`ZopMop · v${APP_VERSION}\nHome, handled.`, { title: 'About ZopMop' })}
             />
             <Row
               muted
               icon={<Feather name="file-text" size={17} color="rgba(255,255,255,0.6)" />}
               label="Terms of Service"
               chev
-              onPress={() => showInfo('Coming soon.', { title: 'Terms of Service' })}
+              onPress={() => Linking.openURL(TERMS_URL).catch(() => showError('Could not open Terms of Service.', { title: 'Terms' }))}
             />
             <Row
               muted
               icon={<Feather name="shield" size={17} color="rgba(255,255,255,0.6)" />}
               label="Privacy Policy"
               chev
-              onPress={() => showInfo('Coming soon.', { title: 'Privacy Policy' })}
+              onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => showError('Could not open Privacy Policy.', { title: 'Privacy' }))}
               last
             />
           </Card>
@@ -315,7 +365,9 @@ function HeroCard({
   const initials = getInitials(name);
   const displayName = name ?? 'Add your name';
   const displayPhone = formatPhone(phone);
-  const bookingsLabel = '14 bookings';
+  // S1, S2: Active-member chip + bookings count are hidden until the backend
+  // exposes membership tier + completed_bookings_count on the user record.
+  // Falling back to fabricated values would mislead fresh accounts.
 
   return (
     <View style={s.heroWrap}>
@@ -378,15 +430,6 @@ function HeroCard({
                     {displayPhone}
                   </Text>
                 )}
-                <View style={s.heroChips}>
-                  <View style={s.chip}>
-                    <View style={s.chipDot} />
-                    <Text style={s.chipText}>Active member</Text>
-                  </View>
-                  <View style={s.chip}>
-                    <Text style={s.chipText}>{bookingsLabel}</Text>
-                  </View>
-                </View>
               </>
             )}
           </View>
@@ -397,12 +440,21 @@ function HeroCard({
 }
 
 function ActionRail({ navigation }: { navigation: Nav }) {
-  const items = [
+  // Pip badges (Bookings/Offers) are hidden until the backend provides counts:
+  //   • Bookings — needs an upcoming-count on /bookings or a /me summary (S9).
+  //   • Offers — needs GET /offers (S10/S23).
+  // Showing fabricated 2/3 values misled fresh accounts.
+  const items: Array<{
+    id: string;
+    label: string;
+    icon: React.ReactNode;
+    pip?: number;
+    go: () => void;
+  }> = [
     {
       id: 'bookings',
       label: 'Bookings',
       icon: <Feather name="calendar" size={22} color={C.amber} />,
-      pip: 2,
       go: () => navigation.navigate('Bookings'),
     },
     {
@@ -415,7 +467,6 @@ function ActionRail({ navigation }: { navigation: Nav }) {
       id: 'offers',
       label: 'Offers',
       icon: <Feather name="tag" size={22} color={C.amber} />,
-      pip: 3,
       go: () => navigation.navigate('Offers'),
     },
     {

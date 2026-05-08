@@ -107,6 +107,10 @@ export type MainStackParamList = {
     otp?: string;
     /** ISO timestamp when booking was confirmed (for the timeline). */
     confirmedAt?: string;
+    /** ISO timestamp when the booking was created (used to compute "accepted in X"). */
+    createdAt?: string;
+    /** ISO timestamp when the helper accepted the booking. */
+    acceptedAt?: string;
   };
   BookingConfirmed: {
     bookingId: string;
@@ -125,6 +129,8 @@ export type MainStackParamList = {
     promoCode?: string;
     /** If true, render the instant-booking variant; else scheduled. */
     instant?: boolean;
+    /** Initial ETA (minutes) for the "When" tile on instant bookings. */
+    etaMinutes?: number;
   };
   Chat: {
     bookingId: string;

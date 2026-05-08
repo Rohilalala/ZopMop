@@ -104,13 +104,17 @@ export default function TrackLiveScreen() {
   const {
     bookingId,
     serviceName,
-    helperName = 'Priya M.',
+    helperName,
     helperPhone,
-    helperRating = 4.9,
-    helperJobs = 312,
-    distanceKm: paramDistanceKm = 1.2,
+    helperRating,
+    helperJobs,
+    distanceKm: paramDistanceKm,
     otp,
+    createdAt,
+    acceptedAt,
   } = params;
+  // Display fallback only — never sent to backend, never used in greetings.
+  const displayHelperName = helperName ?? 'Your pro';
 
   const onCallPro = () => {
     if (!helperPhone) return;
@@ -118,7 +122,7 @@ export default function TrackLiveScreen() {
   };
   const onMessagePro = () => {
     if (!bookingId) return;
-    navigation.navigate('Chat', { bookingId, helperName });
+    navigation.navigate('Chat', { bookingId, helperName: helperName });
   };
 
   // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
@@ -190,7 +194,10 @@ export default function TrackLiveScreen() {
     : null;
 
   const etaMinutes = Math.max(0, Math.round(tracking?.eta_minutes ?? params.etaMinutes ?? 6));
-  const distanceKm = tracking
+  // distanceKm is only known once the WS lands or the route param explicitly
+  // supplies one. We avoid the previous "1.2" default so the pin pill never
+  // shows fabricated distance text before tracking arrives.
+  const distanceKm: number | undefined = tracking
     ? haversineKm(
         tracking.helper_lat,
         tracking.helper_lng,
@@ -250,7 +257,7 @@ export default function TrackLiveScreen() {
   }, [proCoord?.latitude, homeCoord?.latitude]);
 
   const displayOtp = (otp ?? deriveOtp(bookingId ?? '0000')).padStart(4, '0').slice(0, 4);
-  const initial = (helperName || 'P')[0].toUpperCase();
+  const initial = (helperName || displayHelperName || 'P')[0].toUpperCase();
   const shortId = bookingId
     ? `ZM-${bookingId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
     : 'ZM-0000';
@@ -317,8 +324,9 @@ export default function TrackLiveScreen() {
           </Marker>
         )}
 
-        {/* Pro location pill */}
-        {proCoord && (
+        {/* Pro location pill — only render when we know who the pro is and
+            how far away they are. Avoids "Your pro · undefined km" flicker. */}
+        {proCoord && helperName && distanceKm !== undefined && (
           <Marker
             coordinate={proCoord}
             anchor={{ x: 0.5, y: 1 }}
@@ -400,18 +408,26 @@ export default function TrackLiveScreen() {
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Text style={[fontBold, styles.pname]} numberOfLines={1}>
-                  {helperName}
+                  {displayHelperName}
                 </Text>
-                <View style={styles.badge}>
-                  <Text style={[fontExtra, styles.badgeText]}>TOP PRO</Text>
-                </View>
+                {/* TOP PRO badge hidden until backend exposes a helper.is_top_pro
+                    flag (P9). The badge previously rendered for every pro. */}
               </View>
               <View style={styles.metaRow}>
-                <Feather name="star" size={11} color={AMBER} />
-                <Text style={[fontSemi, styles.metaText]}>
-                  {helperRating.toFixed(1)} · {helperJobs} jobs
-                </Text>
-                <View style={styles.metaDot} />
+                {(helperRating !== undefined || helperJobs !== undefined) && (
+                  <>
+                    <Feather name="star" size={11} color={AMBER} />
+                    <Text style={[fontSemi, styles.metaText]}>
+                      {[
+                        helperRating !== undefined ? helperRating.toFixed(1) : null,
+                        helperJobs !== undefined ? `${helperJobs} jobs` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                    <View style={styles.metaDot} />
+                  </>
+                )}
                 <Text style={[fontSemi, styles.metaText]}>{serviceName ?? 'Cleaning'}</Text>
               </View>
             </View>
@@ -433,7 +449,9 @@ export default function TrackLiveScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
               <Text style={[fontMed, styles.otpHelp]}>
-                Share with {helperName.split(' ')[0]} when she arrives
+                {helperName
+                  ? `Share with ${helperName.split(' ')[0]} when they arrive`
+                  : 'Share this code with your pro when they arrive'}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -451,15 +469,19 @@ export default function TrackLiveScreen() {
               state="done"
               icon="check"
               title="Booking confirmed"
-              sub={`${helperName.split(' ')[0]} accepted in 12 sec`}
-              time="9:35 AM"
+              sub={buildAcceptedSub(helperName, createdAt, acceptedAt)}
+              time={acceptedAt ? formatTime(acceptedAt) : '—'}
               connectorBelow="solid-green"
             />
             <Step
               state="active"
               icon="clock"
               title="On the way"
-              sub={`${distanceKm.toFixed(1)} km · ${etaMinutes} min remaining`}
+              sub={
+                distanceKm !== undefined
+                  ? `${distanceKm.toFixed(1)} km · ${etaMinutes} min remaining`
+                  : `${etaMinutes} min remaining`
+              }
               time={formatNow()}
               timeAccent
               connectorBelow="amber-fade"
@@ -737,6 +759,37 @@ function formatNow(): string {
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
   return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function formatTime(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function buildAcceptedSub(
+  helperName: string | undefined,
+  createdAt: string | undefined,
+  acceptedAt: string | undefined,
+): string {
+  const first = helperName ? helperName.split(' ')[0] : 'Your pro';
+  if (!createdAt || !acceptedAt) {
+    return `${first} accepted your booking`;
+  }
+  const created = new Date(createdAt).getTime();
+  const accepted = new Date(acceptedAt).getTime();
+  if (isNaN(created) || isNaN(accepted) || accepted < created) {
+    return `${first} accepted your booking`;
+  }
+  const diffSec = Math.max(1, Math.round((accepted - created) / 1000));
+  if (diffSec < 60) return `${first} accepted in ${diffSec}s`;
+  const diffMin = Math.round(diffSec / 60);
+  return `${first} accepted in ${diffMin} min`;
 }
 
 function addMinutes(min: number): string {

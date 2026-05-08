@@ -66,6 +66,9 @@ export default function NotServiceableScreen({ navigation, route }: Props) {
         </View>
 
         {/* Expansion badge */}
+        {/* TODO(post-expansion): replace with
+             ALL_KNOWN_CITIES.filter(c => c.serviceable).map(c => c.name).join(', ')
+             once ZopMop ships in more than one city (S29). */}
         <View style={s.badge}>
           <View style={s.badgeDot} />
           <Text style={s.badgeText}>Currently serving Gurugram</Text>

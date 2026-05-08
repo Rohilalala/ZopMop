@@ -26,6 +26,7 @@ import { UnpaidBookingsError } from '../../api/users';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 import { showError } from '../../utils/toast';
+import { readLastKnownLocation } from '../../utils/locationCache';
 
 const { width: W } = Dimensions.get('window');
 
@@ -174,10 +175,19 @@ export default function InstantMatchingScreen({ route }: Props) {
         }
 
         try {
+          // P16: prefer the cached last-known address name (user-meaningful
+          // tag like "Home" or "M-Block, Sector 51") so the helper's dashboard
+          // doesn't show the literal string 'User Location'. Fall back to
+          // formatted lat/lng — never to a hardcoded label.
+          const cached = await readLastKnownLocation().catch(() => null);
+          const addressLine =
+            cached?.name && cached.name.trim().length > 0
+              ? cached.name
+              : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
           const booking = await createInstantBooking(
             token,
             serviceId,
-            'User Location',
+            addressLine,
             lat,
             lng,
           );
@@ -214,6 +224,8 @@ export default function InstantMatchingScreen({ route }: Props) {
           const status = await getMatchStatus(token, bookingId);
           if (status.status === 'matched' && status.helper) {
             matchedRef.current = true;
+            // P17: 'Your Pro' fallback only when backend omits helper.name on
+            // a 'matched' response — should always be set in practice.
             matchedHelperRef.current = {
               name: status.helper.name || 'Your Pro',
               phone: status.helper.phone || '',

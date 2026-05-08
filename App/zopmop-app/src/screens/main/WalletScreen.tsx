@@ -156,7 +156,7 @@ export default function WalletScreen() {
             </PressFx>
             <View style={{ flex: 1 }}>
               <Text style={s.title}>Wallet</Text>
-              <Text style={s.sub}>Closed-loop credit for Zopmop bookings.</Text>
+              <Text style={s.sub}>Closed-loop credit for ZopMop bookings.</Text>
             </View>
           </View>
         </View>
@@ -218,7 +218,7 @@ export default function WalletScreen() {
           <GlassCard radius={20} style={s.card}>
             <Row icon="zap" title="Instant refunds" sub="Cancellations land back here within seconds." />
             <View style={s.divider} />
-            <Row icon="lock" title="Closed-loop credit" sub="Spendable only on Zopmop bookings — no third-party charges." />
+            <Row icon="lock" title="Closed-loop credit" sub="Spendable only on ZopMop bookings — no third-party charges." />
             <View style={s.divider} />
             <Row icon="users" title="Refer friends" sub="₹100 wallet credit per friend who joins." />
           </GlassCard>

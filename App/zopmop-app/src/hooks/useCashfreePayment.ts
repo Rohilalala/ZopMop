@@ -38,7 +38,7 @@ import { getCashfreeOrderStatus, type CashfreeOrderStatus } from '../api/payment
 // Keep in sync with src/theme/colors.ts darkColors if the brand palette
 // changes.
 const ZOPMOP_THEME: CFTheme = {
-  navigationBarBackgroundColor: '#0A0A0A',  // header — Zopmop dark
+  navigationBarBackgroundColor: '#0A0A0A',  // header — ZopMop dark
   navigationBarTextColor:       '#FFFFFF',  // header — readable on dark
   buttonBackgroundColor:        '#F5A300',  // primary CTA — amber
   buttonTextColor:               '#0A0A0A', // primary CTA — readable on amber

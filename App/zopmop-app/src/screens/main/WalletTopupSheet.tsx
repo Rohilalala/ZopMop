@@ -180,7 +180,7 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess, token }:
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Add money to wallet</Text>
-            <Text style={s.subtitle}>Funds stay in your Zopmop wallet.</Text>
+            <Text style={s.subtitle}>Funds stay in your ZopMop wallet.</Text>
           </View>
         </View>
 

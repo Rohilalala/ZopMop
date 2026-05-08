@@ -65,7 +65,7 @@ import { setAnalyticsContext } from '../../analytics/context';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import { usePrefetch } from '../../context/PrefetchContext';
-import { writeLastKnownLocation } from '../../utils/locationCache';
+import { writeLastKnownLocation, readLastKnownLocation } from '../../utils/locationCache';
 import type { SduiAction, SduiSection } from '../../sdui/types';
 import {
   Easing,
@@ -79,6 +79,10 @@ import {
   withTiming,
 } from 'react-native-reanimated';
 
+// Last-resort coordinates — only used after the user denies location *and*
+// has no cached last-known location. We surface a "Set your address" prompt
+// alongside this fallback so the user understands services may not be
+// nearby. Tied to current launch city (Gurugram).
 const DEFAULT_LAT = 28.4357;
 const DEFAULT_LON = 77.0763;
 
@@ -281,9 +285,13 @@ export default function HomeScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let lat = DEFAULT_LAT;
-      let lon = DEFAULT_LON;
-      let name = 'Sector 51, Gurugram';
+      // Start from any cached last-known location so we never paint the
+      // hardcoded "Sector 51, Gurugram" placeholder. If nothing is cached
+      // and permission is denied, we leave name as a CTA ("Set your address").
+      const cached = await readLastKnownLocation().catch(() => null);
+      let lat = cached?.lat ?? DEFAULT_LAT;
+      let lon = cached?.lon ?? DEFAULT_LON;
+      let name = cached?.name ?? 'Set your address';
 
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();

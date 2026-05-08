@@ -93,6 +93,8 @@ export default function ProDashboardScreen() {
         if (cancelled) return;
         if (active.length > 0) {
           const a = active[0];
+          // P14: 'Customer Location' is shown only when the helper-active
+          // payload omits address — backend should always provide one.
           navigation.replace('ProActive', {
             bookingId: a.id,
             serviceName: undefined,
@@ -196,9 +198,12 @@ export default function ProDashboardScreen() {
         navigatingToBookingRef.current = true;
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         const invite = invites[0];
+        // P13: 'Service' fallback shown only when invite.services is empty —
+        // backend should always supply a non-empty services array. P14: same
+        // for address. Both flagged for matching API contract review.
         navigation.navigate('ProMatched', {
           bookingId: invite.booking_id.trim(),
-          serviceName: invite.services?.[0] ?? 'Home Service',
+          serviceName: invite.services?.[0] ?? 'Service',
           customerAddress: invite.address || 'Customer Location',
           customerLat: invite.lat,
           customerLng: invite.lng,
@@ -368,7 +373,8 @@ export default function ProDashboardScreen() {
 
         {/* Stats row */}
         <View style={s.statsRow}>
-          <StatCard icon="⭐" label="Rating" value="4.9" />
+          {/* Rating shows em-dash until /helpers/me exposes average_rating (P1). */}
+          <StatCard icon="⭐" label="Rating" value="—" />
           <StatCard icon="✅" label="Jobs Done" value="—" />
           <StatCard icon="💰" label="Earned" value="₹—" />
         </View>

@@ -19,7 +19,6 @@ import { useNavigation } from '@react-navigation/native';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
-import { showInfo } from '../../utils/toast';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -55,21 +54,10 @@ type ContactOption = {
   action: () => void;
 };
 
+// Live chat (S25) and call-us (S24) rows are hidden until ops issues a real
+// support number and a chat vendor is wired. Email is the canonical support
+// channel today; restore the other rows when their backends ship.
 const CONTACT_OPTIONS: ContactOption[] = [
-  {
-    id: 'chat',
-    icon: 'message-circle',
-    label: 'Live chat',
-    sublabel: 'Typically replies in under 2 mins',
-    action: () => showInfo('Live chat is coming soon.', { title: 'Chat' }),
-  },
-  {
-    id: 'call',
-    icon: 'phone',
-    label: 'Call us',
-    sublabel: 'Mon–Sat, 9 AM – 7 PM',
-    action: () => Linking.openURL('tel:+911800000000'),
-  },
   {
     id: 'email',
     icon: 'mail',

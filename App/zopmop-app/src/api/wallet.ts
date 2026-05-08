@@ -1,7 +1,7 @@
 // Closed-loop wallet API client. Mirrors the surface area defined in the
 // backend (App/househelp-api/internal/wallet/handler.go).
 //
-// Closed-loop semantics: balance is spendable only on Zopmop bookings via
+// Closed-loop semantics: balance is spendable only on ZopMop bookings via
 // the wallet payment_source. Topups go through Cashfree PG → backend webhook
 // credits the wallet inside the same transaction as the ledger update.
 // There is no withdraw-to-bank, no P2P transfer.

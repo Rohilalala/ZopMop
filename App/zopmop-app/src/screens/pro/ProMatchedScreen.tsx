@@ -134,9 +134,11 @@ export default function ProMatchedScreen({ route }: Props) {
     try {
       await acceptBooking(token, bookingId);
       haptics.success();
+      // P15: 'Service' fallback when the matching payload omits a service
+      // name. Backend should always include one — see ProDashboard P13 note.
       navigation.replace('ProActive', {
         bookingId,
-        serviceName: serviceName ?? 'Home Service',
+        serviceName: serviceName ?? 'Service',
         customerAddress,
         customerLat,
         customerLng,
@@ -181,7 +183,7 @@ export default function ProMatchedScreen({ route }: Props) {
         <View style={s.detailCard}>
           <Text style={s.detailHeading}>Booking Details</Text>
 
-          <DetailRow icon="🛠️" label="Service" value={serviceName ?? 'Home Service'} />
+          <DetailRow icon="🛠️" label="Service" value={serviceName ?? 'Service'} />
           <View style={s.divider} />
           <DetailRow icon="📍" label="Location" value={customerAddress} />
           {distance ? (

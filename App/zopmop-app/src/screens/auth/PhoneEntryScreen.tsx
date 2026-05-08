@@ -189,7 +189,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
               value={phone}
               onChangeText={handleChange}
               keyboardType="number-pad"
-              placeholder="98765 43210"
+              placeholder="Enter mobile number"
               placeholderTextColor={c.textMuted}
               maxLength={11}
               returnKeyType="done"

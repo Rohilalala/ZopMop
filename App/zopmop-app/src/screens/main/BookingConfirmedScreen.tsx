@@ -83,7 +83,7 @@ export default function BookingConfirmedScreen() {
     bookingId, totalCents, slot, addressLine,
     serviceId, serviceName, durationMinutes,
     helperName, helperPhone, helperRating,
-    paymentLabel, discountCents, promoCode,
+    paymentLabel, discountCents, promoCode, etaMinutes,
   } = params;
 
   // Resolve variant: explicit `instant` overrides; else infer from `slot`.
@@ -247,8 +247,9 @@ export default function BookingConfirmedScreen() {
           paymentLabel={paymentLabel}
           discountCents={discountCents}
           promoCode={promoCode}
-          helperName={helperName}
-          helperRating={helperRating}
+          helperName={liveHelperName ?? helperName}
+          helperRating={liveRating ?? helperRating}
+          etaMinutes={etaMinutes}
         />
 
         {isInstant ? (
@@ -263,11 +264,9 @@ export default function BookingConfirmedScreen() {
           <ScheduledActions />
         )}
 
-        {isInstant ? (
-          <ReferNudge />
-        ) : (
-          <WhatsNext />
-        )}
+        {/* ReferNudge (Refer & earn ₹100) hidden until referral program ships
+            end-to-end (P12 / S14, S15). Re-enable when /me/referrals exists. */}
+        {!isInstant && <WhatsNext />}
       </ScrollView>
 
       <BottomDock
@@ -690,13 +689,14 @@ type TicketProps = {
   promoCode?: string;
   helperName?: string;
   helperRating?: number;
+  etaMinutes?: number;
 };
 
 function Ticket(props: TicketProps) {
   const {
     serviceName, serviceId, durationMinutes, totalRupees, isScheduled,
     slot, addressLine, paymentLabel, discountCents, promoCode,
-    helperName, helperRating,
+    helperName, helperRating, etaMinutes,
   } = props;
   const iconSrc = serviceIcon({ id: serviceId, name: serviceName });
 
@@ -761,6 +761,7 @@ function Ticket(props: TicketProps) {
             paymentLabel={paymentLabel}
             discountCents={discountCents}
             promoCode={promoCode}
+            etaMinutes={etaMinutes}
           />
         )}
       </View>
@@ -820,17 +821,24 @@ type DetailsProps = {
   promoCode?: string;
 };
 
-function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoCode }: DetailsProps) {
+function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoCode, etaMinutes }: DetailsProps & { etaMinutes?: number }) {
   const savedLine =
     discountCents && discountCents > 0
       ? `₹${Math.round(discountCents / 100)} saved${promoCode ? ` with ${promoCode}` : ''}`
       : undefined;
+  // ETA is supplied by the matching API on the BookingConfirmed nav params
+  // (set in InstantMatchingScreen). Until it's there, surface a neutral
+  // tracking state instead of fabricating "In ~6 min".
+  const whenValue =
+    typeof etaMinutes === 'number' && etaMinutes > 0
+      ? `In ~${etaMinutes} min`
+      : 'Tracking ETA…';
   return (
     <>
       <DetRow
         icon="clock"
         label="When"
-        value="In ~6 min"
+        value={whenValue}
         sub={slot ?? 'Today'}
       />
       <DetRow
@@ -941,6 +949,9 @@ function ProMini({
   helperRating?: number;
 }) {
   if (isScheduled) {
+    // TODO(backend): derive copy from booking.scheduled_at (e.g. "Matching
+    // Sat morning"). For now we keep the static "tomorrow" line to match
+    // the design preview; it will read incorrectly for far-out schedules.
     return (
       <View style={styles.proMini}>
         <View style={[styles.proAv, { backgroundColor: '#64748B' }]}>
@@ -972,10 +983,18 @@ function ProMini({
           {helperName ?? 'Your pro'}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 }}>
-          <Feather name="star" size={11} color="#F5A300" />
-          <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11 }]}>
-            {(helperRating ?? 4.9).toFixed(1)} · Verified
-          </Text>
+          {typeof helperRating === 'number' ? (
+            <>
+              <Feather name="star" size={11} color="#F5A300" />
+              <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11 }]}>
+                {helperRating.toFixed(1)} · Verified
+              </Text>
+            </>
+          ) : (
+            <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11 }]}>
+              Verified
+            </Text>
+          )}
         </View>
       </View>
       <Text style={[fontSemi, { color: '#F5A300', fontSize: 11 }]}>On the way</Text>
