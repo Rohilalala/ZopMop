@@ -20,7 +20,7 @@ type Props = {
 };
 
 export default function NotServiceableScreen({ navigation, route }: Props) {
-  const { cityName } = route.params;
+  const { cityName, phone, name } = route.params;
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
   const opacity = useRef(new Animated.Value(0)).current;
@@ -75,7 +75,7 @@ export default function NotServiceableScreen({ navigation, route }: Props) {
         <View style={s.actions}>
           <TouchableOpacity
             style={s.retryButton}
-            onPress={() => navigation.replace('Location')}
+            onPress={() => navigation.replace('Location', { phone, name })}
             activeOpacity={0.8}
           >
             <Text style={s.retryText}>Try a different location</Text>

@@ -1,11 +1,11 @@
 import React, { useEffect } from 'react';
 import {
-  Dimensions,
   StatusBar,
   StyleSheet,
   Text,
   View,
   Pressable,
+  useWindowDimensions,
   type TextStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,8 +43,6 @@ import ZopSmug from '../../assets/zop/zop-smug.svg';
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
-
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 // Pre-baked scatter of background Zops. Positions are in % of screen so the
 // pattern adapts to any device. Each entry: x%, y%, size px, rotation deg,
@@ -168,6 +166,11 @@ type Props = { onRetry: () => void };
 
 export default function BackendDownScreen({ onRetry }: Props) {
   const insets = useSafeAreaInsets();
+  // useWindowDimensions reacts to layout/rotation changes and returns accurate
+  // values on first paint — Dimensions.get('window') at module init can return
+  // a stale or undersized value, which made every background Zop pile up at
+  // the top because y * SCREEN_H mapped 0..1 onto a tiny vertical range.
+  const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
   const [refreshing, setRefreshing] = React.useState(false);
 
   // Tap → run the same probe the button runs, but show the sneaky peek

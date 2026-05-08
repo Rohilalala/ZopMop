@@ -4,79 +4,104 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  
   TextInput,
   FlatList,
   Platform,
   KeyboardAvoidingView,
   Animated,
+  Easing,
 } from 'react-native';
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
+import Feather from '@expo/vector-icons/Feather';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import {
   checkServiceability,
   findCityByName,
   ALL_KNOWN_CITIES,
 } from '../../utils/serviceability';
-import { lightColors } from '../../theme/colors';
-import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
+import { GlassCard } from '../../components/home/GlassCard';
+import { FontFamily, FontSize, Spacing, Radius } from '../../theme';
+
+// Hard-coded dark + amber palette to match the locked home aesthetic
+// (memory: dark home pattern, light mode deferred). Auth screens that fall
+// after sign-in step into the same visual language as Home.
+const BG = '#0A0A0A';
+const SURFACE_DEEP = '#0D0D0F';
+const TEXT_HI = '#FFFFFF';
+const TEXT_MID = 'rgba(255,255,255,0.62)';
+const TEXT_DIM = 'rgba(255,255,255,0.38)';
+const HAIRLINE = 'rgba(255,255,255,0.08)';
+const AMBER = '#F5A300';
+const AMBER_HI = '#FFC042';
+const AMBER_TINT_12 = 'rgba(245,163,0,0.12)';
+const AMBER_TINT_18 = 'rgba(245,163,0,0.18)';
+const DANGER = '#F87171';
+const DANGER_TINT = 'rgba(248,113,113,0.12)';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Location'>;
+  route: RouteProp<AuthStackParamList, 'Location'>;
 };
 
 type Mode = 'choose' | 'gps' | 'manual';
 type GpsState = 'idle' | 'requesting' | 'checking' | 'denied' | 'error';
 
-export default function LocationCheckScreen({ navigation }: Props) {
-  const c = useColors();
-  const styles = useMemo(() => createStyles(c), [c]);
+export default function LocationCheckScreen({ navigation, route }: Props) {
+  const { phone, name } = route.params;
+  const styles = useMemo(() => createStyles(), []);
   const [mode, setMode] = useState<Mode>('choose');
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [searchQuery, setSearchQuery] = useState('');
 
+  const fade = useRef(new Animated.Value(0)).current;
   const rippleScale = useRef(new Animated.Value(1)).current;
-  const rippleOpacity = useRef(new Animated.Value(0.3)).current;
+  const rippleOpacity = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    Animated.timing(fade, {
+      toValue: 1,
+      duration: 480,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [fade]);
 
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
         Animated.parallel([
-          Animated.timing(rippleScale, { toValue: 1.4, duration: 1600, useNativeDriver: true }),
-          Animated.timing(rippleOpacity, { toValue: 0, duration: 1600, useNativeDriver: true }),
+          Animated.timing(rippleScale, { toValue: 1.55, duration: 1900, useNativeDriver: true }),
+          Animated.timing(rippleOpacity, { toValue: 0, duration: 1900, useNativeDriver: true }),
         ]),
-        Animated.delay(400),
+        Animated.delay(300),
         Animated.parallel([
           Animated.timing(rippleScale, { toValue: 1, duration: 0, useNativeDriver: true }),
-          Animated.timing(rippleOpacity, { toValue: 0.3, duration: 0, useNativeDriver: true }),
+          Animated.timing(rippleOpacity, { toValue: 0.5, duration: 0, useNativeDriver: true }),
         ]),
-      ])
+      ]),
     );
     anim.start();
     return () => anim.stop();
-  }, []);
+  }, [rippleScale, rippleOpacity]);
 
-  // Filtered city list based on search input
   const filteredCities = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return ALL_KNOWN_CITIES;
-    return ALL_KNOWN_CITIES.filter((c) =>
-      c.displayName.toLowerCase().includes(q)
+    return ALL_KNOWN_CITIES.filter((city) =>
+      city.displayName.toLowerCase().includes(q),
     );
   }, [searchQuery]);
 
-  // --- GPS flow ---
   async function handleGps() {
     setMode('gps');
     setGpsState('requesting');
 
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-
       if (status !== 'granted') {
         setGpsState('denied');
         return;
@@ -91,14 +116,14 @@ export default function LocationCheckScreen({ navigation }: Props) {
         const city = checkServiceability(latitude, longitude);
 
         if (city) {
-          navigation.replace('PhoneEntry');
+          navigation.replace('Welcome', { phone, name });
         } else {
           let cityName = 'your city';
           try {
             const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
             cityName = geo.city || geo.region || geo.subregion || 'your city';
-          } catch { /* use fallback */ }
-          navigation.replace('NotServiceable', { cityName });
+          } catch { /* fallback */ }
+          navigation.replace('NotServiceable', { cityName, phone, name });
         }
       } catch {
         setGpsState('error');
@@ -108,60 +133,71 @@ export default function LocationCheckScreen({ navigation }: Props) {
     }
   }
 
-  // --- Manual city selection ---
   function handleCitySelect(cityDisplayName: string) {
     const matched = findCityByName(cityDisplayName);
     if (matched) {
-      navigation.replace('PhoneEntry');
+      navigation.replace('Welcome', { phone, name });
     } else {
-      navigation.replace('NotServiceable', { cityName: cityDisplayName });
+      navigation.replace('NotServiceable', { cityName: cityDisplayName, phone, name });
     }
   }
 
   const isGpsLoading = gpsState === 'requesting' || gpsState === 'checking';
 
-  // ── Choose mode screen ──────────────────────────────────────────────────
+  function PinIllustration({ icon = 'map-pin' }: { icon?: 'map-pin' | 'navigation' }) {
+    return (
+      <View style={styles.illustrationWrap}>
+        <Animated.View
+          style={[
+            styles.ripple,
+            styles.rippleOuter,
+            { transform: [{ scale: rippleScale }], opacity: rippleOpacity },
+          ]}
+        />
+        <View style={[styles.ripple, styles.rippleMid]} />
+        <View style={styles.pinCircle}>
+          <View style={styles.pinInner}>
+            <Feather name={icon} size={32} color={AMBER} />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // ── Choose mode ─────────────────────────────────────────────────────────
   if (mode === 'choose') {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <View style={styles.container}>
-          {/* Illustration */}
-          <View style={styles.illustrationWrapper}>
-            <View style={styles.outerRing}>
-              <View style={styles.innerCircle}>
-                <View style={styles.pinHead}><View style={styles.pinDot} /></View>
-                <View style={styles.pinTail} />
-              </View>
-            </View>
-            <Animated.View style={[styles.ripple, styles.ripple1, { transform: [{ scale: rippleScale }], opacity: rippleOpacity }]} />
-            <View style={[styles.ripple, styles.ripple2]} />
-          </View>
+        <Animated.View style={[styles.flex, { opacity: fade }]}>
+          <View style={styles.topSpacer} />
 
-          <View style={styles.copyWrapper}>
-            <Text style={styles.heading}>Where are you located?</Text>
-            <Text style={styles.subheading}>
-              We'll check if ZopMop is available in your area.
+          <PinIllustration />
+
+          <View style={styles.copy}>
+            <Text style={styles.title}>Where are you located?</Text>
+            <Text style={styles.subtitle}>
+              We'll check if <Text style={styles.zopBrand}>Zop</Text>
+              <Text style={styles.mopBrand}>Mop</Text> is available in your area.
             </Text>
           </View>
 
-          <View style={styles.optionsWrapper}>
-            {/* GPS option */}
+          <View style={styles.bottomSpacer} />
+
+          <View style={styles.options}>
             <TouchableOpacity
-              style={styles.optionCard}
+              activeOpacity={0.85}
               onPress={handleGps}
-              activeOpacity={0.8}
             >
-              <View style={[styles.optionIcon, { backgroundColor: c.primaryBg }]}>
-                {/* GPS crosshair */}
-                <View style={styles.crosshairOuter}>
-                  <View style={styles.crosshairInner} />
+              <GlassCard radius={Radius.xl} style={styles.optionCard}>
+                <View style={styles.optionIconAmber}>
+                  <Feather name="navigation" size={20} color={AMBER} />
                 </View>
-              </View>
-              <View style={styles.optionText}>
-                <Text style={styles.optionTitle}>Use my current location</Text>
-                <Text style={styles.optionDesc}>Automatically detect via GPS</Text>
-              </View>
-              <View style={styles.chevron} />
+                <View style={styles.optionText}>
+                  <Text style={styles.optionTitle}>Use my current location</Text>
+                  <Text style={styles.optionDesc}>Detect via GPS</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color={TEXT_DIM} />
+              </GlassCard>
             </TouchableOpacity>
 
             <View style={styles.dividerRow}>
@@ -170,89 +206,90 @@ export default function LocationCheckScreen({ navigation }: Props) {
               <View style={styles.dividerLine} />
             </View>
 
-            {/* Manual option */}
             <TouchableOpacity
-              style={styles.optionCard}
+              activeOpacity={0.85}
               onPress={() => setMode('manual')}
-              activeOpacity={0.8}
             >
-              <View style={[styles.optionIcon, { backgroundColor: '#F0FDF4' }]}>
-                {/* List/search icon suggestion */}
-                <View style={styles.listIcon}>
-                  <View style={styles.listLine} />
-                  <View style={[styles.listLine, { width: 16 }]} />
-                  <View style={styles.listLine} />
+              <GlassCard radius={Radius.xl} style={styles.optionCard}>
+                <View style={styles.optionIconNeutral}>
+                  <Feather name="search" size={20} color={TEXT_HI} />
                 </View>
-              </View>
-              <View style={styles.optionText}>
-                <Text style={styles.optionTitle}>Enter city manually</Text>
-                <Text style={styles.optionDesc}>Search and select your city</Text>
-              </View>
-              <View style={styles.chevron} />
+                <View style={styles.optionText}>
+                  <Text style={styles.optionTitle}>Enter city manually</Text>
+                  <Text style={styles.optionDesc}>Search and select</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color={TEXT_DIM} />
+              </GlassCard>
             </TouchableOpacity>
           </View>
-        </View>
+        </Animated.View>
       </SafeAreaView>
     );
   }
 
-  // ── GPS flow screen ──────────────────────────────────────────────────────
+  // ── GPS request / status ────────────────────────────────────────────────
   if (mode === 'gps') {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <View style={styles.container}>
-          <View style={styles.illustrationWrapper}>
-            <View style={styles.outerRing}>
-              <View style={styles.innerCircle}>
-                <View style={styles.pinHead}><View style={styles.pinDot} /></View>
-                <View style={styles.pinTail} />
-              </View>
-            </View>
-            <Animated.View style={[styles.ripple, styles.ripple1, { transform: [{ scale: rippleScale }], opacity: rippleOpacity }]} />
-            <View style={[styles.ripple, styles.ripple2]} />
-          </View>
+        <Animated.View style={[styles.flex, { opacity: fade }]}>
+          <View style={styles.topSpacer} />
 
-          <View style={styles.copyWrapper}>
-            <Text style={styles.heading}>Allow location access</Text>
-            <Text style={styles.subheading}>
-              ZopMop uses your location to check service availability and connect you with nearby helpers.
+          <PinIllustration icon="navigation" />
+
+          <View style={styles.copy}>
+            <Text style={styles.title}>Allow location access</Text>
+            <Text style={styles.subtitle}>
+              <Text style={styles.zopBrand}>Zop</Text>
+              <Text style={styles.mopBrand}>Mop</Text> uses your location to check
+              service availability and connect you with nearby helpers.
             </Text>
           </View>
 
           {gpsState === 'denied' && (
-            <View style={styles.deniedCard}>
-              <Text style={styles.deniedTitle}>Location access needed</Text>
-              <Text style={styles.deniedText}>
-                Please enable location from{' '}
-                {Platform.OS === 'ios'
-                  ? 'Settings → Privacy → Location'
-                  : 'Settings → App Permissions'}{' '}
-                and try again.
-              </Text>
+            <View style={styles.alertCard}>
+              <Feather name="alert-triangle" size={16} color={DANGER} />
+              <View style={styles.alertText}>
+                <Text style={styles.alertTitle}>Location access needed</Text>
+                <Text style={styles.alertBody}>
+                  Enable location from{' '}
+                  {Platform.OS === 'ios'
+                    ? 'Settings → Privacy → Location'
+                    : 'Settings → App Permissions'}{' '}
+                  and try again.
+                </Text>
+              </View>
             </View>
           )}
           {gpsState === 'error' && (
-            <View style={styles.deniedCard}>
-              <Text style={styles.deniedTitle}>Couldn't get your location</Text>
-              <Text style={styles.deniedText}>
-                Make sure GPS is on and you have a signal, then try again. You can also enter your city manually.
-              </Text>
+            <View style={styles.alertCard}>
+              <Feather name="alert-circle" size={16} color={DANGER} />
+              <View style={styles.alertText}>
+                <Text style={styles.alertTitle}>Couldn't get your location</Text>
+                <Text style={styles.alertBody}>
+                  Make sure GPS is on, then try again. You can also enter your
+                  city manually.
+                </Text>
+              </View>
             </View>
           )}
-        </View>
 
-        <View style={styles.bottomActions}>
+          <View style={styles.bottomSpacer} />
+        </Animated.View>
+
+        <View style={styles.bottom}>
           <TouchableOpacity
-            style={[styles.primaryButton, isGpsLoading && styles.buttonLoading]}
+            style={[styles.primaryButton, isGpsLoading && styles.primaryButtonLoading]}
             onPress={handleGps}
             disabled={isGpsLoading}
-            activeOpacity={0.85}
+            activeOpacity={0.9}
           >
             {isGpsLoading ? (
-              <LoadingBars color="#FFFFFF" size="small" />
+              <LoadingBars color={SURFACE_DEEP} size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>
-                {gpsState === 'denied' || gpsState === 'error' ? 'Try again' : 'Allow location access'}
+                {gpsState === 'denied' || gpsState === 'error'
+                  ? 'Try again'
+                  : 'Allow location access'}
               </Text>
             )}
           </TouchableOpacity>
@@ -262,43 +299,39 @@ export default function LocationCheckScreen({ navigation }: Props) {
           </Text>
 
           <TouchableOpacity onPress={() => setMode('manual')} activeOpacity={0.7}>
-            <Text style={styles.switchLink}>Enter city manually instead</Text>
+            <Text style={styles.linkText}>Enter city manually instead</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Manual city picker screen ────────────────────────────────────────────
+  // ── Manual city picker ──────────────────────────────────────────────────
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        {/* Header */}
         <View style={styles.manualHeader}>
           <TouchableOpacity
             onPress={() => { setSearchQuery(''); setMode('choose'); }}
             style={styles.backButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activeOpacity={0.8}
           >
-            <View style={styles.backArrow} />
+            <Feather name="arrow-left" size={20} color={TEXT_HI} />
           </TouchableOpacity>
           <Text style={styles.manualTitle}>Select your city</Text>
         </View>
 
-        {/* Search */}
         <View style={styles.searchWrapper}>
-          <View style={styles.searchBar}>
-            <View style={styles.searchIcon}>
-              <View style={styles.searchCircle} />
-              <View style={styles.searchHandle} />
-            </View>
+          <GlassCard radius={Radius.xl} style={styles.searchBar}>
+            <Feather name="search" size={18} color={TEXT_DIM} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search city…"
-              placeholderTextColor={c.textMuted}
+              placeholderTextColor={TEXT_DIM}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoFocus
@@ -306,14 +339,16 @@ export default function LocationCheckScreen({ navigation }: Props) {
               returnKeyType="search"
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <View style={styles.clearDot} />
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name="x-circle" size={18} color={TEXT_DIM} />
               </TouchableOpacity>
             )}
-          </View>
+          </GlassCard>
         </View>
 
-        {/* City list */}
         <FlatList
           data={filteredCities}
           keyExtractor={(item) => item.displayName}
@@ -323,9 +358,14 @@ export default function LocationCheckScreen({ navigation }: Props) {
             <TouchableOpacity
               style={styles.cityRow}
               onPress={() => handleCitySelect(item.displayName)}
-              activeOpacity={0.7}
+              activeOpacity={0.6}
             >
               <View style={styles.cityRowLeft}>
+                <Feather
+                  name="map-pin"
+                  size={16}
+                  color={item.serviceable ? AMBER : TEXT_DIM}
+                />
                 <Text style={styles.cityName}>{item.displayName}</Text>
                 {item.serviceable && (
                   <View style={styles.availablePill}>
@@ -340,16 +380,19 @@ export default function LocationCheckScreen({ navigation }: Props) {
           )}
           ListEmptyComponent={
             <View style={styles.emptyState}>
+              <Feather name="search" size={28} color={TEXT_DIM} />
               <Text style={styles.emptyText}>No cities found for "{searchQuery}"</Text>
             </View>
           }
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
 
-        {/* Switch to GPS */}
         <View style={styles.gpsLinkWrapper}>
-          <TouchableOpacity onPress={() => { setSearchQuery(''); setMode('gps'); handleGps(); }} activeOpacity={0.7}>
-            <Text style={styles.switchLink}>Use my GPS location instead</Text>
+          <TouchableOpacity
+            onPress={() => { setSearchQuery(''); setMode('gps'); handleGps(); }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.linkText}>Use my GPS location instead</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -357,66 +400,269 @@ export default function LocationCheckScreen({ navigation }: Props) {
   );
 }
 
-function createStyles(c: typeof lightColors) {
+function createStyles() {
   return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing['2xl'] },
-    illustrationWrapper: { width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing['2xl'], position: 'relative' },
-    outerRing: { width: 96, height: 96, borderRadius: Radius.full, backgroundColor: c.primaryBg, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
-    innerCircle: { alignItems: 'center', justifyContent: 'flex-end', height: 52 },
-    pinHead: { width: 32, height: 32, borderRadius: Radius.full, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
-    pinDot: { width: 10, height: 10, borderRadius: Radius.full, backgroundColor: '#FFFFFF' },
-    pinTail: { width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 14, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: c.primary, marginTop: -2 },
-    ripple: { position: 'absolute', borderRadius: Radius.full, borderWidth: 1.5, borderColor: c.primary, zIndex: 1 },
-    ripple1: { width: 120, height: 120, opacity: 0.25 },
-    ripple2: { width: 156, height: 156, opacity: 0.1 },
-    copyWrapper: { alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.md, marginBottom: Spacing['2xl'] },
-    heading: { fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, textAlign: 'center', letterSpacing: -0.3 },
-    subheading: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary, textAlign: 'center', lineHeight: FontSize.base * 1.6 },
-    optionsWrapper: { width: '100%', gap: Spacing.md },
-    optionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.white, borderRadius: Radius.xl, padding: Spacing.base, gap: Spacing.md, ...Shadow.sm },
-    optionIcon: { width: 48, height: 48, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
+    flex: { flex: 1 },
+    safe: { flex: 1, backgroundColor: BG },
+    topSpacer: { flex: 0.6 },
+    bottomSpacer: { flex: 0.5 },
+
+    // Illustration
+    illustrationWrap: {
+      width: 160,
+      height: 160,
+      alignSelf: 'center',
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    ripple: {
+      position: 'absolute',
+      borderRadius: Radius.full,
+      borderWidth: 1,
+      borderColor: AMBER,
+    },
+    rippleOuter: { width: 132, height: 132 },
+    rippleMid: { width: 158, height: 158, opacity: 0.15 },
+    pinCircle: {
+      width: 92,
+      height: 92,
+      borderRadius: Radius.full,
+      backgroundColor: AMBER_TINT_12,
+      borderWidth: 1,
+      borderColor: AMBER_TINT_18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    pinInner: {
+      width: 64,
+      height: 64,
+      borderRadius: Radius.full,
+      backgroundColor: AMBER_TINT_18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    // Copy
+    copy: {
+      paddingHorizontal: 24,
+      alignItems: 'center',
+      gap: 10,
+      marginTop: Spacing['2xl'],
+    },
+    title: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: 30,
+      lineHeight: 36,
+      letterSpacing: -0.6,
+      color: TEXT_HI,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontFamily: FontFamily.regular,
+      fontSize: 15,
+      lineHeight: 22,
+      color: TEXT_MID,
+      textAlign: 'center',
+      paddingHorizontal: Spacing.md,
+    },
+    zopBrand: { fontFamily: FontFamily.extrabold, color: AMBER_HI },
+    mopBrand: { fontFamily: FontFamily.extrabold, color: TEXT_HI },
+
+    // Options
+    options: {
+      paddingHorizontal: 24,
+      paddingBottom: Spacing['2xl'],
+      gap: Spacing.md,
+    },
+    optionCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.base,
+      paddingVertical: Spacing.base,
+      gap: Spacing.md,
+    },
+    optionIconAmber: {
+      width: 44,
+      height: 44,
+      borderRadius: Radius.lg,
+      backgroundColor: AMBER_TINT_12,
+      borderWidth: 1,
+      borderColor: AMBER_TINT_18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionIconNeutral: {
+      width: 44,
+      height: 44,
+      borderRadius: Radius.lg,
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: HAIRLINE,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     optionText: { flex: 1, gap: 2 },
-    optionTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: c.text },
-    optionDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
-    chevron: { width: 8, height: 8, borderTopWidth: 2, borderRightWidth: 2, borderColor: c.textMuted, transform: [{ rotate: '45deg' }], marginRight: Spacing.xs },
-    dividerRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginVertical: Spacing.xs },
-    dividerLine: { flex: 1, height: 1, backgroundColor: c.border },
-    dividerText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
-    crosshairOuter: { width: 24, height: 24, borderRadius: Radius.full, borderWidth: 2, borderColor: c.primary, alignItems: 'center', justifyContent: 'center' },
-    crosshairInner: { width: 8, height: 8, borderRadius: Radius.full, backgroundColor: c.primary },
-    listIcon: { gap: 4, alignItems: 'flex-start' },
-    listLine: { width: 20, height: 2, backgroundColor: c.success, borderRadius: 1 },
-    bottomActions: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'], alignItems: 'center', gap: Spacing.sm },
-    primaryButton: { width: '100%', height: 52, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
-    buttonLoading: { opacity: 0.8 },
-    primaryButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.1 },
-    statusHint: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, height: 18 },
-    switchLink: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.primary, textDecorationLine: 'underline' },
-    deniedCard: { marginTop: Spacing.xl, backgroundColor: c.dangerBg, borderRadius: Radius.lg, padding: Spacing.base, width: '100%', gap: Spacing.xs },
-    deniedTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.danger },
-    deniedText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, lineHeight: FontSize.sm * 1.6 },
-    manualHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md, gap: Spacing.md },
-    backButton: { width: 36, height: 36, borderRadius: Radius.md, backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center' },
-    backArrow: { width: 8, height: 8, borderLeftWidth: 2, borderBottomWidth: 2, borderColor: c.text, transform: [{ rotate: '45deg' }], marginLeft: 4 },
-    manualTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    optionTitle: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.md,
+      color: TEXT_HI,
+      letterSpacing: -0.2,
+    },
+    optionDesc: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: TEXT_MID,
+    },
+    dividerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Spacing.md,
+      paddingVertical: Spacing.xs,
+    },
+    dividerLine: { flex: 1, height: 1, backgroundColor: HAIRLINE },
+    dividerText: {
+      fontFamily: FontFamily.medium,
+      fontSize: FontSize.sm,
+      color: TEXT_DIM,
+    },
+
+    // Alerts (GPS denied / error)
+    alertCard: {
+      flexDirection: 'row',
+      gap: Spacing.sm,
+      marginHorizontal: 24,
+      marginTop: Spacing.xl,
+      backgroundColor: DANGER_TINT,
+      borderRadius: Radius.lg,
+      borderWidth: 1,
+      borderColor: 'rgba(248,113,113,0.22)',
+      padding: Spacing.base,
+    },
+    alertText: { flex: 1, gap: 2 },
+    alertTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: DANGER },
+    alertBody: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: 'rgba(248,113,113,0.85)',
+      lineHeight: FontSize.sm * 1.6,
+    },
+
+    // Bottom CTA (amber, dark text — matches home button)
+    bottom: {
+      paddingHorizontal: 24,
+      paddingBottom: 20,
+      gap: Spacing.sm,
+      alignItems: 'center',
+    },
+    primaryButton: {
+      width: '100%',
+      height: 54,
+      backgroundColor: AMBER,
+      borderRadius: Radius.xl,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: AMBER,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.35,
+      shadowRadius: 18,
+      elevation: 10,
+    },
+    primaryButtonLoading: { opacity: 0.85 },
+    primaryButtonText: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: FontSize.md,
+      color: SURFACE_DEEP,
+      letterSpacing: 0.2,
+    },
+    statusHint: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: TEXT_DIM,
+      height: 18,
+    },
+    linkText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.sm,
+      color: AMBER_HI,
+    },
+
+    // Manual mode
+    manualHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.base,
+      paddingTop: Spacing.sm,
+      paddingBottom: Spacing.md,
+      gap: Spacing.md,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: Radius.md,
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: HAIRLINE,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    manualTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: FontSize.lg,
+      color: TEXT_HI,
+      letterSpacing: -0.3,
+    },
     searchWrapper: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.sm },
-    searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: c.white, borderRadius: Radius.xl, paddingHorizontal: Spacing.md, height: 48, gap: Spacing.sm, ...Shadow.sm },
-    searchIcon: { position: 'relative', width: 18, height: 18 },
-    searchCircle: { width: 12, height: 12, borderRadius: Radius.full, borderWidth: 2, borderColor: c.textMuted, position: 'absolute', top: 0, left: 0 },
-    searchHandle: { width: 6, height: 2, backgroundColor: c.textMuted, position: 'absolute', bottom: 0, right: 0, transform: [{ rotate: '45deg' }], borderRadius: 1 },
-    searchInput: { flex: 1, fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.text, paddingVertical: 0 },
-    clearDot: { width: 16, height: 16, borderRadius: Radius.full, backgroundColor: c.border },
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: Spacing.base,
+      height: 52,
+      gap: Spacing.sm,
+    },
+    searchInput: {
+      flex: 1,
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: TEXT_HI,
+      paddingVertical: 0,
+    },
     cityList: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.base },
-    cityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md },
-    cityRowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-    cityName: { fontFamily: FontFamily.medium, fontSize: FontSize.md, color: c.text },
-    availablePill: { backgroundColor: c.successBg, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 2 },
-    availablePillText: { fontFamily: FontFamily.semibold, fontSize: FontSize.xs, color: c.success },
-    comingSoon: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
-    separator: { height: 1, backgroundColor: c.border },
-    emptyState: { paddingTop: Spacing['3xl'], alignItems: 'center' },
-    emptyText: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textMuted, textAlign: 'center' },
-    gpsLinkWrapper: { alignItems: 'center', paddingVertical: Spacing.lg, borderTopWidth: 1, borderTopColor: c.border },
+    cityRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: Spacing.md,
+    },
+    cityRowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flex: 1 },
+    cityName: { fontFamily: FontFamily.medium, fontSize: FontSize.md, color: TEXT_HI },
+    availablePill: {
+      backgroundColor: AMBER_TINT_18,
+      borderRadius: Radius.full,
+      paddingHorizontal: Spacing.sm,
+      paddingVertical: 2,
+      borderWidth: 1,
+      borderColor: AMBER_TINT_18,
+    },
+    availablePillText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.xs,
+      color: AMBER_HI,
+    },
+    comingSoon: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: TEXT_DIM },
+    separator: { height: 1, backgroundColor: HAIRLINE },
+    emptyState: { paddingTop: Spacing['3xl'], alignItems: 'center', gap: Spacing.md },
+    emptyText: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.base,
+      color: TEXT_DIM,
+      textAlign: 'center',
+    },
+    gpsLinkWrapper: {
+      alignItems: 'center',
+      paddingVertical: Spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: HAIRLINE,
+    },
   });
 }

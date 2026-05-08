@@ -3,8 +3,8 @@ import type { ApiService } from '../api/services';
 export type AuthStackParamList = {
   ZopIntro: undefined;
   HiZop: undefined;
-  Location: undefined;
-  NotServiceable: { cityName: string };
+  Location: { phone: string; name: string };
+  NotServiceable: { cityName: string; phone: string; name: string };
   PhoneEntry: undefined;
   OTPVerification: {
     phone: string;

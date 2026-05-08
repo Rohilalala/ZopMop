@@ -102,9 +102,9 @@ export default function NameEntryScreen({ navigation, route }: Props) {
         const updatedUser = await updateMe(pending.token, sanitized);
         pendingAuthStore.set(pending.token, updatedUser);
       }
-      navigation.replace('Welcome', { phone, name: sanitized });
+      navigation.replace('Location', { phone, name: sanitized });
     } catch {
-      navigation.replace('Welcome', { phone, name: sanitized });
+      navigation.replace('Location', { phone, name: sanitized });
     } finally {
       setLoading(false);
     }

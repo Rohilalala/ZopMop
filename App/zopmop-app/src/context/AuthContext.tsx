@@ -11,12 +11,32 @@ import { pendingAuthStore } from '../utils/pendingAuthStore';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+// Marker: this device has completed at least one full backend signIn. Gates
+// Firebase silent-refresh on launch so a force-quit during OTP entry — which
+// commits Firebase native state before the backend handoff finishes — cannot
+// mint a session on the next launch.
+const SIGNUP_COMPLETED_KEY = 'auth_signup_completed_v1';
 
 // Silent-restore window. If Firebase reports a sign-in newer than this, we'll
 // try to silently re-issue the backend session via getIdToken(true) → POST
 // /auth/firebase. Older sessions force the user back through PhoneEntry so
 // stale device installs can't roll forward indefinitely.
 const FIREBASE_SILENT_REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// Hard cap on any Firebase native call we make from launch-restore. If the
+// native module hangs (broken bridge, stuck token refresh) we must NOT block
+// setIsLoading(false) — that strands the UI on a black screen because
+// Navigation returns null while isLoading is true.
+const FIREBASE_OP_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      () => { clearTimeout(t); resolve(null); },
+    );
+  });
+}
 
 // Silently exchange a fresh Firebase ID token for a backend JWT. Returns the
 // session on success. Returns null when:
@@ -49,7 +69,7 @@ async function tryFirebaseSilentRefresh(): Promise<{ token: string; user?: AuthU
       return null;
     }
 
-    const idToken = await mod.getIdToken(current, true);
+    const idToken = await withTimeout(mod.getIdToken(current, true), FIREBASE_OP_TIMEOUT_MS);
     if (!idToken) return null;
 
     const controller = new AbortController();
@@ -74,6 +94,30 @@ async function tryFirebaseSilentRefresh(): Promise<{ token: string; user?: AuthU
   } catch (err) {
     console.info('[Auth] Firebase silent refresh failed:', err instanceof Error ? err.message : err);
     return null;
+  }
+}
+
+// Sign out of Firebase native state without surfacing errors. Used to clear
+// orphaned currentUser created by a partial OTP attempt (confirmation.confirm
+// commits Firebase state before the backend handoff). No-op when the module
+// isn't available or no current user exists.
+async function trySignOutFirebaseSilently(): Promise<void> {
+  let mod: typeof import('@react-native-firebase/auth') | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    mod = require('@react-native-firebase/auth');
+  } catch {
+    return;
+  }
+  if (!mod) return;
+  try {
+    const fbAuth = mod.getAuth();
+    if (fbAuth.currentUser) {
+      await withTimeout(mod.signOut(fbAuth), FIREBASE_OP_TIMEOUT_MS);
+      console.info('[Auth] cleared lingering Firebase native state');
+    }
+  } catch {
+    // non-fatal
   }
 }
 
@@ -119,6 +163,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // or the stored token is rejected — this lets returning users skip
   // PhoneEntry as long as their Firebase session is < 30 days old.
   useEffect(() => {
+    // Hard ceiling: no matter what restore() is doing, flip isLoading so the
+    // UI never strands on a black screen. SecureStore/Firebase native bridges
+    // can hang on simulator and would otherwise keep Navigation rendering null.
+    const ceiling = setTimeout(() => {
+      console.warn('[Auth] restore exceeded ceiling — forcing isLoading=false');
+      setIsLoading(false);
+    }, 8_000);
+
     async function trySilentFirebase(): Promise<boolean> {
       const session = await tryFirebaseSilentRefresh();
       if (!session) return false;
@@ -129,6 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session.user) {
           await SecureStore.setItemAsync(USER_KEY, JSON.stringify(session.user));
         }
+        await SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1');
       } catch {}
       console.info('[Auth] session restored via Firebase silent refresh');
       return true;
@@ -142,7 +195,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ]);
 
         if (!storedToken) {
-          await trySilentFirebase();
+          // Gate silent refresh on prior successful signIn. Without this,
+          // confirmation.confirm() during OTP entry commits Firebase native
+          // state before the backend handoff — a force-quit at that point
+          // would let the next launch mint a session despite signup never
+          // completing. Marker is set in signIn(), cleared in signOut().
+          const completed = await SecureStore
+            .getItemAsync(SIGNUP_COMPLETED_KEY)
+            .catch(() => null);
+          if (completed === '1') {
+            await trySilentFirebase();
+          } else {
+            await trySignOutFirebaseSilently();
+          }
           return;
         }
 
@@ -179,6 +244,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(freshUser);
             console.info('[Auth] session restored from server');
             SecureStore.setItemAsync(USER_KEY, JSON.stringify(freshUser)).catch(() => {});
+            // Backfill marker for upgrade migration: pre-fix users have a
+            // valid session but no marker; setting it preserves their UX
+            // if their token later gets revoked and triggers silent refresh.
+            SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
             return;
           }
         } catch {
@@ -202,10 +271,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // SecureStore unavailable (simulator without keychain) — start unauthenticated.
       } finally {
+        clearTimeout(ceiling);
         setIsLoading(false);
       }
     }
     restore();
+    return () => clearTimeout(ceiling);
   }, []);
 
   // Re-validate when the app comes to the foreground (catches mid-session user deletion).
@@ -246,6 +317,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (authUser) {
       SecureStore.setItemAsync(USER_KEY, JSON.stringify(authUser)).catch(() => {});
     }
+    SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
   }
 
   function signOut() {
@@ -253,6 +325,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
     SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(SIGNUP_COMPLETED_KEY).catch(() => {});
+    // Clear Firebase native state too — otherwise the next launch could
+    // silent-refresh from the orphaned Firebase user (defense in depth;
+    // the marker check above is the primary gate).
+    trySignOutFirebaseSilently().catch(() => {});
     // Clear all module-level singletons so a subsequent user on the same
     // device cannot inherit stale OTP handles, promo codes, or pending tokens.
     otpStore.clear();
