@@ -730,6 +730,65 @@ func (s *Service) ClearUserHistory(ctx context.Context, userID string) {
 	_ = s.rdb.Del(ctx, sessKey).Err()
 }
 
+// toolFreqWindow is the per-user-per-tool sliding window for destructive
+// tool frequency caps. 10 minutes is short enough to bound abuse, long
+// enough that a legitimate user juggling bookings doesn't hit it.
+const toolFreqWindow = 10 * time.Minute
+
+// cancelRescheduleCap caps cancel_booking + reschedule_booking at 2 per
+// 10-min window per user. Legitimate "book → realise wrong → cancel →
+// rebook" fits in 2; more than that is indecision or attack.
+const cancelRescheduleCap = 2
+
+// createBookingCap caps create_instant_booking + create_scheduled_booking
+// at 3 per 10-min window per user. Covers the realistic max of "cleaning
+// + plumber + electrician in one session" without leaving room for loops.
+const createBookingCap = 3
+
+// ZopToolFreqCheck enforces per-user-per-tool frequency caps within a
+// 10-min window for destructive tools. Returns nil on allow, non-nil on
+// refuse. Reads (get_bookings, list_service_categories, get_cart, etc.)
+// are not capped here — the 200/hr message-level limit gates them.
+//
+// Fails open on Redis errors: infra issues must not block legitimate
+// users.
+//
+// Audit NEW-A2-002 item c.
+func (s *Service) ZopToolFreqCheck(ctx context.Context, userID, toolName string) error {
+	cap := 0
+	switch toolName {
+	case "cancel_booking", "reschedule_booking":
+		cap = cancelRescheduleCap
+	case "create_instant_booking", "create_scheduled_booking", "create_booking":
+		cap = createBookingCap
+	default:
+		return nil
+	}
+
+	key := fmt.Sprintf("zop:tool_freq:%s:%s", userID, toolName)
+	count, err := s.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		log.Warn().Err(err).
+			Str("user_id", userID).
+			Str("tool", toolName).
+			Msg("[zop] tool freq counter failed; allowing")
+		return nil
+	}
+	if count == 1 {
+		if expErr := s.rdb.Expire(ctx, key, toolFreqWindow).Err(); expErr != nil {
+			log.Warn().Err(expErr).
+				Str("user_id", userID).
+				Str("tool", toolName).
+				Msg("[zop] tool freq TTL set failed")
+		}
+	}
+	if count > int64(cap) {
+		return fmt.Errorf("tool frequency cap exceeded: %s (%d/%d in %s)",
+			toolName, count, cap, toolFreqWindow)
+	}
+	return nil
+}
+
 // ZopRateLimiter enforces the per-user 30-msg/hour cap. Returns true when
 // the user has exceeded the cap and should be 429'd.
 func (s *Service) ZopRateLimiter(ctx context.Context, userID string) bool {
@@ -1135,7 +1194,8 @@ func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, 
 	// Enforce the confirmation gate at the executor for destructive tools —
 	// prompt rules alone don't reliably bind smaller models. The user's most
 	// recent message must read as a confirmation; otherwise we refuse and
-	// the chat brain has to show a summary + wait for yes.
+	// the chat brain has to show a summary + wait for yes. Cheap (in-memory
+	// context lookup), runs before the Redis freq counter.
 	switch toolName {
 	case "create_booking", "create_scheduled_booking", "create_instant_booking",
 		"cancel_booking", "reschedule_booking":
@@ -1143,6 +1203,17 @@ func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, 
 		if !looksLikeConfirmation(latest) {
 			return errorJSON("user has not confirmed yet — show them a clear summary of the action and ask if they want to proceed (e.g. 'should I book it?'). Only call this tool after they reply yes/confirm/do-it/etc.")
 		}
+	}
+	// Per-user-per-tool frequency cap for destructive tools (10-min window).
+	// Runs after the confirmation gate so unconfirmed retries don't consume
+	// the user's quota. Blocks adversarial cancel-then-rebook loops shaped
+	// by prompt-injection inputs. Audit NEW-A2-002 item c.
+	if err := s.ZopToolFreqCheck(ctx, userID, toolName); err != nil {
+		log.Warn().Err(err).
+			Str("user_id", userID).
+			Str("tool", toolName).
+			Msg("[zop] tool freq cap exceeded; refusing")
+		return errorJSON("you've used this action several times recently — please wait a few minutes before trying again")
 	}
 	switch toolName {
 	case "get_available_slots":
