@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
-import { navigationRef } from './src/navigation/navigationRef';
+import { navigationRef, flushPendingNavigation } from './src/navigation/navigationRef';
 import {
   useFonts,
   PlusJakartaSans_400Regular,
@@ -41,6 +41,7 @@ function Navigation() {
         ref={navigationRef}
         onReady={() => {
           routeNameRef.current = navigationRef.current?.getCurrentRoute()?.name;
+          flushPendingNavigation();
         }}
         onStateChange={() => {
           const current = navigationRef.current?.getCurrentRoute()?.name;

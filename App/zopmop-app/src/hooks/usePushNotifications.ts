@@ -68,6 +68,7 @@ export function usePushNotifications(authToken: string | null, isAuthenticated: 
 
     let unsubRefresh: (() => void) | undefined;
     let unsubMessage: (() => void) | undefined;
+    let unsubBg: (() => void) | undefined;
     let cancelled = false;
 
     (async () => {
@@ -91,12 +92,22 @@ export function usePushNotifications(authToken: string | null, isAuthenticated: 
         });
         unsubMessage = messaging().onMessage((m: any) => {
           setNotification(m);
-          // Route data-only pushes (SCHEDULED_INVITE, BOOKING_*) to the
-          // right screen / toast. Foreground delivery only — background
-          // taps land in the OS tray and re-open the app via the deep-link
-          // handler (TODO: wire in App.tsx if we add tray notifications).
           routeFcmMessage(m?.data as Record<string, string> | undefined, userRole);
         });
+
+        // Background taps: app was suspended, user tapped OS notification banner.
+        unsubBg = messaging().onNotificationOpenedApp((m: any) => {
+          if (m?.data) routeFcmMessage(m.data as Record<string, string>, userRole);
+        });
+
+        // Quit-state taps: app was killed, OS launched it fresh via notification.
+        // getInitialNotification is async; by the time the promise resolves,
+        // NavigationContainer.onReady has already fired so navigate() works.
+        // The cold-start buffer in navigationRef handles the rare race where it
+        // resolves before onReady.
+        messaging().getInitialNotification().then((m: any) => {
+          if (m?.data) routeFcmMessage(m.data as Record<string, string>, userRole);
+        }).catch(() => {/* non-fatal */});
       } catch (err) {
         // Permission denied, APNs unavailable, simulator without push, etc.
         // Bail out silently — feature is non-critical for app function.
@@ -108,6 +119,7 @@ export function usePushNotifications(authToken: string | null, isAuthenticated: 
       cancelled = true;
       unsubRefresh?.();
       unsubMessage?.();
+      unsubBg?.();
     };
   }, [isAuthenticated, registerToken, userRole]);
 
