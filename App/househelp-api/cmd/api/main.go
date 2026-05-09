@@ -39,6 +39,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/internal/places"
@@ -329,6 +330,13 @@ func main() {
 	segmentWorker := segments.NewWorker(segments.NewService(dbPool), 24*time.Hour)
 	segmentWorker.Start()
 	defer segmentWorker.Stop()
+
+	outboxWorker := outbox.NewWorker(dbPool, 5*time.Second)
+	for eventType, h := range outbox.DefaultHandlers() {
+		outboxWorker.Register(eventType, h)
+	}
+	outboxWorker.Start()
+	defer outboxWorker.Stop()
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
