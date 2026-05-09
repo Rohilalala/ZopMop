@@ -214,8 +214,6 @@ func backoffDuration(attempt int) time.Duration {
 	secs := math.Pow(float64(attempt), 2) * 5
 	d := time.Duration(secs) * time.Second
 	d = min(d, maxBackoff)
-	if d < 5*time.Second {
-		d = 5 * time.Second
-	}
+	d = max(d, 5*time.Second)
 	return d
 }
