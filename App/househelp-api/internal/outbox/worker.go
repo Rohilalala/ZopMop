@@ -38,6 +38,7 @@ type Worker struct {
 	handlers map[string]Handler
 	interval time.Duration
 	stop     chan struct{}
+	stopOnce sync.Once
 	wg       sync.WaitGroup
 }
 
@@ -65,9 +66,7 @@ func (w *Worker) Start() {
 	if w == nil || w.db == nil {
 		return
 	}
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
+	w.wg.Go(func() {
 		w.runOnce()
 		ticker := time.NewTicker(w.interval)
 		defer ticker.Stop()
@@ -79,7 +78,7 @@ func (w *Worker) Start() {
 				return
 			}
 		}
-	}()
+	})
 }
 
 // Stop signals the worker to shut down and waits for the current tick to finish.
@@ -87,15 +86,14 @@ func (w *Worker) Stop() {
 	if w == nil {
 		return
 	}
-	close(w.stop)
+	w.stopOnce.Do(func() { close(w.stop) })
 	w.wg.Wait()
 }
 
 func (w *Worker) runOnce() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	rows, err := w.claim(ctx)
+	cancel()
 	if err != nil {
 		log.Warn().Err(err).Msg("[outbox] claim failed")
 		return
@@ -105,9 +103,11 @@ func (w *Worker) runOnce() {
 	}
 
 	for _, row := range rows {
-		if err := w.dispatch(ctx, row); err != nil {
+		dCtx, dCancel := context.WithTimeout(context.Background(), 25*time.Second)
+		if err := w.dispatch(dCtx, row); err != nil {
 			log.Warn().Err(err).Str("id", row.ID).Str("event_type", row.EventType).Msg("[outbox] dispatch failed")
 		}
+		dCancel()
 	}
 }
 
@@ -155,7 +155,11 @@ func (w *Worker) claim(ctx context.Context) ([]Row, error) {
 func (w *Worker) dispatch(ctx context.Context, row Row) error {
 	h, ok := w.handlers[row.EventType]
 	if !ok {
-		h = w.handlers["*"] // catch-all
+		h = w.handlers["*"]
+	}
+
+	if h == nil {
+		log.Warn().Str("event_type", row.EventType).Str("id", row.ID).Msg("[outbox] no handler registered, marking done")
 	}
 
 	var handlerErr error
@@ -209,9 +213,7 @@ func (w *Worker) markRetry(ctx context.Context, id, errMsg string, attempt int) 
 func backoffDuration(attempt int) time.Duration {
 	secs := math.Pow(float64(attempt), 2) * 5
 	d := time.Duration(secs) * time.Second
-	if d > maxBackoff {
-		d = maxBackoff
-	}
+	d = min(d, maxBackoff)
 	if d < 5*time.Second {
 		d = 5 * time.Second
 	}
