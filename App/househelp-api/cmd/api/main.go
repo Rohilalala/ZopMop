@@ -39,6 +39,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/offers"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
@@ -454,6 +455,10 @@ func main() {
 	// Cart routes (requires JWT).
 	cartGroup := api.Group("/cart", authMiddleware, authLimiter, dbBoundLimiter)
 	cartHandler.RegisterRoutes(cartGroup)
+
+	// Offers routes (requires JWT).
+	offersGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
+	offers.NewHandler(dbPool).RegisterRoutes(offersGroup)
 
 	// Time slots routes (requires JWT).
 	slotsGroup := api.Group("/slots", authMiddleware, authLimiter, dbBoundLimiter)

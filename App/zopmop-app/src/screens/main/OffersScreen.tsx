@@ -3,8 +3,9 @@
 // gradient Apply) → list of ticket-style offer cards with discount badge,
 // dashed divider, terms, and apply CTA.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -28,6 +29,9 @@ import type { MainStackParamList } from '../../types/navigation';
 import { promoStore } from '../../utils/promoStore';
 import { showSuccess, showError } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
+import { useAuth } from '../../context/AuthContext';
+import { listOffers, type Offer } from '../../api/promotions';
+import { logEvent } from '../../analytics/impressionTracker';
 
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
@@ -41,60 +45,51 @@ const H_PAD = 20;
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
-type Offer = {
-  id: string;
-  title: string;
-  code: string;
-  discount: string;
-  terms: string[];
-};
-
-// TODO(backend): replace with GET /offers so coupons can be added/expired
-// without an app update. Backend must also validate codes at booking time —
-// today an unmarked offer can be applied indefinitely. Tracked as S23.
-const OFFERS: Offer[] = [
-  {
-    id: 'WARDROBE10',
-    title: 'Flat 10% off on Complete Wardrobe',
-    code: 'WARDROBE10',
-    discount: '10% OFF',
-    terms: [
-      'Only applicable on Complete Wardrobe cleaning.',
-      'Maximum discount up to ₹50.',
-    ],
-  },
-  {
-    id: 'KIT10',
-    title: 'Flat 10% off on Kitchen Cabinets',
-    code: 'KIT10',
-    discount: '10% OFF',
-    terms: [
-      'Only applicable on Kitchen Cabinets cleaning.',
-      'Maximum discount up to ₹50.',
-    ],
-  },
-  {
-    id: 'FIRST50',
-    title: '50% off your first booking',
-    code: 'FIRST50',
-    discount: '50% OFF',
-    terms: [
-      'Valid only on your first ZopMop booking.',
-      'Maximum discount up to ₹150.',
-    ],
-  },
-];
+function offerTerms(offer: Offer): string[] {
+  const terms: string[] = [];
+  if (offer.min_order_cents > 0) {
+    terms.push(`Min order ₹${Math.floor(offer.min_order_cents / 100)}.`);
+  }
+  if (offer.max_per_user > 0) {
+    terms.push(`Max ${offer.max_per_user} use${offer.max_per_user === 1 ? '' : 's'} per user.`);
+  }
+  if (offer.expires_at) {
+    const d = new Date(offer.expires_at);
+    terms.push(`Valid until ${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}.`);
+  }
+  if (offer.categories.length > 0) {
+    terms.push(`Applicable on: ${offer.categories.join(', ')}.`);
+  }
+  if (!offer.stackable) {
+    terms.push('Cannot be combined with other offers.');
+  }
+  return terms;
+}
 
 export default function OffersScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [loading, setLoading] = useState(true);
   const [inputCode, setInputCode] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    listOffers(token)
+      .then((data) => {
+        setOffers(data);
+        data.forEach((o) => logEvent('offer_impression', { offer_id: o.id, code: o.code }));
+      })
+      .catch(() => {/* non-fatal — empty list is fine */})
+      .finally(() => setLoading(false));
+  }, [token]);
 
   function handleApplyInput() {
     const code = inputCode.trim().toUpperCase();
     if (!code) return;
-    const match = OFFERS.find((o) => o.code === code);
+    const match = offers.find((o) => o.code === code);
     if (match) {
       haptics.success();
       promoStore.set(match.code);
@@ -109,6 +104,7 @@ export default function OffersScreen() {
 
   function handleApplyOffer(offer: Offer) {
     haptics.medium();
+    logEvent('offer_tap', { offer_id: offer.id, code: offer.code });
     promoStore.set(offer.code);
     showSuccess(`"${offer.title}" applied to your cart.`, { title: 'Offer applied' });
   }
@@ -179,11 +175,26 @@ export default function OffersScreen() {
         </View>
 
         <Text style={s.secH}>Available coupons</Text>
-        <View style={[s.body, { gap: 12 }]}>
-          {OFFERS.map((offer) => (
-            <OfferCard key={offer.id} offer={offer} onApply={() => handleApplyOffer(offer)} />
-          ))}
-        </View>
+        {loading ? (
+          <View style={s.body}>
+            <ActivityIndicator color="#F5A300" style={{ marginTop: 20 }} />
+          </View>
+        ) : offers.length === 0 ? (
+          <View style={s.body}>
+            <Text style={s.emptyText}>No offers available right now.</Text>
+          </View>
+        ) : (
+          <View style={[s.body, { gap: 12 }]}>
+            {offers.map((offer) => (
+              <OfferCard
+                key={offer.id}
+                offer={offer}
+                terms={offerTerms(offer)}
+                onApply={() => handleApplyOffer(offer)}
+              />
+            ))}
+          </View>
+        )}
 
         <View style={s.disclaim}>
           <Feather name="info" size={12} color="rgba(255,255,255,0.4)" />
@@ -196,7 +207,7 @@ export default function OffersScreen() {
   );
 }
 
-function OfferCard({ offer, onApply }: { offer: Offer; onApply: () => void }) {
+function OfferCard({ offer, terms, onApply }: { offer: Offer; terms: string[]; onApply: () => void }) {
   return (
     <View style={s.ticket}>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
@@ -220,7 +231,7 @@ function OfferCard({ offer, onApply }: { offer: Offer; onApply: () => void }) {
 
       <View style={s.ticketTop}>
         <View style={s.discountBadge}>
-          <Text style={s.discountBadgeText}>{offer.discount}</Text>
+          <Text style={s.discountBadgeText}>{offer.discount_label}</Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={s.ticketTitle} numberOfLines={2}>{offer.title}</Text>
@@ -236,7 +247,7 @@ function OfferCard({ offer, onApply }: { offer: Offer; onApply: () => void }) {
       <View style={s.dashedDivider} />
 
       <View style={s.terms}>
-        {offer.terms.map((t, i) => (
+        {terms.map((t, i) => (
           <View key={i} style={s.termRow}>
             <View style={s.termDot} />
             <Text style={s.termText}>{t}</Text>
@@ -408,6 +419,12 @@ const s = StyleSheet.create({
   ticketApplyText: {
     ...fontExtra,
     fontSize: 12.5, color: '#F5A300', letterSpacing: 0.2,
+  },
+
+  emptyText: {
+    ...fontMed,
+    fontSize: 13, color: 'rgba(255,255,255,0.4)',
+    textAlign: 'center', paddingVertical: 24,
   },
 
   disclaim: {
