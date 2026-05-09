@@ -132,15 +132,16 @@ export default function ServiceAboutScreen() {
 
   const handleAddToCart = useCallback(async () => {
     const d = duration ?? service.min_duration_minutes;
-    await addItem(service.id, d);
+    const priceCents = Math.round((service.base_price_cents * d) / service.min_duration_minutes);
+    await addItem(service.id, d, service.name, priceCents);
     setDuration(d);
     setAddedToCart(true);
     posthog?.capture('service_added_to_cart', {
-      service_id:          service.id,
-      service_name:        service.name,
-      duration_minutes:    d,
-      price_cents:         Math.round((service.base_price_cents * d) / service.min_duration_minutes),
-      selected_addons:     selectedAddons.size,
+      service_id:       service.id,
+      service_name:     service.name,
+      duration_minutes: d,
+      price_cents:      priceCents,
+      selected_addons:  selectedAddons.size,
     });
   }, [addItem, service.id, service.name, service.min_duration_minutes, service.base_price_cents, duration, selectedAddons.size, posthog]);
 

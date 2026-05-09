@@ -322,7 +322,7 @@ export default function BookingsScreen() {
               <>
                 <Text style={styles.secH}>This week</Text>
                 <View style={styles.body}>
-                  {thisWeek.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} />)}
+                  {thisWeek.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} onReport={(book) => navigation.navigate('ReportIssue', { bookingId: book.id, serviceName: book.services[0]?.service_name })} />)}
                 </View>
               </>
             )}
@@ -330,7 +330,7 @@ export default function BookingsScreen() {
               <>
                 <Text style={styles.secH}>Earlier</Text>
                 <View style={styles.body}>
-                  {earlier.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} />)}
+                  {earlier.map((b) => <PastCard key={b.id} booking={b} onRate={(book) => navigation.navigate('BookingRate', { bookingId: book.id, helperId: book.helper_id ?? undefined, helperName: book.helper_name ?? undefined })} onReport={(book) => navigation.navigate('ReportIssue', { bookingId: book.id, serviceName: book.services[0]?.service_name })} />)}
                 </View>
               </>
             )}
@@ -516,7 +516,7 @@ function ScheduledCard({
 
 // ── Past card ───────────────────────────────────────────────────────────────
 
-function PastCard({ booking, onRate }: { booking: ApiBooking; onRate?: (b: ApiBooking) => void }) {
+function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?: (b: ApiBooking) => void; onReport?: (b: ApiBooking) => void }) {
   const svc = booking.services[0];
   const stamp = booking.scheduled_time || booking.created_at;
   const date = shortDate(stamp);
@@ -582,6 +582,12 @@ function PastCard({ booking, onRate }: { booking: ApiBooking; onRate?: (b: ApiBo
             <Text style={[fontBold, { color: 'rgba(255,255,255,0.85)', fontSize: 13 }]}>Receipt</Text>
           </PressFx>
         </View>
+      )}
+      {!isCancelled && (
+        <PressFx onPress={() => onReport?.(booking)} style={styles.reportBtn}>
+          <Feather name="alert-circle" size={12} color="rgba(255,255,255,0.35)" />
+          <Text style={[fontMed, styles.reportLabel]}>Report an issue</Text>
+        </PressFx>
       )}
     </GlassCard>
   );
@@ -1144,6 +1150,8 @@ const styles = StyleSheet.create({
   },
   pastLbl: { fontSize: 11, color: 'rgba(255,255,255,0.5)' },
   starsRow: { flexDirection: 'row', alignItems: 'center' },
+  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, justifyContent: 'center', paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.05)' },
+  reportLabel: { fontSize: 11, color: 'rgba(255,255,255,0.3)' },
 
   // Empty
   empty: {

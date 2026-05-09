@@ -1,5 +1,6 @@
 import React from 'react';
 import { TouchableOpacity, Text, StyleSheet, Animated, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../types/navigation';
@@ -20,7 +21,7 @@ export default function FloatingCartButton() {
       activeOpacity={0.85}
       onPress={() => navigation.navigate('Cart')}
     >
-      <Text style={s.icon}>🛒</Text>
+      <Feather name="shopping-cart" size={22} color={Colors.white} />
       <Animated.View style={[s.badge, { transform: [{ scale: cartBadgeAnim }] }]}>
         <Text style={s.badgeText}>{itemCount > 9 ? '9+' : itemCount}</Text>
       </Animated.View>
@@ -43,7 +44,6 @@ const s = StyleSheet.create({
     // subtle translucency
     opacity: 0.96,
   },
-  icon: { fontSize: 24 },
   badge: {
     position: 'absolute',
     top: -4, right: -4,

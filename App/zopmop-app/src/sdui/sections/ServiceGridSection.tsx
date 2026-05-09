@@ -59,7 +59,7 @@ export function ServiceGridSection({ data, onAction }: Props) {
   const handleAdd = useCallback(
     async (svc: ApiService) => {
       try {
-        await addItem(svc.id, svc.min_duration_minutes);
+        await addItem(svc.id, svc.min_duration_minutes, svc.name, svc.base_price_cents);
       } catch {
         onAction({
           trigger: 'tap',

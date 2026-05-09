@@ -11,7 +11,7 @@ interface CartContextValue {
   items: ApiCartItem[];
   itemCount: number;
   subtotalCents: number;
-  addItem: (serviceId: string, durationMinutes: number) => Promise<void>;
+  addItem: (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number) => Promise<void>;
   removeItem: (itemId: string) => Promise<void>;
   refreshCart: () => Promise<void>;
   cartBadgeAnim: Animated.Value;
@@ -47,7 +47,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     ]).start();
   }, [cartBadgeAnim]);
 
-  const addItem = useCallback(async (serviceId: string, durationMinutes: number) => {
+  const addItem = useCallback(async (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number) => {
     if (!token) return;
     haptics.medium();
     const snapshot = cart;
@@ -56,9 +56,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       id: `tmp-${Date.now()}`,
       cart_id: snapshot?.id ?? 'tmp-cart',
       service_id: serviceId,
-      service_name: '',
+      service_name: serviceName,
       duration_minutes: durationMinutes,
-      price_cents: 0,
+      price_cents: priceCents,
     };
     const optimistic: ApiCart = snapshot
       ? { ...snapshot, items: [...snapshot.items, tempItem], updated_at: now }
@@ -72,7 +72,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setCart(snapshot);
       showError('Failed to update cart');
     }
-  }, [token, cart, pulseBadge]);
+  }, [token, cart, pulseBadge]); // serviceName + priceCents are args, not closured deps
 
   const removeItem = useCallback(async (itemId: string) => {
     if (!token) return;
