@@ -24,16 +24,9 @@
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
           "remote-notification",
-          "fetch",
-          "remote-notification",
           "fetch"
         ],
         "CFBundleURLTypes": [
-          {
-            "CFBundleURLSchemes": [
-              "com.googleusercontent.apps.506963622768-en4njmal7vd6s25n1ic7iauaosjs2157"
-            ]
-          },
           {
             "CFBundleURLSchemes": [
               "com.googleusercontent.apps.506963622768-en4njmal7vd6s25n1ic7iauaosjs2157"

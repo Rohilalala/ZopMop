@@ -12,13 +12,31 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/pkg/config"
+	"github.com/adityarohilla/househelp-api/pkg/httpx"
 )
+
+// Webhook signature failure counters. Exposed via WebhookMetrics() for the
+// /admin/runtime/metrics endpoint. Clock-skew failures indicate NTP drift
+// on the host; HMAC failures indicate misconfigured secrets or replay attempts.
+var (
+	webhookClockSkewFailures atomic.Int64
+	webhookHMACFailures      atomic.Int64
+)
+
+// WebhookMetrics returns current webhook signature failure counts.
+func WebhookMetrics() map[string]int64 {
+	return map[string]int64{
+		"cashfree_webhook_clock_skew_failures_total": webhookClockSkewFailures.Load(),
+		"cashfree_webhook_hmac_failures_total":       webhookHMACFailures.Load(),
+	}
+}
 
 // Cashfree PG (collection) endpoints. Distinct from the Cashfree Payouts
 // surface used in handler.go for VPA validation — different product, hosts,
@@ -69,7 +87,7 @@ func NewCashfreeGateway(cfg *config.Config) *CashfreeGateway {
 		secretKey:     cfg.CashfreePGSecretKey,
 		baseURL:       base,
 		webhookSecret: cfg.CashfreePGWebhookSecret,
-		http:          &http.Client{Timeout: 15 * time.Second},
+		http:          httpx.NewClient(15 * time.Second),
 		log:           log.With().Str("component", "cashfree-pg").Logger(),
 	}
 }
@@ -403,6 +421,8 @@ func (c *CashfreeGateway) VerifyWebhookSignature(rawBody []byte, timestamp, sign
 		skew = -skew
 	}
 	if skew > cashfreeWebhookMaxSkew {
+		webhookClockSkewFailures.Add(1)
+		log.Warn().Dur("skew", skew).Msg("[cashfree] webhook timestamp outside replay window — possible NTP drift")
 		return ErrWebhookStale
 	}
 
@@ -412,6 +432,7 @@ func (c *CashfreeGateway) VerifyWebhookSignature(rawBody []byte, timestamp, sign
 	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	if !hmac.Equal([]byte(expected), []byte(signature)) {
+		webhookHMACFailures.Add(1)
 		return ErrWebhookBadSignature
 	}
 	return nil

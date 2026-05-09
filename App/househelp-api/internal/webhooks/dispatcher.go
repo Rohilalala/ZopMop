@@ -71,13 +71,22 @@ func WithMaxConcurrency(n int) Option {
 	}
 }
 
+// WithAllowedDomains sets the domain allowlist for outbound webhook targets.
+// When non-empty, webhook delivery is rejected unless the destination hostname
+// matches one of the listed domains (or is a subdomain of one). If empty,
+// any non-private domain is permitted. Configure via ALLOWED_WEBHOOK_DOMAINS.
+func WithAllowedDomains(domains []string) Option {
+	return func(dp *Dispatcher) { dp.allowedDomains = domains }
+}
+
 // Dispatcher is shared between services; safe for concurrent use.
 type Dispatcher struct {
-	pool        *pgxpool.Pool
-	client      *http.Client
-	httpTimeout time.Duration
-	sem         chan struct{}
-	wg          sync.WaitGroup
+	pool           *pgxpool.Pool
+	client         *http.Client
+	httpTimeout    time.Duration
+	sem            chan struct{}
+	wg             sync.WaitGroup
+	allowedDomains []string
 }
 
 // New constructs a Dispatcher with sane defaults.
@@ -296,8 +305,8 @@ func (d *Dispatcher) deliver(ctx context.Context, s subscriber, event string, bo
 	// the HTTP call. Persist the rejection so admins can see the failure
 	// in the CRM delivery list. DNS-rebinding still requires network-level
 	// egress filtering — see ssrf.go comment.
-	if err := validateWebhookTarget(s.URL); err != nil {
-		log.Warn().Err(err).Str("webhook_id", s.ID).Str("url", s.URL).Msg("[webhooks] SSRF rejected")
+	if err := validateWebhookTarget(s.URL, d.allowedDomains); err != nil {
+		log.Warn().Err(err).Str("webhook_id", s.ID).Str("url", s.URL).Msg("[webhooks] target rejected")
 		return d.persist(ctx, s.ID, event, body, 0, truncate(err.Error(), defaultBodyCap), nil, attempt, false)
 	}
 	deliveryUUID := uuid.NewString()

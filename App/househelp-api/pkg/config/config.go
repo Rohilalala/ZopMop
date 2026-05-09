@@ -29,7 +29,8 @@ type Config struct {
 	JWTSecretID        string
 	JWTPreviousSecrets []JWTSecretEntry
 	JWTExpiryHours     int
-	AllowedOrigins     []string
+	AllowedOrigins          []string
+	WebhookAllowedDomains   []string // ALLOWED_WEBHOOK_DOMAINS; empty = any non-private domain allowed
 
 	// Cashfree Payment Gateway (collection). Distinct from Cashfree Payouts
 	// (CASHFREE_CLIENT_ID/SECRET) used for VPA validation in internal/payments.
@@ -124,6 +125,17 @@ func Load() (*Config, error) {
 		cfg.AllowedOrigins = strings.Split(originsStr, ",")
 		for i, origin := range cfg.AllowedOrigins {
 			cfg.AllowedOrigins[i] = strings.TrimSpace(origin)
+		}
+	}
+
+	// Parse webhook allowlist (comma-separated domains, e.g. "api.slack.com,hooks.example.com").
+	webhookDomainsStr := strings.TrimSpace(os.Getenv("ALLOWED_WEBHOOK_DOMAINS"))
+	if webhookDomainsStr != "" {
+		parts := strings.Split(webhookDomainsStr, ",")
+		for _, p := range parts {
+			if d := strings.TrimSpace(p); d != "" {
+				cfg.WebhookAllowedDomains = append(cfg.WebhookAllowedDomains, d)
+			}
 		}
 	}
 

@@ -39,6 +39,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/disputes"
 	"github.com/adityarohilla/househelp-api/internal/offers"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
@@ -277,7 +278,7 @@ func main() {
 	// Outbound webhook dispatcher (shared with cmd/crm-api). Domain services
 	// call webhookDispatcher.Dispatch(ctx, event, payload) for fan-out;
 	// individual services receive it via SetWebhooks below.
-	webhookDispatcher := webhooks.New(dbPool)
+	webhookDispatcher := webhooks.New(dbPool, webhooks.WithAllowedDomains(cfg.WebhookAllowedDomains))
 
 	// Admin.
 	adminRepo := admin.NewRepository(dbPool)
@@ -336,12 +337,15 @@ func main() {
 	for eventType, h := range outbox.DefaultHandlers() {
 		outboxWorker.Register(eventType, h)
 	}
+	for eventType, h := range outbox.BookingHandlers(notificationService, dbPool) {
+		outboxWorker.Register(eventType, h)
+	}
 	outboxWorker.Start()
 	defer outboxWorker.Stop()
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
-	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, notificationService, matchBatcher)
+	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchBatcher)
 
 	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
 	// account deletion when the customer has completed-but-unpaid Cashfree
@@ -460,6 +464,10 @@ func main() {
 	offersGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
 	offers.NewHandler(dbPool).RegisterRoutes(offersGroup)
 
+	// Disputes routes (requires JWT — customer files, CRM resolves).
+	disputesGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
+	disputes.NewHandler(dbPool).RegisterRoutes(disputesGroup)
+
 	// Time slots routes (requires JWT).
 	slotsGroup := api.Group("/slots", authMiddleware, authLimiter, dbBoundLimiter)
 	slotsHandler.RegisterRoutes(slotsGroup)
@@ -542,12 +550,14 @@ func main() {
 	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
 	//   - ScheduledDispatcher: nightly 22:00 IST batch
 	//   - StealthDispatcher:   per-minute after-8pm bookings
-	//   - RebookScanner:       per-5-minute "pros are back" nudge
+	//   - RebookScanner:            per-5-minute "pros are back" nudge
+	//   - PendingActionSweeper:     per-5-minute stuck-booking auto-cancel
 	cronCtx, cancelCrons := context.WithCancel(context.Background())
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
 	go matching.NewScheduledDispatcher(dispatcher).Start(cronCtx)
 	go matching.NewStealthDispatcher(dispatcher).Start(cronCtx)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
+	go booking.NewPendingActionSweeper(dbPool, walletRepo, notificationService).Start(cronCtx)
 	defer cancelCrons()
 
 	// Device-token routes (requires JWT). New per-device push registration —
@@ -600,6 +610,7 @@ func main() {
 			"rate_limiter":     mw.RateLimiterMetrics(),
 			"db_concurrency":   mw.DBConcurrencyMetrics(),
 			"analytics_rollup": rollupWorker.Metrics(),
+			"cashfree_webhook": payments.WebhookMetrics(),
 		})
 	})
 

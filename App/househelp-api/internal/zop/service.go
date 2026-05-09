@@ -25,6 +25,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/slots"
+	"github.com/adityarohilla/househelp-api/pkg/httpx"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
@@ -282,7 +283,7 @@ func NewService(
 		cartSvc:     cartSvc,
 		servicesSvc: servicesSvc,
 		authSvc:     authSvc,
-		httpClient:  &http.Client{Timeout: llmCallTimeout},
+		httpClient:  httpx.NewClient(llmCallTimeout),
 		apiKey:      apiKey,
 	}
 }

@@ -262,10 +262,11 @@ func (s *Service) NotifyCustomerBookingAccepted(ctx context.Context, customerID,
 	}
 	return s.sendToToken(ctx, token,
 		"Helper on the way!",
-		helperName+" has accepted and is heading to you.",
+		"Your helper has accepted and is heading to you.",
 		map[string]string{
-			"type":       "booking_accepted",
-			"booking_id": bookingID,
+			"type":        "booking_accepted",
+			"booking_id":  bookingID,
+			"helper_name": helperName,
 		},
 	)
 }

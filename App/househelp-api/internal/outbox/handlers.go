@@ -2,13 +2,14 @@ package outbox
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
 
-// NoopHandler logs receipt and marks the event done. Used for event types
-// whose side-effects already fire via direct call paths (pre-outbox inline
-// FCM calls). Keeps the table drained without triggering duplicate actions.
+// NoopHandler logs receipt and marks the event done.
 func NoopHandler(_ context.Context, row Row) error {
 	log.Debug().
 		Str("id", row.ID).
@@ -19,9 +20,65 @@ func NoopHandler(_ context.Context, row Row) error {
 	return nil
 }
 
-// DefaultHandlers returns the handler registry for all currently-emitted
-// event types. All handlers are no-ops because their side-effects already
-// fire via direct FCM calls in payments/handler.go and wallet/service.go.
+// bookingNotifier is the subset of notification.Service used by booking handlers.
+type bookingNotifier interface {
+	NotifyProBookingCancelled(ctx context.Context, helperID, bookingID string) error
+	NotifyCustomerBookingAccepted(ctx context.Context, customerID, helperName, bookingID string) error
+	NotifyCustomerBookingCompleted(ctx context.Context, customerID, bookingID string) error
+}
+
+// BookingHandlers returns handlers for booking lifecycle events that fire FCM
+// notifications via the transactional outbox (durable, retried on failure).
+func BookingHandlers(notif bookingNotifier, db *pgxpool.Pool) map[string]Handler {
+	return map[string]Handler{
+		"booking.cancelled": func(ctx context.Context, row Row) error {
+			var p struct {
+				BookingID string `json:"booking_id"`
+				HelperID  string `json:"helper_id"`
+			}
+			if err := json.Unmarshal(row.Payload, &p); err != nil {
+				return fmt.Errorf("booking.cancelled: unmarshal: %w", err)
+			}
+			if p.HelperID == "" {
+				return nil
+			}
+			return notif.NotifyProBookingCancelled(ctx, p.HelperID, p.BookingID)
+		},
+
+		"booking.accepted": func(ctx context.Context, row Row) error {
+			var p struct {
+				BookingID  string `json:"booking_id"`
+				CustomerID string `json:"customer_id"`
+				HelperID   string `json:"helper_id"`
+			}
+			if err := json.Unmarshal(row.Payload, &p); err != nil {
+				return fmt.Errorf("booking.accepted: unmarshal: %w", err)
+			}
+			// Resolve helper name from DB for the "X is on their way" message.
+			var helperName string
+			if err := db.QueryRow(ctx,
+				`SELECT COALESCE(full_name, '') FROM helpers WHERE id = $1`, p.HelperID,
+			).Scan(&helperName); err != nil {
+				return fmt.Errorf("booking.accepted: lookup helper name: %w", err)
+			}
+			return notif.NotifyCustomerBookingAccepted(ctx, p.CustomerID, helperName, p.BookingID)
+		},
+
+		"booking.completed": func(ctx context.Context, row Row) error {
+			var p struct {
+				BookingID  string `json:"booking_id"`
+				CustomerID string `json:"customer_id"`
+			}
+			if err := json.Unmarshal(row.Payload, &p); err != nil {
+				return fmt.Errorf("booking.completed: unmarshal: %w", err)
+			}
+			return notif.NotifyCustomerBookingCompleted(ctx, p.CustomerID, p.BookingID)
+		},
+	}
+}
+
+// DefaultHandlers returns the handler registry for wallet/payment events
+// whose side-effects fire via direct call paths (pre-outbox inline FCM calls).
 func DefaultHandlers() map[string]Handler {
 	return map[string]Handler{
 		"wallet.credited":  NoopHandler,

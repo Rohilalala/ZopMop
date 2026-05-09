@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
+	"github.com/adityarohilla/househelp-api/pkg/httpx"
 )
 
 type Handler struct {
@@ -19,7 +20,7 @@ type Handler struct {
 func NewHandler(c *Collector, appURL string) *Handler {
 	return &Handler{
 		collector:  c,
-		httpClient: &http.Client{Timeout: 3 * time.Second},
+		httpClient: httpx.NewClient(3 * time.Second),
 		appURL:     appURL,
 	}
 }

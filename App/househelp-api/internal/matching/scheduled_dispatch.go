@@ -161,19 +161,33 @@ func (s *ScheduledDispatcher) claimNext(ctx context.Context) (bookingID, custome
 	}
 	defer tx.Rollback(ctx)
 
+	// Claim and stamp matched_at in one atomic CTE (audit B1-7).
+	// FOR UPDATE SKIP LOCKED keeps multiple cron instances from racing on the
+	// same row. The UPDATE stamps matched_at = NOW() before commit so that
+	// a second instance running its own claimNext after this tx commits will
+	// miss the row via "AND matched_at IS NULL" — even though the advisory
+	// lock is gone the moment we commit.
 	row := tx.QueryRow(ctx, `
-		SELECT id::text, customer_id::text, scheduled_time
-		FROM bookings
-		WHERE status              = 'pending'
-		  AND time_slot_id        IS NOT NULL
-		  AND is_stealth_instant  = false
-		  AND helper_id           IS NULL
-		  AND scheduled_time      BETWEEN now() + interval '6 hours'
-		                              AND now() + interval '30 hours'
-		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
-		ORDER BY scheduled_time ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED
+		WITH claimed AS (
+			SELECT id, customer_id, scheduled_time
+			FROM   bookings
+			WHERE  status             = 'pending'
+			  AND  time_slot_id       IS NOT NULL
+			  AND  is_stealth_instant = false
+			  AND  helper_id          IS NULL
+			  AND  matched_at         IS NULL
+			  AND  scheduled_time     BETWEEN now() + interval '6 hours'
+			                              AND now() + interval '30 hours'
+			  AND  (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+			ORDER BY scheduled_time ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE bookings b
+		SET    matched_at = NOW()
+		FROM   claimed
+		WHERE  b.id = claimed.id
+		RETURNING b.id::text, b.customer_id::text, b.scheduled_time
 	`)
 	if err := row.Scan(&bookingID, &customerID, &scheduledTime); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

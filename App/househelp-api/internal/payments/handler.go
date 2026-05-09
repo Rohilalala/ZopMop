@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/users"
+	"github.com/adityarohilla/househelp-api/pkg/httpx"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
 )
 
@@ -72,7 +73,7 @@ func NewHandler() *Handler {
 		cashfreeClientID:     os.Getenv("CASHFREE_CLIENT_ID"),
 		cashfreeClientSecret: os.Getenv("CASHFREE_CLIENT_SECRET"),
 		cashfreeBase:         strings.TrimRight(base, "/"),
-		client:               &http.Client{Timeout: 8 * time.Second},
+		client:               httpx.NewClient(8 * time.Second),
 	}
 }
 

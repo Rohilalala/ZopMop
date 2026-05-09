@@ -21,6 +21,9 @@ bin/
 
 # Load-test outputs — k6 reports, stress summaries (audit E3-3).
 loadtest/results/
+# Load-test seed data contains signed JWTs (audit F2-4).
+loadtest/customers.csv
+loadtest/helpers.csv
 
 # Vendor
 vendor/

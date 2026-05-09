@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/pkg/database"
+	"github.com/adityarohilla/househelp-api/pkg/httpx"
 )
 
 // DirectionsResult holds the parsed response from the Directions API.
@@ -35,7 +36,7 @@ func NewClient(apiKey string, rdb *redis.Client) *Client {
 	return &Client{
 		apiKey: apiKey,
 		rdb:    rdb,
-		http:   &http.Client{Timeout: 5 * time.Second},
+		http:   httpx.NewClient(5 * time.Second),
 	}
 }
 

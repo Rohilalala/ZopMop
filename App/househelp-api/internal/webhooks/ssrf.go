@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 )
 
 // ErrSSRFRejected is returned when a webhook target resolves to a private,
@@ -40,15 +41,19 @@ var privateRanges = func() []*net.IPNet {
 	return out
 }()
 
-// validateWebhookTarget returns nil if the URL is structurally OK and none
-// of its resolved IPs are private. Returns a wrapped ErrSSRFRejected on
-// failure so callers can errors.Is(err, ErrSSRFRejected).
+// ErrWebhookNotAllowed is returned when a webhook target's domain is not in
+// the ALLOWED_WEBHOOK_DOMAINS allowlist.
+var ErrWebhookNotAllowed = errors.New("webhook target rejected: domain not in allowlist")
+
+// validateWebhookTarget returns nil if the URL is structurally OK, none of
+// its resolved IPs are private, and (when allowedDomains is non-empty) the
+// hostname is in the allowlist.
 //
 // Note: this does NOT defend against DNS rebinding (the IP can change
 // between LookupIP and the actual http.Do). Defense in depth is provided
 // by binding outbound traffic to a network policy that drops RFC1918
 // destinations at the cluster level. Here we only catch the obvious cases.
-func validateWebhookTarget(rawURL string) error {
+func validateWebhookTarget(rawURL string, allowedDomains []string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("%w: parse: %v", ErrSSRFRejected, err)
@@ -60,6 +65,22 @@ func validateWebhookTarget(rawURL string) error {
 	if host == "" {
 		return fmt.Errorf("%w: empty host", ErrSSRFRejected)
 	}
+
+	// Domain allowlist check: if configured, host must match exactly or be a
+	// subdomain of an allowlisted entry (e.g. "example.com" allows "api.example.com").
+	if len(allowedDomains) > 0 {
+		allowed := false
+		for _, d := range allowedDomains {
+			if host == d || strings.HasSuffix(host, "."+d) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("%w: %s", ErrWebhookNotAllowed, host)
+		}
+	}
+
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("%w: dns: %v", ErrSSRFRejected, err)

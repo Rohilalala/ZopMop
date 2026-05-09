@@ -167,6 +167,7 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 	feeApplied := feeCents > 0
 	var (
 		customerID     string
+		helperID       *string
 		priceCents     int64
 		discountCents  int64
 		paymentMethod  *string
@@ -181,9 +182,9 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 		  WHERE id = $1
 		    AND status IN ('pending', 'accepted')
 		  RETURNING customer_id::text, amount_paise, COALESCE(discount_paise, 0),
-		            payment_method, payment_id, payment_status`,
+		            payment_method, payment_id, payment_status, helper_id::text`,
 		bookingID, StatusCancelled, cancelledBy, feeApplied, feeCents,
-	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus)
+	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus, &helperID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("booking cannot be cancelled in current status")
@@ -215,6 +216,17 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 			customerID, refundAmount, bookingID, paymentMethod, paymentID,
 		); err != nil {
 			return fmt.Errorf("failed to create refund record: %w", err)
+		}
+	}
+
+	// Emit booking.cancelled in the same tx so the notification fires even if
+	// the process crashes after commit. Handler reads helper_id and fires FCM.
+	if helperID != nil {
+		if p, merr := json.Marshal(map[string]any{"booking_id": bookingID, "helper_id": *helperID}); merr == nil {
+			_, _ = tx.Exec(queryCtx,
+				`INSERT INTO event_outbox (event_type, aggregate_id, payload)
+				 VALUES ('booking.cancelled', $1::uuid, $2::jsonb)`,
+				bookingID, p)
 		}
 	}
 
@@ -342,7 +354,8 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 		return ErrHelperAtMaxActive
 	}
 
-	tag, err := tx.Exec(queryCtx,
+	var customerID string
+	if err := tx.QueryRow(queryCtx,
 		`UPDATE bookings
 		    SET helper_id = $2,
 		        status = $3,
@@ -350,14 +363,23 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 		        accepted_at = now(),
 		        matched_at = COALESCE(matched_at, now())
 		  WHERE id = $1
-		    AND status = $4`,
+		    AND status = $4
+		  RETURNING customer_id::text`,
 		bookingID, helperID, StatusAccepted, StatusPending,
-	)
-	if err != nil {
+	).Scan(&customerID); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrAlreadyAccepted
+		}
 		return fmt.Errorf("failed to accept booking: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrAlreadyAccepted
+
+	// Emit booking.accepted so the outbox worker notifies the customer
+	// even if the process crashes immediately after commit.
+	if p, merr := json.Marshal(map[string]any{"booking_id": bookingID, "customer_id": customerID, "helper_id": helperID}); merr == nil {
+		_, _ = tx.Exec(queryCtx,
+			`INSERT INTO event_outbox (event_type, aggregate_id, payload)
+			 VALUES ('booking.accepted', $1::uuid, $2::jsonb)`,
+			bookingID, p)
 	}
 
 	if err := tx.Commit(queryCtx); err != nil {

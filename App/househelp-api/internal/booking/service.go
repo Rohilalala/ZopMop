@@ -16,7 +16,6 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
-	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/users"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
@@ -164,7 +163,6 @@ type Service struct {
 	db           *pgxpool.Pool
 	rdb          *redis.Client
 	configSvc    *config_manager.Service
-	notifSvc     *notification.Service
 	matchBatcher *matching.Batcher    // nil-safe; only used for instant bookings
 	matchEngine  *matching.Engine     // nil-safe; used for status queries
 	maps         *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
@@ -316,7 +314,7 @@ func (s *Service) fireWebhook(ctx context.Context, event string, payload any) {
 }
 
 // NewService creates a new booking service.
-func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, notifSvc *notification.Service, batcher *matching.Batcher) *Service {
+func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, batcher *matching.Batcher) *Service {
 	var engine *matching.Engine
 	if batcher != nil {
 		engine = matching.NewEngine(db, rdb, configSvc)
@@ -326,7 +324,6 @@ func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc
 		db:           db,
 		rdb:          rdb,
 		configSvc:    configSvc,
-		notifSvc:     notifSvc,
 		matchBatcher: batcher,
 		matchEngine:  engine,
 	}
@@ -591,16 +588,6 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 		})
 	}
 
-	// Notify assigned helper (if any) that the job was cancelled.
-	if s.notifSvc != nil && booking.HelperID != nil {
-		helperID := *booking.HelperID
-		mw.SafeGo("booking.cancel.notify_pro", func() {
-			if notifErr := s.notifSvc.NotifyProBookingCancelled(context.Background(), helperID, bookingID); notifErr != nil {
-				log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send cancellation notification to pro")
-			}
-		})
-	}
-
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
 	return &CancelBookingResponse{
 		Message:                "booking cancelled",
@@ -699,13 +686,6 @@ func (s *Service) AcceptBooking(ctx context.Context, bookingID, helperID string)
 		AmountPaise:        int64(booking.AmountPaise),
 		OccurredAt:        time.Now().UTC(),
 	})
-
-	// Notify customer that their helper is on the way.
-	if s.notifSvc != nil {
-		if notifErr := s.notifSvc.NotifyCustomerBookingAccepted(ctx, booking.CustomerID, helperName, bookingID); notifErr != nil {
-			log.Error().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send booking accepted notification to customer")
-		}
-	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking accepted by helper")
 	return nil
@@ -1725,22 +1705,42 @@ func (s *Service) RescheduleBooking(
 // increments the helper's total_jobs counter.
 // Only the assigned helper may call this.
 func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
-	res, err := s.db.Exec(ctx,
-		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
-		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'`,
-		bookingID, helperID,
-	)
+	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer txCancel()
+
+	tx, err := s.db.BeginTx(txCtx, pgx.TxOptions{})
 	if err != nil {
+		return fmt.Errorf("failed to begin complete tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	var customerID string
+	if err := tx.QueryRow(txCtx,
+		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'
+		 RETURNING customer_id::text`,
+		bookingID, helperID,
+	).Scan(&customerID); err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("booking not found or cannot be completed")
+		}
 		return fmt.Errorf("failed to complete booking: %w", err)
 	}
-	if res.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found or cannot be completed")
-	}
-	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
 
+	if p, merr := json.Marshal(map[string]any{"booking_id": bookingID, "customer_id": customerID, "helper_id": helperID}); merr == nil {
+		_, _ = tx.Exec(txCtx,
+			`INSERT INTO event_outbox (event_type, aggregate_id, payload)
+			 VALUES ('booking.completed', $1::uuid, $2::jsonb)`,
+			bookingID, p)
+	}
+
+	if err := tx.Commit(txCtx); err != nil {
+		return fmt.Errorf("failed to commit complete tx: %w", err)
+	}
+
+	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
 	s.fireWebhook(ctx, webhooks.EventOrderCompleted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusCompleted)))
 
-	// Increment total_jobs and notify customer — both best-effort, non-blocking.
 	mw.SafeGo("booking.complete.increment_jobs", func() {
 		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -1751,22 +1751,6 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 			log.Warn().Err(dbErr).Str("helper_id", helperID).Msg("failed to increment total_jobs")
 		}
 	})
-
-	if s.notifSvc != nil {
-		mw.SafeGo("booking.complete.notify_customer", func() {
-			// Fetch customer ID for this booking then notify them.
-			var customerID string
-			qCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			if err := s.db.QueryRow(qCtx,
-				`SELECT customer_id FROM bookings WHERE id = $1`, bookingID,
-			).Scan(&customerID); err == nil {
-				if notifErr := s.notifSvc.NotifyCustomerBookingCompleted(context.Background(), customerID, bookingID); notifErr != nil {
-					log.Warn().Err(notifErr).Str("booking_id", bookingID).Msg("failed to send completion notification to customer")
-				}
-			}
-		})
-	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking completed")
 	return nil
