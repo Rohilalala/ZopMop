@@ -7,16 +7,14 @@
 // life of the JS bundle (i.e. one session). Each (page, section) fires once.
 
 import { analyticsContext } from './context';
+import { posthog } from '../config/posthog';
 
 const firedImpressions = new Set<string>();
 
-/** Single sink for all SDUI analytics. Replace the body when wiring a real
- *  analytics SDK; every sdui_* event in the codebase already routes here. */
-export function logEvent(name: string, payload: object): void {
-  // Structured log so log scrapers can pick the events up before a real
-  // analytics SDK is wired.
-  // eslint-disable-next-line no-console
-  console.info(`[analytics] ${name}`, payload);
+/** Single sink for all SDUI analytics. Routes to PostHog. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function logEvent(name: string, payload: Record<string, any>): void {
+  posthog.capture(name, payload);
 }
 
 /** Fires `sdui_section_impression` exactly once per session for a given

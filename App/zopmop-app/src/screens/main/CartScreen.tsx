@@ -41,6 +41,7 @@ import AddressPickerModal from '../../components/AddressPickerModal';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
+import { usePostHog } from 'posthog-react-native';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { CartScreenSkeleton } from '../../components/skeletons/CartScreenSkeleton';
@@ -72,6 +73,7 @@ export default function CartScreen() {
   const { token, user } = useAuth();
   const { myGroup, bookGroupChore } = useRoomies();
   const insets = useSafeAreaInsets();
+  const posthog = usePostHog();
 
   const [addresses, setAddresses] = useState<ApiAddress[]>(cartMemCache.addresses);
   const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(cartMemCache.selectedAddress);
@@ -201,8 +203,16 @@ export default function CartScreen() {
 
   const handleRemove = useCallback(async (itemId: string) => {
     setRemoving(itemId);
-    try { await removeItem(itemId); } finally { setRemoving(null); }
-  }, [removeItem]);
+    try {
+      const removed = items.find((i) => i.id === itemId);
+      await removeItem(itemId);
+      posthog.capture('service_removed_from_cart', {
+        service_id: removed?.service_id ?? null,
+        service_name: removed?.service_name ?? null,
+        price_cents: removed?.price_cents ?? null,
+      });
+    } finally { setRemoving(null); }
+  }, [removeItem, items, posthog]);
 
   const handleCheckout = useCallback(async () => {
     if (!token) return;
@@ -223,6 +233,15 @@ export default function CartScreen() {
 
     haptics.medium();
 
+    posthog.capture('booking_checkout_started', {
+      item_count: itemCount,
+      subtotal_cents: subtotalCents,
+      total_cents: totalCents,
+      payment_source: paymentSource,
+      has_promo: !!promoStore.get(),
+      split_enabled: splitEnabled,
+    });
+
     const doSplit = splitEnabled && !!myGroup && selectedMemberIds.size > 0;
 
     bookingInFlight.current = true;
@@ -234,6 +253,15 @@ export default function CartScreen() {
         time_slot_id: selectedSlotId,
         ...(promoCode ? { promo_code: promoCode } : {}),
         payment_source: paymentSource,
+      });
+
+      posthog.capture('booking_confirmed', {
+        booking_id: created.id,
+        total_cents: totalCents,
+        payment_source: paymentSource,
+        split_enabled: doSplit,
+        split_count: splitCount,
+        has_promo: !!promoCode,
       });
 
       if (doSplit && myGroup) {
@@ -254,6 +282,10 @@ export default function CartScreen() {
       if (paymentSource === 'direct') {
         // Booking exists in 'pending'. Hand off to the Cashfree drop
         // sheet flow — PaymentScreen owns order creation + SDK launch.
+        posthog.capture('booking_payment_initiated', {
+          booking_id: created.id,
+          amount_paise: created.price_cents,
+        });
         navigation.replace('Payment', {
           booking_id: created.id,
           // JSON field is back-compat; value is paise (see backend
@@ -314,7 +346,7 @@ export default function CartScreen() {
   }, [
     token, selectedAddress, selectedSlotId, itemCount, refreshCart, navigation,
     splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore, selectedSlotLabel,
-    paymentSource, walletBalance, refetchWalletBalance,
+    paymentSource, walletBalance, refetchWalletBalance, subtotalCents, posthog,
   ]);
 
   if (hydrating) {

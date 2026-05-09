@@ -44,6 +44,7 @@ import {
 import { showError } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import WalletTopupSheet from './WalletTopupSheet';
+import { usePostHog } from 'posthog-react-native';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -66,6 +67,7 @@ export default function WalletScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const posthog = usePostHog();
 
   const [balancePaise, setBalancePaise] = useState<number | null>(walletMemCache.balancePaise);
   const [transactions, setTransactions] = useState<WalletTransaction[]>(
@@ -118,8 +120,9 @@ export default function WalletScreen() {
       showError('Please sign in to top up your wallet.');
       return;
     }
+    posthog.capture('wallet_topup_opened', { balance_paise: balancePaise });
     setTopupOpen(true);
-  }, [token]);
+  }, [token, posthog, balancePaise]);
 
   const handleTopupSuccess = useCallback(() => {
     fetchAll();

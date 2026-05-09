@@ -27,6 +27,7 @@ import { haptics } from '../../utils/haptics';
 import LottieView from 'lottie-react-native';
 import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { posthog } from '../../config/posthog';
 
 // Public-facing policy URLs. Kept inline rather than from env because they're
 // the same across builds — the Privacy Policy link in the new-user consent
@@ -136,6 +137,11 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
       }
 
       haptics.success();
+      posthog.capture('otp_verified', {
+        is_new_user: isNewUser,
+        has_backend_token: !!backendToken,
+        role: backendUser?.role ?? null,
+      });
 
       // Returning pro/helper — sign in directly, skip onboarding.
       if (backendToken && (backendUser?.role === 'helper' || backendUser?.role === 'pro')) {

@@ -8,6 +8,7 @@ import { BASE_URL } from '../api/config';
 import { otpStore } from '../utils/otpStore';
 import { promoStore } from '../utils/promoStore';
 import { pendingAuthStore } from '../utils/pendingAuthStore';
+import { posthog } from '../config/posthog';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
@@ -316,11 +317,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     SecureStore.setItemAsync(TOKEN_KEY, jwt).catch(() => {});
     if (authUser) {
       SecureStore.setItemAsync(USER_KEY, JSON.stringify(authUser)).catch(() => {});
+      posthog.identify(authUser.id, {
+        $set: { phone: authUser.phone, role: authUser.role, name: authUser.name ?? null },
+        $set_once: { first_sign_in_date: new Date().toISOString() },
+      });
     }
+    posthog.capture('user_signed_in', { role: authUser?.role ?? null });
     SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
   }
 
   function signOut() {
+    posthog.capture('user_signed_out');
+    posthog.reset();
     setToken(null);
     setUser(null);
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});

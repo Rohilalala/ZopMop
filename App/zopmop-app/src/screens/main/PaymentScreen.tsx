@@ -51,6 +51,7 @@ import {
 } from '../../hooks/useCashfreePayment';
 import { showError } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
+import { usePostHog } from 'posthog-react-native';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -70,6 +71,7 @@ export default function PaymentScreen() {
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
   const { startPayment, pollStatus } = useCashfreePayment();
+  const posthog = usePostHog();
 
   // Defense against deep-link mistakes / typed-as-undefined route params.
   const params = route.params;
@@ -105,6 +107,7 @@ export default function PaymentScreen() {
     haptics.medium();
     setState('creating_order');
     setErrorMessage(null);
+    posthog?.capture('payment_started', { booking_id: bookingID, amount_paise: amountPaise });
 
     let order;
     try {
@@ -142,6 +145,7 @@ export default function PaymentScreen() {
         try {
           const snap = await pollStatus(order.order_id, { signal: ctrl.signal });
           if (snap.status === 'success') {
+            posthog?.capture('payment_completed', { booking_id: bookingID, amount_paise: amountPaise });
             navigation.replace('BookingConfirmed', {
               bookingId: bookingID,
               totalCents: amountPaise,
@@ -149,6 +153,7 @@ export default function PaymentScreen() {
             return;
           }
           if (snap.status === 'failed') {
+            posthog?.capture('payment_failed', { booking_id: bookingID, amount_paise: amountPaise, reason: 'poll_failed' });
             setState('error');
             setErrorMessage('Payment failed. Try again or pick a different method.');
             return;
@@ -178,11 +183,12 @@ export default function PaymentScreen() {
       },
       on_failure: (cfErr) => {
         const msg = cfErr.getMessage?.() || 'Payment failed';
+        posthog?.capture('payment_failed', { booking_id: bookingID, amount_paise: amountPaise, reason: msg });
         setState('error');
         setErrorMessage(msg);
       },
     });
-  }, [token, bookingID, amountPaise, state, startPayment, pollStatus, navigation]);
+  }, [token, bookingID, amountPaise, state, startPayment, pollStatus, navigation, posthog]);
 
   const ctaDisabled =
     state === 'creating_order' ||

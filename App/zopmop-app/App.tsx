@@ -25,17 +25,42 @@ import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
 import Toast from 'react-native-toast-message';
+import { PostHogProvider } from 'posthog-react-native';
+import { posthog } from './src/config/posthog';
 
 SplashScreenNative.preventAutoHideAsync();
 
 function Navigation() {
   const { isAuthenticated, isLoading } = useAuth();
+  const routeNameRef = React.useRef<string | undefined>(undefined);
   if (isLoading) return null;
   return (
     <ErrorBoundary>
       <Toast />
-      <NavigationContainer ref={navigationRef}>
-        {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
+      <NavigationContainer
+        ref={navigationRef}
+        onReady={() => {
+          routeNameRef.current = navigationRef.current?.getCurrentRoute()?.name;
+        }}
+        onStateChange={() => {
+          const current = navigationRef.current?.getCurrentRoute()?.name;
+          if (current && current !== routeNameRef.current) {
+            posthog?.capture('$screen', { $screen_name: current });
+          }
+          routeNameRef.current = current;
+        }}
+      >
+        <PostHogProvider
+          client={posthog}
+          autocapture={{
+            captureScreens: false,
+            captureTouches: true,
+            propsToCapture: ['testID'],
+            maxElementsCaptured: 20,
+          }}
+        >
+          {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
+        </PostHogProvider>
       </NavigationContainer>
     </ErrorBoundary>
   );

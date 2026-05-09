@@ -1,0 +1,102 @@
+[
+  {
+    "event": "sdui_section_impression",
+    "description": "A home screen SDUI section entered the viewport for the first time this session",
+    "file": "src/analytics/impressionTracker.ts"
+  },
+  {
+    "event": "sdui_action",
+    "description": "User tapped a CTA inside an SDUI section",
+    "file": "src/sdui/ActionHandler.ts"
+  },
+  {
+    "event": "sdui_render_error",
+    "description": "An SDUI section failed to render",
+    "file": "src/sdui/SectionRenderer.tsx"
+  },
+  {
+    "event": "otp_requested",
+    "description": "User submitted their phone number and an OTP was sent",
+    "file": "src/screens/auth/PhoneEntryScreen.tsx"
+  },
+  {
+    "event": "otp_verified",
+    "description": "User entered a valid OTP and was authenticated",
+    "file": "src/screens/auth/OTPVerificationScreen.tsx"
+  },
+  {
+    "event": "user_signed_in",
+    "description": "User successfully signed in (after OTP verify + backend JWT issued)",
+    "file": "src/context/AuthContext.tsx"
+  },
+  {
+    "event": "user_signed_out",
+    "description": "User signed out",
+    "file": "src/context/AuthContext.tsx"
+  },
+  {
+    "event": "service_viewed",
+    "description": "User opened a service detail screen",
+    "file": "src/screens/main/ServiceAboutScreen.tsx"
+  },
+  {
+    "event": "service_added_to_cart",
+    "description": "User tapped Add to Cart on a service",
+    "file": "src/screens/main/ServiceAboutScreen.tsx"
+  },
+  {
+    "event": "service_removed_from_cart",
+    "description": "User removed a service from the cart",
+    "file": "src/screens/main/CartScreen.tsx"
+  },
+  {
+    "event": "booking_checkout_started",
+    "description": "User tapped Checkout in the cart",
+    "file": "src/screens/main/CartScreen.tsx"
+  },
+  {
+    "event": "booking_payment_initiated",
+    "description": "Booking confirmed with payment required — redirecting to payment screen",
+    "file": "src/screens/main/CartScreen.tsx"
+  },
+  {
+    "event": "payment_started",
+    "description": "User tapped Continue to payment on the PaymentScreen",
+    "file": "src/screens/main/PaymentScreen.tsx"
+  },
+  {
+    "event": "payment_completed",
+    "description": "Cashfree payment succeeded and booking confirmed",
+    "file": "src/screens/main/PaymentScreen.tsx"
+  },
+  {
+    "event": "payment_failed",
+    "description": "Cashfree payment failed or could not be confirmed",
+    "file": "src/screens/main/PaymentScreen.tsx"
+  },
+  {
+    "event": "booking_confirmed",
+    "description": "Booking created and confirmed (wallet or payment path)",
+    "file": "src/screens/main/CartScreen.tsx"
+  },
+  {
+    "event": "booking_rated",
+    "description": "User submitted a star rating for a completed booking",
+    "file": "src/screens/main/BookingRateScreen.tsx"
+  },
+  {
+    "event": "expert_added",
+    "description": "User added a helper to their preferred experts list after a booking",
+    "file": "src/screens/main/BookingRateScreen.tsx"
+  },
+  {
+    "event": "wallet_topup_opened",
+    "description": "User opened the wallet top-up sheet",
+    "file": "src/screens/main/WalletScreen.tsx"
+  },
+  {
+    "event": "location_changed",
+    "description": "User changed their service delivery location on the home screen",
+    "file": "src/screens/main/HomeScreen.tsx"
+  }
+]

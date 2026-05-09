@@ -36,6 +36,7 @@ import { PrimaryButton } from '../../components/PrimaryButton';
 import { haptics } from '../../utils/haptics';
 import { showError, showSuccess } from '../../utils/toast';
 import { markBookingRated } from '../../utils/ratedBookingsStore';
+import { usePostHog } from 'posthog-react-native';
 
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
@@ -56,6 +57,7 @@ export default function BookingRateScreen({ route }: Props) {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const posthog = usePostHog();
 
   const [stars, setStars] = useState(0);
   const [comment, setComment] = useState('');
@@ -91,6 +93,12 @@ export default function BookingRateScreen({ route }: Props) {
         return;
       }
       await markBookingRated(bookingId);
+      posthog.capture('booking_rated', {
+        booking_id: bookingId,
+        stars,
+        has_comment: comment.trim().length > 0,
+        helper_id: helperId ?? null,
+      });
       setSubmitted(true);
 
       if (helperId && helperId !== '' && stars >= 4) {
@@ -118,6 +126,7 @@ export default function BookingRateScreen({ route }: Props) {
     setAddingExpert(true);
     try {
       await addExpert(token, helperId);
+      posthog.capture('expert_added', { helper_id: helperId });
       showSuccess(`${helperName ?? 'Pro'} added to Your Experts.`);
       setTimeout(() => navigation.goBack(), 600);
     } catch (err: any) {

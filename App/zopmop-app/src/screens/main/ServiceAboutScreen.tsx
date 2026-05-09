@@ -30,6 +30,7 @@ import {
   type ServiceAddon,
 } from '../../api/services';
 import { useCart } from '../../context/CartContext';
+import { usePostHog } from 'posthog-react-native';
 
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
@@ -89,6 +90,16 @@ export default function ServiceAboutScreen() {
   const [addedToCart, setAddedToCart] = useState(false);
 
   const { addItem } = useCart();
+  const posthog = usePostHog();
+
+  useEffect(() => {
+    posthog?.capture('service_viewed', {
+      service_id:        service.id,
+      service_name:      service.name,
+      base_price_cents:  service.base_price_cents,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [service.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,7 +135,14 @@ export default function ServiceAboutScreen() {
     await addItem(service.id, d);
     setDuration(d);
     setAddedToCart(true);
-  }, [addItem, service.id, service.min_duration_minutes, duration]);
+    posthog?.capture('service_added_to_cart', {
+      service_id:          service.id,
+      service_name:        service.name,
+      duration_minutes:    d,
+      price_cents:         Math.round((service.base_price_cents * d) / service.min_duration_minutes),
+      selected_addons:     selectedAddons.size,
+    });
+  }, [addItem, service.id, service.name, service.min_duration_minutes, service.base_price_cents, duration, selectedAddons.size, posthog]);
 
   const handleShare = useCallback(() => {
     Share.share({ message: `Check out ${service.name} on ZopMop!` });

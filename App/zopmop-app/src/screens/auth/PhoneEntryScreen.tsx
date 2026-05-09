@@ -25,6 +25,7 @@ import { otpStore } from '../../utils/otpStore';
 import { haptics } from '../../utils/haptics';
 import { BASE_URL } from '../../api/config';
 import { IndiaFlag } from '../../components/ui/IndiaFlag';
+import { posthog } from '../../config/posthog';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'PhoneEntry'>;
@@ -123,6 +124,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       const confirmation = await signInWithPhoneNumber(firebaseAuth, fullPhone);
       otpStore.set(confirmation);
       const isNewUser = await isNewUserPromise;
+      posthog.capture('otp_requested', { is_new_user: isNewUser });
       navigation.navigate('OTPVerification', { phone: fullPhone, isNewUser });
     } catch (err: any) {
       const msg =

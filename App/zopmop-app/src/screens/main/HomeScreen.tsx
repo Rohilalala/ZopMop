@@ -64,6 +64,7 @@ import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
+import { usePostHog } from 'posthog-react-native';
 import { usePrefetch } from '../../context/PrefetchContext';
 import { writeLastKnownLocation, readLastKnownLocation } from '../../utils/locationCache';
 import type { SduiAction, SduiSection } from '../../sdui/types';
@@ -93,6 +94,7 @@ export default function HomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { consumeHome } = usePrefetch();
+  const posthog = usePostHog();
 
   // Read prefetched data once on mount. Already-fetched SDUI page + coords
   // become initial state, so first paint is instant when prefetch completed.
@@ -385,11 +387,15 @@ export default function HomeScreen() {
       const result = await checkServiceability(lat, lon).catch(() => ({
         serviceable: true,
       }));
+      posthog.capture('location_changed', {
+        serviceable: result.serviceable,
+        has_saved_address: !!addressId,
+      });
       setServiceable(result.serviceable);
       setCoords({ lat, lon });
       writeLastKnownLocation({ lat, lon, name: shortName, addressId });
     },
-    [token],
+    [token, posthog],
   );
 
   // ── Action routing ────────────────────────────────────────────────────────
