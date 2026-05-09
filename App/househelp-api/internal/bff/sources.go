@@ -23,15 +23,16 @@ type BatchRegistry map[string]BatchDef
 // PromoSlide is the wire shape for a promo carousel slide. Mirrors the
 // PromoSlide TypeScript interface.
 type PromoSlide struct {
-	Key     string         `json:"key"`
-	Eyebrow string         `json:"eyebrow"`
-	Title   string         `json:"title"`
-	Body    string         `json:"body"`
-	CTA     string         `json:"cta"`
-	BG      string         `json:"bg"`
-	Accent  string         `json:"accent"`
-	Emoji   string         `json:"emoji"`
-	Action  map[string]any `json:"action"`
+	Key      string         `json:"key"`
+	Eyebrow  string         `json:"eyebrow"`
+	Title    string         `json:"title"`
+	Body     string         `json:"body"`
+	CTA      string         `json:"cta"`
+	BG       string         `json:"bg"`
+	Accent   string         `json:"accent"`
+	Emoji    string         `json:"emoji"`
+	Action   map[string]any `json:"action"`
+	ImageURL string         `json:"image_url,omitempty"`
 }
 
 // SourceDeps holds the live dependencies needed by every Fetch closure.
@@ -217,17 +218,28 @@ func fetchPopularServices(catalog *services.Catalog) func(ctx context.Context, r
 	}
 }
 
+// fetchActivePromos returns hero carousel slides from the banners table.
+// banners is the canonical editorial source; home_promos was dropped in migration 080.
 func fetchActivePromos(db *pgxpool.Pool) func(ctx context.Context, rc RequestContext) (any, error) {
 	return func(ctx context.Context, rc RequestContext) (any, error) {
 		queryCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		defer cancel()
 
-		rows, err := db.Query(queryCtx,
-			`SELECT key, eyebrow, title, body, cta, bg_color, accent_color, emoji, screen, screen_params
-			   FROM home_promos
-			  WHERE is_active = true
-			  ORDER BY display_order ASC, created_at ASC`,
-		)
+		rows, err := db.Query(queryCtx, `
+			SELECT
+				id::text,
+				title,
+				COALESCE(subtitle, '')   AS body,
+				COALESCE(cta_label, '')  AS cta,
+				COALESCE(tap_action, '') AS tap_action,
+				image_url
+			FROM banners
+			WHERE is_active = TRUE
+			  AND (starts_at IS NULL OR starts_at <= NOW())
+			  AND (ends_at   IS NULL OR ends_at   >  NOW())
+			ORDER BY display_order ASC, created_at ASC
+			LIMIT 10
+		`)
 		if err != nil {
 			return nil, fmt.Errorf("promos.active: %w", err)
 		}
@@ -236,23 +248,25 @@ func fetchActivePromos(db *pgxpool.Pool) func(ctx context.Context, rc RequestCon
 		out := make([]PromoSlide, 0, 8)
 		for rows.Next() {
 			var s PromoSlide
-			var screen string
-			var params []byte
-			if err := rows.Scan(&s.Key, &s.Eyebrow, &s.Title, &s.Body, &s.CTA, &s.BG, &s.Accent, &s.Emoji, &screen, &params); err != nil {
-				return nil, fmt.Errorf("scan promo: %w", err)
+			var tapAction string
+			if err := rows.Scan(&s.Key, &s.Title, &s.Body, &s.CTA, &tapAction, &s.ImageURL); err != nil {
+				return nil, fmt.Errorf("scan banner: %w", err)
 			}
-			action := map[string]any{
+			// Default visual fields — admins can override via banners.accent_color
+			// if that column is added later; for now use brand defaults.
+			s.Eyebrow = ""
+			s.Emoji = ""
+			s.BG = "#1A1A2E"
+			s.Accent = "#F5A300"
+			screen := tapAction
+			if screen == "" {
+				screen = "Offers"
+			}
+			s.Action = map[string]any{
 				"trigger": "tap",
 				"type":    "navigate",
 				"screen":  screen,
 			}
-			if len(params) > 0 {
-				var p map[string]any
-				if err := jsonUnmarshalSafe(params, &p); err == nil && len(p) > 0 {
-					action["params"] = p
-				}
-			}
-			s.Action = action
 			out = append(out, s)
 		}
 		return out, rows.Err()
