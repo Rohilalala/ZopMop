@@ -1,10 +1,12 @@
 import './global.css';
 import React, { useState, useCallback, useEffect } from 'react';
-import { View } from 'react-native';
+import { View, LogBox, Linking } from 'react-native';
+
+LogBox.ignoreLogs(['Error while flushing PostHog', 'PostHogFetchNetworkError']);
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
-import { navigationRef, flushPendingNavigation } from './src/navigation/navigationRef';
+import { navigationRef, flushPendingNavigation, navigate as navNavigate } from './src/navigation/navigationRef';
 import {
   useFonts,
   PlusJakartaSans_400Regular,
@@ -24,15 +26,48 @@ import { RoomiesProvider } from './src/context/RoomiesContext';
 import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
+import { addConnectivityListener, isConnected } from './src/utils/netInfo';
 import Toast from 'react-native-toast-message';
 import { PostHogProvider } from 'posthog-react-native';
 import { posthog } from './src/config/posthog';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 SplashScreenNative.preventAutoHideAsync();
 
 function Navigation() {
   const { isAuthenticated, isLoading } = useAuth();
   const routeNameRef = React.useRef<string | undefined>(undefined);
+
+  // Deep link handler: parse /r/<code> and route to ReferralInvite or stash for after login.
+  useEffect(() => {
+    const handleUrl = async ({ url }: { url: string }) => {
+      const match = url.match(/\/r\/([A-Za-z0-9_]+)/);
+      if (!match) return;
+      const code = match[1].toUpperCase();
+      if (isAuthenticated) {
+        navNavigate('ReferralInvite', { code });
+      } else {
+        await AsyncStorage.setItem('pendingReferralCode', code);
+      }
+    };
+
+    const sub = Linking.addEventListener('url', handleUrl);
+    Linking.getInitialURL().then(url => { if (url) handleUrl({ url }); });
+    return () => sub.remove();
+  }, [isAuthenticated]);
+
+  // After login, flush any stashed referral code.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    AsyncStorage.getItem('pendingReferralCode').then(code => {
+      if (!code) return;
+      AsyncStorage.removeItem('pendingReferralCode');
+      setTimeout(() => {
+        navNavigate('ReferralInvite', { code });
+      }, 300);
+    });
+  }, [isAuthenticated]);
+
   if (isLoading) return null;
   return (
     <ErrorBoundary>
@@ -75,6 +110,17 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
   useColors();
   const { status, retry } = useBackendHealth();
 
+  // null = not yet checked (fail-open: assume online until we know otherwise)
+  const [isOnline, setIsOnline] = useState<boolean | null>(null);
+  useEffect(() => {
+    isConnected().then(setIsOnline);
+    return addConnectivityListener(setIsOnline);
+  }, []);
+
+  const retryOffline = useCallback(() => {
+    isConnected().then(setIsOnline);
+  }, []);
+
   // Sticky "show backend-down screen" flag. Goes true the first time the
   // hook reports down. Stays true through subsequent 'unknown' probe windows
   // so the screen remains mounted and can run its peek/refresh animation.
@@ -85,10 +131,16 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
     else if (status === 'up') setShowDown(false);
   }, [status]);
 
+  // If backend is reachable, treat as online regardless of NetInfo (iOS
+  // simulator can false-negative isConnected during app startup).
+  const offline = isOnline === false && status !== 'up';
+
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }} onLayout={onLayout}>
       {!splashDone ? (
         <SplashScreen onReady={() => setSplashDone(true)} />
+      ) : offline ? (
+        <BackendDownScreen onRetry={retryOffline} />
       ) : showDown ? (
         <BackendDownScreen onRetry={retry} />
       ) : (

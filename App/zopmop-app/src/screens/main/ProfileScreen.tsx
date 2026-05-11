@@ -243,8 +243,17 @@ export default function ProfileScreen() {
 
           <ActionRail navigation={navigation} />
 
-          {/* Referral ticket hidden until the referral program ships end-to-end
-              (S14, S15). Re-enable when /me/referrals + share intent are wired. */}
+          <SectionHeader>Referral</SectionHeader>
+          <Card>
+            <Row
+              icon={<Feather name="gift" size={17} color={C.amber} />}
+              label="Refer & Earn"
+              meta="Get Rs 200 per referral"
+              chev
+              onPress={() => navigation.navigate('ReferralEarn')}
+              last
+            />
+          </Card>
 
           <SectionHeader>Preferences</SectionHeader>
           <Card>

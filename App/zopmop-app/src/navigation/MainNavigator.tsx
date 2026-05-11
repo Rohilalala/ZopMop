@@ -34,6 +34,8 @@ import BookingConfirmedScreen from '../screens/main/BookingConfirmedScreen';
 import TrackLiveScreen from '../screens/main/TrackLiveScreen';
 import ChatScreen from '../screens/main/ChatScreen';
 import TipScreen from '../screens/main/TipScreen';
+import ReferralEarnScreen from '../screens/main/ReferralEarnScreen';
+import ReferralInviteScreen from '../screens/main/ReferralInviteScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -230,6 +232,16 @@ export default function MainNavigator() {
           name="Tip"
           component={TipScreen}
           options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="ReferralEarn"
+          component={ReferralEarnScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ReferralInvite"
+          component={ReferralInviteScreen}
+          options={{ gestureEnabled: false, animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
       <PersistentTabBar />
