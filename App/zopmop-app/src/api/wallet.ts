@@ -19,7 +19,7 @@ export type WalletTransaction = {
   id: string;
   amount_paise: number;
   balance_after: number;
-  kind: 'topup' | 'spend' | 'refund_credit' | 'adjustment' | 'reversal';
+  kind: 'topup' | 'spend' | 'refund_credit' | 'adjustment' | 'reversal' | 'referral_credit';
   booking_id: string | null;
   payment_id: string | null;
   note: string | null;

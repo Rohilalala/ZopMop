@@ -142,6 +142,8 @@ export type MainStackParamList = {
     helperName?: string;
     initialAmountRupees?: number;
   };
+  ReferralEarn: undefined;
+  ReferralInvite: { code: string };
 };
 
 export type RootStackParamList = {
