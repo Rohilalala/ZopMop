@@ -117,7 +117,7 @@ func TestValidateDebitInputs_RejectsNonPositiveAmount(t *testing.T) {
 
 func TestKindIsCredit(t *testing.T) {
 	t.Parallel()
-	credits := []Kind{KindTopup, KindRefundCredit, KindAdjustment}
+	credits := []Kind{KindTopup, KindRefundCredit, KindAdjustment, KindReferralCredit}
 	debits := []Kind{KindSpend, KindReversal}
 	for _, k := range credits {
 		if !k.IsCredit() {
