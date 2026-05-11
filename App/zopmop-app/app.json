@@ -15,6 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.zopmop.app",
+      "associatedDomains": ["applinks:zopmop.com"],
       "googleServicesFile": "./GoogleService-Info.plist",
       "entitlements": {
         "aps-environment": "development"
@@ -34,7 +35,11 @@
           }
         ]
       },
-      "config": {}
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCYCxpNia7E01jVn9AnHUgyPgUC4-HYYQ0"
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -43,10 +48,22 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "googleServicesFile": "./android/app/google-services.json",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "zopmop.com",
+              "pathPrefix": "/r/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "permissions": [
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.POST_NOTIFICATIONS",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.POST_NOTIFICATIONS"
@@ -71,6 +88,12 @@
       "@react-native-firebase/auth",
       "@react-native-firebase/messaging",
       "expo-secure-store",
+      [
+        "react-native-maps",
+        {
+          "iosGoogleMapsApiKey": "AIzaSyCYCxpNia7E01jVn9AnHUgyPgUC4-HYYQ0"
+        }
+      ],
       [
         "expo-build-properties",
         {
