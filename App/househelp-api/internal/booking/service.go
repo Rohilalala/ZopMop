@@ -116,6 +116,11 @@ func indiaLocation() *time.Location {
 	return time.FixedZone("IST", 5*3600+30*60)
 }
 
+// ReferralCompleter hooks into booking completion to credit referral rewards.
+type ReferralCompleter interface {
+	MaybeCompleteOnBookingTx(ctx context.Context, tx pgx.Tx, customerID string) error
+}
+
 // WalletDebiter is the slice of internal/wallet's Service that the booking
 // flow needs to spend wallet funds. Defined as an interface to avoid an
 // import cycle (wallet imports nothing from booking; if we typed against
@@ -170,6 +175,7 @@ type Service struct {
 	webhooks     *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
 	ledger       *payments.Ledger     // nil-safe; charge-row writer
 	wallet       WalletDebiter        // nil-safe; payment_source="wallet" flow
+	referrals    ReferralCompleter    // nil-safe; referral reward on completion
 }
 
 // SetPaymentsLedger wires the payments ledger so booking confirmation can
@@ -180,6 +186,11 @@ func (s *Service) SetPaymentsLedger(l *payments.Ledger) { s.ledger = l }
 // SetWallet wires the wallet service so payment_source="wallet" can debit
 // inline. Optional — without it, a wallet-source request is rejected.
 func (s *Service) SetWallet(w WalletDebiter) { s.wallet = w }
+
+// SetReferralCompleter wires the referral service so first-booking completion
+// can credit the referee and referrer rewards. nil-safe — leaving it unset
+// disables referral crediting.
+func (s *Service) SetReferralCompleter(rc ReferralCompleter) { s.referrals = rc }
 
 // payBookingFromWallet runs the wallet debit + payments row insert + booking
 // status flip + booking.paid outbox event for a freshly created booking.
@@ -1732,6 +1743,12 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 			`INSERT INTO event_outbox (event_type, aggregate_id, payload)
 			 VALUES ('booking.completed', $1::uuid, $2::jsonb)`,
 			bookingID, p)
+	}
+
+	if s.referrals != nil {
+		if rerr := s.referrals.MaybeCompleteOnBookingTx(txCtx, tx, customerID); rerr != nil {
+			return fmt.Errorf("referral completion: %w", rerr)
+		}
 	}
 
 	if err := tx.Commit(txCtx); err != nil {

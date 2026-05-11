@@ -46,6 +46,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/internal/places"
 	"github.com/adityarohilla/househelp-api/internal/reengagement"
+	"github.com/adityarohilla/househelp-api/internal/referral"
 	"github.com/adityarohilla/househelp-api/internal/reviews"
 	"github.com/adityarohilla/househelp-api/internal/roomies"
 	"github.com/adityarohilla/househelp-api/internal/segments"
@@ -546,6 +547,16 @@ func main() {
 	expertsService := experts.NewService(expertsRepo)
 	expertsHandler := experts.NewHandler(expertsService)
 	expertsHandler.RegisterRoutes(meGroup)
+
+	// Referral system: shareable links, Rs 100 referee + Rs 200 referrer on first booking.
+	referralRepo := referral.NewRepository(dbPool)
+	referralSvc := referral.NewService(referralRepo, dbPool, walletSvc)
+	referralHandler := referral.NewHandler(referralSvc)
+	authService.SetCodeGenerator(referralSvc)
+	bookingService.SetReferralCompleter(referralSvc)
+	referralHandler.RegisterMeRoutes(meGroup)
+	referralsGroup := api.Group("/referrals", authMiddleware, authLimiter, dbBoundLimiter)
+	referralHandler.RegisterRoutes(referralsGroup)
 
 	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
 	//   - ScheduledDispatcher: nightly 22:00 IST batch

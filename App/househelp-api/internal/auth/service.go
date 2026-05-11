@@ -49,6 +49,11 @@ var (
 	ErrOTPExpiredOrNotFound = errors.New("OTP expired or not found")
 )
 
+// CodeGenerator generates referral codes on profile name update.
+type CodeGenerator interface {
+	GenerateAndSetCode(ctx context.Context, userID, name, phone string) (string, error)
+}
+
 // Service handles auth business logic.
 type Service struct {
 	repo            *Repository
@@ -58,7 +63,12 @@ type Service struct {
 	jwtExpiry       time.Duration
 	devOTPEnabled   bool
 	postDeleteHooks []func(ctx context.Context, userID string)
+	codeGen         CodeGenerator
 }
+
+// SetCodeGenerator wires the referral code generator so a code is minted
+// (idempotently) whenever a user sets their name for the first time.
+func (s *Service) SetCodeGenerator(cg CodeGenerator) { s.codeGen = cg }
 
 // NewService creates a new auth service.
 // devOTPEnabled controls whether SendOTP returns the plaintext OTP alongside the
@@ -288,7 +298,17 @@ func (s *Service) GetMe(ctx context.Context, userID string) (*User, error) {
 
 // UpdateProfile updates name and/or email for the current user.
 func (s *Service) UpdateProfile(ctx context.Context, userID string, req UpdateProfileRequest) (*User, error) {
-	return s.repo.UpdateProfile(ctx, userID, req)
+	user, err := s.repo.UpdateProfile(ctx, userID, req)
+	if err != nil {
+		return nil, err
+	}
+	if s.codeGen != nil && req.Name != "" {
+		name := req.Name
+		if _, cgErr := s.codeGen.GenerateAndSetCode(ctx, userID, name, user.Phone); cgErr != nil {
+			log.Warn().Err(cgErr).Str("user_id", userID).Msg("auth: referral code generation failed (non-fatal)")
+		}
+	}
+	return user, nil
 }
 
 // OnboardPro records a helper application in 'pending' status. SECURITY: it
