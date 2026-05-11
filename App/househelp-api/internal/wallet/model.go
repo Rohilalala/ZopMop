@@ -21,11 +21,12 @@ import (
 type Kind string
 
 const (
-	KindTopup        Kind = "topup"         // credit, requires payment_id
-	KindSpend        Kind = "spend"         // debit, requires booking_id
-	KindRefundCredit Kind = "refund_credit" // credit, may carry booking_id or payment_id
-	KindAdjustment   Kind = "adjustment"    // credit, admin-only — no /wallet/* route exposes it
-	KindReversal     Kind = "reversal"      // debit, may carry booking_id
+	KindTopup          Kind = "topup"            // credit, requires payment_id
+	KindSpend          Kind = "spend"            // debit, requires booking_id
+	KindRefundCredit   Kind = "refund_credit"    // credit, may carry booking_id or payment_id
+	KindAdjustment     Kind = "adjustment"       // credit, admin-only — no /wallet/* route exposes it
+	KindReversal       Kind = "reversal"         // debit, may carry booking_id
+	KindReferralCredit Kind = "referral_credit"  // both referee Rs 100 + referrer Rs 200
 )
 
 // IsCredit reports whether a kind represents a credit (positive balance
@@ -33,7 +34,7 @@ const (
 // (always positive) caller-supplied amount.
 func (k Kind) IsCredit() bool {
 	switch k {
-	case KindTopup, KindRefundCredit, KindAdjustment:
+	case KindTopup, KindRefundCredit, KindAdjustment, KindReferralCredit:
 		return true
 	default:
 		return false
