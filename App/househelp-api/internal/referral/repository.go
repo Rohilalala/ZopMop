@@ -43,6 +43,26 @@ func (r *Repository) GetReferralCodeForUser(ctx context.Context, userID string) 
 	return *code, nil
 }
 
+// getUserNamePhone fetches name and phone for a user. Used when codegen is
+// triggered without name/phone context (e.g. from GET /me/referral).
+func (r *Repository) getUserNamePhone(ctx context.Context, userID string) (name, phone string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var namePtr *string
+	if scanErr := r.db.QueryRow(ctx,
+		`SELECT name, phone FROM users WHERE id = $1 AND deleted_at IS NULL`, userID,
+	).Scan(&namePtr, &phone); scanErr != nil {
+		if errors.Is(scanErr, pgx.ErrNoRows) {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("get user name/phone: %w", scanErr)
+	}
+	if namePtr != nil {
+		name = *namePtr
+	}
+	return name, phone, nil
+}
+
 // SetReferralCodeIfNil writes referral_code only when the column is currently NULL.
 // Returns a unique-violation error (isUniqueViolation == true) when another user
 // already holds that code value.

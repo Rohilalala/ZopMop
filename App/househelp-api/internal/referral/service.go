@@ -40,6 +40,19 @@ func (s *Service) GenerateAndSetCode(ctx context.Context, userID, name, phone st
 		return existing, nil
 	}
 
+	// If caller didn't supply name/phone (e.g. from GET /me/referral),
+	// fetch from DB so we can generate a proper name-based code.
+	if name == "" {
+		dbName, dbPhone, fetchErr := s.repo.getUserNamePhone(ctx, userID)
+		if fetchErr != nil {
+			return "", fetchErr
+		}
+		name = dbName
+		if phone == "" {
+			phone = dbPhone
+		}
+	}
+
 	prefix := firstNamePrefix(name)
 	if prefix == "" {
 		code := "USER" + phoneSuffix(phone)
