@@ -156,7 +156,10 @@ func (r *Repository) CompleteReferralTx(ctx context.Context, tx pgx.Tx, referral
 		 WHERE id = $1`,
 		referralID,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("complete referral: %w", err)
+	}
+	return nil
 }
 
 // GetStatsForUser returns referral stats for the Refer & Earn screen.
