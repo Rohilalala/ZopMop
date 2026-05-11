@@ -8,8 +8,8 @@ ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE;
 -- 2. Referrals tracking.
 CREATE TABLE referrals (
   id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  referrer_id          UUID        NOT NULL REFERENCES users(id),
-  referee_id           UUID        NOT NULL REFERENCES users(id),
+  referrer_id          UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referee_id           UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status               TEXT        NOT NULL DEFAULT 'pending'
                                    CHECK (status IN ('pending', 'completed')),
   referee_credited_at  TIMESTAMPTZ,
@@ -22,8 +22,6 @@ CREATE INDEX referrals_referrer_idx ON referrals(referrer_id, status);
 
 -- 3. Extend wallet_transactions.kind CHECK to include referral_credit.
 ALTER TABLE wallet_transactions
-  DROP CONSTRAINT wallet_transactions_kind_check;
-
-ALTER TABLE wallet_transactions
+  DROP CONSTRAINT wallet_transactions_kind_check,
   ADD CONSTRAINT wallet_transactions_kind_check
-  CHECK (kind IN ('topup','spend','refund_credit','adjustment','reversal','referral_credit'));
+    CHECK (kind IN ('topup','spend','refund_credit','adjustment','reversal','referral_credit'));
