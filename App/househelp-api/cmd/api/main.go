@@ -128,7 +128,16 @@ func main() {
 		pprofAddr := "127.0.0.1:6060"
 		go func() {
 			log.Info().Str("addr", pprofAddr).Msg("pprof listening")
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			// Explicit timeouts so the pprof listener can't be wedged by a
+			// slow client (gosec G114). 30s is generous for an internal
+			// debug endpoint serving small profile responses.
+			pprofSrv := &http.Server{
+				Addr:         pprofAddr,
+				Handler:      nil, // DefaultServeMux (pprof handlers register there)
+				ReadTimeout:  30 * time.Second,
+				WriteTimeout: 30 * time.Second,
+			}
+			if err := pprofSrv.ListenAndServe(); err != nil {
 				log.Warn().Err(err).Msg("pprof server exited")
 			}
 		}()

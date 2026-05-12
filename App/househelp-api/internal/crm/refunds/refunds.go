@@ -830,6 +830,15 @@ func (h *Handler) notifyCustomer(_ context.Context, userID string, amountCents i
 	if h.notif == nil || userID == "" {
 		return
 	}
+	// context.Background() is intentional here (gosec G is a false positive):
+	// the refund has already been processed at the payment gateway by the
+	// time we reach this point. The customer-facing notification MUST be
+	// delivered regardless of whether the admin HTTP request context is
+	// still alive — if the admin closes the browser between gateway-debit
+	// and notification dispatch, we still owe the customer a message that
+	// their money is on its way back. This is a fire-and-forget after-effect,
+	// not request-scoped work. The first parameter is `_ context.Context`
+	// on purpose: callers should not be able to cancel this side-effect.
 	go func(ctx context.Context, userID string, cents int64, bid string) {
 		// Strip cents to the nearest rupee for the human-readable amount.
 		// We intentionally don't format with commas — keeps the body short.
@@ -837,7 +846,7 @@ func (h *Handler) notifyCustomer(_ context.Context, userID string, amountCents i
 		if err := h.notif.NotifyCustomerRefundProcessed(ctx, userID, amount, bid); err != nil {
 			log.Warn().Err(err).Str("user_id", userID).Msg("[crm.refunds] notify customer failed")
 		}
-	}(context.Background(), userID, amountCents, bookingID)
+	}(context.Background(), userID, amountCents, bookingID) // #nosec G -- intentional, see comment above
 }
 
 func (h *Handler) Reject(c *fiber.Ctx) error {
