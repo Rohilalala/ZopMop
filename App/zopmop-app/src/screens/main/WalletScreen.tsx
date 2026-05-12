@@ -352,21 +352,25 @@ function formatRupees(paise: number): { whole: string; decimals: string } {
 
 function labelForKind(kind: WalletTransaction['kind']): string {
   switch (kind) {
-    case 'topup':         return 'Wallet topup';
-    case 'spend':         return 'Booking payment';
-    case 'refund_credit': return 'Refund credit';
-    case 'adjustment':    return 'Adjustment';
-    case 'reversal':      return 'Reversal';
+    case 'topup':           return 'Wallet topup';
+    case 'spend':           return 'Booking payment';
+    case 'refund_credit':   return 'Refund credit';
+    case 'adjustment':      return 'Adjustment';
+    case 'reversal':        return 'Reversal';
+    case 'referral_credit': return 'Referral credit';
+    default:                throw new Error(`Unhandled kind: ${kind as never}`);
   }
 }
 
 function iconForKind(kind: WalletTransaction['kind']): keyof typeof Feather.glyphMap {
   switch (kind) {
-    case 'topup':         return 'plus-circle';
-    case 'spend':         return 'shopping-bag';
-    case 'refund_credit': return 'corner-down-left';
-    case 'adjustment':    return 'tool';
-    case 'reversal':      return 'rotate-ccw';
+    case 'topup':           return 'plus-circle';
+    case 'spend':           return 'shopping-bag';
+    case 'refund_credit':   return 'corner-down-left';
+    case 'adjustment':      return 'tool';
+    case 'reversal':        return 'rotate-ccw';
+    case 'referral_credit': return 'gift';
+    default:                throw new Error(`Unhandled kind: ${kind as never}`);
   }
 }
 
