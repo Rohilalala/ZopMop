@@ -48,6 +48,17 @@ export default function InstantMatchingScreen({ route }: Props) {
   const { serviceId, serviceName } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  // Mirror live deps into refs so the long-running match effect (which is
+  // intentionally mount-only — restarting it would cancel and recreate the
+  // booking) always reads the freshest value without re-running.
+  const tokenRef = useRef(token);
+  const navigationRef = useRef(navigation);
+  const serviceIdRef = useRef(serviceId);
+  const serviceNameRef = useRef(serviceName);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+  useEffect(() => { navigationRef.current = navigation; }, [navigation]);
+  useEffect(() => { serviceIdRef.current = serviceId; }, [serviceId]);
+  useEffect(() => { serviceNameRef.current = serviceName; }, [serviceName]);
 
   const [screenState, setScreenState] = useState<ScreenState>('searching');
   const [phaseIdx, setPhaseIdx] = useState(0);
@@ -101,7 +112,7 @@ export default function InstantMatchingScreen({ route }: Props) {
       a1.stop(); a2.stop(); a3.stop();
       pulseLoop.stop();
     };
-  }, []);
+  }, [dot1, dot2, dot3, pulse]);
 
   useEffect(() => {
     const timers = PHASES.slice(1).map((p, i) =>
@@ -111,6 +122,10 @@ export default function InstantMatchingScreen({ route }: Props) {
   }, []);
 
   const pendingTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Intentionally mount-only: re-running this effect would cancel the
+  // in-flight booking and recreate a new one (charging the user twice on the
+  // backend). We use refs (above) for token / navigation / serviceId /
+  // serviceName so every async tick reads the latest value without retrigger.
   useEffect(() => {
     let cancelled = false;
     const safeTimeout = (fn: () => void, ms: number) => {
@@ -132,16 +147,18 @@ export default function InstantMatchingScreen({ route }: Props) {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         progress.stopAnimation();
         const bid = bookingIdRef.current;
-        if (bid && token && token !== '__guest__') {
+        const tkn = tokenRef.current;
+        if (bid && tkn && tkn !== '__guest__') {
           apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tkn}` },
           }).catch(() => {});
         }
         setScreenState('busy');
       }, MATCH_DURATION);
 
-      if (!token || token === '__guest__') {
+      const initialToken = tokenRef.current;
+      if (!initialToken || initialToken === '__guest__') {
         safeTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
         return;
       }
@@ -155,7 +172,7 @@ export default function InstantMatchingScreen({ route }: Props) {
               'We need your location to find pros near you. Please enable location access in Settings and try again.',
               { title: 'Location Required' },
             );
-            navigation.goBack();
+            navigationRef.current.goBack();
           }
           return;
         }
@@ -169,7 +186,7 @@ export default function InstantMatchingScreen({ route }: Props) {
         } catch {
           if (!cancelled) {
             showError('Could not get your current location. Please try again.', { title: 'Location Unavailable' });
-            navigation.goBack();
+            navigationRef.current.goBack();
           }
           return;
         }
@@ -185,8 +202,8 @@ export default function InstantMatchingScreen({ route }: Props) {
               ? cached.name
               : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
           const booking = await createInstantBooking(
-            token,
-            serviceId,
+            tokenRef.current!,
+            serviceIdRef.current,
             addressLine,
             lat,
             lng,
@@ -201,12 +218,12 @@ export default function InstantMatchingScreen({ route }: Props) {
               'Settle pending payments',
               `You have ${err.count} unpaid booking(s) totaling ₹${totalRupees}. Please settle them before booking again.`,
               [
-                { text: 'Cancel', style: 'cancel', onPress: () => navigation.goBack() },
+                { text: 'Cancel', style: 'cancel', onPress: () => navigationRef.current.goBack() },
                 {
                   text: 'View Bookings',
                   onPress: () => {
-                    navigation.goBack();
-                    navigation.navigate('Bookings');
+                    navigationRef.current.goBack();
+                    navigationRef.current.navigate('Bookings');
                   },
                 },
               ],
@@ -221,7 +238,9 @@ export default function InstantMatchingScreen({ route }: Props) {
       pollRef.current = setInterval(async () => {
         if (!bookingId || cancelled) return;
         try {
-          const status = await getMatchStatus(token, bookingId);
+          const tkn = tokenRef.current;
+          if (!tkn) return;
+          const status = await getMatchStatus(tkn, bookingId);
           if (status.status === 'matched' && status.helper) {
             matchedRef.current = true;
             // P17: 'Your Pro' fallback only when backend omits helper.name on
@@ -238,11 +257,11 @@ export default function InstantMatchingScreen({ route }: Props) {
             if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
             progress.stopAnimation();
             if (!cancelled && !userCancelledRef.current) {
-              navigation.replace('BookingConfirmed', {
+              navigationRef.current.replace('BookingConfirmed', {
                 bookingId: bookingId!,
                 totalCents: priceCentsRef.current,
-                serviceId,
-                serviceName,
+                serviceId: serviceIdRef.current,
+                serviceName: serviceNameRef.current,
                 helperName: status.helper.name || 'Your Pro',
                 helperPhone: status.helper.phone,
                 helperRating: status.helper.rating,
@@ -265,13 +284,15 @@ export default function InstantMatchingScreen({ route }: Props) {
       pendingTimers.current.forEach(clearTimeout);
       pendingTimers.current = [];
       const bid = bookingIdRef.current;
-      if (bid && !matchedRef.current && token && token !== '__guest__') {
+      const tkn = tokenRef.current;
+      if (bid && !matchedRef.current && tkn && tkn !== '__guest__') {
         apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tkn}` },
         }).catch(() => {});
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only: see comment above; deps read via refs
   }, []);
 
   function handleCancel() {
@@ -380,7 +401,7 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-  }, []);
+  }, [fadeIn]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
@@ -413,7 +434,7 @@ function MatchedFlash() {
       Animated.spring(scale, { toValue: 1, useNativeDriver: true, bounciness: 14 }),
       Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
     ]).start();
-  }, []);
+  }, [scale, opacity]);
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>

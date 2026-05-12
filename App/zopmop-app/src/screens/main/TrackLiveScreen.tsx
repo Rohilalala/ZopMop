@@ -186,12 +186,29 @@ export default function TrackLiveScreen() {
     };
   }, [bookingId, token]);
 
-  const proCoord = tracking
-    ? { latitude: tracking.helper_lat, longitude: tracking.helper_lng }
-    : null;
-  const homeCoord = tracking
-    ? { latitude: tracking.customer_lat, longitude: tracking.customer_lng }
-    : null;
+  // Memoize coord objects so their reference identity is stable when the
+  // underlying lat/lng values don't change — lets dependent hooks list
+  // `proCoord` / `homeCoord` directly (satisfies exhaustive-deps) without
+  // re-firing on every render. Pull values into locals so the hook body
+  // doesn't reference `tracking` (avoids spurious dep warning).
+  const helperLat = tracking?.helper_lat;
+  const helperLng = tracking?.helper_lng;
+  const customerLat = tracking?.customer_lat;
+  const customerLng = tracking?.customer_lng;
+  const proCoord = useMemo(
+    () =>
+      helperLat !== undefined && helperLng !== undefined
+        ? { latitude: helperLat, longitude: helperLng }
+        : null,
+    [helperLat, helperLng],
+  );
+  const homeCoord = useMemo(
+    () =>
+      customerLat !== undefined && customerLng !== undefined
+        ? { latitude: customerLat, longitude: customerLng }
+        : null,
+    [customerLat, customerLng],
+  );
 
   const etaMinutes = Math.max(0, Math.round(tracking?.eta_minutes ?? params.etaMinutes ?? 6));
   // distanceKm is only known once the WS lands or the route param explicitly
@@ -224,7 +241,7 @@ export default function TrackLiveScreen() {
       };
     }
     return DEFAULT_REGION;
-  }, [proCoord?.latitude, proCoord?.longitude, homeCoord?.latitude, homeCoord?.longitude]);
+  }, [proCoord, homeCoord]);
 
   // Decode the backend-supplied driving polyline once per tracking update.
   // Falls back to a straight pro→home line if decoding fails or polyline is
@@ -240,7 +257,7 @@ export default function TrackLiveScreen() {
     } catch {
       return [proCoord, homeCoord];
     }
-  }, [tracking?.polyline, proCoord?.latitude, homeCoord?.latitude]);
+  }, [tracking?.polyline, proCoord, homeCoord]);
 
   const mapRef = useRef<any>(null);
 
@@ -254,7 +271,7 @@ export default function TrackLiveScreen() {
         animated: true,
       });
     }
-  }, [proCoord?.latitude, homeCoord?.latitude]);
+  }, [proCoord, homeCoord]);
 
   const displayOtp = (otp ?? deriveOtp(bookingId ?? '0000')).padStart(4, '0').slice(0, 4);
   const initial = (helperName || displayHelperName || 'P')[0].toUpperCase();

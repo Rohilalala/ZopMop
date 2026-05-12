@@ -114,7 +114,10 @@ export default function ProActiveScreen({ route }: Props) {
   // ── WebSocket (real-time path, best-effort) ───────────────────────────────
   // Reconnects with exponential backoff (1s → 30s cap) on close.
   // Reset attempt counter on successful open. Skip reconnect when unmounting.
-  function connectWs() {
+  // Self-reference via ref so the reconnect timer can call the freshest
+  // closure without breaking useCallback's dependency graph.
+  const connectWsRef = useRef<() => void>(() => {});
+  const connectWs = useCallback(() => {
     if (!token || token === '__guest__') return;
     try {
       // Security: token is NOT in the URL (would appear in server/proxy logs).
@@ -134,16 +137,17 @@ export default function ProActiveScreen({ route }: Props) {
         if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
         reconnectTimer.current = setTimeout(() => {
           reconnectTimer.current = null;
-          if (!wsClosedByUnmount.current) connectWs();
+          if (!wsClosedByUnmount.current) connectWsRef.current();
         }, delay);
       };
     } catch { /* WS not available */ }
-  }
+  }, [token]);
+  useEffect(() => { connectWsRef.current = connectWs; }, [connectWs]);
 
   // ── Core location push — raw GPS → Redis, no Google Maps ─────────────────
   // Called on a hard 10-second interval so it's reliable on the simulator and
   // on real devices regardless of OS-level location batching.
-  async function pushCurrentLocation() {
+  const pushCurrentLocation = useCallback(async () => {
     try {
       const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -164,7 +168,7 @@ export default function ProActiveScreen({ route }: Props) {
         }).catch(() => {});
       }
     } catch { /* GPS unavailable — skip this tick */ }
-  }
+  }, [token]);
 
   // ── Poll booking status — detect customer cancellation ───────────────────
   const fetchStatus = useCallback(async () => {
@@ -259,7 +263,7 @@ export default function ProActiveScreen({ route }: Props) {
       appStateSubRef.current?.remove();
       appStateSubRef.current = null;
     };
-  }, []);
+  }, [connectWs, fetchStatus, fetchTracking, pushCurrentLocation]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   // Pro tapped "I've Arrived". Stamps arrived_at on the booking but leaves
