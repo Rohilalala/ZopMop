@@ -7,7 +7,7 @@ import {
   ScrollView,
   Animated,
   Alert,
-  
+  RefreshControl,
   AppState,
 } from 'react-native';
 import { LoadingBars } from '../../components/ui/LoadingBars';
@@ -19,17 +19,19 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
 import { isConnected as getIsConnected, addConnectivityListener } from '../../utils/netInfo';
-import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { getHelperInvitesWithDetails } from '../../api/matching';
-import { getHelperActive, getHelperToday, type HelperBooking } from '../../api/pro';
+import { getHelperActive, getHelperToday, getHelperStats, type HelperBooking, type HelperStats } from '../../api/pro';
 import { getBalance, getAffectedTomorrow, type LeaveBalance, type AffectedBooking } from '../../api/leave';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 import { haptics } from '../../utils/haptics';
+import OfflineBanner from '../../components/OfflineBanner';
+import SvgIcon from '../../components/SvgIcon';
+import type { SvgIconName } from '../../components/SvgIcon';
 import { showError } from '../../utils/toast';
 import { enqueueLocationPing, flushLocationPingQueue } from '../../utils/locationPingQueue';
 
@@ -48,6 +50,8 @@ export default function ProDashboardScreen() {
   // Today's bookings panel state — current (accepted/in_progress) + past today.
   const [todayBookings, setTodayBookings] = useState<HelperBooking[]>([]);
   const [todayLoading, setTodayLoading] = useState(true);
+
+  const [stats, setStats] = useState<HelperStats | null>(null);
 
   // Tomorrow + leave-balance state for the leave-declaration UI. Refetched on
   // focus so the pro sees fresh values after coming back from declare/profile.
@@ -74,11 +78,17 @@ export default function ProDashboardScreen() {
     try {
       const list = await getHelperToday(token);
       setTodayBookings(list);
-    } catch {
-      // keep last-known list on transient failures
+    } catch (e) {
+      if (__DEV__) console.warn('refreshToday:', e);
     } finally {
       setTodayLoading(false);
     }
+  }, [token]);
+
+  // Fetch lifetime stats once on mount. Non-critical — failure just leaves em-dashes.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    getHelperStats(token).then(setStats).catch(() => {});
   }, [token]);
 
   // On mount: recover an active booking via the helper-side endpoint (the
@@ -135,13 +145,28 @@ export default function ProDashboardScreen() {
   }, [token, navigation, refreshLeaveContext]);
 
   const [isOnline, setIsOnline] = useState(false);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
+
+  // Sync isOnline with backend state on mount so the toggle reflects reality
+  // after the app is killed and relaunched while the pro was online.
+  useEffect(() => {
+    if (!token || token === '__guest__') return;
+    apiFetch(`${BASE_URL}/helpers/me/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.is_available) setIsOnline(true); })
+      .catch(() => {});
+  }, [token]);
   const [toggling, setToggling] = useState(false);
   const [checkingInvites, setCheckingInvites] = useState(false);
   const [inviteCount, setInviteCount] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const locationHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const navigatingToBookingRef = useRef(false);
+  const isOnlineRef = useRef(false);
 
   // True when the pro has an accepted/in_progress booking — drives the faster
   // 30s heartbeat cadence below. Tracked via ref so the AppState listener and
@@ -216,11 +241,13 @@ export default function ProDashboardScreen() {
     }
   }, [token]);
 
+  const INVITE_POLL_MS = 8_000;
+
   useEffect(() => {
     navigatingToBookingRef.current = false;
     if (isOnline) {
       checkInvites();
-      pollRef.current = setInterval(checkInvites, 8000);
+      pollRef.current = setInterval(checkInvites, INVITE_POLL_MS);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
       setInviteCount(0);
@@ -230,6 +257,23 @@ export default function ProDashboardScreen() {
       if (locationHeartbeatRef.current) clearInterval(locationHeartbeatRef.current);
     };
   }, [isOnline, checkInvites]);
+
+  // Pause invite poll when screen loses focus; resume on focus.
+  useEffect(() => {
+    const onBlur = () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    };
+    const onFocus = () => {
+      if (isOnlineRef.current && !pollRef.current) {
+        navigatingToBookingRef.current = false;
+        checkInvites();
+        pollRef.current = setInterval(checkInvites, INVITE_POLL_MS);
+      }
+    };
+    const unsubBlur = navigation.addListener('blur', onBlur);
+    const unsubFocus = navigation.addListener('focus', onFocus);
+    return () => { unsubBlur(); unsubFocus(); };
+  }, [navigation, checkInvites]);
 
   async function pushLocation(): Promise<boolean> {
     try {
@@ -331,8 +375,20 @@ export default function ProDashboardScreen() {
     if (!isOnline) return;
     if (!locationHeartbeatRef.current) return;
     clearInterval(locationHeartbeatRef.current);
+    // Push immediately so the customer sees the updated position right away.
+    pushLocation();
     locationHeartbeatRef.current = setInterval(pushLocation, heartbeatIntervalMs());
   }, [hasActiveBooking, isOnline]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.all([
+      refreshToday(),
+      refreshLeaveContext(),
+      getHelperStats(token!).then(setStats).catch(() => {}),
+    ]);
+    setRefreshing(false);
+  }
 
   function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -345,12 +401,17 @@ export default function ProDashboardScreen() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={s.content} bounces={false} showsVerticalScrollIndicator={false}>
+      <OfflineBanner />
+      <ScrollView
+        contentContainerStyle={s.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
 
         {/* Header */}
         <View style={s.header}>
           <View>
-            <Text style={s.greeting}>Hey, {firstName} 👋</Text>
+            <Text style={s.greeting}>Hey, {firstName}</Text>
             <Text style={s.subGreeting}>Ready to earn today?</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -358,10 +419,10 @@ export default function ProDashboardScreen() {
             <TouchableOpacity
               onPress={() => navigation.navigate('ProProfile')}
               activeOpacity={0.7}
-              hitSlop={10}
               accessibilityLabel="Profile"
+              accessibilityRole="button"
               style={{
-                width: 36, height: 36, borderRadius: 18,
+                width: 44, height: 44, borderRadius: 22,
                 alignItems: 'center', justifyContent: 'center',
                 borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
               }}
@@ -373,10 +434,9 @@ export default function ProDashboardScreen() {
 
         {/* Stats row */}
         <View style={s.statsRow}>
-          {/* Rating shows em-dash until /helpers/me exposes average_rating (P1). */}
-          <StatCard icon="⭐" label="Rating" value="—" />
-          <StatCard icon="✅" label="Jobs Done" value="—" />
-          <StatCard icon="💰" label="Earned" value="₹—" />
+          <StatCard iconName="star-filled" label="Rating" value={stats ? stats.average_rating.toFixed(1) : '—'} />
+          <StatCard iconName="check-circle" label="Jobs Done" value={stats ? String(stats.total_jobs) : '—'} />
+          <StatCard iconName="coins" label="Earned" value={stats ? `₹${Math.round(stats.total_earned_paise / 100)}` : '₹—'} />
         </View>
 
         {/* GO ONLINE button */}
@@ -386,6 +446,8 @@ export default function ProDashboardScreen() {
             activeOpacity={0.88}
             disabled={toggling}
             style={s.goOnlineTouchable}
+            accessibilityLabel={isOnline ? 'Go offline' : 'Go online'}
+            accessibilityRole="button"
           >
             <View style={s.goOnlineOuter}>
               {isOnline && (
@@ -397,7 +459,7 @@ export default function ProDashboardScreen() {
               <View style={[s.goOnlineBtn, isOnline && s.goOnlineBtnActive]}>
                 {toggling
                   ? <LoadingBars color={isOnline ? '#FFFFFF' : c.primary} size="large" />
-                  : <Text style={s.goOnlineEmoji}>{isOnline ? '🟢' : '⚫'}</Text>
+                  : <SvgIcon name={isOnline ? 'dot-online' : 'dot-offline'} size={28} color={isOnline ? '#3DDC84' : c.textMuted} />
                 }
                 <Text style={[s.goOnlineLabel, isOnline && { color: '#FFFFFF' }]}>
                   {isOnline ? 'YOU\'RE LIVE' : 'GO ONLINE'}
@@ -465,12 +527,12 @@ export default function ProDashboardScreen() {
   );
 }
 
-function StatCard({ icon, label, value }: { icon: string; label: string; value: string }) {
+function StatCard({ iconName, label, value }: { iconName: SvgIconName; label: string; value: string }) {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.statCard}>
-      <Text style={s.statIcon}>{icon}</Text>
+      <SvgIcon name={iconName} size={22} color={c.primary} />
       <Text style={s.statValue}>{value}</Text>
       <Text style={s.statLabel}>{label}</Text>
     </View>
@@ -496,10 +558,11 @@ function TodayPanel({
     b => b.status === 'completed' || b.status === 'cancelled',
   );
 
-  const earnedCents = past
+  // price_cents / discount_cents store paise (not cents) — named per existing API contract.
+  const earnedPaise = past
     .filter(b => b.status === 'completed')
     .reduce((sum, b) => sum + (b.price_cents - b.discount_cents), 0);
-  const earnedRupees = `₹${Math.round(earnedCents / 100)}`;
+  const earnedRupees = `₹${Math.round(earnedPaise / 100)}`;
 
   return (
     <View style={s.todayCard}>
@@ -705,7 +768,7 @@ function HowStep({ n, text }: { n: string; text: string }) {
 
 const BUTTON_SIZE = 164;
 
-function createStyles(c: typeof lightColors) {
+function createStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: c.background },
     content: { padding: 20, gap: 20, paddingBottom: 40 },
@@ -722,7 +785,6 @@ function createStyles(c: typeof lightColors) {
       borderWidth: 1, borderColor: c.border,
       ...Shadow.sm,
     },
-    statIcon: { fontSize: 20 },
     statValue: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: c.text },
     statLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
 
@@ -749,7 +811,6 @@ function createStyles(c: typeof lightColors) {
       backgroundColor: c.primary,
       borderColor: c.primary,
     },
-    goOnlineEmoji: { fontSize: 36 },
     goOnlineLabel: { fontFamily: FontFamily.extrabold, fontSize: FontSize.base, color: c.text, letterSpacing: 0.5 },
     goOnlineSub: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
 

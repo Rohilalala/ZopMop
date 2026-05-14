@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Approved-only.
 	approved := router.Group("", RequireApproved(h.repo))
 	approved.Get("/me/invites", h.GetInvites)
+	approved.Get("/me/stats", h.GetStats)
 	approved.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
 	approved.Put("/me/location", h.UpdateLocation)
 	approved.Put("/me/status", h.SetStatus)
@@ -135,6 +136,22 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update location"})
 	}
 	return c.JSON(fiber.Map{"status": "ok"})
+}
+
+// GetStats handles GET /helpers/me/stats.
+// Returns the helper's aggregate stats: rating, total jobs, and lifetime earnings.
+func (h *Handler) GetStats(c *fiber.Ctx) error {
+	helperID, _ := c.Locals("userID").(string)
+	profile, err := h.service.GetProfile(c.UserContext(), helperID)
+	if err != nil {
+		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper stats")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "profile not found"})
+	}
+	return c.JSON(fiber.Map{
+		"average_rating":     profile.Rating,
+		"total_jobs":         profile.TotalJobs,
+		"total_earned_paise": profile.TotalEarnedPaise,
+	})
 }
 
 // SetStatus handles PUT /helpers/me/status.

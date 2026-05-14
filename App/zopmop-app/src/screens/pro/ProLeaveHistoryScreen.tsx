@@ -4,8 +4,8 @@
 // so we omit it rather than ship a misleading column. The CRM-side dashboard
 // shows the per-row reassignment breakdown.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { FontFamily } from '../../theme';
 import { getHistory, type LeaveRow } from '../../api/leave';
+import OfflineBanner from '../../components/OfflineBanner';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
@@ -42,41 +43,56 @@ export default function ProLeaveHistoryScreen() {
 
   const [rows, setRows] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadHistory = useCallback(async () => {
+    if (!token) return;
+    try {
+      const list = await getHistory(token, 100);
+      setRows(list);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
   useEffect(() => {
-    if (!token) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const list = await getHistory(token, 100);
-        if (!cancelled) setRows(list);
-      } catch {
-        if (!cancelled) setRows([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    loadHistory().then(() => { if (cancelled) return; });
     return () => { cancelled = true; };
-  }, [token]);
+  }, [loadHistory]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await loadHistory();
+    setRefreshing(false);
+  }
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <OfflineBanner />
       <View style={s.headerBar}>
-        <TouchableOpacity onPress={() => nav.goBack()} hitSlop={10} style={{ padding: 4 }}>
+        <TouchableOpacity onPress={() => nav.goBack()} accessibilityLabel="Go back" accessibilityRole="button" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="arrow-left" size={20} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Leave history</Text>
         <View style={{ width: 28 }} />
       </View>
 
-      <ScrollView contentContainerStyle={s.content}>
-        {loading ? (
+      {loading ? (
+        <View style={s.content}>
           <LoadingSkeleton variant="list" rows={4} />
-        ) : rows.length === 0 ? (
-          <Text style={s.empty}>No leave history yet.</Text>
-        ) : (
-          rows.map((r) => (
-            <View key={r.id} style={s.row}>
+        </View>
+      ) : (
+        <FlatList
+          data={rows}
+          keyExtractor={(r) => r.id}
+          contentContainerStyle={s.content}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+          ListEmptyComponent={<Text style={s.empty}>No leave history yet.</Text>}
+          renderItem={({ item: r }) => (
+            <View style={s.row}>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={s.rowDate}>{fmtDate(r.date)}</Text>
                 <Text style={s.rowSub}>
@@ -100,9 +116,9 @@ export default function ProLeaveHistoryScreen() {
                 </Text>
               </View>
             </View>
-          ))
-        )}
-      </ScrollView>
+          )}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -125,10 +141,10 @@ function createStyles(c: ReturnType<typeof useColors>) {
       alignItems: 'center',
       paddingHorizontal: 16,
       paddingVertical: 14,
-      backgroundColor: 'rgba(255,255,255,0.04)',
+      backgroundColor: c.surface,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.06)',
+      borderColor: c.border,
     },
     rowDate: { color: c.text, fontFamily: FontFamily.bold, fontSize: 14 },
     rowSub: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 12, marginTop: 2 },

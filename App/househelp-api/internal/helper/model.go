@@ -4,13 +4,14 @@ import "time"
 
 // Profile is the helper's own profile as returned by GET /helpers/me/profile.
 type Profile struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Phone       string    `json:"phone"`
-	Rating      float64   `json:"rating"`
-	TotalJobs   int       `json:"total_jobs"`
-	IsAvailable bool      `json:"is_available"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Phone            string    `json:"phone"`
+	Rating           float64   `json:"rating"`
+	TotalJobs        int       `json:"total_jobs"`
+	TotalEarnedPaise int64     `json:"total_earned_paise"`
+	IsAvailable      bool      `json:"is_available"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // Invite is a booking the matching engine has proposed to this helper.

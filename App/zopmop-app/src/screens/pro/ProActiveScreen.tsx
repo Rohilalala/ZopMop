@@ -19,7 +19,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import polyline from '@mapbox/polyline';
-import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -36,6 +35,13 @@ import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
 import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
+import OfflineBanner from '../../components/OfflineBanner';
+import SvgIcon from '../../components/SvgIcon';
+import { Feather } from '@expo/vector-icons';
+
+const LOCATION_PUSH_MS = 10_000;
+const TRACKING_POLL_MS = 30_000;
+const STATUS_POLL_MS = 5_000;
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
@@ -71,6 +77,7 @@ export default function ProActiveScreen({ route }: Props) {
   const reconnectAttempts = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsClosedByUnmount = useRef(false);
+  const mountedRef = useRef(true);
   // Interval that pushes raw GPS coords to Redis every 10 s (no Google Maps involved).
   const locationPushRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -128,6 +135,15 @@ export default function ProActiveScreen({ route }: Props) {
         reconnectAttempts.current = 0;
         ws.send(JSON.stringify({ type: 'auth', token }));
       };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data as string);
+          if (msg.type === 'auth_error') {
+            ws.close();
+            showError('Live tracking disconnected. Continuing in fallback mode.');
+          }
+        } catch { /* non-JSON message, ignore */ }
+      };
       ws.onerror = () => { /* silent — REST fallback handles it */ };
       ws.onclose = () => {
         wsRef.current = null;
@@ -167,7 +183,7 @@ export default function ProActiveScreen({ route }: Props) {
           body: JSON.stringify({ lat: latitude, lng: longitude }),
         }).catch(() => {});
       }
-    } catch { /* GPS unavailable — skip this tick */ }
+    } catch (e) { if (__DEV__) console.warn('pushCurrentLocation:', e); }
   }, [token]);
 
   // ── Poll booking status — detect customer cancellation ───────────────────
@@ -216,7 +232,7 @@ export default function ProActiveScreen({ route }: Props) {
     const startHeartbeat = () => {
       if (locationPushRef.current) return; // guard against stacking
       pushCurrentLocation();
-      locationPushRef.current = setInterval(pushCurrentLocation, 10_000);
+      locationPushRef.current = setInterval(pushCurrentLocation, LOCATION_PUSH_MS);
     };
     const stopHeartbeat = () => {
       if (locationPushRef.current) {
@@ -235,25 +251,27 @@ export default function ProActiveScreen({ route }: Props) {
       if (AppState.currentState === 'active') startHeartbeat();
     })();
 
-    // Pause GPS heartbeat when app is backgrounded; resume on foreground.
+    // Pause all polls when backgrounded; resume on foreground.
     const sub = AppState.addEventListener('change', (next) => {
-      if ((next === 'background' || next === 'inactive')) {
+      if (next === 'background' || next === 'inactive') {
         stopHeartbeat();
+        if (trackingPollRef.current) { clearInterval(trackingPollRef.current); trackingPollRef.current = null; }
+        if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
       } else if (next === 'active') {
-        // Only restart if we have permission & no pending interval.
         startHeartbeat();
+        if (!trackingPollRef.current) trackingPollRef.current = setInterval(fetchTracking, TRACKING_POLL_MS);
+        if (!statusPollRef.current) statusPollRef.current = setInterval(fetchStatus, STATUS_POLL_MS);
       }
     });
     appStateSubRef.current = sub;
 
     fetchTracking();
     fetchStatus();
-    // Refresh route polyline every 30 s (Google Maps call — kept as-is).
-    trackingPollRef.current = setInterval(fetchTracking, 30000);
-    // Poll booking status every 5 s to catch customer cancellations quickly.
-    statusPollRef.current = setInterval(fetchStatus, 5000);
+    trackingPollRef.current = setInterval(fetchTracking, TRACKING_POLL_MS);
+    statusPollRef.current = setInterval(fetchStatus, STATUS_POLL_MS);
 
     return () => {
+      mountedRef.current = false;
       wsClosedByUnmount.current = true;
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
       wsRef.current?.close();
@@ -347,6 +365,7 @@ export default function ProActiveScreen({ route }: Props) {
 
   return (
     <View style={s.container}>
+      <OfflineBanner />
       {/* Full-screen map */}
       <MapView
         ref={mapRef}
@@ -364,7 +383,7 @@ export default function ProActiveScreen({ route }: Props) {
             anchor={{ x: 0.5, y: 0.5 }}
           >
             <View style={s.proMarker}>
-              <Text style={s.markerEmoji}>🚶</Text>
+              <SvgIcon name="walker" size={22} color={c.primary} />
             </View>
           </Marker>
         )}
@@ -376,7 +395,7 @@ export default function ProActiveScreen({ route }: Props) {
             anchor={{ x: 0.5, y: 1.0 }}
           >
             <View style={s.customerMarker}>
-              <Text style={s.markerEmoji}>📍</Text>
+              <SvgIcon name="location-pin" size={22} color={c.danger} />
             </View>
           </Marker>
         )}
@@ -400,9 +419,22 @@ export default function ProActiveScreen({ route }: Props) {
       {/* Status chip */}
       <SafeAreaView style={s.topWrap} edges={['top']}>
         <View style={s.topChip}>
-          <Text style={s.topChipText}>
-            {bookingStatus === 'in_progress' ? '✅  Service in progress' : eta > 0 ? `🚶  ${eta} min to customer` : '📍  Navigate to customer'}
-          </Text>
+          {bookingStatus === 'in_progress' ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <SvgIcon name="check-circle" size={14} color={c.text} />
+              <Text style={s.topChipText}>Service in progress</Text>
+            </View>
+          ) : eta > 0 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <SvgIcon name="walker" size={14} color={c.text} />
+              <Text style={s.topChipText}>{eta} min to customer</Text>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <SvgIcon name="location-pin" size={14} color={c.text} />
+              <Text style={s.topChipText}>Navigate to customer</Text>
+            </View>
+          )}
         </View>
       </SafeAreaView>
 
@@ -413,8 +445,11 @@ export default function ProActiveScreen({ route }: Props) {
           <Text style={s.addressText} numberOfLines={2}>{customerAddress}</Text>
         </View>
 
-        <TouchableOpacity style={s.navBtn} activeOpacity={0.85} onPress={openNavigation}>
-          <Text style={s.navBtnText}>🗺️  Open Navigation</Text>
+        <TouchableOpacity style={s.navBtn} activeOpacity={0.85} onPress={openNavigation} accessibilityLabel="Open navigation" accessibilityRole="button">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <SvgIcon name="map-open" size={18} color={c.accent} />
+            <Text style={s.navBtnText}>Open Navigation</Text>
+          </View>
         </TouchableOpacity>
 
         {bookingStatus === 'accepted' && !hasArrived && (
@@ -423,10 +458,17 @@ export default function ProActiveScreen({ route }: Props) {
             activeOpacity={0.88}
             onPress={handleArrive}
             disabled={actionLoading}
+            accessibilityLabel="I've arrived"
+            accessibilityRole="button"
           >
             {actionLoading
               ? <LoadingBars color="#FFFFFF" />
-              : <Text style={s.actionBtnText}>✅  I've Arrived</Text>
+              : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <SvgIcon name="check-circle" size={18} color="#FFFFFF" />
+                  <Text style={s.actionBtnText}>I've Arrived</Text>
+                </View>
+              )
             }
           </TouchableOpacity>
         )}
@@ -437,10 +479,17 @@ export default function ProActiveScreen({ route }: Props) {
             activeOpacity={0.88}
             onPress={handleStart}
             disabled={actionLoading}
+            accessibilityLabel="Start service"
+            accessibilityRole="button"
           >
             {actionLoading
               ? <LoadingBars color="#FFFFFF" />
-              : <Text style={s.actionBtnText}>▶️  Start Service</Text>
+              : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Feather name="play" size={18} color="#FFFFFF" />
+                  <Text style={s.actionBtnText}>Start Service</Text>
+                </View>
+              )
             }
           </TouchableOpacity>
         )}
@@ -451,10 +500,17 @@ export default function ProActiveScreen({ route }: Props) {
             activeOpacity={0.88}
             onPress={handleComplete}
             disabled={actionLoading}
+            accessibilityLabel="Complete service"
+            accessibilityRole="button"
           >
             {actionLoading
               ? <LoadingBars color="#FFFFFF" />
-              : <Text style={s.actionBtnText}>🏁  Complete Service</Text>
+              : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <SvgIcon name="flag-finish" size={18} color="#FFFFFF" />
+                  <Text style={s.actionBtnText}>Complete Service</Text>
+                </View>
+              )
             }
           </TouchableOpacity>
         )}
@@ -463,7 +519,7 @@ export default function ProActiveScreen({ route }: Props) {
   );
 }
 
-function createStyles(c: typeof lightColors) {
+function createStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: c.background },
 
@@ -513,8 +569,6 @@ function createStyles(c: typeof lightColors) {
       borderColor: c.danger,
       ...Shadow.sm,
     },
-    markerEmoji: { fontSize: 22 },
-
     bottomBar: {
       position: 'absolute',
       bottom: 0,

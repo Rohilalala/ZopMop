@@ -1,5 +1,4 @@
-// Helper-side booking endpoints — used by the pro app to recover state and
-// display today's bookings on the dashboard.
+// Helper-side API — bookings, profile stats, used by the pro app.
 
 import { apiFetch } from './client';
 import { BASE_URL, authHeaders } from './config';
@@ -57,4 +56,21 @@ export async function getHelperToday(token: string): Promise<HelperBooking[]> {
   const data = await res.json();
   const bookings = (data?.bookings ?? []) as HelperBooking[];
   return Array.isArray(bookings) ? bookings : [];
+}
+
+export interface HelperStats {
+  average_rating: number;
+  total_jobs: number;
+  total_earned_paise: number;
+}
+
+/**
+ * GET /helpers/me/stats — lifetime rating, job count, and earnings.
+ */
+export async function getHelperStats(token: string): Promise<HelperStats> {
+  const res = await apiFetch(`${BASE_URL}/helpers/me/stats`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error('Failed to load stats');
+  return res.json() as Promise<HelperStats>;
 }

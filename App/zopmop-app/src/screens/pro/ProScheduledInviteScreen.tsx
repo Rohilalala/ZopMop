@@ -25,11 +25,11 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { acceptBooking } from '../../api/matching';
-import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
+import OfflineBanner from '../../components/OfflineBanner';
 
 const COUNTDOWN_SECONDS = 25;
 
@@ -56,6 +56,7 @@ export default function ProScheduledInviteScreen({ route }: Props) {
   const [expired, setExpired] = useState(false);
   const expiredRef = useRef(false);
   const fillAnim = useRef(new Animated.Value(1)).current;
+  const fillAnimRef = useRef<Animated.CompositeAnimation | null>(null);
 
   // Confirmation haptic on entry.
   useEffect(() => {
@@ -64,11 +65,12 @@ export default function ProScheduledInviteScreen({ route }: Props) {
 
   // Smooth fill depletion + 1s tick.
   useEffect(() => {
-    Animated.timing(fillAnim, {
+    fillAnimRef.current = Animated.timing(fillAnim, {
       toValue: 0,
       duration: COUNTDOWN_SECONDS * 1000,
       useNativeDriver: false,
-    }).start();
+    });
+    fillAnimRef.current.start();
     const tick = setInterval(() => setSecondsLeft((p) => Math.max(0, p - 1)), 1000);
     return () => clearInterval(tick);
   }, []);
@@ -86,9 +88,9 @@ export default function ProScheduledInviteScreen({ route }: Props) {
 
   async function handleAccept() {
     if (!token || token === '__guest__' || expired || accepting) return;
-    haptics.heavy();
-    fillAnim.stopAnimation();
     setAccepting(true);
+    haptics.heavy();
+    fillAnimRef.current?.stop();
     try {
       await acceptBooking(token, bookingId);
       haptics.success();
@@ -113,6 +115,7 @@ export default function ProScheduledInviteScreen({ route }: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <OfflineBanner />
       <ScrollView contentContainerStyle={s.content} bounces={false}>
         <View style={s.tag}>
           <Text style={s.tagText}>SCHEDULED JOB</Text>
@@ -154,7 +157,7 @@ export default function ProScheduledInviteScreen({ route }: Props) {
 
       {/* Sticky CTAs */}
       <View style={s.ctas}>
-        <TouchableOpacity style={s.declineBtn} activeOpacity={0.8} onPress={handleDecline} disabled={accepting}>
+        <TouchableOpacity style={s.declineBtn} activeOpacity={0.8} onPress={handleDecline} disabled={accepting} accessibilityLabel="Decline job" accessibilityRole="button">
           <Text style={s.declineBtnText}>Decline</Text>
         </TouchableOpacity>
 
@@ -163,6 +166,8 @@ export default function ProScheduledInviteScreen({ route }: Props) {
           activeOpacity={0.85}
           onPress={handleAccept}
           disabled={accepting || expired}
+          accessibilityLabel={expired ? 'Booking expired' : `Accept job, ${secondsLeft} seconds remaining`}
+          accessibilityRole="button"
         >
           <Animated.View style={[s.acceptFill, { width: fillWidth }]} />
           <View style={s.acceptContent}>
@@ -199,7 +204,7 @@ function Divider() {
 }
 
 function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 }
 
 function formatRelativeDate(d: Date): string {
@@ -220,7 +225,7 @@ function formatDuration(mins: number): string {
   return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
 }
 
-function createStyles(c: typeof lightColors) {
+function createStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: c.background },
     content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
