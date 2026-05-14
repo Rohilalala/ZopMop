@@ -48,7 +48,14 @@ const (
 	// API version pinned on every request. Bump deliberately when the
 	// gateway ships breaking changes; floating onto whatever Cashfree
 	// defaults to is asking for surprise outages.
-	cashfreeAPIVersion = "2025-01-01"
+	//
+	// Pinned to 2023-08-01 to match react-native-cashfree-pg-sdk@2.3.2 which
+	// bundles CashfreePG@2.3.7 — that native iOS SDK was built before the
+	// 2025-01-01 API existed and cannot determine x-api-version from sessions
+	// created against a newer API contract. Bump this only when the RN SDK
+	// is updated to a version whose bundled native library supports the new
+	// contract.
+	cashfreeAPIVersion = "2023-08-01"
 
 	// Webhook replay-protection window. Signatures with timestamps outside
 	// ±300s of server time are rejected even if the HMAC matches.

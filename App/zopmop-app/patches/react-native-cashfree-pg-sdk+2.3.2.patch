@@ -1,0 +1,36 @@
+diff --git a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.js b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.js
+index 223c4ac..2ecfb4c 100644
+--- a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.js
++++ b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.js
+@@ -71,6 +71,7 @@ async function getInfo(env, route, bodyData) {
+             method: 'POST',
+             headers: {
+                 'Content-Type': 'application/json',
++                'x-api-version': '2023-08-01',
+             },
+             body: bodyData,
+         });
+diff --git a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.tsx b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.tsx
+index 285317e..b4843fd 100644
+--- a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.tsx
++++ b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFCardComponent.tsx
+@@ -88,6 +88,7 @@ async function getInfo(env: string, route: string, bodyData: string) {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
++        'x-api-version': '2023-08-01',
+       },
+       body: bodyData,
+     });
+diff --git a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFSubsCardComponent.js b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFSubsCardComponent.js
+index a6b3968..5545964 100644
+--- a/node_modules/react-native-cashfree-pg-sdk/src/Card/CFSubsCardComponent.js
++++ b/node_modules/react-native-cashfree-pg-sdk/src/Card/CFSubsCardComponent.js
+@@ -58,6 +58,7 @@ async function getCardBin(session, bin) {
+             method: 'POST',
+             headers: {
+                 'Content-Type': 'application/json',
++                'x-api-version': '2023-08-01',
+                 'x-sub-session-id': session.subscription_session_id,
+             },
+             body,
