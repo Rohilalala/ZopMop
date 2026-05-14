@@ -61,9 +61,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-househelp}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev123}
       POSTGRES_DB: ${POSTGRES_DB:-househelp_db}
-    # Bind to loopback only — never expose a database directly on a non-local host.
-    ports:
-      - "127.0.0.1:5432:5432"
+    # No host port binding — backend reaches postgres via compose DNS (postgres:5432).
+    # For psql access from the host, use `make psql` (docker compose exec).
+    # Uncomment below only if you need direct host access AND port 5432 is free:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -78,8 +80,11 @@ services:
     container_name: househelp-redis
     restart: unless-stopped
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "127.0.0.1:6379:6379"
+    # No host port binding — backend reaches redis via compose DNS (redis:6379).
+    # For redis-cli access from the host, use `make redis-cli` (docker compose exec).
+    # Uncomment below only if you need direct host access AND port 6379 is free:
+    # ports:
+    #   - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:

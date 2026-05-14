@@ -40,9 +40,19 @@ if [ ! -f .env.local ]; then
   exit 1
 fi
 
-# 5. Spin up infra, run migrations, then backend.
-bold "==> docker compose up -d postgres redis (build)"
-$COMPOSE up -d --build postgres redis
+# 4b. Host port 8080 must be free (the compose backend service binds it).
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+  red "Port 8080 is already in use on this host."
+  red "Stop the conflicting process (native 'api', another docker stack, etc.) and re-run."
+  lsof -nP -iTCP:8080 -sTCP:LISTEN | sed -n '1,5p' >&2
+  exit 1
+fi
+
+# 5. Build the backend image once, up front. The `backend` and `migrate`
+# services share image `househelp-api:local`; a stale cached image is the
+# most common cause of preflight running against old migrations.
+bold "==> docker compose build backend"
+$COMPOSE build backend
 
 cleanup() {
   bold "==> tearing down stack"
@@ -50,11 +60,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+bold "==> docker compose up -d postgres redis"
+$COMPOSE up -d postgres redis
+
 bold "==> docker compose run --rm migrate up"
 $COMPOSE run --rm migrate up
 
-bold "==> docker compose up -d backend (build)"
-$COMPOSE up -d --build backend
+bold "==> docker compose up -d backend"
+$COMPOSE up -d backend
 
 # 6. Wait for backend health.
 bold "==> waiting for $HEALTH_URL"
