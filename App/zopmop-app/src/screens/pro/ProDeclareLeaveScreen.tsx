@@ -3,7 +3,7 @@
 // /pro/leave/declare. Outcome screen reflects the reassignment / cancellation
 // breakdown returned by the backend.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   
   ScrollView,
@@ -79,6 +79,7 @@ export default function ProDeclareLeaveScreen() {
   const [bookings, setBookings] = useState<AffectedBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [result, setResult] = useState<DeclareResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -102,7 +103,8 @@ export default function ProDeclareLeaveScreen() {
   }, [token]);
 
   async function onConfirm() {
-    if (!token || submitting) return;
+    if (!token || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setErrorMsg(null);
     try {
@@ -112,6 +114,7 @@ export default function ProDeclareLeaveScreen() {
       const err = e as DeclareError;
       setErrorMsg(err?.message || 'Could not declare leave. Try again.');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -237,7 +240,7 @@ function Header({
 }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 }}>
-      <TouchableOpacity onPress={onBack} hitSlop={10} style={{ padding: 4 }}>
+      <TouchableOpacity onPress={onBack} accessibilityLabel="Go back" accessibilityRole="button" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
         <Feather name="arrow-left" size={20} color={colors.text} />
       </TouchableOpacity>
       <Text
@@ -261,11 +264,11 @@ function createStyles(c: ReturnType<typeof useColors>) {
     safe: { flex: 1, backgroundColor: c.background },
     content: { padding: 16, gap: 12 },
     card: {
-      backgroundColor: 'rgba(255,255,255,0.04)',
+      backgroundColor: c.surface,
       borderRadius: 16,
       padding: 16,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.06)',
+      borderColor: c.border,
     },
     cardTitle: { color: c.text, fontFamily: FontFamily.bold, fontSize: 15, marginBottom: 4 },
     cardSub: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 13, lineHeight: 18 },
@@ -283,7 +286,7 @@ function createStyles(c: ReturnType<typeof useColors>) {
       alignItems: 'center',
       paddingVertical: 8,
       borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: 'rgba(255,255,255,0.06)',
+      borderTopColor: c.border,
     },
     bookingTitle: { color: c.text, fontFamily: FontFamily.medium, fontSize: 13 },
     bookingSub: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 12, marginTop: 2 },

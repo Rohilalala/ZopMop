@@ -2,8 +2,8 @@
 // Kept intentionally minimal: name, phone, role/status. Pros edit profile from
 // onboarding; this is the dashboard entry point, not a settings page.
 
-import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -13,6 +13,7 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { FontFamily } from '../../theme';
+import OfflineBanner from '../../components/OfflineBanner';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
@@ -23,19 +24,30 @@ export default function ProProfileScreen() {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
 
+  const [refreshing, setRefreshing] = useState(false);
   const initial = (user?.name?.[0] ?? user?.phone?.[0] ?? '?').toUpperCase();
+
+  function handleRefresh() {
+    setRefreshing(true);
+    // Profile data comes from auth context; brief visual refresh is sufficient.
+    setTimeout(() => setRefreshing(false), 500);
+  }
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <OfflineBanner />
       <View style={s.headerBar}>
-        <TouchableOpacity onPress={() => nav.goBack()} hitSlop={10} style={{ padding: 4 }}>
+        <TouchableOpacity onPress={() => nav.goBack()} accessibilityLabel="Go back" accessibilityRole="button" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="arrow-left" size={20} color={c.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>Profile</Text>
         <View style={{ width: 28 }} />
       </View>
 
-      <ScrollView contentContainerStyle={s.content}>
+      <ScrollView
+        contentContainerStyle={s.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      >
         <View style={s.avatarWrap}>
           <View style={s.avatar}>
             <Text style={s.avatarText}>{initial}</Text>
@@ -125,11 +137,11 @@ function createStyles(c: ReturnType<typeof useColors>) {
       letterSpacing: 1.2,
     },
     card: {
-      backgroundColor: 'rgba(255,255,255,0.04)',
+      backgroundColor: c.surface,
       borderRadius: 16,
       paddingVertical: 4,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.06)',
+      borderColor: c.border,
     },
     row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
     rowLabel: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 },
@@ -139,10 +151,10 @@ function createStyles(c: ReturnType<typeof useColors>) {
       alignItems: 'center',
       paddingHorizontal: 16,
       paddingVertical: 14,
-      backgroundColor: 'rgba(255,255,255,0.04)',
+      backgroundColor: c.surface,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.06)',
+      borderColor: c.border,
     },
     linkLabel: { flex: 1, color: c.text, fontFamily: FontFamily.medium, fontSize: 14 },
   });

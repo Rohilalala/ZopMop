@@ -39,13 +39,18 @@ func (r *Repository) GetProfile(ctx context.Context, helperID string) (*Profile,
 		        u.phone,
 		        COALESCE(h.rating, 5.00) AS rating,
 		        COALESCE(h.total_jobs, 0) AS total_jobs,
+		        COALESCE((
+		          SELECT SUM(b.amount_paise)
+		          FROM bookings b
+		          WHERE b.helper_id = h.id AND b.status = 'completed'
+		        ), 0) AS total_earned_paise,
 		        h.is_available,
 		        h.created_at
 		 FROM helpers h
 		 JOIN users u ON u.id = h.id
 		 WHERE h.id = $1`,
 		helperID,
-	).Scan(&p.ID, &p.Name, &p.Phone, &p.Rating, &p.TotalJobs, &p.IsAvailable, &p.CreatedAt)
+	).Scan(&p.ID, &p.Name, &p.Phone, &p.Rating, &p.TotalJobs, &p.TotalEarnedPaise, &p.IsAvailable, &p.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("helper not found: %w", err)
 	}

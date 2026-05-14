@@ -16,7 +16,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
@@ -24,8 +23,11 @@ import { useProRoleGate } from '../../hooks/useRoleGate';
 import { acceptBooking, getHelperInvites } from '../../api/matching';
 import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
+import OfflineBanner from '../../components/OfflineBanner';
+import SvgIcon from '../../components/SvgIcon';
+import { Feather } from '@expo/vector-icons';
 
-const COUNTDOWN_SECONDS = 20;
+const COUNTDOWN_SECONDS = 25;
 
 type Props = {
   route: RouteProp<MainStackParamList, 'ProMatched'>;
@@ -46,6 +48,7 @@ export default function ProMatchedScreen({ route }: Props) {
 
   const invitePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fillAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   const cancelAlertShownRef = useRef(false);
   const expiredRef = useRef(false);
 
@@ -62,11 +65,11 @@ export default function ProMatchedScreen({ route }: Props) {
           cancelAlertShownRef.current = true;
           if (invitePollRef.current) clearInterval(invitePollRef.current);
           if (countdownRef.current) clearInterval(countdownRef.current);
-          fillAnim.stopAnimation();
+          fillAnimRef.current?.stop();
           showInfo('The customer has cancelled this booking.', { title: 'Booking Cancelled' });
           navigation.goBack();
         }
-      } catch { /* keep polling */ }
+      } catch (e) { if (__DEV__) console.warn('invite poll:', e); }
     }, 5000);
     return () => { if (invitePollRef.current) clearInterval(invitePollRef.current); };
   }, []);
@@ -74,11 +77,12 @@ export default function ProMatchedScreen({ route }: Props) {
   // Countdown timer
   useEffect(() => {
     // Smooth fill depletion over full duration (non-native: width % needs layout driver)
-    Animated.timing(fillAnim, {
+    fillAnimRef.current = Animated.timing(fillAnim, {
       toValue: 0,
       duration: COUNTDOWN_SECONDS * 1000,
       useNativeDriver: false,
-    }).start();
+    });
+    fillAnimRef.current.start();
 
     // 1-second label ticks — pure state update, no navigation side-effects here.
     countdownRef.current = setInterval(() => {
@@ -127,10 +131,10 @@ export default function ProMatchedScreen({ route }: Props) {
 
   async function handleAccept() {
     if (!token || token === '__guest__' || expired || accepting) return;
+    setAccepting(true);
     haptics.heavy();
     if (countdownRef.current) clearInterval(countdownRef.current);
-    fillAnim.stopAnimation();
-    setAccepting(true);
+    fillAnimRef.current?.stop();
     try {
       await acceptBooking(token, bookingId);
       haptics.success();
@@ -162,6 +166,7 @@ export default function ProMatchedScreen({ route }: Props) {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <OfflineBanner />
       <ScrollView contentContainerStyle={s.content} bounces={false}>
 
         {/* Match Banner */}
@@ -171,9 +176,9 @@ export default function ProMatchedScreen({ route }: Props) {
               <View style={[s.circle, s.c1]} />
               <View style={[s.circle, s.c2]} />
             </View>
-            <Animated.Text style={[s.matchIcon, { transform: [{ scale: pulse }] }]}>
-              🎉
-            </Animated.Text>
+            <Animated.View style={[s.matchIcon, { transform: [{ scale: pulse }] }]}>
+              <SvgIcon name="celebration" size={64} color="#FFFFFF" />
+            </Animated.View>
             <Text style={s.bannerTitle}>You've been matched!</Text>
             <Text style={s.bannerSub}>A customer near you needs your help.</Text>
           </View>
@@ -183,22 +188,22 @@ export default function ProMatchedScreen({ route }: Props) {
         <View style={s.detailCard}>
           <Text style={s.detailHeading}>Booking Details</Text>
 
-          <DetailRow icon="🛠️" label="Service" value={serviceName ?? 'Service'} />
+          <DetailRow iconNode={<SvgIcon name="wrench" size={26} color={c.textMuted} />} label="Service" value={serviceName ?? 'Service'} />
           <View style={s.divider} />
-          <DetailRow icon="📍" label="Location" value={customerAddress} />
+          <DetailRow iconNode={<SvgIcon name="location-pin" size={26} color={c.textMuted} />} label="Location" value={customerAddress} />
           {distance ? (
             <>
               <View style={s.divider} />
-              <DetailRow icon="📏" label="Distance" value={distance} />
+              <DetailRow iconNode={<SvgIcon name="ruler-distance" size={26} color={c.textMuted} />} label="Distance" value={distance} />
             </>
           ) : null}
           <View style={s.divider} />
-          <DetailRow icon="⏱️" label="ETA" value="~30 minutes to arrive" />
+          <DetailRow iconNode={<Feather name="clock" size={24} color={c.textMuted} />} label="ETA" value="~30 minutes to arrive" />
         </View>
 
         {/* Maps Button */}
-        <TouchableOpacity style={s.mapsBtn} activeOpacity={0.85} onPress={openMaps}>
-          <Text style={s.mapsBtnIcon}>🗺️</Text>
+        <TouchableOpacity style={s.mapsBtn} activeOpacity={0.85} onPress={openMaps} accessibilityLabel="Open in Google Maps" accessibilityRole="button">
+          <SvgIcon name="map-open" size={32} color={c.accent} />
           <View style={s.mapsBtnText}>
             <Text style={s.mapsBtnTitle}>Open in Google Maps</Text>
             <Text style={s.mapsBtnSub}>Get turn-by-turn directions</Text>
@@ -208,9 +213,10 @@ export default function ProMatchedScreen({ route }: Props) {
 
         {/* Info box */}
         <View style={s.infoBox}>
-          <Text style={s.infoText}>
-            ⚡  Accept quickly! This booking may be offered to other pros if you wait too long.
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+            <SvgIcon name="lightning" size={16} color={c.text} style={{ marginTop: 3 }} />
+            <Text style={[s.infoText, { flex: 1 }]}>Accept quickly! This booking may be offered to other pros if you wait too long.</Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -221,6 +227,8 @@ export default function ProMatchedScreen({ route }: Props) {
           activeOpacity={0.8}
           onPress={handleDecline}
           disabled={accepting || expired}
+          accessibilityLabel="Decline booking"
+          accessibilityRole="button"
         >
           <Text style={s.declineBtnText}>Decline</Text>
         </TouchableOpacity>
@@ -231,6 +239,8 @@ export default function ProMatchedScreen({ route }: Props) {
           activeOpacity={0.88}
           onPress={handleAccept}
           disabled={accepting || expired}
+          accessibilityLabel={expired ? 'Booking expired' : `Accept booking, ${secondsLeft} seconds remaining`}
+          accessibilityRole="button"
         >
           {/* Animated fill — depletes right-to-left */}
           <Animated.View style={[s.acceptFill, { width: fillWidth }]} />
@@ -240,7 +250,12 @@ export default function ProMatchedScreen({ route }: Props) {
               ? <LoadingBars color="#FFFFFF" />
               : expired
                 ? <Text style={s.acceptBtnText}>Expired</Text>
-                : <Text style={s.acceptBtnText}>✅  Accept ({secondsLeft}s)</Text>
+                : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <SvgIcon name="check-circle" size={18} color="#FFFFFF" />
+                  <Text style={s.acceptBtnText}>Accept ({secondsLeft}s)</Text>
+                </View>
+              )
             }
           </View>
         </TouchableOpacity>
@@ -249,12 +264,12 @@ export default function ProMatchedScreen({ route }: Props) {
   );
 }
 
-function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+function DetailRow({ iconNode, label, value }: { iconNode: React.ReactNode; label: string; value: string }) {
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
   return (
     <View style={s.detailRow}>
-      <Text style={s.detailIcon}>{icon}</Text>
+      <View style={s.detailIconWrap}>{iconNode}</View>
       <View style={s.detailTexts}>
         <Text style={s.detailLabel}>{label}</Text>
         <Text style={s.detailValue}>{value}</Text>
@@ -263,7 +278,7 @@ function DetailRow({ icon, label, value }: { icon: string; label: string; value:
   );
 }
 
-function createStyles(c: typeof lightColors) {
+function createStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: c.background },
     content: { paddingBottom: 24 },
@@ -281,7 +296,7 @@ function createStyles(c: typeof lightColors) {
     c1: { width: 160, height: 160, opacity: 0.06, top: -60, right: -40 },
     c2: { width: 80, height: 80, opacity: 0.05, bottom: -20, left: 30 },
 
-    matchIcon: { fontSize: 64, marginBottom: 14 },
+    matchIcon: { marginBottom: 14 },
     bannerTitle: {
       fontFamily: FontFamily.extrabold,
       fontSize: FontSize['2xl'],
@@ -319,7 +334,7 @@ function createStyles(c: typeof lightColors) {
       gap: 14,
       paddingVertical: 4,
     },
-    detailIcon: { fontSize: 26, width: 32, textAlign: 'center', marginTop: 2 },
+    detailIconWrap: { width: 32, alignItems: 'center', marginTop: 2 },
     detailTexts: { flex: 1 },
     detailLabel: {
       fontFamily: FontFamily.medium,
@@ -348,7 +363,6 @@ function createStyles(c: typeof lightColors) {
       marginBottom: 16,
       ...Shadow.sm,
     },
-    mapsBtnIcon: { fontSize: 32 },
     mapsBtnText: { flex: 1 },
     mapsBtnTitle: {
       fontFamily: FontFamily.bold,

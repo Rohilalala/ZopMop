@@ -27,6 +27,7 @@ import { BASE_URL } from '../../api/config';
 import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { apiFetch } from '../../api/client';
 import { showError } from '../../utils/toast';
+import SvgIcon from '../../components/SvgIcon';
 
 const { width: W } = Dimensions.get('window');
 
@@ -194,13 +195,13 @@ export default function ProOnboardingScreen({ route }: Props) {
 
   function toggleService(id: string) {
     setSelectedServices(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   }
 
   function toggleSlot(id: string) {
     setSelectedSlots(prev =>
-      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   }
 
@@ -304,7 +305,10 @@ export default function ProOnboardingScreen({ route }: Props) {
                 ) : gpsLat != null ? (
                   <Text style={s.locationBtnText}>✓  Location captured</Text>
                 ) : (
-                  <Text style={s.locationBtnText}>📍  Use my location</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <SvgIcon name="location-pin" size={18} color="#FFFFFF" />
+                    <Text style={s.locationBtnText}>Use my location</Text>
+                  </View>
                 )}
               </TouchableOpacity>
 
@@ -349,7 +353,7 @@ export default function ProOnboardingScreen({ route }: Props) {
           {step === 4 && (
             <View style={[s.stepContainer, s.completionContainer]}>
               <View style={s.successIcon}>
-                <Text style={s.successEmoji}>🎉</Text>
+                <SvgIcon name="celebration" size={52} color={c.success} />
               </View>
               <Text style={s.completionTitle}>You're all set!</Text>
               <Text style={s.completionSub}>You are ready to start working</Text>
@@ -386,6 +390,11 @@ export default function ProOnboardingScreen({ route }: Props) {
               ]}
               activeOpacity={0.88}
               onPress={nextStep}
+              disabled={
+                (step === 1 && selectedServices.length === 0) ||
+                (step === 2 && !gpsLat) ||
+                (step === 3 && selectedSlots.length === 0)
+              }
             >
               <Text style={s.ctaBtnText}>Continue</Text>
             </TouchableOpacity>
@@ -630,7 +639,6 @@ function createStyles(c: typeof lightColors) {
       marginBottom: Spacing.xl,
       ...Shadow.md,
     },
-    successEmoji: { fontSize: 52 },
     completionTitle: {
       fontFamily: FontFamily.extrabold,
       fontSize: FontSize['3xl'],
