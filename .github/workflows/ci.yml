@@ -48,21 +48,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Audit C-8 / B5-D7 chunk 19: every migration must follow
-      # NNN_description.up.sql so golang-migrate's file source can
+      # NNN_description.{up,down}.sql so golang-migrate's file source can
       # parse it. Bad: 049_foo.sql, 049_foo.up, 49_foo.up.sql,
-      # 049_foo.up.SQL. Good: 049_foo.up.sql, 080_extend_x.up.sql.
+      # 049_foo.up.SQL. Good: 049_foo.up.sql, 080_extend_x.down.sql.
       - name: Verify migration filename pattern
         run: |
           cd App/househelp-api
-          bad=$(ls migrations/ | grep -v -E '^[0-9]{3}_[a-z0-9_]+\.up\.sql$' || true)
+          bad=$(ls migrations/ | grep -v -E '^[0-9]{3}_[a-z0-9_]+\.(up|down)\.sql$' || true)
           if [ -n "$bad" ]; then
             echo "Invalid migration filenames detected:"
             echo "$bad"
             echo
-            echo "Expected pattern: NNN_description.up.sql (3-digit prefix, lowercase + underscores)"
+            echo "Expected pattern: NNN_description.{up,down}.sql (3-digit prefix, lowercase + underscores)"
             exit 1
           fi
-          echo "All $(ls migrations/ | wc -l) migrations follow NNN_description.up.sql pattern."
+          echo "All $(ls migrations/ | wc -l) migrations follow NNN_description.{up,down}.sql pattern."
   mobile:
     name: RN app
     runs-on: ubuntu-latest
