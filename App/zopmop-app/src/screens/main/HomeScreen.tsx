@@ -284,67 +284,101 @@ export default function HomeScreen() {
   }, [page]);
 
   // ── Location bootstrap (app-shell, not SDUI) ──────────────────────────────
+  //
+  // Two-phase resolution so the screen paints immediately:
+  //   Phase 1 (instant): read cached last-known location from disk, set coords
+  //     and unset `bootstrapping` so the SDUI page (cached or prefetched)
+  //     renders. Skeleton dismisses without waiting on GPS.
+  //   Phase 2 (background): request permission, try `getLastKnownPositionAsync`
+  //     (instant) before falling back to `getCurrentPositionAsync` (GPS warm-up,
+  //     can take 2-5s). When precise coords resolve, upgrade coords + name.
+  //
+  // Address name resolution uses the prefetched address list (see
+  // PrefetchContext) instead of re-fetching, avoiding a duplicate round-trip.
   useEffect(() => {
     let cancelled = false;
+
+    const resolveNameFromAddresses = (
+      lat: number,
+      lon: number,
+      saved: NonNullable<typeof prefetched>['addresses'],
+    ): string | null => {
+      if (!saved || saved.length === 0) return null;
+      let nearest = null as null | (typeof saved)[number];
+      let minDist = Infinity;
+      for (const addr of saved) {
+        const d = Math.hypot(addr.lat - lat, addr.lon - lon);
+        if (d < minDist) {
+          minDist = d;
+          nearest = addr;
+        }
+      }
+      const pick =
+        nearest && minDist < 0.009
+          ? nearest
+          : saved.find((a) => a.tag === 'Home') ?? saved[0];
+      if (!cancelled) {
+        setSelectedAddressId(pick.id);
+        setAddressTag(pick.tag ?? undefined);
+      }
+      return pick.full_address.split(',').slice(0, 2).join(',').trim();
+    };
+
     (async () => {
-      // Start from any cached last-known location so we never paint the
-      // hardcoded "Sector 51, Gurugram" placeholder. If nothing is cached
-      // and permission is denied, we leave name as a CTA ("Set your address").
+      // ── Phase 1: paint immediately from cached last-known location ────────
       const cached = await readLastKnownLocation().catch(() => null);
-      let lat = cached?.lat ?? DEFAULT_LAT;
-      let lon = cached?.lon ?? DEFAULT_LON;
+      let lat = cached?.lat ?? prefetched?.coords?.lat ?? DEFAULT_LAT;
+      let lon = cached?.lon ?? prefetched?.coords?.lon ?? DEFAULT_LON;
       let name = cached?.name ?? 'Set your address';
 
+      // If we have prefetched addresses, resolve name from them now so the
+      // header shows a real address on first paint.
+      const savedAddresses = prefetched?.addresses ?? null;
+      const fromPrefetch = resolveNameFromAddresses(lat, lon, savedAddresses);
+      if (fromPrefetch) name = fromPrefetch;
+
+      if (!cancelled) {
+        setLocationName(name);
+        setCoords({ lat, lon });
+        setBootstrapping(false);
+      }
+
+      // ── Phase 2: upgrade location in the background ───────────────────────
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          lat = pos.coords.latitude;
-          lon = pos.coords.longitude;
+          // Try last-known first (instant), fall back to live GPS only if
+          // there's no recent fix cached on-device.
+          let pos = await Location.getLastKnownPositionAsync({
+            maxAge: 10 * 60 * 1000,
+          }).catch(() => null);
+          if (!pos) {
+            pos = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            }).catch(() => null);
+          }
+          if (pos && !cancelled) {
+            lat = pos.coords.latitude;
+            lon = pos.coords.longitude;
 
-          if (token && token !== '__guest__') {
-            try {
-              const saved = await listAddresses(token);
-              let nearest = null as null | (typeof saved)[number];
-              let minDist = Infinity;
-              for (const addr of saved) {
-                const d = Math.hypot(addr.lat - lat, addr.lon - lon);
-                if (d < minDist) {
-                  minDist = d;
-                  nearest = addr;
+            if (savedAddresses && savedAddresses.length > 0) {
+              const upgraded = resolveNameFromAddresses(lat, lon, savedAddresses);
+              if (upgraded) name = upgraded;
+            } else if (token && token !== '__guest__') {
+              try {
+                const [place] = await Location.reverseGeocodeAsync({
+                  latitude: lat,
+                  longitude: lon,
+                });
+                if (place) {
+                  const parts = [
+                    place.name,
+                    place.district ?? place.subregion ?? place.city,
+                  ].filter(Boolean);
+                  if (parts.length > 0) name = parts.join(', ');
                 }
-              }
-              if (nearest && minDist < 0.009) {
-                name = nearest.full_address.split(',').slice(0, 2).join(',').trim();
-                if (!cancelled) {
-                  setSelectedAddressId(nearest.id);
-                  setAddressTag(nearest.tag ?? undefined);
-                }
-              } else if (saved.length > 0) {
-                const home = saved.find((a) => a.tag === 'Home') ?? saved[0];
-                name = home.full_address.split(',').slice(0, 2).join(',').trim();
-                if (!cancelled) {
-                  setSelectedAddressId(home.id);
-                  setAddressTag(home.tag ?? undefined);
-                }
-              } else {
-                try {
-                  const [place] = await Location.reverseGeocodeAsync({
-                    latitude: lat,
-                    longitude: lon,
-                  });
-                  if (place) {
-                    const parts = [
-                      place.name,
-                      place.district ?? place.subregion ?? place.city,
-                    ].filter(Boolean);
-                    if (parts.length > 0) name = parts.join(', ');
-                  }
-                } catch {}
-              }
-            } catch {}
+              } catch {}
+            }
           }
         }
       } catch {}
@@ -357,7 +391,6 @@ export default function HomeScreen() {
       } catch {}
       if (cancelled) return;
       setCoords({ lat, lon });
-      setBootstrapping(false);
       writeLastKnownLocation({ lat, lon, name, addressId: selectedAddressId });
     })();
     return () => {
