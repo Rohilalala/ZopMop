@@ -198,10 +198,42 @@ func (r *Repository) GetStatsForUser(ctx context.Context, userID string) (code s
 	}
 
 	if scanErr := r.db.QueryRow(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='completed' THEN 20000 ELSE 0 END), 0)
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='completed' THEN 15000 ELSE 0 END), 0)
 		 FROM referrals WHERE referrer_id = $1`, userID,
 	).Scan(&used, &earnedPaise); scanErr != nil {
 		return "", 0, 0, fmt.Errorf("get referral stats: %w", scanErr)
 	}
 	return code, used, earnedPaise, nil
+}
+
+// GetIncomingReferralForUser returns the referral this user is the REFEREE of,
+// if one exists. Returns (nil, nil) if the user was never referred.
+func (r *Repository) GetIncomingReferralForUser(ctx context.Context, userID string) (*IncomingReferral, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var (
+		status       string
+		referrerCode *string
+		referrerName *string
+	)
+	err := r.db.QueryRow(ctx,
+		`SELECT r.status, u.referral_code, u.name
+		 FROM referrals r
+		 JOIN users u ON u.id = r.referrer_id
+		 WHERE r.referee_id = $1`, userID,
+	).Scan(&status, &referrerCode, &referrerName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get incoming referral: %w", err)
+	}
+	out := &IncomingReferral{Status: status}
+	if referrerCode != nil {
+		out.ReferrerCode = *referrerCode
+	}
+	if referrerName != nil {
+		out.ReferrerName = *referrerName
+	}
+	return out, nil
 }

@@ -1,12 +1,19 @@
 import { apiFetch } from './client';
 import { BASE_URL, authHeaders } from './config';
 
+export type IncomingReferral = {
+  status: 'pending' | 'completed';
+  referrer_code: string;
+  referrer_name?: string;
+};
+
 export type ReferralStats = {
   code: string;
   link: string;
   referrals_used: number;
   referrals_remaining: number;
   total_earned_paise: number;
+  incoming?: IncomingReferral | null;
 };
 
 export async function getReferralStats(token: string): Promise<ReferralStats> {
