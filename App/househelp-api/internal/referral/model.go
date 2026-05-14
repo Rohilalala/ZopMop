@@ -14,7 +14,7 @@ var (
 
 const (
 	MaxReferralsPerReferrer = 3
-	ReferrerCreditPaise     = int64(20_000) // Rs 200
+	ReferrerCreditPaise     = int64(15_000) // Rs 150
 	RefereeCreditPaise      = int64(10_000) // Rs 100
 )
 
@@ -29,11 +29,20 @@ type Referral struct {
 }
 
 type ReferralStats struct {
-	Code               string `json:"code"`
-	Link               string `json:"link"`
-	ReferralsUsed      int    `json:"referrals_used"`
-	ReferralsRemaining int    `json:"referrals_remaining"`
-	TotalEarnedPaise   int64  `json:"total_earned_paise"`
+	Code               string            `json:"code"`
+	Link               string            `json:"link"`
+	ReferralsUsed      int               `json:"referrals_used"`
+	ReferralsRemaining int               `json:"referrals_remaining"`
+	TotalEarnedPaise   int64             `json:"total_earned_paise"`
+	Incoming           *IncomingReferral `json:"incoming,omitempty"`
+}
+
+// IncomingReferral describes whether THIS user was referred by someone else,
+// and if so, the current state of that referral.
+type IncomingReferral struct {
+	Status       string `json:"status"`        // "pending" | "completed"
+	ReferrerCode string `json:"referrer_code"` // the code this user redeemed
+	ReferrerName string `json:"referrer_name,omitempty"`
 }
 
 type ApplyRequest struct {

@@ -14,7 +14,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
-import { applyReferralCode } from '../../api/referral';
+import { applyReferralCode, getReferralStats } from '../../api/referral';
 import {
   checkServiceability,
   SERVICEABLE_CITIES,
@@ -46,12 +46,40 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   const [showManual, setShowManual] = useState(false);
 
   useEffect(() => {
-    runGpsCheck();
+    runPreflightAndGps();
   }, []);
 
-  const runGpsCheck = async () => {
+  // Pre-check the user's referral state BEFORE showing the Accept Invite UI.
+  // Skips straight to the error step when the code can't possibly be applied:
+  //   - user already has an incoming referral (used or pending)
+  //   - the deep-link code is the user's own code (self-referral)
+  // This prevents users tapping Accept just to see a backend rejection.
+  const runPreflightAndGps = async () => {
     setBusy(true);
     try {
+      if (token) {
+        try {
+          const stats = await getReferralStats(token);
+          if (stats.incoming) {
+            setErrorMsg(
+              `Zop here — you’ve already redeemed code ${stats.incoming.referrer_code}. Only one referral code is allowed per account. Open Refer & Earn for details.`,
+            );
+            setStep('error');
+            setBusy(false);
+            return;
+          }
+          if (stats.code && stats.code.toUpperCase() === code.toUpperCase()) {
+            setErrorMsg('Zop says: that’s your own code. Share it with friends instead — you can’t redeem it yourself.');
+            setStep('error');
+            setBusy(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[referral] preflight stats failed; proceeding to GPS step', e);
+          // Non-fatal: fall through to normal GPS flow.
+        }
+      }
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setShowManual(true);
@@ -82,11 +110,15 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
     } catch (err: any) {
       const errCode = err?.code;
       if (errCode === 'already_referred') {
-        setErrorMsg('You have already used a referral code.');
+        setErrorMsg(
+          'Zop here — you’ve already redeemed a referral code. Only one is allowed per account. Check Refer & Earn for details.',
+        );
       } else if (errCode === 'referral_cap_reached') {
-        setErrorMsg('This referral link is no longer active.');
+        setErrorMsg('Zop says: this code has already filled all 3 referral slots and isn’t active anymore.');
+      } else if (errCode === 'self_referral') {
+        setErrorMsg('Zop says: you can’t redeem your own code. Share it with friends instead.');
       } else {
-        setErrorMsg('Something went wrong. Please try again.');
+        setErrorMsg('Zop hit a snag applying that code. Please try again.');
       }
       setStep('error');
     } finally {

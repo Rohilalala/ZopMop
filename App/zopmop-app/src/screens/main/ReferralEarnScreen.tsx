@@ -27,6 +27,58 @@ type Props = {
   navigation: NativeStackNavigationProp<MainStackParamList, 'ReferralEarn'>;
 };
 
+type Banner = {
+  tone: 'info' | 'success' | 'cap';
+  icon: React.ComponentProps<typeof Feather>['name'];
+  title: string;
+  body: string;
+};
+
+function deriveBanner(stats: ReferralStats): Banner | null {
+  const cap = stats.referrals_remaining === 0;
+  const inc = stats.incoming;
+
+  // Incoming referral pending — referee hasn't completed first booking yet.
+  if (inc?.status === 'pending') {
+    return {
+      tone: 'info',
+      icon: 'gift',
+      title: 'Zop’s eager to send you ₹100',
+      body: `You redeemed ${inc.referrer_code}. Book your first service to claim the ₹100 welcome credit.`,
+    };
+  }
+
+  // Incoming referral already completed — referee already got their ₹100.
+  if (inc?.status === 'completed') {
+    if (cap) {
+      return {
+        tone: 'cap',
+        icon: 'users',
+        title: 'Zop’s tapped out',
+        body: `You’ve already redeemed a code and maxed out your 3 outgoing invites. No more referrals available.`,
+      };
+    }
+    return {
+      tone: 'success',
+      icon: 'check-circle',
+      title: 'Zop says: welcome bonus claimed',
+      body: `Only one code can be redeemed per account, but you can still invite up to ${stats.referrals_remaining} more ${stats.referrals_remaining === 1 ? 'friend' : 'friends'} to keep earning.`,
+    };
+  }
+
+  // No incoming. Outgoing cap reached.
+  if (cap) {
+    return {
+      tone: 'cap',
+      icon: 'users',
+      title: 'Zop’s tapped out',
+      body: `You’ve maxed your 3 referrals — that’s the limit. No more invites available right now.`,
+    };
+  }
+
+  return null;
+}
+
 export default function ReferralEarnScreen({ navigation }: Props) {
   const { token } = useAuth();
   const [stats, setStats] = useState<ReferralStats | null>(null);
@@ -66,6 +118,9 @@ export default function ReferralEarnScreen({ navigation }: Props) {
     });
   };
 
+  const banner = stats ? deriveBanner(stats) : null;
+  const canShare = !!stats && stats.referrals_remaining > 0;
+
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.header}>
@@ -84,7 +139,7 @@ export default function ReferralEarnScreen({ navigation }: Props) {
         <View style={styles.body}>
           <View style={styles.rewardRow}>
             <View style={styles.rewardCard}>
-              <Text style={styles.rewardAmount}>Rs 200</Text>
+              <Text style={styles.rewardAmount}>Rs 150</Text>
               <Text style={styles.rewardLabel}>you earn</Text>
             </View>
             <Feather name="plus" size={20} color={TEXT_DIM} />
@@ -107,6 +162,32 @@ export default function ReferralEarnScreen({ navigation }: Props) {
             </View>
           )}
 
+          {banner && (
+            <View
+              style={[
+                styles.banner,
+                banner.tone === 'success' && styles.bannerSuccess,
+                banner.tone === 'cap' && styles.bannerCap,
+              ]}
+            >
+              <Feather
+                name={banner.icon}
+                size={20}
+                color={
+                  banner.tone === 'success'
+                    ? '#7CD992'
+                    : banner.tone === 'cap'
+                      ? TEXT_DIM
+                      : AMBER
+                }
+              />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.bannerTitle}>{banner.title}</Text>
+                <Text style={styles.bannerBody}>{banner.body}</Text>
+              </View>
+            </View>
+          )}
+
           {stats && (
             <>
               <View style={styles.codeRow}>
@@ -119,7 +200,7 @@ export default function ReferralEarnScreen({ navigation }: Props) {
 
               <View style={styles.progressRow}>
                 <Text style={styles.progressText}>
-                  {stats.referrals_used}/3 referrals used
+                  {stats.referrals_used} {stats.referrals_used === 1 ? 'referral' : 'referrals'} used
                 </Text>
                 {stats.total_earned_paise > 0 && (
                   <Text style={styles.progressText}>
@@ -129,20 +210,20 @@ export default function ReferralEarnScreen({ navigation }: Props) {
               </View>
 
               <TouchableOpacity
-                style={[styles.shareBtn, stats.referrals_remaining === 0 && styles.shareBtnDisabled]}
+                style={[styles.shareBtn, !canShare && styles.shareBtnDisabled]}
                 onPress={handleShare}
-                disabled={stats.referrals_remaining === 0}
+                disabled={!canShare}
               >
                 <Feather
                   name="share-2"
                   size={18}
-                  color={stats.referrals_remaining > 0 ? '#0A0A0A' : TEXT_DIM}
+                  color={canShare ? '#0A0A0A' : TEXT_DIM}
                 />
                 <Text style={[
                   styles.shareBtnText,
-                  stats.referrals_remaining === 0 && styles.shareBtnTextDisabled,
+                  !canShare && styles.shareBtnTextDisabled,
                 ]}>
-                  {stats.referrals_remaining > 0 ? 'Share Invite' : 'Referral limit reached'}
+                  {canShare ? 'Share Invite' : 'Referral limit reached'}
                 </Text>
               </TouchableOpacity>
             </>
@@ -177,6 +258,20 @@ const styles = StyleSheet.create({
   rewardAmount: { color: AMBER, fontSize: 32, fontWeight: '700' },
   rewardLabel: { color: TEXT_MID, fontSize: 13, marginTop: 4 },
   rewardSub: { color: TEXT_DIM, fontSize: 13, textAlign: 'center', marginBottom: 24 },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: SURFACE,
+    borderLeftWidth: 3,
+    borderLeftColor: AMBER,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+  },
+  bannerSuccess: { borderLeftColor: '#7CD992' },
+  bannerCap: { borderLeftColor: TEXT_DIM },
+  bannerTitle: { color: TEXT_HI, fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  bannerBody: { color: TEXT_MID, fontSize: 13, lineHeight: 18 },
   codeRow: {
     flexDirection: 'row',
     alignItems: 'center',

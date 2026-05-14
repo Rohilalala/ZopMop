@@ -106,12 +106,18 @@ func (s *Service) GetStats(ctx context.Context, userID, name, phone string) (*Re
 	if remaining < 0 {
 		remaining = 0
 	}
+	incoming, err := s.repo.GetIncomingReferralForUser(ctx, userID)
+	if err != nil {
+		// Non-fatal: stats still useful without incoming info.
+		log.Warn().Err(err).Str("user_id", userID).Msg("referral: get incoming referral failed")
+	}
 	return &ReferralStats{
 		Code:               code,
 		Link:               referralBaseURL + code,
 		ReferralsUsed:      used,
 		ReferralsRemaining: remaining,
 		TotalEarnedPaise:   earnedPaise,
+		Incoming:           incoming,
 	}, nil
 }
 
