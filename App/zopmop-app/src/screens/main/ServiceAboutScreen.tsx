@@ -123,27 +123,32 @@ export default function ServiceAboutScreen() {
     return () => { cancelled = true; };
   }, [service.id]);
 
-  const priceCents = duration != null
-    ? Math.round((service.base_price_cents * duration) / service.min_duration_minutes)
-    : service.base_price_cents;
+  // Use fresh details.service when available — nav params may be stale if
+  // admin updated the price after this user's SDUI cache was populated.
+  const activeSvc = details?.service ?? service;
 
-  const canAddMore = duration === null || duration < service.max_duration_minutes;
-  const canReduce = duration !== null && duration > service.min_duration_minutes;
+  const priceCents = duration != null
+    ? Math.round((activeSvc.base_price_cents * duration) / activeSvc.min_duration_minutes)
+    : activeSvc.base_price_cents;
+
+  const canAddMore = duration === null || duration < activeSvc.max_duration_minutes;
+  const canReduce = duration !== null && duration > activeSvc.min_duration_minutes;
 
   const handleAddToCart = useCallback(async () => {
-    const d = duration ?? service.min_duration_minutes;
-    const priceCents = Math.round((service.base_price_cents * d) / service.min_duration_minutes);
-    await addItem(service.id, d, service.name, priceCents);
+    const svc = details?.service ?? service;
+    const d = duration ?? svc.min_duration_minutes;
+    const pc = Math.round((svc.base_price_cents * d) / svc.min_duration_minutes);
+    await addItem(service.id, d, service.name, pc);
     setDuration(d);
     setAddedToCart(true);
     posthog?.capture('service_added_to_cart', {
       service_id:       service.id,
       service_name:     service.name,
       duration_minutes: d,
-      price_cents:      priceCents,
+      price_cents:      pc,
       selected_addons:  selectedAddons.size,
     });
-  }, [addItem, service.id, service.name, service.min_duration_minutes, service.base_price_cents, duration, selectedAddons.size, posthog]);
+  }, [addItem, service.id, service.name, duration, selectedAddons.size, posthog, details]);
 
   const handleShare = useCallback(() => {
     Share.share({ message: `Check out ${service.name} on ZopMop!` });
@@ -206,7 +211,7 @@ export default function ServiceAboutScreen() {
         <View style={s.body}>
           <GlassCard radius={20} style={s.durationCard}>
             <View>
-              <Text style={s.durationLabel}>{`${duration ?? service.min_duration_minutes} min`}</Text>
+              <Text style={s.durationLabel}>{`${duration ?? activeSvc.min_duration_minutes} min`}</Text>
               <Text style={s.durationSub}>{`₹${(priceCents / 100).toFixed(0)}`}</Text>
             </View>
             <View style={s.durationControls}>
@@ -214,7 +219,7 @@ export default function ServiceAboutScreen() {
                 style={[s.durationBtn, !canReduce && s.durationBtnDisabled]}
                 disabled={!canReduce}
                 onPress={() => {
-                  const prev = computePrevDuration(duration, service);
+                  const prev = computePrevDuration(duration, activeSvc);
                   setDuration(prev);
                   setAddedToCart(false);
                 }}
@@ -225,12 +230,12 @@ export default function ServiceAboutScreen() {
                   color={canReduce ? '#F5A300' : 'rgba(255,255,255,0.25)'}
                 />
               </PressFx>
-              <Text style={s.durationValue}>{duration ?? service.min_duration_minutes}</Text>
+              <Text style={s.durationValue}>{duration ?? activeSvc.min_duration_minutes}</Text>
               <PressFx
                 style={[s.durationBtn, !canAddMore && s.durationBtnDisabled]}
                 disabled={!canAddMore}
                 onPress={() => {
-                  const next = computeNextDuration(duration, service);
+                  const next = computeNextDuration(duration, activeSvc);
                   setDuration(next);
                   setAddedToCart(false);
                 }}

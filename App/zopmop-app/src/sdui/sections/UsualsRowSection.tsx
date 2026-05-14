@@ -2,9 +2,13 @@
 // service taps into a navigate action handled by the renderer.
 
 import React, { useCallback } from 'react';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { UsualsRow } from '../../components/home/UsualsRow';
+import { haptics } from '../../utils/haptics';
 import type { ApiService } from '../../api/services';
+import type { MainStackParamList } from '../../types/navigation';
 import type { SduiAction, UsualsRowData } from '../types';
 
 interface Props {
@@ -13,16 +17,14 @@ interface Props {
 }
 
 export function UsualsRowSection({ data, onAction }: Props) {
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+
   const handlePress = useCallback(
     (svc: ApiService) => {
-      onAction({
-        trigger: 'tap',
-        type:    'navigate',
-        screen:  'ServiceDetail',
-        params:  { serviceId: svc.id },
-      });
+      haptics.light();
+      navigation.navigate('ServiceAbout', { service: svc });
     },
-    [onAction],
+    [navigation],
   );
 
   const handleSeeAll = useCallback(() => {

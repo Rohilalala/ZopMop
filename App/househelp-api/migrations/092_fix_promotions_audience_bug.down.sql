@@ -1,0 +1,5 @@
+-- No-op: the UPDATE cannot be reversed because original audience values are not
+-- preserved. Any rows with audience='user_segment' (which was invalid per the
+-- CHECK constraint) would have been updated to 'specific'. The CHECK constraint
+-- prevents restoring 'user_segment'. If rollback is truly needed, restore from
+-- a backup taken before migration 092 ran.

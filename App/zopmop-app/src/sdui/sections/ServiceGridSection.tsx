@@ -14,6 +14,8 @@ import {
 import { Image } from 'expo-image';
 
 import { Feather } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { PressFx } from '../../components/ui/PressFx';
 import { GlassCard } from '../../components/home/GlassCard';
@@ -22,6 +24,7 @@ import { serviceIcon } from '../../components/home/serviceIcon';
 import { useCart } from '../../context/CartContext';
 import { haptics } from '../../utils/haptics';
 import type { ApiService } from '../../api/services';
+import type { MainStackParamList } from '../../types/navigation';
 import type { SduiAction, ServiceGridData } from '../types';
 
 interface Props {
@@ -42,18 +45,14 @@ const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 
 export function ServiceGridSection({ data, onAction }: Props) {
   const { addItem } = useCart();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
 
   const handlePress = useCallback(
     (svc: ApiService) => {
       haptics.light();
-      onAction({
-        trigger: 'tap',
-        type:    'navigate',
-        screen:  'ServiceDetail',
-        params:  { serviceId: svc.id },
-      });
+      navigation.navigate('ServiceAbout', { service: svc });
     },
-    [onAction],
+    [navigation],
   );
 
   const handleAdd = useCallback(

@@ -27,6 +27,7 @@ import { cancelBooking } from '../../api/bookings';
 import { haptics } from '../../utils/haptics';
 
 import { BASE_URL } from '../../api/config';
+import SvgIcon from '../../components/SvgIcon';
 
 const MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#f9fafb' }] },
@@ -310,9 +311,14 @@ export default function ActiveBookingScreen({ route }: Props) {
         {/* ETA row */}
         <View style={s.etaRow}>
           <View>
-            <Text style={s.etaLabel}>
-              {arrived ? 'Pro is at your location' : eta > 0 ? `🚶 ${eta} min away` : 'Locating your pro…'}
-            </Text>
+            {arrived || eta <= 0 ? (
+              <Text style={s.etaLabel}>{arrived ? 'Pro is at your location' : 'Locating your pro…'}</Text>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <SvgIcon name="walker" size={14} color={c.text} />
+                <Text style={s.etaLabel}>{eta} min away</Text>
+              </View>
+            )}
             <Text style={s.bookingRef}>Booking #{bookingId.slice(0, 8).toUpperCase()}</Text>
           </View>
           <View style={s.etaBadge}>
@@ -327,7 +333,10 @@ export default function ActiveBookingScreen({ route }: Props) {
           </View>
           <View style={s.proInfo}>
             <Text style={s.proName}>{helperName}</Text>
-            <Text style={s.proRating}>⭐ {helperRating?.toFixed(1)}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <SvgIcon name="star-filled" size={13} color={c.primary} />
+              <Text style={s.proRating}>{helperRating?.toFixed(1)}</Text>
+            </View>
           </View>
         </View>
 
@@ -372,7 +381,7 @@ const HelperMarker = memo(({ coord }: { coord: { latitude: number; longitude: nu
   return (
     <Marker coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
       <View style={s.helperMarker}>
-        <Text style={s.markerEmoji}>🚶</Text>
+        <SvgIcon name="walker" size={22} color={c.primary} />
       </View>
     </Marker>
   );
@@ -384,7 +393,7 @@ const CustomerMarker = memo(({ coord }: { coord: { latitude: number; longitude: 
   return (
     <Marker coordinate={coord} anchor={{ x: 0.5, y: 1.0 }}>
       <View style={s.customerMarker}>
-        <Text style={s.markerEmoji}>🏠</Text>
+        <SvgIcon name="home-pin" size={22} color={c.danger} />
       </View>
     </Marker>
   );
@@ -465,8 +474,6 @@ function createStyles(c: typeof lightColors) {
       borderColor: c.primary,
       ...Shadow.sm,
     },
-    markerEmoji: { fontSize: 22 },
-
     // Bottom sheet
     sheet: {
       position: 'absolute',
