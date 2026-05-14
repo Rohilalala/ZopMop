@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Block direct pushes to the Railway deploy branch.
+# Enable: git config core.hooksPath .githooks  (run from App/househelp-api/)
+set -euo pipefail
+
+PROTECTED="${PROTECTED_BRANCH:-feature/sdui}"
+remote="${1:-}"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # remote_ref looks like refs/heads/<branch>
+  branch="${remote_ref#refs/heads/}"
+  if [ "$branch" = "$PROTECTED" ]; then
+    echo
+    printf '\033[31m✗ Refusing to push to protected branch %s.\033[0m\n' "$PROTECTED" >&2
+    echo "  Railway auto-deploys from $PROTECTED on push." >&2
+    echo "  Push your feature branch and open a PR instead." >&2
+    echo >&2
+    echo "  Bypass (only when you really mean it):" >&2
+    echo "    git push --no-verify $remote $branch" >&2
+    exit 1
+  fi
+done
+
+exit 0

@@ -1,4 +1,58 @@
 services:
+  # One-shot migration runner. Reuses the backend image (the Dockerfile builds
+  # both cmd/api and cmd/migrate). Run via:  docker compose run --rm migrate up
+  # The `tools` profile keeps it out of the default `docker compose up` set.
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: househelp-api:local
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    env_file:
+      - .env.local
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-househelp}:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/${POSTGRES_DB:-househelp_db}?sslmode=disable
+      MIGRATIONS_PATH: /app/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: househelp-api:local
+    container_name: househelp-backend
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      # Override hostnames in case .env.local was copied from .env (which points at localhost).
+      DATABASE_URL: postgres://${POSTGRES_USER:-househelp}:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/${POSTGRES_DB:-househelp_db}?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      MIGRATIONS_PATH: /app/migrations
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount Firebase service-account JSON read-only.
+      # Drop the file at App/househelp-api/secrets/firebase-adminsdk.json on the host.
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # busybox wget is built into alpine; --spider exits non-zero on non-200.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   postgres:
     image: postgis/postgis:16-3.4-alpine
     container_name: househelp-postgres
