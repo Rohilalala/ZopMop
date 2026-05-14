@@ -13,7 +13,10 @@ export async function getReferralStats(token: string): Promise<ReferralStats> {
   const res = await apiFetch(`${BASE_URL}/me/referral`, {
     headers: authHeaders(token),
   });
-  if (!res.ok) throw new Error('Failed to load referral info');
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`/me/referral ${res.status}: ${body.slice(0, 200) || 'no body'}`);
+  }
   return res.json();
 }
 

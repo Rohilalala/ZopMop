@@ -92,7 +92,7 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
           </PressFx>
         )}
         <PressFx
-          onPress={() => navigation.navigate('Offers')}
+          onPress={() => navigation.navigate('ReferralEarn')}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -106,7 +106,7 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
           }}
         >
           <Feather name="plus-circle" size={12} color="#F5A300" />
-          <Text style={[fontBold, { fontSize: 12, color: '#F5A300' }]}>Earn ₹100</Text>
+          <Text style={[fontBold, { fontSize: 12, color: '#F5A300' }]}>Earn ₹200</Text>
         </PressFx>
         <PressFx
           onPress={() => navigation.navigate('Profile')}

@@ -31,15 +31,26 @@ export default function ReferralEarnScreen({ navigation }: Props) {
   const { token } = useAuth();
   const [stats, setStats] = useState<ReferralStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      setError('Please sign in to view your referral code.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
     getReferralStats(token)
       .then(setStats)
-      .catch(() => {})
+      .catch((e: Error) => {
+        console.warn('[referral] getReferralStats failed', e);
+        setError(e?.message || 'Could not load referral info. Pull down to retry.');
+      })
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, reloadKey]);
 
   const handleCopy = async () => {
     if (!stats) return;
@@ -85,6 +96,16 @@ export default function ReferralEarnScreen({ navigation }: Props) {
           <Text style={styles.rewardSub}>
             Both credited after your friend completes their first booking.
           </Text>
+
+          {error && !stats && (
+            <View style={styles.errorCard}>
+              <Feather name="alert-circle" size={18} color={AMBER} />
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity onPress={() => setReloadKey((k) => k + 1)} style={styles.retryBtn}>
+                <Text style={styles.retryLabel}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {stats && (
             <>
@@ -186,4 +207,21 @@ const styles = StyleSheet.create({
   shareBtnDisabled: { backgroundColor: SURFACE },
   shareBtnText: { color: '#0A0A0A', fontSize: 16, fontWeight: '700', marginLeft: 10 },
   shareBtnTextDisabled: { color: TEXT_DIM },
+  errorCard: {
+    backgroundColor: SURFACE,
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    gap: 10,
+  },
+  errorText: { color: TEXT_MID, fontSize: 13, textAlign: 'center' },
+  retryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,163,0,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.3)',
+  },
+  retryLabel: { color: AMBER, fontSize: 14, fontWeight: '600' },
 });
