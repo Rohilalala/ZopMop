@@ -581,18 +581,29 @@ export default function CartScreen() {
                       <Text style={s.svcName} numberOfLines={1}>{item.service_name}</Text>
                       <Text style={s.svcMeta}>{item.duration_minutes} min</Text>
                     </View>
+                    <View style={s.qtyRow}>
+                      <TouchableOpacity
+                        onPress={() => handleRemove(item.id)}
+                        activeOpacity={0.7}
+                        disabled={removing === item.id}
+                        style={s.qtyBtn}
+                        hitSlop={8}
+                      >
+                        {removing === item.id
+                          ? <LoadingBars size="small" color={C.textMuted} />
+                          : <Feather name="minus" size={12} color={C.textMuted} />}
+                      </TouchableOpacity>
+                      <Text style={s.qtyCount}>1</Text>
+                      <TouchableOpacity
+                        onPress={() => navigation.navigate('AllServices', {})}
+                        activeOpacity={0.7}
+                        style={s.qtyBtn}
+                        hitSlop={8}
+                      >
+                        <Feather name="plus" size={12} color={C.amber} />
+                      </TouchableOpacity>
+                    </View>
                     <Text style={s.svcPrice}>₹{(item.price_cents / 100).toFixed(0)}</Text>
-                    <TouchableOpacity
-                      onPress={() => handleRemove(item.id)}
-                      activeOpacity={0.7}
-                      disabled={removing === item.id}
-                      style={s.removeBtn}
-                      hitSlop={10}
-                    >
-                      {removing === item.id
-                        ? <LoadingBars size="small" color={C.danger} />
-                        : <Feather name="x" size={14} color={C.danger} />}
-                    </TouchableOpacity>
                   </View>
                   {i < items.length - 1 && <View style={s.divider} />}
                 </ReAnimated.View>
@@ -801,11 +812,13 @@ const s = StyleSheet.create({
   svcName: { fontFamily: FontFamily.bold, fontSize: 13.5, color: C.white, letterSpacing: -0.1, lineHeight: 16 },
   svcMeta: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, marginTop: 2 },
   svcPrice: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
-  removeBtn: {
-    width: 28, height: 28, borderRadius: 8,
+  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  qtyBtn: {
+    width: 26, height: 26, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.dangerSoft,
+    backgroundColor: 'rgba(255,255,255,0.07)',
   },
+  qtyCount: { fontFamily: FontFamily.bold, fontSize: 13, color: C.white, minWidth: 16, textAlign: 'center' },
 
   // Bill
   billRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },

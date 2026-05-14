@@ -1018,11 +1018,17 @@ func (s *Service) CreateScheduledBooking(
 		locality = nil
 	}
 
-	// Calculate total price from items.
+	// Calculate total price from items + platform fee (matches cart display).
 	totalPriceCents := 0
 	for _, item := range cartItems {
 		totalPriceCents += item.PriceCents
 	}
+	pricingCfg, pricingErr := s.configSvc.GetPricingConfig(ctx)
+	if pricingErr != nil {
+		log.Warn().Err(pricingErr).Msg("[booking] pricing config unavailable, using default platform fee")
+		pricingCfg = &config_manager.PricingConfig{BaseFeeCents: 2000, SurgeMultiplier: 1.0}
+	}
+	totalPriceCents += pricingCfg.BaseFeeCents
 
 	discountCents := 0
 	var promoCode *string
@@ -1158,6 +1164,12 @@ func (s *Service) CreateInstantBookingFromCart(
 	for _, item := range cartItems {
 		totalPriceCents += item.PriceCents
 	}
+	pricingCfgI, pricingErrI := s.configSvc.GetPricingConfig(ctx)
+	if pricingErrI != nil {
+		log.Warn().Err(pricingErrI).Msg("[booking] pricing config unavailable, using default platform fee")
+		pricingCfgI = &config_manager.PricingConfig{BaseFeeCents: 2000, SurgeMultiplier: 1.0}
+	}
+	totalPriceCents += pricingCfgI.BaseFeeCents
 
 	discountCents := 0
 	var promoCodePtr *string
