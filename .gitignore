@@ -70,3 +70,18 @@ App/zopmop-crm/tsconfig.tsbuildinfo
 
 # Marketing website — separate publish target, not part of the app repo.
 /website/
+
+# New Next.js marketing rebuild — empty scaffold, decide later whether to track.
+/web/
+
+# Migrate CLI binary (build leak — recompile via `go build ./cmd/migrate`)
+/App/househelp-api/migrate
+
+# Superpowers skill workspace (brainstorm scratch, plan outputs)
+**/.superpowers/
+
+# Claude skill installs (per-user tooling, not project state)
+.claude/skills/
+
+# PostHog wizard setup reports
+**/posthog-setup-report.md

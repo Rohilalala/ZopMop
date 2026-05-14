@@ -203,6 +203,25 @@ webhooks to land. Use `ngrok http 8080` and paste the https URL into
 `PUBLIC_BASE_URL` in `.env.local`. Restart the backend so it picks up the
 change.
 
+## Railway pre-deploy migrations
+
+`railway.json` declares a `preDeployCommand` of `/usr/local/bin/migrate up`.
+Railway runs that command on a single instance before booting `api`, so every
+deploy applies pending migrations automatically.
+
+Implications:
+
+- **Migration files MUST be committed to `feature/sdui` before pushing code that
+  depends on them.** If a migration is only on disk and the dependent code ships,
+  Railway will boot the new api against an unmigrated DB and the new code will
+  500. Stage migrations + code together in the same PR.
+- **Down migrations are not run** — forward-only per `cmd/migrate/main.go:9`.
+- **Local `make up` and `make migrate` keep working** — they go through the
+  one-shot `migrate` compose service and ignore `railway.json` entirely.
+- Older Railway projects may need `preDeployCommand` set in the dashboard
+  (Service → Settings → Deploy) if they don't auto-pick up `railway.json`.
+  Verify in the dashboard after the first deploy that uses this file.
+
 ## Rolling back a bad deploy
 
 If something slips through preflight and breaks production:

@@ -47,7 +47,7 @@ services:
         condition: service_healthy
     healthcheck:
       # busybox wget is built into alpine; --spider exits non-zero on non-200.
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
       interval: 15s
       timeout: 5s
       retries: 6
