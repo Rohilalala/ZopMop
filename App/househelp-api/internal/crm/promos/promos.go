@@ -31,7 +31,7 @@ type Promo struct {
 	Description     *string    `json:"description,omitempty"`
 	DiscountType    string     `json:"discount_type"`     // "percent" | "fixed"
 	DiscountValue   int        `json:"discount_value"`
-	MinOrderCents   int        `json:"min_order_cents"`
+	MinOrderCents   int        `json:"min_order_paise"`
 	MaxUses         int        `json:"max_uses"`          // 0 = unlimited
 	UsesCount       int        `json:"uses_count"`
 	MaxPerUser      int        `json:"max_per_user"`
@@ -51,7 +51,7 @@ type CreateRequest struct {
 	Description     string     `json:"description"`
 	DiscountType    string     `json:"discount_type"`
 	DiscountValue   int        `json:"discount_value"`
-	MinOrderCents   int        `json:"min_order_cents"`
+	MinOrderCents   int        `json:"min_order_paise"`
 	MaxUses         int        `json:"max_uses"`
 	MaxPerUser      int        `json:"max_per_user"`
 	Audience        string     `json:"audience"`
@@ -216,8 +216,8 @@ func (r *Repository) SetActive(ctx context.Context, id string, active bool) erro
 type Stats struct {
 	Redemptions    int   `json:"redemptions"`
 	UniqueUsers    int   `json:"unique_users"`
-	DiscountCents  int64 `json:"discount_cents"`
-	RevenueCents   int64 `json:"revenue_cents"`
+	DiscountCents  int64 `json:"discount_paise"`
+	RevenueCents   int64 `json:"revenue_paise"`
 }
 
 func (r *Repository) Stats(ctx context.Context, code string) (*Stats, error) {

@@ -209,7 +209,7 @@ export default function CartScreen() {
       posthog.capture('service_removed_from_cart', {
         service_id: removed?.service_id ?? null,
         service_name: removed?.service_name ?? null,
-        price_cents: removed?.price_cents ?? null,
+        price_paise: removed?.price_paise ?? null,
       });
     } finally { setRemoving(null); }
   }, [removeItem, items, posthog]);
@@ -235,8 +235,8 @@ export default function CartScreen() {
 
     posthog.capture('booking_checkout_started', {
       item_count: itemCount,
-      subtotal_cents: subtotalCents,
-      total_cents: totalCents,
+      subtotal_paise: subtotalCents,
+      total_paise: totalCents,
       payment_source: paymentSource,
       has_promo: !!promoStore.get(),
       split_enabled: splitEnabled,
@@ -257,7 +257,7 @@ export default function CartScreen() {
 
       posthog.capture('booking_confirmed', {
         booking_id: created.id,
-        total_cents: totalCents,
+        total_paise: totalCents,
         payment_source: paymentSource,
         split_enabled: doSplit,
         split_count: splitCount,
@@ -284,13 +284,13 @@ export default function CartScreen() {
         // sheet flow — PaymentScreen owns order creation + SDK launch.
         posthog.capture('booking_payment_initiated', {
           booking_id: created.id,
-          amount_paise: created.price_cents,
+          amount_paise: created.price_paise,
         });
         navigation.replace('Payment', {
           booking_id: created.id,
           // JSON field is back-compat; value is paise (see backend
           // migration 065). No * 100 conversion needed.
-          amount_paise: created.price_cents,
+          amount_paise: created.price_paise,
         });
         return;
       }
@@ -603,7 +603,7 @@ export default function CartScreen() {
                         <Feather name="plus" size={12} color={C.amber} />
                       </TouchableOpacity>
                     </View>
-                    <Text style={s.svcPrice}>₹{(item.price_cents / 100).toFixed(0)}</Text>
+                    <Text style={s.svcPrice}>₹{(item.price_paise / 100).toFixed(0)}</Text>
                   </View>
                   {i < items.length - 1 && <View style={s.divider} />}
                 </ReAnimated.View>

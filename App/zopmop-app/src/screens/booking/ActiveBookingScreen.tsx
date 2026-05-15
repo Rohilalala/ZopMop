@@ -206,7 +206,7 @@ export default function ActiveBookingScreen({ route }: Props) {
           try {
             const result = await cancelBooking(token, bookingId);
             if (result.cancellation_fee_applied) {
-              const rupees = (result.cancellation_fee_cents / 100).toFixed(2);
+              const rupees = (result.cancellation_fee_paise / 100).toFixed(2);
               Alert.alert(
                 'Booking cancelled',
                 `A cancellation fee of ₹${rupees} was charged.`,

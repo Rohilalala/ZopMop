@@ -14,7 +14,7 @@ type PendingRefund struct {
 	ID          string     `json:"id"`
 	UserID      string     `json:"user_id"`
 	UserPhone   string     `json:"user_phone,omitempty"`
-	AmountCents int64      `json:"amount_cents"`
+	AmountCents int64      `json:"amount_paise"`
 	Source      string     `json:"source"`
 	SourceRef   string     `json:"source_ref,omitempty"`
 	Status      string     `json:"status"`

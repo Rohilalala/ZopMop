@@ -1,7 +1,7 @@
 # Local backend testing helpers.
 # Run all targets from App/househelp-api/.
 
-DEPLOY_BRANCH := feature/sdui
+DEPLOY_BRANCH := main
 COMPOSE       := docker compose
 
 .PHONY: help check-env up down restart migrate logs ps psql redis-cli reset-db lan-ip new-feature preflight test vet

@@ -29,7 +29,7 @@ type ListItem struct {
 	IsVIP         bool       `json:"is_vip"`
 	JoinedAt      time.Time  `json:"joined_at"`
 	TotalOrders   int        `json:"total_orders"`
-	LTVCents      int64      `json:"ltv_cents"`
+	LTVCents      int64      `json:"ltv_paise"`
 	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
 }
 
@@ -39,7 +39,7 @@ type Detail struct {
 	SuspendReason *string  `json:"suspend_reason,omitempty"`
 	BanReason     *string  `json:"ban_reason,omitempty"`
 	BannedAt      *time.Time `json:"banned_at,omitempty"`
-	AvgOrderCents int64    `json:"avg_order_cents"`
+	AvgOrderCents int64    `json:"avg_order_paise"`
 	ActiveOrders  int      `json:"active_orders"`
 	PreferredCategories []CategoryShare `json:"preferred_categories"`
 }
@@ -55,7 +55,7 @@ type OrderRow struct {
 	ID       string `json:"id"`
 	Category string `json:"category"`
 	Status   string `json:"status"`
-	AmountPaise int        `json:"price_cents"`
+	AmountPaise int        `json:"price_paise"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }

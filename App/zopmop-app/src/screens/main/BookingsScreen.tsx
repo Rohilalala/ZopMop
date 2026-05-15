@@ -390,7 +390,7 @@ function ActiveCard({ booking }: { booking: ApiBooking }) {
       <SvcRow
         service={svc}
         extraLine={`${booking.total_duration_minutes} min${startedAt ? ` · today, started ${startedAt}` : ''}`}
-        priceCents={booking.price_cents}
+        priceCents={booking.price_paise}
       />
 
       <LiveStrip
@@ -422,7 +422,7 @@ function ActiveCard({ booking }: { booking: ApiBooking }) {
           onPress={() =>
             navigation.navigate('BookingConfirmed', {
               bookingId: booking.id,
-              totalCents: booking.price_cents,
+              totalCents: booking.price_paise,
               serviceId: svc?.service_id,
               serviceName: svc?.service_name,
               durationMinutes: booking.total_duration_minutes,
@@ -475,7 +475,7 @@ function ScheduledCard({
             ? `${totalServices} services · ${booking.total_duration_minutes} min total`
             : `${booking.total_duration_minutes} min`
         }
-        priceCents={booking.price_cents}
+        priceCents={booking.price_paise}
       />
 
       <View style={styles.stops}>
@@ -555,7 +555,7 @@ function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?:
         title={summaryName}
         extraLine={extraLine}
         secondLine={time ? `Booked at ${time}` : undefined}
-        priceCents={booking.price_cents}
+        priceCents={booking.price_paise}
         priceStruck={isCancelled}
       />
 

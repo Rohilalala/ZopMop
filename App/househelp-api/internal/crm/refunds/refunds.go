@@ -41,7 +41,7 @@ type Item struct {
 	UserID      string     `json:"user_id"`
 	UserName    *string    `json:"user_name,omitempty"`
 	UserPhone   string     `json:"user_phone"`
-	AmountCents int64      `json:"amount_cents"`
+	AmountCents int64      `json:"amount_paise"`
 	Source      string     `json:"source"`
 	SourceRef   *string    `json:"source_ref,omitempty"`
 	Status      string     `json:"status"`
@@ -50,7 +50,7 @@ type Item struct {
 }
 
 type DecisionRequest struct {
-	AmountCents *int64 `json:"amount_cents"` // nil = full
+	AmountCents *int64 `json:"amount_paise"` // nil = full
 	Reason      string `json:"reason"        validate:"required,min=2,max=500"`
 }
 

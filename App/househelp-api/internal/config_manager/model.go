@@ -96,7 +96,7 @@ type MatchingConfig struct {
 
 // PricingConfig holds pricing-related configuration values.
 type PricingConfig struct {
-	BaseFeeCents    int     `json:"base_fee_cents"`
+	BaseFeeCents    int     `json:"base_fee_paise"`
 	SurgeMultiplier float64 `json:"surge_multiplier"`
 	SurgeEnabled    bool    `json:"surge_enabled"`
 }

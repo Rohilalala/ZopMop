@@ -58,7 +58,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       service_id: serviceId,
       service_name: serviceName,
       duration_minutes: durationMinutes,
-      price_cents: priceCents,
+      price_paise: priceCents,
     };
     const optimistic: ApiCart = snapshot
       ? { ...snapshot, items: [...snapshot.items, tempItem], updated_at: now }
@@ -92,7 +92,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   const items = cart?.items ?? [];
   const itemCount = items.length;
-  const subtotalCents = items.reduce((sum, item) => sum + item.price_cents, 0);
+  const subtotalCents = items.reduce((sum, item) => sum + item.price_paise, 0);
 
   return (
     <CartContext.Provider value={{ items, itemCount, subtotalCents, addItem, removeItem, refreshCart, cartBadgeAnim }}>

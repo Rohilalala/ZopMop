@@ -13,7 +13,7 @@ export interface BookingServiceItem {
   service_id: string;
   service_name: string;
   duration_minutes: number;
-  price_cents: number;
+  price_paise: number;
 }
 
 export interface ApiBooking {
@@ -27,8 +27,8 @@ export interface ApiBooking {
   total_duration_minutes: number;
   services: BookingServiceItem[];
   status: BookingStatus;
-  price_cents: number;
-  discount_cents: number;
+  price_paise: number;
+  discount_paise: number;
   promo_code?: string;
   created_at: string;
   helper_id?: string;
@@ -74,7 +74,7 @@ export async function createScheduledBooking(
     }
     throw new Error(err.error ?? 'Failed to create booking');
   }
-  return validateShape<ApiBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_cents', 'created_at']);
+  return validateShape<ApiBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
 }
 
 export async function getBookings(
@@ -90,14 +90,14 @@ export async function getBookings(
   const data = await res.json();
   if (!Array.isArray(data.bookings)) throw new Error('Invalid response: bookings is not an array');
   return (data.bookings as unknown[]).map(b =>
-    validateShape<ApiBooking>(b, ['id', 'customer_id', 'status', 'price_cents', 'created_at']),
+    validateShape<ApiBooking>(b, ['id', 'customer_id', 'status', 'price_paise', 'created_at']),
   );
 }
 
 export interface CancelBookingResponse {
   message: string;
   cancellation_fee_applied: boolean;
-  cancellation_fee_cents: number;
+  cancellation_fee_paise: number;
 }
 
 export async function cancelBooking(

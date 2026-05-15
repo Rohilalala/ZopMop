@@ -23,7 +23,7 @@ type Invite struct {
 	Lng          float64   `json:"lng"`
 	Services     []string  `json:"services"`
 	TotalMinutes int       `json:"total_minutes"`
-	AmountPaise  int       `json:"price_cents"`
+	AmountPaise  int       `json:"price_paise"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

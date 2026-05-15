@@ -53,7 +53,7 @@ type JobRow struct {
 	ID       string `json:"id"`
 	Category string `json:"category"`
 	Status   string `json:"status"`
-	AmountPaise int        `json:"price_cents"`
+	AmountPaise int        `json:"price_paise"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }

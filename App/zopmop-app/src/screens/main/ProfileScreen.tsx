@@ -402,7 +402,7 @@ function HeroCard({
 
         <View style={s.heroTop}>
           <Text style={s.heroEyebrow} numberOfLines={1}>
-            ZOPMOP · {roleLabel(role)}
+            ZopMop · {roleLabel(role)}
           </Text>
           <TouchableOpacity onPress={onEdit} activeOpacity={0.75} hitSlop={12} style={s.heroEdit}>
             <Feather name="edit-2" size={13} color={C.white} />

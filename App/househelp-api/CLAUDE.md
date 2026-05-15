@@ -1,18 +1,21 @@
 ## Backend deploy gate
 
-**`feature/sdui` is the Railway-watched production branch.** Railway auto-deploys on every push/merge. NEVER:
-- commit directly to `feature/sdui`
-- push directly to `feature/sdui`
-- merge to `feature/sdui` without running `make preflight` first
+**`main` is the Railway-watched production branch.** Railway auto-deploys on every push/merge. NEVER:
+- commit directly to `main`
+- push directly to `main`
+- merge to `main` without running `make preflight` first
 
-All work happens on `feature/<name>` branches cut from `feature/sdui`, then PR'd back in.
+All work happens on `feature/<name>` branches cut from `main`, then PR'd back in.
+
+> Switched from `feature/sdui` → `main` on 2026-05-15. The old `feature/sdui`
+> branch may still exist on origin but is no longer auto-deployed.
 
 ## Local testing
 
 Full workflow is in `BACKEND_TESTING.md`. TL;DR:
 
 ```bash
-make new-feature name=<thing>     # cut feature branch from feature/sdui
+make new-feature name=<thing>     # cut feature branch from main
 make up                           # build + start postgres+redis+backend, run migrations
 make logs                         # tail backend
 make preflight                    # vet + tests + compose + smoke (gate before PR)

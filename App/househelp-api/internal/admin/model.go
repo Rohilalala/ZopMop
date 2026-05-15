@@ -41,7 +41,7 @@ type DashboardStats struct {
 	TotalUsers     int   `json:"total_users"`
 	TotalHelpers   int   `json:"total_helpers"`
 	ActiveBookings int   `json:"active_bookings"`
-	RevenueTodayCents int `json:"revenue_today_cents"`
+	RevenueTodayCents int `json:"revenue_today_paise"`
 }
 
 // UserListItem represents a user in the admin user list.
@@ -75,8 +75,8 @@ type BookingListItem struct {
 	HelperPhone       *string   `json:"helper_phone,omitempty"`
 	ServiceCategory   string    `json:"service_category"`
 	Status        string    `json:"status"`
-	AmountPaise   int       `json:"price_cents"`
-	DiscountPaise int       `json:"discount_cents"`
+	AmountPaise   int       `json:"price_paise"`
+	DiscountPaise int       `json:"discount_paise"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -95,7 +95,7 @@ type Promotion struct {
 	Code          string    `json:"code"`
 	DiscountType  string    `json:"discount_type"` // "percent" or "fixed"
 	DiscountValue int       `json:"discount_value"`
-	MinOrderCents int       `json:"min_order_cents"`
+	MinOrderCents int       `json:"min_order_paise"`
 	MaxUses       int       `json:"max_uses"` // 0 = unlimited
 	UsesCount     int       `json:"uses_count"`
 	IsActive      bool      `json:"is_active"`
@@ -116,7 +116,7 @@ type PromotionRequest struct {
 	Code          string     `json:"code"            validate:"required,min=3,max=32,alphanum"`
 	DiscountType  string     `json:"discount_type"   validate:"required,oneof=percent fixed"`
 	DiscountValue int        `json:"discount_value"  validate:"required,min=1,max=100000"`
-	MinOrderCents int        `json:"min_order_cents" validate:"min=0,max=10000000"`
+	MinOrderCents int        `json:"min_order_paise" validate:"min=0,max=10000000"`
 	MaxUses       int        `json:"max_uses"        validate:"min=0,max=1000000"`
 	IsActive      bool       `json:"is_active"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`

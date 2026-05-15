@@ -86,8 +86,8 @@ type OverviewResponse struct {
 	PendingBookings    int     `json:"pending_bookings"`
 	CompletionRate     float64 `json:"completion_rate"`    // completed / (completed + cancelled)
 	MatchSuccessRate   float64 `json:"match_success_rate"` // accepted+started+completed / total
-	TotalRevenueCents  int64   `json:"total_revenue_cents"`
-	AvgOrderValueCents int64   `json:"avg_order_value_cents"`
+	TotalRevenueCents  int64   `json:"total_revenue_paise"`
+	AvgOrderValueCents int64   `json:"avg_order_value_paise"`
 	ActiveHelpers      int     `json:"active_helpers"`
 	NewUsers           int     `json:"new_users"`
 }
@@ -140,9 +140,9 @@ type OperationalMetrics struct {
 // RevenueTrendDay is one row in the revenue trend chart.
 type RevenueTrendDay struct {
 	Date              string `json:"date"`
-	GrossRevenueCents int64  `json:"gross_revenue_cents"`
-	DiscountCents     int64  `json:"discount_cents"`
-	NetRevenueCents   int64  `json:"net_revenue_cents"`
+	GrossRevenueCents int64  `json:"gross_revenue_paise"`
+	DiscountCents     int64  `json:"discount_paise"`
+	NetRevenueCents   int64  `json:"net_revenue_paise"`
 	BookingCount      int    `json:"booking_count"`
 }
 

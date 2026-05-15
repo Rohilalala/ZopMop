@@ -19,9 +19,9 @@ export interface HelperBooking {
   address: string;
   lat: number;
   lng: number;
-  price_cents: number;
+  price_paise: number;
   promo_code?: string | null;
-  discount_cents: number;
+  discount_paise: number;
   created_at: string;
   updated_at: string;
 }

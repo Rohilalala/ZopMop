@@ -210,7 +210,7 @@ export default function InstantMatchingScreen({ route }: Props) {
           );
           bookingId = booking.id;
           bookingIdRef.current = bookingId;
-          priceCentsRef.current = booking.price_cents ?? 0;
+          priceCentsRef.current = booking.price_paise ?? 0;
         } catch (err) {
           if (err instanceof UnpaidBookingsError && !cancelled) {
             const totalRupees = (err.totalPaise / 100).toFixed(2);

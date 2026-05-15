@@ -3,7 +3,7 @@
 # Enable: git config core.hooksPath .githooks  (run from App/househelp-api/)
 set -euo pipefail
 
-PROTECTED="${PROTECTED_BRANCH:-feature/sdui}"
+PROTECTED="${PROTECTED_BRANCH:-main}"
 remote="${1:-}"
 
 while read -r local_ref local_sha remote_ref remote_sha; do

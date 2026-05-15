@@ -8,8 +8,8 @@ export interface ApiService {
   short_description?: string;
   emoji?: string;
   bg_color: string;
-  base_price_cents: number;
-  mrp_cents?: number;
+  base_price_paise: number;
+  mrp_paise?: number;
   rating: number;
   review_count: number;
   min_duration_minutes: number;
@@ -45,7 +45,7 @@ export interface ServiceAddon {
   name: string;
   emoji?: string;
   bg_color: string;
-  base_price_cents: number;
+  base_price_paise: number;
   display_order: number;
 }
 

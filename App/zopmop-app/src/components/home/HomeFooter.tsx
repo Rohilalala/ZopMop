@@ -165,10 +165,10 @@ function Signoff() {
       <Text
         style={[
           fontExtra,
-          { fontSize: 22, color: '#F5A300', letterSpacing: 6, marginTop: 24 },
+          { fontSize: 22, color: '#F5A300', letterSpacing: 1, marginTop: 24 },
         ]}
       >
-        ZOPMOP
+        ZopMop
       </Text>
 
       <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap' }}>

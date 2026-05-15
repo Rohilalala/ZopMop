@@ -7,6 +7,7 @@ toolchain go1.26.3
 require (
 	firebase.google.com/go/v4 v4.19.0
 	github.com/alicebob/miniredis/v2 v2.37.0
+	github.com/getsentry/sentry-go v0.46.2
 	github.com/go-playground/validator/v10 v10.23.0
 	github.com/gofiber/fiber/v2 v2.52.12
 	github.com/gofiber/helmet/v2 v2.2.26
