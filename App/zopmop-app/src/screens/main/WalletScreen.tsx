@@ -266,7 +266,7 @@ function BalanceHero({ balancePaise, loading }: { balancePaise: number | null; l
         <View style={s.heroAmberLine} pointerEvents="none" />
 
         <View style={s.heroTop}>
-          <Text style={s.heroEyebrow}>ZOPMOP · WALLET BALANCE</Text>
+          <Text style={s.heroEyebrow}>ZopMop · Wallet balance</Text>
           <View style={s.heroBadge}>
             <Feather name="lock" size={10} color="#FFC042" />
             <Text style={s.heroBadgeText}>Secure</Text>

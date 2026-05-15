@@ -39,8 +39,8 @@ type ListItem struct {
 	WorkerPhone    *string    `json:"worker_phone,omitempty"`
 	Category       string     `json:"category"`
 	Status         string     `json:"status"`
-	AmountPaise    int        `json:"price_cents"`
-	DiscountPaise  int        `json:"discount_cents"`
+	AmountPaise    int        `json:"price_paise"`
+	DiscountPaise  int        `json:"discount_paise"`
 	PromoCode      *string    `json:"promo_code,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`

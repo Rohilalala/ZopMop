@@ -355,6 +355,12 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 	}
 
 	var customerID string
+	// Accept any unassigned booking — either a freshly-created 'pending'
+	// row from the scheduled flow OR a stealth-instant row already flipped
+	// to 'searching' by the StealthDispatcher. The race semantics stay
+	// the same: a single UPDATE … WHERE status IN (...) RETURNING id
+	// claims the row atomically; the loser (a second accept attempt) sees
+	// status='accepted' and falls through to ErrAlreadyAccepted.
 	if err := tx.QueryRow(queryCtx,
 		`UPDATE bookings
 		    SET helper_id = $2,
@@ -363,9 +369,9 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 		        accepted_at = now(),
 		        matched_at = COALESCE(matched_at, now())
 		  WHERE id = $1
-		    AND status = $4
+		    AND status IN ($4, $5)
 		  RETURNING customer_id::text`,
-		bookingID, helperID, StatusAccepted, StatusPending,
+		bookingID, helperID, StatusAccepted, StatusPending, StatusSearching,
 	).Scan(&customerID); err != nil {
 		if err == pgx.ErrNoRows {
 			return ErrAlreadyAccepted
@@ -675,7 +681,11 @@ func (r *Repository) CreateScheduledBooking(
 	// Insert booking_services rows.
 	for _, item := range items {
 		_, err := tx.Exec(queryCtx,
-			`INSERT INTO booking_services (booking_id, service_id, duration_minutes, price_cents)
+			// Column was renamed to price_paise by migration 094 (the
+			// idempotent recovery for the 2026-05-14 incident). The Go
+			// struct field is still named PriceCents internally but the
+			// value has always been paise — see BREAKING_CHANGES.md.
+			`INSERT INTO booking_services (booking_id, service_id, duration_minutes, price_paise)
 			 VALUES ($1, $2, $3, $4)`,
 			b.ID, item.ServiceID, item.DurationMinutes, item.PriceCents,
 		)
@@ -731,7 +741,9 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 						'service_id', bs.service_id::text,
 						'service_name', sc.name,
 						'duration_minutes', bs.duration_minutes,
-						'price_cents', bs.price_cents
+						-- JSON key is price_paise to match the renamed schema
+						-- column and the mobile TS type. Value is paise.
+						'price_paise', bs.price_paise
 					)
 					ORDER BY bs.id
 				) FILTER (WHERE bs.service_id IS NOT NULL),

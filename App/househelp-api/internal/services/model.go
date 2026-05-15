@@ -10,8 +10,8 @@ type Service struct {
 	ShortDescription    *string   `json:"short_description,omitempty"`
 	Emoji               *string   `json:"emoji"`
 	BgColor             string    `json:"bg_color"`
-	BasePriceCents      int       `json:"base_price_cents"`
-	MrpCents            *int      `json:"mrp_cents,omitempty"`
+	BasePriceCents      int       `json:"base_price_paise"`
+	MrpCents            *int      `json:"mrp_paise,omitempty"`
 	Rating              float64   `json:"rating"`
 	ReviewCount         int       `json:"review_count"`
 	MinDurationMinutes  int       `json:"min_duration_minutes"`
@@ -52,7 +52,7 @@ type ServiceAddon struct {
 	Name          string  `json:"name"`
 	Emoji         *string `json:"emoji,omitempty"`
 	BgColor       string  `json:"bg_color"`
-	BasePriceCents int    `json:"base_price_cents"`
+	BasePriceCents int    `json:"base_price_paise"`
 	DisplayOrder  int     `json:"display_order"`
 }
 
@@ -68,7 +68,7 @@ type ServiceDetails struct {
 // All fields are optional — only non-zero/non-nil values are applied.
 type AdminUpdateServiceRequest struct {
 	Name           string  `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
-	BasePriceCents *int    `json:"base_price_cents,omitempty" validate:"omitempty,gt=0"`
+	BasePriceCents *int    `json:"base_price_paise,omitempty" validate:"omitempty,gt=0"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 	DisplayOrder   *int    `json:"display_order,omitempty"`
 	Emoji          *string `json:"emoji,omitempty"`
@@ -81,7 +81,7 @@ type AdminCreateServiceRequest struct {
 	Name                string `json:"name" validate:"required,min=1,max=200"`
 	Emoji               string `json:"emoji,omitempty"`
 	BgColor             string `json:"bg_color,omitempty"`
-	BasePriceCents      int    `json:"base_price_cents" validate:"required,gt=0"`
+	BasePriceCents      int    `json:"base_price_paise" validate:"required,gt=0"`
 	DisplayOrder        int    `json:"display_order"`
 	Category            string `json:"category,omitempty"`
 	MinDurationMinutes  int    `json:"min_duration_minutes,omitempty"`

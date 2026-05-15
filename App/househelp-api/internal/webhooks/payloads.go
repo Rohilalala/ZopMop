@@ -39,7 +39,7 @@ type OrderEvent struct {
 	CustomerID        string    `json:"customer_id"`
 	HelperID          *string   `json:"helper_id,omitempty"`
 	ServiceCategoryID string    `json:"service_category_id,omitempty"`
-	AmountPaise       int64     `json:"price_cents,omitempty"`
+	AmountPaise       int64     `json:"price_paise,omitempty"`
 	OccurredAt  time.Time `json:"occurred_at"`
 }
 
@@ -143,7 +143,7 @@ type AdminSurgeActivatedEvent struct {
 type RefundApprovedEvent struct {
 	RefundID    string    `json:"refund_id"`
 	UserID      string    `json:"user_id"`
-	AmountCents int64     `json:"amount_cents"`
+	AmountCents int64     `json:"amount_paise"`
 	AdminID     string    `json:"admin_id"`
 	OccurredAt  time.Time `json:"occurred_at"`
 }
@@ -155,7 +155,7 @@ type RefundProcessedEvent struct {
 	RefundID        string    `json:"refund_id"`
 	BookingID       string    `json:"booking_id,omitempty"`
 	UserID          string    `json:"user_id"`
-	AmountCents     int64     `json:"amount_cents"`
+	AmountCents     int64     `json:"amount_paise"`
 	PaymentMethod   string    `json:"payment_method,omitempty"`
 	GatewayRefundID string    `json:"gateway_refund_id,omitempty"`
 	Manual          bool      `json:"manual"`

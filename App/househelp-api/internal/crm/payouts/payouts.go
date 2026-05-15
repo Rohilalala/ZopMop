@@ -25,7 +25,7 @@ type Payout struct {
 	WorkerPhone string     `json:"worker_phone"`
 	PeriodStart time.Time  `json:"period_start"`
 	PeriodEnd   time.Time  `json:"period_end"`
-	AmountCents int64      `json:"amount_cents"`
+	AmountCents int64      `json:"amount_paise"`
 	Status      string     `json:"status"`
 	PaidAt      *time.Time `json:"paid_at,omitempty"`
 	ExternalRef *string    `json:"external_ref,omitempty"`
@@ -37,7 +37,7 @@ type CreateRequest struct {
 	WorkerID    string    `json:"worker_id"`
 	PeriodStart time.Time `json:"period_start"`
 	PeriodEnd   time.Time `json:"period_end"`
-	AmountCents int64     `json:"amount_cents"`
+	AmountCents int64     `json:"amount_paise"`
 	Notes       string    `json:"notes"`
 }
 

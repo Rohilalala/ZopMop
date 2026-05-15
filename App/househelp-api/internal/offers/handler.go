@@ -21,7 +21,7 @@ type Offer struct {
 	Description   string     `json:"description"`
 	DiscountLabel string     `json:"discount_label"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	MinOrderCents int        `json:"min_order_cents"`
+	MinOrderCents int        `json:"min_order_paise"`
 	MaxPerUser    int        `json:"max_per_user"`
 	Stackable     bool       `json:"stackable"`
 	Categories    []string   `json:"categories"`

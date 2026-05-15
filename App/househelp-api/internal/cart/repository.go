@@ -50,10 +50,19 @@ func (r *Repository) AddItem(ctx context.Context, cartID, serviceID string, dura
 	defer cancel()
 
 	var item CartItem
+	// ON CONFLICT WHERE matches the partial unique index added in
+	// migration 096 (idx_cart_items_unique_service_only). Migration 095
+	// dropped the legacy (cart_id, service_id) UNIQUE; the new partial
+	// index only covers rows where neither variant_id nor bundle_id is
+	// set, which is the path the current customer mobile build uses.
+	// When variant-aware writes ship, they must use the matching
+	// (cart_id, variant_id) / (cart_id, bundle_id) partial indexes.
 	err := r.db.QueryRow(ctx,
 		`INSERT INTO cart_items (cart_id, service_id, duration_minutes, price_cents)
 		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (cart_id, service_id) DO UPDATE
+		 ON CONFLICT (cart_id, service_id)
+		   WHERE variant_id IS NULL AND bundle_id IS NULL
+		 DO UPDATE
 		   SET duration_minutes = EXCLUDED.duration_minutes,
 		       price_cents      = EXCLUDED.price_cents
 		 RETURNING id, cart_id, service_id, duration_minutes, price_cents`,

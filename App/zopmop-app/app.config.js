@@ -46,6 +46,9 @@ module.exports = ({ config }) => ({
     ...config.extra,
     posthogProjectToken: process.env.POSTHOG_PROJECT_TOKEN,
     posthogHost: process.env.POSTHOG_HOST,
+    sentryDsn: process.env.SENTRY_DSN,
+    sentryEnvironment: process.env.SENTRY_ENVIRONMENT,
+    sentryRelease: process.env.SENTRY_RELEASE,
   },
   plugins: [
     ...(config.plugins ?? []),
@@ -56,5 +59,9 @@ module.exports = ({ config }) => ({
         androidGoogleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
       },
     ],
+    // Sentry Expo config plugin — wires the native SDK + source map upload.
+    // SENTRY_AUTH_TOKEN must be set as an EAS secret for prod builds so
+    // symbolicated stack traces appear in Sentry.
+    ['@sentry/react-native/expo', { url: 'https://sentry.io/' }],
   ],
 });

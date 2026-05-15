@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerSignOutCallback, apiFetch } from '../api/client';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 
@@ -9,6 +10,7 @@ import { otpStore } from '../utils/otpStore';
 import { promoStore } from '../utils/promoStore';
 import { pendingAuthStore } from '../utils/pendingAuthStore';
 import { posthog } from '../config/posthog';
+import { setUser as sentrySetUser } from '../config/sentry';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
@@ -317,10 +319,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     SecureStore.setItemAsync(TOKEN_KEY, jwt).catch(() => {});
     if (authUser) {
       SecureStore.setItemAsync(USER_KEY, JSON.stringify(authUser)).catch(() => {});
+      // PostHog identify: distinct_id + low-cardinality cohort props only.
+      // We deliberately do NOT send phone / name to PostHog person properties
+      // — they are DPDP-relevant PII and were previously leaking on every
+      // sign-in. Role stays since it is a useful, non-PII cohort dimension.
       posthog.identify(authUser.id, {
-        $set: { phone: authUser.phone, role: authUser.role, name: authUser.name ?? null },
+        $set: { role: authUser.role },
         $set_once: { first_sign_in_date: new Date().toISOString() },
       });
+      // Sentry user binding — backend UUID only. No phone / name.
+      sentrySetUser(authUser.id);
     }
     posthog.capture('user_signed_in', { role: authUser?.role ?? null });
     SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
@@ -329,6 +337,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   function signOut() {
     posthog.capture('user_signed_out');
     posthog.reset();
+    // Clear Sentry user binding so post-signOut errors aren't attributed
+    // to the prior identity.
+    sentrySetUser(null);
     setToken(null);
     setUser(null);
     SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
@@ -343,6 +354,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     otpStore.clear();
     promoStore.clear();
     pendingAuthStore.clear();
+    // Clear any stashed referral attribution so it can't roll over to the
+    // next user on the same device.
+    AsyncStorage.multiRemove([
+      'pendingReferralCode',
+      'pendingReferralCodeAt',
+    ]).catch(() => {});
   }
 
   function updateUser(updatedUser: AuthUser) {

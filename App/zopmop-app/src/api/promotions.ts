@@ -8,7 +8,7 @@ export type Offer = {
   description: string;
   discount_label: string;
   expires_at: string | null;
-  min_order_cents: number;
+  min_order_paise: number;
   max_per_user: number;
   stackable: boolean;
   categories: string[];

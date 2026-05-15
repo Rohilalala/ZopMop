@@ -1,4 +1,8 @@
 import './global.css';
+// Sentry must be imported before the rest of the app so its init runs
+// before any other module can crash. See src/config/sentry.ts for the
+// DSN-gated init (no-op when SENTRY_DSN is unset).
+import { wrapRoot as wrapWithSentry } from './src/config/sentry';
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, LogBox, Linking } from 'react-native';
 
@@ -39,6 +43,10 @@ function Navigation() {
   const routeNameRef = React.useRef<string | undefined>(undefined);
 
   // Deep link handler: parse /r/<code> and route to ReferralInvite or stash for after login.
+  //
+  // The stash carries a 24h TTL (`pendingReferralCodeAt`) and is cleared on
+  // signOut (see AuthContext) so a shared device can't apply one user's
+  // referral code to the next user who installs/signs in.
   useEffect(() => {
     const handleUrl = async ({ url }: { url: string }) => {
       const match = url.match(/\/r\/([A-Za-z0-9_]+)/);
@@ -47,7 +55,10 @@ function Navigation() {
       if (isAuthenticated) {
         navNavigate('ReferralInvite', { code });
       } else {
-        await AsyncStorage.setItem('pendingReferralCode', code);
+        await AsyncStorage.multiSet([
+          ['pendingReferralCode', code],
+          ['pendingReferralCodeAt', String(Date.now())],
+        ]);
       }
     };
 
@@ -56,16 +67,23 @@ function Navigation() {
     return () => sub.remove();
   }, [isAuthenticated]);
 
-  // After login, flush any stashed referral code.
+  // After login, flush any stashed referral code — only if fresher than 24h.
   useEffect(() => {
     if (!isAuthenticated) return;
-    AsyncStorage.getItem('pendingReferralCode').then(code => {
+    (async () => {
+      const [[, code], [, atRaw]] = await AsyncStorage.multiGet([
+        'pendingReferralCode',
+        'pendingReferralCodeAt',
+      ]);
       if (!code) return;
-      AsyncStorage.removeItem('pendingReferralCode');
+      const at = Number(atRaw) || 0;
+      const stale = !at || Date.now() - at > 24 * 60 * 60 * 1000;
+      await AsyncStorage.multiRemove(['pendingReferralCode', 'pendingReferralCodeAt']);
+      if (stale) return;
       setTimeout(() => {
         navNavigate('ReferralInvite', { code });
       }, 300);
-    });
+    })();
   }, [isAuthenticated]);
 
   if (isLoading) return null;
@@ -150,7 +168,7 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
   );
 }
 
-export default function App() {
+function App() {
   const [splashDone, setSplashDone] = useState(false);
 
   const [fontsLoaded] = useFonts({
@@ -190,3 +208,7 @@ export default function App() {
     </GestureHandlerRootView>
   );
 }
+
+// Wrap with Sentry so React render errors are captured automatically.
+// Pass-through when SENTRY_DSN is unset.
+export default wrapWithSentry(App);

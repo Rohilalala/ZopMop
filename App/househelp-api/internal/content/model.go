@@ -26,7 +26,7 @@ type ServiceCategory struct {
 	Name          string    `json:"name"`
 	Description   string    `json:"description,omitempty"`
 	IconURL       string    `json:"icon_url,omitempty"`
-	BasePriceCents int      `json:"base_price_cents"`
+	BasePriceCents int      `json:"base_price_paise"`
 	IsActive      bool      `json:"is_active"`
 	DisplayOrder  int       `json:"display_order"`
 	CreatedBy     string    `json:"created_by"`
@@ -79,7 +79,7 @@ type CreateServiceCategoryRequest struct {
 	Name           string `json:"name" validate:"required,max=100"`
 	Description    string `json:"description,omitempty" validate:"omitempty,max=2000"`
 	IconURL        string `json:"icon_url,omitempty" validate:"omitempty,max=500"`
-	BasePriceCents int    `json:"base_price_cents" validate:"required,min=0"`
+	BasePriceCents int    `json:"base_price_paise" validate:"required,min=0"`
 	IsActive       bool   `json:"is_active"`
 	DisplayOrder   int    `json:"display_order"`
 }

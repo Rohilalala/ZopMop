@@ -5,7 +5,7 @@ Railway auto-deploy. Read it once, then refer back when something bites.
 
 ## Branch model
 
-- **`feature/sdui`** is the production branch. **Railway watches this branch
+- **`main`** is the production branch. **Railway watches this branch
   and auto-deploys on every push or merge.** Treat it as protected. Never
   commit directly. Never push directly. The `.githooks/pre-push` hook blocks
   this if you enable it (see below).
@@ -13,15 +13,15 @@ Railway auto-deploy. Read it once, then refer back when something bites.
 - **`chore/<thing>`** is for tooling / infra changes (this doc was created on
   one such branch).
 
-> **Heads-up.** Earlier versions of this workflow referred to the deploy
-> branch as `sdui`. It's actually `feature/sdui` in this repo. Anywhere a
-> tool, script, or doc says "deploy branch", read `feature/sdui`.
+> **Heads-up.** This repo's deploy branch was renamed twice: original `sdui`
+> → `feature/sdui` (early 2026) → `main` (2026-05-15). Anywhere a tool,
+> script, or older doc says `feature/sdui` or `sdui`, read `main`.
 
 ## The loop
 
 ```
                   ┌───────────────────────────────┐
-                  │  feature/sdui  (Railway prod) │
+                  │  main  (Railway prod) │
                   └───────────────┬───────────────┘
                                   │  git pull
                                   ▼
@@ -45,7 +45,7 @@ Railway auto-deploy. Read it once, then refer back when something bites.
                                   │  passes
                                   ▼
                   ┌───────────────────────────────┐
-                  │  push, open PR → feature/sdui │
+                  │  push, open PR → main │
                   └───────────────┬───────────────┘
                                   │  review + merge
                                   ▼
@@ -59,7 +59,7 @@ Railway auto-deploy. Read it once, then refer back when something bites.
 From `App/househelp-api/`:
 
 ```bash
-# Enable the pre-push hook that blocks pushes to feature/sdui.
+# Enable the pre-push hook that blocks pushes to main.
 git config core.hooksPath .githooks
 
 # Copy the env template and fill in real secrets.
@@ -115,7 +115,7 @@ isolation, switch networks.
 ```bash
 make new-feature name=helper-bonus
 # equivalent to:
-# git checkout feature/sdui && git pull && git checkout -b feature/helper-bonus
+# git checkout main && git pull && git checkout -b feature/helper-bonus
 ```
 
 ## Preflight (gate before opening a PR)
@@ -125,7 +125,7 @@ make preflight
 ```
 
 The script:
-1. Refuses to run if you're on `feature/sdui`.
+1. Refuses to run if you're on `main`.
 2. Runs `go vet ./...`.
 3. Runs `go test ./...`.
 4. Builds and starts the full docker compose stack.
@@ -187,15 +187,15 @@ devices** if you reuse the prod service account in local dev. Either use a
 separate Firebase project for local, or accept that test pushes will reach
 real users.
 
-### 5. The big one: accidental push to `feature/sdui`
-Railway deploys on every push. A `git push origin feature/sdui` from your
+### 5. The big one: accidental push to `main`
+Railway deploys on every push. A `git push origin main` from your
 laptop while you have local changes uncommitted on top of a stale base is
 catastrophic. Defences, in order:
 
 - `git config core.hooksPath .githooks` (blocks the push locally)
-- Don't `git checkout feature/sdui` to "just check something" — use a
+- Don't `git checkout main` to "just check something" — use a
   worktree or `git stash`
-- Treat `feature/sdui` as receive-only: it only changes via PR merge
+- Treat `main` as receive-only: it only changes via PR merge
 
 ### 6. Cashfree webhooks won't reach localhost
 `PUBLIC_BASE_URL` must be reachable from the public internet for Cashfree
@@ -211,7 +211,7 @@ deploy applies pending migrations automatically.
 
 Implications:
 
-- **Migration files MUST be committed to `feature/sdui` before pushing code that
+- **Migration files MUST be committed to `main` before pushing code that
   depends on them.** If a migration is only on disk and the dependent code ships,
   Railway will boot the new api against an unmigrated DB and the new code will
   500. Stage migrations + code together in the same PR.
@@ -226,19 +226,19 @@ Implications:
 
 If something slips through preflight and breaks production:
 
-1. Identify the merge commit on `feature/sdui` that introduced the regression:
+1. Identify the merge commit on `main` that introduced the regression:
 
    ```bash
-   git log --oneline --first-parent feature/sdui | head -10
+   git log --oneline --first-parent main | head -10
    ```
 
 2. Revert it (creates a new commit; does not rewrite history):
 
    ```bash
-   git checkout feature/sdui
+   git checkout main
    git pull --ff-only
    git revert -m 1 <merge-sha>
-   git push origin feature/sdui
+   git push origin main
    ```
 
    The `-m 1` keeps the first parent (the previous deploy branch state).
@@ -250,7 +250,7 @@ If something slips through preflight and breaks production:
    force a redeploy from the dashboard: select the latest commit → Redeploy.
 
 5. Fix the bug on a fresh feature branch. Don't push the fix back to
-   `feature/sdui` directly.
+   `main` directly.
 
 ## File reference
 
@@ -262,5 +262,5 @@ If something slips through preflight and breaks production:
 | `.dockerignore`               | What's excluded from the image build context (pre-existing) |
 | `Makefile`                    | Convenience targets for the local loop |
 | `scripts/preflight.sh`        | PR gate. Runs vet, tests, stack, smoke |
-| `.githooks/pre-push`          | Blocks accidental pushes to `feature/sdui` |
+| `.githooks/pre-push`          | Blocks accidental pushes to `main` |
 | `BACKEND_TESTING.md`          | This document |

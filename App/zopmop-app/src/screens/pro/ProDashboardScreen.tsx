@@ -432,11 +432,11 @@ export default function ProDashboardScreen() {
           </View>
         </View>
 
-        {/* Stats row */}
+        {/* Stats row — pros are salaried staff, not gig workers. Earnings tile
+            removed per project_design_conventions; do not reintroduce. */}
         <View style={s.statsRow}>
           <StatCard iconName="star-filled" label="Rating" value={stats ? stats.average_rating.toFixed(1) : '—'} />
           <StatCard iconName="check-circle" label="Jobs Done" value={stats ? String(stats.total_jobs) : '—'} />
-          <StatCard iconName="coins" label="Earned" value={stats ? `₹${Math.round(stats.total_earned_paise / 100)}` : '₹—'} />
         </View>
 
         {/* GO ONLINE button */}
@@ -558,10 +558,10 @@ function TodayPanel({
     b => b.status === 'completed' || b.status === 'cancelled',
   );
 
-  // price_cents / discount_cents store paise (not cents) — named per existing API contract.
+  // price_paise / discount_paise store paise (not cents) — named per existing API contract.
   const earnedPaise = past
     .filter(b => b.status === 'completed')
-    .reduce((sum, b) => sum + (b.price_cents - b.discount_cents), 0);
+    .reduce((sum, b) => sum + (b.price_paise - b.discount_paise), 0);
   const earnedRupees = `₹${Math.round(earnedPaise / 100)}`;
 
   return (
@@ -630,7 +630,7 @@ function TodayPanel({
             </Text>
           </View>
           <Text style={s.todayRowAmount}>
-            ₹{Math.round((b.price_cents - b.discount_cents) / 100)}
+            ₹{Math.round((b.price_paise - b.discount_paise) / 100)}
           </Text>
         </View>
       ))}

@@ -150,11 +150,20 @@ func (r *Repository) CreateReferralTx(ctx context.Context, tx pgx.Tx, referrerID
 
 // GetPendingReferralForRefereeTx reads the pending referral for a referee inside
 // the supplied tx. Returns nil, nil when the user was not referred.
+//
+// Locks the row (`FOR UPDATE`) so two concurrent booking-completion
+// transactions for the same customer serialise on this read — the
+// second tx waits, then sees `status='completed'` after the first tx
+// commits, and skips the double credit. Without the lock both tx's
+// observed `status='pending'` and both called wallet.CreditTx,
+// double-paying referee + referrer (audit Critical-4).
 func (r *Repository) GetPendingReferralForRefereeTx(ctx context.Context, tx pgx.Tx, refereeID string) (*Referral, error) {
 	var ref Referral
 	err := tx.QueryRow(ctx,
 		`SELECT id, referrer_id, referee_id, status, created_at
-		 FROM referrals WHERE referee_id = $1 AND status = 'pending'`,
+		 FROM referrals
+		 WHERE referee_id = $1 AND status = 'pending'
+		 FOR UPDATE`,
 		refereeID,
 	).Scan(&ref.ID, &ref.ReferrerID, &ref.RefereeID, &ref.Status, &ref.CreatedAt)
 	if err != nil {

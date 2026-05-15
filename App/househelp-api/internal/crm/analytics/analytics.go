@@ -108,10 +108,10 @@ type Summary struct {
 	Orders          int   `json:"orders"`
 	CompletedOrders int   `json:"completed_orders"`
 	CancelledOrders int   `json:"cancelled_orders"`
-	RevenueCents    int64 `json:"revenue_cents"`
+	RevenueCents    int64 `json:"revenue_paise"`
 	NewUsers        int   `json:"new_users"`
 	NewWorkers      int   `json:"new_workers"`
-	AvgOrderCents   int64 `json:"avg_order_cents"`
+	AvgOrderCents   int64 `json:"avg_order_paise"`
 }
 
 func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, error) {
@@ -141,7 +141,7 @@ func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, er
 type CategoryRow struct {
 	Category   string `json:"category"`
 	Orders     int    `json:"orders"`
-	RevenueCents int64 `json:"revenue_cents"`
+	RevenueCents int64 `json:"revenue_paise"`
 }
 
 func (s *Service) ByCategory(ctx context.Context, from, to time.Time) ([]CategoryRow, error) {

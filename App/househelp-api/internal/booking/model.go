@@ -7,6 +7,12 @@ type BookingStatus string
 
 const (
 	StatusPending    BookingStatus = "pending"
+	// StatusSearching is set by the StealthDispatcher after it claims a
+	// new instant booking and before it emits the FCM invites. Pros that
+	// receive the invite call AcceptBooking, which now accepts both
+	// 'pending' (scheduled flow) and 'searching' (stealth flow) as the
+	// pre-assignment state.
+	StatusSearching  BookingStatus = "searching"
 	StatusAccepted   BookingStatus = "accepted"
 	StatusInProgress BookingStatus = "in_progress"
 	StatusCompleted  BookingStatus = "completed"
@@ -24,13 +30,13 @@ type Booking struct {
 	Address                string        `json:"address"`
 	Lat                    float64       `json:"lat"`
 	Lng                    float64       `json:"lng"`
-	AmountPaise            int           `json:"price_cents"`
+	AmountPaise            int           `json:"price_paise"`
 	PromoCode              *string       `json:"promo_code,omitempty"`
-	DiscountPaise          int           `json:"discount_cents"`
+	DiscountPaise          int           `json:"discount_paise"`
 	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
-	CancellationFeeCents   int           `json:"cancellation_fee_cents"`
+	CancellationFeeCents   int           `json:"cancellation_fee_paise"`
 	// CanCancelFree and FreeCancelUntil are computed at read time on the
 	// booking detail endpoint. nil for terminal-state bookings (no longer
 	// cancellable).
@@ -44,7 +50,7 @@ type Booking struct {
 type CancelBookingResponse struct {
 	Message                string `json:"message"`
 	CancellationFeeApplied bool   `json:"cancellation_fee_applied"`
-	CancellationFeeCents   int    `json:"cancellation_fee_cents"`
+	CancellationFeeCents   int    `json:"cancellation_fee_paise"`
 }
 
 // CreateBookingRequest is the input for creating a new booking.
@@ -72,7 +78,7 @@ type BookingServiceItem struct {
 	ServiceID       string `json:"service_id"`
 	ServiceName     string `json:"service_name"`
 	DurationMinutes int    `json:"duration_minutes"`
-	PriceCents      int    `json:"price_cents"`
+	PriceCents      int    `json:"price_paise"`
 }
 
 // ScheduledBooking is the response for the new scheduling flow, includes
@@ -88,8 +94,8 @@ type ScheduledBooking struct {
 	TotalDurationMinutes int                  `json:"total_duration_minutes"`
 	Services             []BookingServiceItem `json:"services"`
 	Status               BookingStatus        `json:"status"`
-	AmountPaise          int                  `json:"price_cents"`
-	DiscountPaise        int                  `json:"discount_cents"`
+	AmountPaise          int                  `json:"price_paise"`
+	DiscountPaise        int                  `json:"discount_paise"`
 	PromoCode     *string             `json:"promo_code,omitempty"`
 	CreatedAt     time.Time           `json:"created_at"`
 }

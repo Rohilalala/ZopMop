@@ -396,7 +396,7 @@ func sanitizeAddressesForLLM(addrs []addresses.Address) []SafeAddress {
 type SafeBookingService struct {
 	ServiceName     string `json:"service_name,omitempty"`
 	DurationMinutes int    `json:"duration_minutes,omitempty"`
-	PriceCents      int    `json:"price_cents,omitempty"`
+	PriceCents      int    `json:"price_paise,omitempty"`
 }
 
 // SafeBooking is the LLM-visible projection of a Booking. Drops customer/
@@ -412,8 +412,8 @@ type SafeBooking struct {
 	AddressTag           string               `json:"address_tag,omitempty"`
 	AddressTitle         string               `json:"address_title,omitempty"`
 	PriceRupees          int                  `json:"price_rupees,omitempty"`
-	AmountPaise          int                  `json:"price_cents,omitempty"`
-	DiscountPaise        int                  `json:"discount_cents,omitempty"`
+	AmountPaise          int                  `json:"price_paise,omitempty"`
+	DiscountPaise        int                  `json:"discount_paise,omitempty"`
 	TotalDurationMinutes int                  `json:"total_duration_minutes,omitempty"`
 	Services             []SafeBookingService `json:"services,omitempty"`
 }

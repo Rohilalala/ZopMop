@@ -96,7 +96,7 @@ export default function ServiceAboutScreen() {
     posthog?.capture('service_viewed', {
       service_id:        service.id,
       service_name:      service.name,
-      base_price_cents:  service.base_price_cents,
+      base_price_paise:  service.base_price_paise,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [service.id]);
@@ -128,8 +128,8 @@ export default function ServiceAboutScreen() {
   const activeSvc = details?.service ?? service;
 
   const priceCents = duration != null
-    ? Math.round((activeSvc.base_price_cents * duration) / activeSvc.min_duration_minutes)
-    : activeSvc.base_price_cents;
+    ? Math.round((activeSvc.base_price_paise * duration) / activeSvc.min_duration_minutes)
+    : activeSvc.base_price_paise;
 
   const canAddMore = duration === null || duration < activeSvc.max_duration_minutes;
   const canReduce = duration !== null && duration > activeSvc.min_duration_minutes;
@@ -137,7 +137,7 @@ export default function ServiceAboutScreen() {
   const handleAddToCart = useCallback(async () => {
     const svc = details?.service ?? service;
     const d = duration ?? svc.min_duration_minutes;
-    const pc = Math.round((svc.base_price_cents * d) / svc.min_duration_minutes);
+    const pc = Math.round((svc.base_price_paise * d) / svc.min_duration_minutes);
     await addItem(service.id, d, service.name, pc);
     setDuration(d);
     setAddedToCart(true);
@@ -145,7 +145,7 @@ export default function ServiceAboutScreen() {
       service_id:       service.id,
       service_name:     service.name,
       duration_minutes: d,
-      price_cents:      pc,
+      price_paise:      pc,
       selected_addons:  selectedAddons.size,
     });
   }, [addItem, service.id, service.name, duration, selectedAddons.size, posthog, details]);
@@ -349,7 +349,7 @@ export default function ServiceAboutScreen() {
                         </View>
                         <Text style={s.addonName} numberOfLines={2}>{addon.name}</Text>
                         <Text style={s.addonPrice}>
-                          ₹{(addon.base_price_cents / 100).toFixed(0)}
+                          ₹{(addon.base_price_paise / 100).toFixed(0)}
                         </Text>
                         <View style={[s.addonToggle, selected && s.addonToggleSelected]}>
                           <Feather
@@ -382,8 +382,8 @@ export default function ServiceAboutScreen() {
           <Text style={s.bottomPriceLabel}>Total</Text>
           <View style={s.bottomPriceRow}>
             <Text style={s.bottomPrice}>₹{(priceCents / 100).toFixed(0)}</Text>
-            {service.mrp_cents != null && (
-              <Text style={s.bottomMrp}>₹{(service.mrp_cents / 100).toFixed(0)}</Text>
+            {service.mrp_paise != null && (
+              <Text style={s.bottomMrp}>₹{(service.mrp_paise / 100).toFixed(0)}</Text>
             )}
           </View>
         </View>

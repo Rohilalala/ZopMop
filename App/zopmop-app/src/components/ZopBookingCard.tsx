@@ -23,15 +23,15 @@ export interface ZopBookingData {
   id: string;
   scheduled_time?: string | null;
   total_duration_minutes?: number;
-  price_cents?: number;
-  discount_cents?: number;
+  price_paise?: number;
+  discount_paise?: number;
   address_id?: string | null;
   address_tag?: string | null;
   address_title?: string | null;
   services?: Array<{
     service_name?: string;
     duration_minutes?: number;
-    price_cents?: number;
+    price_paise?: number;
   }>;
 }
 
@@ -102,7 +102,7 @@ export default function ZopBookingCard({ booking, onCloseChat }: Props) {
               setCancelled(true);
               showSuccess(
                 r.cancellation_fee_applied
-                  ? `Cancelled · ₹${Math.round(r.cancellation_fee_cents / 100)} fee applied`
+                  ? `Cancelled · ₹${Math.round(r.cancellation_fee_paise / 100)} fee applied`
                   : 'Booking cancelled',
               );
             } catch (e) {
@@ -127,7 +127,7 @@ export default function ZopBookingCard({ booking, onCloseChat }: Props) {
       : `${booking.total_duration_minutes ?? svc?.duration_minutes ?? 0} min`;
   // Match server's customer-facing total: price - discount (mirrors
   // sanitizeBookingsForLLM in househelp-api/internal/zop/service.go).
-  const netCents = (booking.price_cents ?? 0) - (booking.discount_cents ?? 0);
+  const netCents = (booking.price_paise ?? 0) - (booking.discount_paise ?? 0);
   const priceText = `₹${Math.round(Math.max(0, netCents) / 100)}`;
   const headerLabel = formatHeader(booking.scheduled_time);
   const whenLine = formatRange(booking.scheduled_time, booking.total_duration_minutes);

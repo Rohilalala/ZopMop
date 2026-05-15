@@ -8,7 +8,7 @@ export interface ApiCartItem {
   service_name: string;
   service_emoji?: string;
   duration_minutes: number;
-  price_cents: number;
+  price_paise: number;
 }
 
 export interface ApiCart {

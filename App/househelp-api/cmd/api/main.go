@@ -39,6 +39,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/observability"
 	"github.com/adityarohilla/househelp-api/internal/disputes"
 	"github.com/adityarohilla/househelp-api/internal/offers"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
@@ -121,6 +122,12 @@ func main() {
 	// Initialize logger.
 	logger.Init(cfg.Env)
 	log.Info().Str("env", cfg.Env).Msg("starting househelp-api")
+
+	// Initialise Sentry error tracking. No-op when SENTRY_DSN is unset
+	// so dev / CI runs don't need a Sentry project. The returned flush
+	// is deferred so pending events ship before process exit.
+	flushSentry := observability.Init(cfg.Env)
+	defer flushSentry()
 
 	// Optional pprof endpoint, bound to localhost so it's never reachable from
 	// outside the host. Enable with ENABLE_PPROF=1 (dev or perf-test runs only).
@@ -206,6 +213,19 @@ func main() {
 	// internals into the response body (ErrorHandler turns it into 500).
 	app.Use(fiberrecover.New(fiberrecover.Config{
 		EnableStackTrace: cfg.IsDevelopment(),
+		StackTraceHandler: func(c *fiber.Ctx, e interface{}) {
+			// Forward panics to Sentry before the recover middleware
+			// swallows them. No-op when Sentry is uninitialised.
+			err, ok := e.(error)
+			if !ok {
+				err = fmt.Errorf("panic: %v", e)
+			}
+			observability.CaptureError(err, map[string]string{
+				"path":      c.Path(),
+				"method":    c.Method(),
+				"requestID": c.GetRespHeader("X-Request-ID"),
+			})
+		},
 	}))
 	app.Use(mw.RequestID())
 	app.Use(mw.SecurityHeaders(cfg.IsProduction()))

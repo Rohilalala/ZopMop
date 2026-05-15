@@ -3,7 +3,7 @@
 # Refuses to run from the deploy branch itself.
 set -euo pipefail
 
-DEPLOY_BRANCH="${DEPLOY_BRANCH:-feature/sdui}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8080/health}"
 COMPOSE="${COMPOSE:-docker compose}"
 

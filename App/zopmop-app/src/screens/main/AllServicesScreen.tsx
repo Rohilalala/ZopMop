@@ -498,8 +498,8 @@ function ServiceCard({
   const cartItem = items.find((i) => i.service_id === service.id);
   const inCart   = !!cartItem;
 
-  const price  = `₹${(service.base_price_cents / 100).toFixed(0)}`;
-  const mrp    = service.mrp_cents ? `₹${(service.mrp_cents / 100).toFixed(0)}` : null;
+  const price  = `₹${(service.base_price_paise / 100).toFixed(0)}`;
+  const mrp    = service.mrp_paise ? `₹${(service.mrp_paise / 100).toFixed(0)}` : null;
   const rating = service.rating?.toFixed(1) ?? null;
   const reviews =
     service.review_count > 1000
@@ -523,7 +523,7 @@ function ServiceCard({
     if (busy) return;
     setBusy(true);
     try {
-      await addItem(service.id, service.min_duration_minutes, service.name, service.base_price_cents);
+      await addItem(service.id, service.min_duration_minutes, service.name, service.base_price_paise);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Please try again.';
       showError(msg, { title: 'Could not add to cart' });
@@ -540,7 +540,7 @@ function ServiceCard({
       if (next < service.min_duration_minutes) {
         await removeItem(cartItem.id);
       } else if (next <= service.max_duration_minutes) {
-        await addItem(service.id, next, service.name, Math.round((service.base_price_cents * next) / service.min_duration_minutes));
+        await addItem(service.id, next, service.name, Math.round((service.base_price_paise * next) / service.min_duration_minutes));
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Please try again.';

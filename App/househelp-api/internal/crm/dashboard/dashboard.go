@@ -19,7 +19,7 @@ import (
 type KPIs struct {
 	ActiveOrders       int `json:"active_orders"`
 	WorkersOnline      int `json:"workers_online"`
-	RevenueTodayCents  int `json:"revenue_today_cents"`
+	RevenueTodayCents  int `json:"revenue_today_paise"`
 	PendingRefunds     int `json:"pending_refunds"`
 	PendingApplications int `json:"pending_applications"`
 	OpenDisputes       int `json:"open_disputes"`
@@ -38,7 +38,7 @@ type LiveOrder struct {
 // RevenuePoint is a single bar on the 7-day revenue chart.
 type RevenuePoint struct {
 	Date         string `json:"date"`         // YYYY-MM-DD
-	RevenueCents int    `json:"revenue_cents"`
+	RevenueCents int    `json:"revenue_paise"`
 }
 
 // CategoryShare is a slice of the orders-by-category donut.

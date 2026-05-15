@@ -19,7 +19,7 @@ type CartItem struct {
 	ServiceName     string  `json:"service_name"`
 	ServiceEmoji    *string `json:"service_emoji,omitempty"`
 	DurationMinutes int     `json:"duration_minutes"`
-	PriceCents      int     `json:"price_cents"`
+	PriceCents      int     `json:"price_paise"`
 }
 
 // AddItemRequest is the body for POST /cart/add.

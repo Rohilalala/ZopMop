@@ -33,7 +33,7 @@ export interface InstantBooking {
   id: string;
   customer_id: string;
   status: string;
-  price_cents: number;
+  price_paise: number;
   created_at: string;
 }
 
@@ -49,7 +49,7 @@ export interface HelperInviteDetail {
   lng: number;
   services: string[];
   total_minutes: number;
-  price_cents: number;
+  price_paise: number;
   created_at: string;
 }
 
@@ -88,7 +88,7 @@ export async function createInstantBooking(
     }
     throw new Error(err.error ?? 'Failed to create instant booking');
   }
-  return validateShape<InstantBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_cents', 'created_at']);
+  return validateShape<InstantBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
 }
 
 /**
@@ -139,7 +139,7 @@ export async function getHelperInvitesWithDetails(token: string): Promise<Helper
   const data = await res.json();
   if (!Array.isArray(data.invites ?? [])) throw new Error('Invalid response: invites is not an array');
   return (data.invites ?? []).map((inv: unknown) =>
-    validateShape<HelperInviteDetail>(inv, ['booking_id', 'address', 'lat', 'lng', 'price_cents']),
+    validateShape<HelperInviteDetail>(inv, ['booking_id', 'address', 'lat', 'lng', 'price_paise']),
   );
 }
 
@@ -151,7 +151,7 @@ export async function getBookingDetails(token: string, bookingId: string): Promi
     headers: authHeaders(token),
   });
   if (!res.ok) throw new Error('Failed to get booking details');
-  return validateShape<HelperInviteDetail>(await res.json(), ['booking_id', 'address', 'lat', 'lng', 'price_cents']);
+  return validateShape<HelperInviteDetail>(await res.json(), ['booking_id', 'address', 'lat', 'lng', 'price_paise']);
 }
 
 /**

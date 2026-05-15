@@ -58,7 +58,7 @@ export function ServiceGridSection({ data, onAction }: Props) {
   const handleAdd = useCallback(
     async (svc: ApiService) => {
       try {
-        await addItem(svc.id, svc.min_duration_minutes, svc.name, svc.base_price_cents);
+        await addItem(svc.id, svc.min_duration_minutes, svc.name, svc.base_price_paise);
       } catch {
         onAction({
           trigger: 'tap',
@@ -140,8 +140,8 @@ function ServiceCard({
   onPress: () => void;
   onAdd: () => void;
 }) {
-  const price  = `₹${(service.base_price_cents / 100).toFixed(0)}`;
-  const mrp    = service.mrp_cents ? `₹${(service.mrp_cents / 100).toFixed(0)}` : null;
+  const price  = `₹${(service.base_price_paise / 100).toFixed(0)}`;
+  const mrp    = service.mrp_paise ? `₹${(service.mrp_paise / 100).toFixed(0)}` : null;
   const rating = service.rating?.toFixed(1) ?? null;
   const reviewLabel =
     service.review_count > 1000

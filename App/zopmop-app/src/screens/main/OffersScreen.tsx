@@ -47,8 +47,8 @@ type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 function offerTerms(offer: Offer): string[] {
   const terms: string[] = [];
-  if (offer.min_order_cents > 0) {
-    terms.push(`Min order ₹${Math.floor(offer.min_order_cents / 100)}.`);
+  if (offer.min_order_paise > 0) {
+    terms.push(`Min order ₹${Math.floor(offer.min_order_paise / 100)}.`);
   }
   if (offer.max_per_user > 0) {
     terms.push(`Max ${offer.max_per_user} use${offer.max_per_user === 1 ? '' : 's'} per user.`);

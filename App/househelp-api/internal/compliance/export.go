@@ -406,8 +406,8 @@ func (s *Service) exportRefunds(ctx context.Context, js *jsonStreamer, userID st
 		var r struct {
 			ID                 string     `json:"id"`
 			BookingID          string     `json:"booking_id"`
-			AmountCents        int64      `json:"amount_cents"`
-			PartialAmountCents *int64     `json:"partial_amount_cents"`
+			AmountCents        int64      `json:"amount_paise"`
+			PartialAmountCents *int64     `json:"partial_amount_paise"`
 			Source             string     `json:"source"`
 			SourceRef          *string    `json:"source_ref"`
 			Status             string     `json:"status"`
