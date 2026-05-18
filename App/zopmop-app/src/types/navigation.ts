@@ -63,33 +63,32 @@ export type MainStackParamList = {
     helperLng?: number;
     etaMinutes: number;
   };
+  /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile). */
+  Pro: undefined;
+  /** Legacy single-screen routes kept for back-compat with anything that
+   *  still calls navigation.navigate('ProDashboard', ...). They point at
+   *  the same components but live on the parent stack so the tab bar
+   *  hides behind them — only push these when a non-tab modal flow
+   *  genuinely needs that. Prefer navigating to a Pro tab via
+   *  `navigation.navigate('Pro', { screen: 'ProHome' })`. */
   ProDashboard: undefined;
   ProProfile: undefined;
   ProDeclareLeave: undefined;
   ProLeaveHistory: undefined;
-  ProMatched: {
-    bookingId: string;
-    serviceName?: string;
-    customerAddress: string;
-    customerLat: number;
-    customerLng: number;
-    distanceKm?: number;
+  CommitShift: undefined;
+  ZoneApprovalRequest: {
+    commitment_id: string;
+    current_lat: number;
+    current_lng: number;
+    distance_meters: number;
   };
-  ProActive: {
-    bookingId: string;
-    serviceName?: string;
-    customerAddress: string;
-    customerLat: number;
-    customerLng: number;
-  };
-  ProScheduledInvite: {
-    bookingId: string;
-    scheduledTime: string; // RFC3339
-    durationMinutes: number;
-    customerArea: string;
-    services?: { name: string; durationMinutes: number }[];
-    notes?: string;
-  };
+  ProMoney: undefined;
+  LanguageToggle: undefined;
+  JobOffer: { booking_id: string };
+  JobDetail: { booking_id: string };
+  // ProMatched / ProActive / ProScheduledInvite retired in Phase 10.
+  // Replaced by JobDetail + JobOffer below. Screens archived at
+  // _legacy/pro_legacy_screens/.
   RoomiesSetup: undefined;
   RoomiesCodeShare: { groupId: string; code: string; groupName: string };
   RoomiesJoin: undefined;

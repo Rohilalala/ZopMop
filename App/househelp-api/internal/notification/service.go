@@ -601,3 +601,65 @@ func (s *Service) sendDataToTokens(ctx context.Context, tokens []string, data ma
 func (s *Service) SendToTokensWithReport(ctx context.Context, tokens []string, title, body string, data map[string]string) (*MulticastReport, error) {
 	return s.sendToTokensWithReport(ctx, tokens, title, body, data)
 }
+
+// AdminFCMTokens returns the FCM tokens for every active admin
+// user. Pulls from users.fcm_token + device_tokens via the same
+// resolver path other notifications use. Empty slice when no
+// admins have device tokens.
+//
+// TODO(phase: CRM-admin-login): switch to a topic-based push
+// ("admin_zone_approvals") once admin device-token registration
+// runs on CRM login. Iterating tokens is fine for the handful of
+// admins we have today but does not scale.
+func (s *Service) AdminFCMTokens(ctx context.Context) ([]string, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT COALESCE(u.fcm_token,'')
+		  FROM admin_users a
+		  JOIN users u ON u.id = a.user_id
+		 WHERE u.deleted_at IS NULL
+		   AND u.fcm_token IS NOT NULL
+		   AND u.fcm_token <> ''
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out, rows.Err()
+}
+
+// SendToAdmins fans out a push to every admin user's FCM token. No
+// error if there are no tokens — the operation is best-effort.
+// Returns the multicast report so callers can log success counts.
+func (s *Service) SendToAdmins(ctx context.Context, title, body string, data map[string]string) (*MulticastReport, error) {
+	tokens, err := s.AdminFCMTokens(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(tokens) == 0 {
+		return &MulticastReport{}, nil
+	}
+	return s.sendToTokensWithReport(ctx, tokens, title, body, data)
+}
+
+// SendToProByID is the typed single-user push used by the shift
+// system. Exported for the shift-notifier adapter.
+func (s *Service) SendToProByID(ctx context.Context, proID, title, body string, data map[string]string) error {
+	token := s.fcmToken(ctx, proID)
+	if token == "" {
+		return nil
+	}
+	return s.sendToToken(ctx, token, title, body, data)
+}

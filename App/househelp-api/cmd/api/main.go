@@ -52,6 +52,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/roomies"
 	"github.com/adityarohilla/househelp-api/internal/segments"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
+	"github.com/adityarohilla/househelp-api/internal/shift"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
 	"github.com/adityarohilla/househelp-api/internal/zop"
@@ -276,6 +277,30 @@ func main() {
 	// Auth.
 	authRepo := auth.NewRepository(dbPool)
 	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment())
+
+	// Post-Firebase MSG91 wiring. Each piece is independent so the
+	// boot keeps working when MSG91 is dev-mode and refresh-token
+	// migrations are pending. The handlers fail-loud at request time
+	// if any of them is missing.
+	msg91Client := auth.NewMSG91Client(auth.MSG91Config{
+		AuthKey:    cfg.MSG91AuthKey,
+		TemplateID: cfg.MSG91TemplateID,
+		SenderID:   cfg.MSG91SenderID,
+		DevMode:    cfg.MSG91DevMode,
+	})
+	tokenIssuer := auth.NewTokenIssuer(auth.TokenIssuerConfig{
+		AccessSecret:   cfg.JWTAccessSecret,
+		AccessSecretID: cfg.JWTSecretID,
+		AccessTTL:      time.Duration(cfg.JWTAccessTTLHours) * time.Hour,
+		RefreshTTL:     time.Duration(cfg.JWTRefreshTTLDays) * 24 * time.Hour,
+	})
+	refreshRepo := auth.NewRefreshRepo(dbPool)
+	otpLimiter := auth.NewOTPRateLimiter(rdb)
+	authService.SetMSG91(msg91Client)
+	authService.SetTokenIssuer(tokenIssuer)
+	authService.SetRefreshRepo(refreshRepo)
+	authService.SetOTPRateLimiter(otpLimiter)
+
 	authHandler := auth.NewHandler(authService, rdb, cfg.IsProduction())
 
 	// Compliance + audit. The compliance service backs DSAR endpoints
@@ -291,11 +316,22 @@ func main() {
 	authHandler.SetCompliance(complianceService)
 	authHandler.SetAudit(auditRecorder)
 
-	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+1)
+	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+2)
 	for _, key := range cfg.JWTVerificationSecrets() {
 		jwtVerificationKeys = append(jwtVerificationKeys, mw.JWTKey{
 			ID:     key.ID,
 			Secret: key.Secret,
+		})
+	}
+	// MSG91 access tokens may be signed with a distinct
+	// JWT_ACCESS_SECRET. Add it to the verification set so middleware
+	// accepts both legacy Firebase-era tokens and new MSG91 tokens
+	// during the cut-over. Falls back to JWT_SECRET when unset (see
+	// pkg/config.Load).
+	if cfg.JWTAccessSecret != "" && cfg.JWTAccessSecret != cfg.JWTSecret {
+		jwtVerificationKeys = append(jwtVerificationKeys, mw.JWTKey{
+			ID:     cfg.JWTSecretID,
+			Secret: cfg.JWTAccessSecret,
 		})
 	}
 
@@ -455,6 +491,17 @@ func main() {
 	appGroup := api.Group("/app", publicLimiter)
 	contentHandler.RegisterPublicRoutes(appGroup)
 	configHandler.RegisterPublicRoutes(appGroup)
+
+	// Phase 7 shift system. Notifier wraps notification.Service via a
+	// thin adapter (PushClient interface) so the shift package stays
+	// decoupled from the FCM-specific return types.
+	shiftRepo := shift.NewRepository(dbPool)
+	shiftService := shift.NewService(shiftRepo)
+	shiftService.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notificationService}))
+	shiftHandler := shift.NewHandler(shiftService)
+	shiftCron := shift.NewCron(shiftService)
+	shiftCron.Start(context.Background())
+	defer shiftCron.Stop()
 
 	// Authenticated routes with rate limiting by user ID.
 	authMiddleware := mw.AuthMiddleware(jwtVerificationKeys, authRepo)
@@ -639,6 +686,20 @@ func main() {
 	adminLimiter := mw.RateLimiter(rdb, mw.AdminRateLimit, "user")
 	adminGroup := api.Group("/admin", authMiddleware, adminMiddleware, adminLimiter, dbBoundLimiter)
 	adminHandler.RegisterRoutes(adminGroup)
+	shiftHandler.RegisterAdminRoutes(adminGroup)
+
+	// Pro-only shift routes. AuthMiddleware sets userType in locals;
+	// RequireRole("pro") rejects customers + admins. proApprovedMW
+	// (declared earlier) gates on helpers.approval_status='approved'.
+	proGroup := api.Group("/pro", authMiddleware, mw.RequireRole("pro"), proApprovedMW, authLimiter, dbBoundLimiter)
+	shiftHandler.RegisterProRoutes(proGroup)
+
+	// Phase 10 — pro-side job lifecycle endpoints. Mounted alongside
+	// (not replacing) the legacy /api/v1/bookings/:id/{accept,...}
+	// surface so existing app builds keep working.
+	bookingService.SetNotifier(&bookingNotifierAdapter{n: notificationService})
+	jobsHandler := booking.NewJobsHandler(bookingService)
+	jobsHandler.RegisterRoutes(proGroup.Group("/jobs"))
 	contentHandler.RegisterAdminContentRoutes(adminGroup)
 	configHandler.RegisterAdminRoutes(adminGroup)
 	zonesHandler.RegisterAdminRoutes(adminGroup.Group("/zones"))
@@ -834,4 +895,30 @@ type walletTopupAdapter struct{ ph *payments.Handler }
 
 func (a walletTopupAdapter) HandleWalletTopup(c *fiber.Ctx, userID string, amountPaise int64) error {
 	return a.ph.HandleWalletTopup(c, userID, amountPaise)
+}
+
+// bookingNotifierAdapter narrows notification.Service down to
+// booking.Notifier (which only needs SendData). Wired by main into
+// bookingService.SetNotifier so the /pro/jobs/en-route + /arrived
+// paths can push the customer.
+type bookingNotifierAdapter struct{ n *notification.Service }
+
+func (a *bookingNotifierAdapter) SendData(ctx context.Context, userID string, data map[string]string) error {
+	return a.n.SendData(ctx, userID, data)
+}
+
+// shiftPushAdapter narrows notification.Service down to shift.PushClient.
+// notification.Service.SendToAdmins returns (*MulticastReport, error);
+// shift only needs the error, so we discard the report. The CRM-login
+// migration to topic-based admin fan-out lands without changing this
+// signature.
+type shiftPushAdapter struct{ n *notification.Service }
+
+func (a *shiftPushAdapter) SendToAdmins(ctx context.Context, title, body string, data map[string]string) error {
+	_, err := a.n.SendToAdmins(ctx, title, body, data)
+	return err
+}
+
+func (a *shiftPushAdapter) SendToProByID(ctx context.Context, proID, title, body string, data map[string]string) error {
+	return a.n.SendToProByID(ctx, proID, title, body, data)
 }

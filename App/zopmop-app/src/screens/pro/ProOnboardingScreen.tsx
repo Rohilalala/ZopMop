@@ -24,7 +24,6 @@ import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { BASE_URL } from '../../api/config';
-import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { apiFetch } from '../../api/client';
 import { showError } from '../../utils/toast';
 import SvgIcon from '../../components/SvgIcon';
@@ -55,7 +54,7 @@ type Props = {
 export default function ProOnboardingScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
-  const { signIn } = useAuth();
+  const { updateUser, user: currentUser } = useAuth();
   const c = useColors();
   const s = useMemo(() => createStyles(c), [c]);
 
@@ -120,9 +119,8 @@ export default function ProOnboardingScreen({ route }: Props) {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const pending = pendingAuthStore.get();
-      if (!pending?.token) {
-        showError('Cannot reach the server. Check your network and try again.', { title: 'Connection Error' });
+      if (!currentUser) {
+        showError('Please sign in again.', { title: 'Session expired' });
         return;
       }
       if (!gpsLat || !gpsLng) {
@@ -130,12 +128,11 @@ export default function ProOnboardingScreen({ route }: Props) {
         return;
       }
 
+      // apiFetch attaches the Bearer header from AuthContext + auto-
+      // refreshes on 401, so no manual Authorization is needed here.
       const res = await apiFetch(`${BASE_URL}/me/onboard-pro`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${pending.token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           lat: gpsLat,
           lng: gpsLng,
@@ -154,15 +151,15 @@ export default function ProOnboardingScreen({ route }: Props) {
       // Push GPS to Redis so matching engine can find this pro immediately.
       await apiFetch(`${BASE_URL}/helpers/me/location`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${data.token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lat: gpsLat, lng: gpsLng }),
       });
 
-      signIn(data.token, data.user);
-      pendingAuthStore.clear();
+      // Backend does NOT issue a new token on onboard-pro (admin
+      // approval still pending); just refresh the local user view.
+      if (data?.user) {
+        updateUser(data.user);
+      }
     } catch (err: any) {
       showError('Please check your details and try again.', { title: 'Something went wrong' });
     } finally {

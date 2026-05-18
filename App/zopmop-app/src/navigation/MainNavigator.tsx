@@ -19,12 +19,17 @@ import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
 // render the new design.
 // import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
-import ProMatchedScreen from '../screens/pro/ProMatchedScreen';
-import ProScheduledInviteScreen from '../screens/pro/ProScheduledInviteScreen';
-import ProActiveScreen from '../screens/pro/ProActiveScreen';
 import ProDeclareLeaveScreen from '../screens/pro/ProDeclareLeaveScreen';
 import ProProfileScreen from '../screens/pro/ProProfileScreen';
 import ProLeaveHistoryScreen from '../screens/pro/ProLeaveHistoryScreen';
+import CommitShiftScreen from '../screens/pro/CommitShiftScreen';
+import ZoneApprovalRequestScreen from '../screens/pro/ZoneApprovalRequestScreen';
+import ProMoneyScreen from '../screens/pro/ProMoneyScreen';
+import LanguageToggleScreen from '../screens/pro/LanguageToggleScreen';
+import JobOfferScreen from '../screens/pro/JobOfferScreen';
+import JobDetailScreen from '../screens/pro/JobDetailScreen';
+import ProNavigator from './ProNavigator';
+import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
 import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
@@ -82,7 +87,7 @@ export default function MainNavigator() {
       <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <Stack.Navigator
         screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0A' } }}
-        initialRouteName={user?.role === 'pro' || user?.role === 'helper' ? 'ProDashboard' : 'Tabs'}
+        initialRouteName={user?.role === 'pro' || user?.role === 'helper' ? 'Pro' : 'Tabs'}
       >
         {/* The four bottom-bar destinations live inside TabsNavigator so
             switching between them is instant (parallel-mounted tabs, no
@@ -154,25 +159,23 @@ export default function MainNavigator() {
           options={{ animation: 'fade', gestureEnabled: false }}
         />
         <Stack.Screen
+          name="Pro"
+          component={ProNavigator}
+          options={{ animation: 'none' }}
+        />
+        <Stack.Screen
           name="ProDashboard"
           component={ProDashboardScreen}
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
-          name="ProMatched"
-          component={ProMatchedScreen}
-          options={{ animation: 'slide_from_bottom' }}
+          name="LanguageToggle"
+          component={LanguageToggleScreen}
+          options={{ animation: 'slide_from_right' }}
         />
-        <Stack.Screen
-          name="ProScheduledInvite"
-          component={ProScheduledInviteScreen}
-          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="ProActive"
-          component={ProActiveScreen}
-          options={{ animation: 'fade', gestureEnabled: false }}
-        />
+        {/* ProMatched / ProActive / ProScheduledInvite were retired
+            in Phase 10 — replaced by JobDetail + JobOffer.
+            Archived at _legacy/pro_legacy_screens/. */}
         <Stack.Screen
           name="ProProfile"
           component={ProProfileScreen}
@@ -186,6 +189,31 @@ export default function MainNavigator() {
         <Stack.Screen
           name="ProLeaveHistory"
           component={ProLeaveHistoryScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="CommitShift"
+          component={CommitShiftScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ZoneApprovalRequest"
+          component={ZoneApprovalRequestScreen}
+          options={{ animation: 'slide_from_bottom' }}
+        />
+        <Stack.Screen
+          name="ProMoney"
+          component={ProMoneyScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="JobOffer"
+          component={JobOfferScreen}
+          options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="JobDetail"
+          component={JobDetailScreen}
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
@@ -245,6 +273,7 @@ export default function MainNavigator() {
         />
       </Stack.Navigator>
       <PersistentTabBar />
+      <ZoneDriftOverlay />
       </View>
     </CartProvider>
   );

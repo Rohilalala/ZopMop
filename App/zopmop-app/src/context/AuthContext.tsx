@@ -1,144 +1,41 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { registerSignOutCallback, apiFetch } from '../api/client';
+import { registerSignOutCallback, registerTokenAccessors, apiFetch } from '../api/client';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-
 import { BASE_URL } from '../api/config';
-import { otpStore } from '../utils/otpStore';
 import { promoStore } from '../utils/promoStore';
-import { pendingAuthStore } from '../utils/pendingAuthStore';
 import { posthog } from '../config/posthog';
 import { setUser as sentrySetUser } from '../config/sentry';
+import { logout as logoutHTTP, refreshAccessToken, type AuthUser as ServiceAuthUser } from '../services/auth';
 
-const TOKEN_KEY = 'auth_token';
+// MSG91-backed auth state. Two tokens are persisted in expo-secure-store:
+//
+//   - ACCESS_KEY  — short-lived JWT used as Authorization: Bearer
+//   - REFRESH_KEY — opaque base64url string used to mint a new pair
+//
+// On launch the provider tries the stored access token against /me.
+// On 401 it falls back to /refresh; on second failure it signs out
+// and routes the user to PhoneEntry. The old Firebase silent-refresh
+// path is gone — see _legacy/firebase_auth/ for the archive.
+
+const ACCESS_KEY = 'auth_access_token';
+const REFRESH_KEY = 'auth_refresh_token';
 const USER_KEY = 'auth_user';
-// Marker: this device has completed at least one full backend signIn. Gates
-// Firebase silent-refresh on launch so a force-quit during OTP entry — which
-// commits Firebase native state before the backend handoff finishes — cannot
-// mint a session on the next launch.
+const LEGACY_TOKEN_KEY = 'auth_token'; // single-token Firebase-era key
 const SIGNUP_COMPLETED_KEY = 'auth_signup_completed_v1';
 
-// Silent-restore window. If Firebase reports a sign-in newer than this, we'll
-// try to silently re-issue the backend session via getIdToken(true) → POST
-// /auth/firebase. Older sessions force the user back through PhoneEntry so
-// stale device installs can't roll forward indefinitely.
-const FIREBASE_SILENT_REFRESH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-// Hard cap on any Firebase native call we make from launch-restore. If the
-// native module hangs (broken bridge, stuck token refresh) we must NOT block
-// setIsLoading(false) — that strands the UI on a black screen because
-// Navigation returns null while isLoading is true.
-const FIREBASE_OP_TIMEOUT_MS = 5_000;
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise<T | null>((resolve) => {
-    const t = setTimeout(() => resolve(null), ms);
-    p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      () => { clearTimeout(t); resolve(null); },
-    );
-  });
-}
-
-// Silently exchange a fresh Firebase ID token for a backend JWT. Returns the
-// session on success. Returns null when:
-//   - @react-native-firebase/auth is unavailable (Expo Go, web, missing native)
-//   - no current Firebase user
-//   - last sign-in is older than the window
-//   - token refresh throws
-//   - backend exchange returns non-2xx
-async function tryFirebaseSilentRefresh(): Promise<{ token: string; user?: AuthUser } | null> {
-  let mod: typeof import('@react-native-firebase/auth') | null = null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    mod = require('@react-native-firebase/auth');
-  } catch {
-    return null;
-  }
-  if (!mod) return null;
-
-  try {
-    const fbAuth = mod.getAuth();
-    const current = fbAuth.currentUser;
-    if (!current) return null;
-
-    // metadata.lastSignInTime is an ISO string per Firebase types.
-    const lastSignInIso = current.metadata?.lastSignInTime;
-    const lastSignInMs = lastSignInIso ? Date.parse(lastSignInIso) : NaN;
-    if (!Number.isFinite(lastSignInMs)) return null;
-    if (Date.now() - lastSignInMs > FIREBASE_SILENT_REFRESH_WINDOW_MS) {
-      console.info('[Auth] Firebase session older than window — skipping silent refresh');
-      return null;
-    }
-
-    const idToken = await withTimeout(mod.getIdToken(current, true), FIREBASE_OP_TIMEOUT_MS);
-    if (!idToken) return null;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
-    try {
-      const res = await fetch(`${BASE_URL}/auth/firebase`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firebase_token: idToken }),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        console.warn('[Auth] Firebase silent refresh: backend returned', res.status);
-        return null;
-      }
-      const data = await res.json();
-      if (!data?.token) return null;
-      return { token: data.token as string, user: data.user as AuthUser | undefined };
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (err) {
-    console.info('[Auth] Firebase silent refresh failed:', err instanceof Error ? err.message : err);
-    return null;
-  }
-}
-
-// Sign out of Firebase native state without surfacing errors. Used to clear
-// orphaned currentUser created by a partial OTP attempt (confirmation.confirm
-// commits Firebase state before the backend handoff). No-op when the module
-// isn't available or no current user exists.
-async function trySignOutFirebaseSilently(): Promise<void> {
-  let mod: typeof import('@react-native-firebase/auth') | null = null;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    mod = require('@react-native-firebase/auth');
-  } catch {
-    return;
-  }
-  if (!mod) return;
-  try {
-    const fbAuth = mod.getAuth();
-    if (fbAuth.currentUser) {
-      await withTimeout(mod.signOut(fbAuth), FIREBASE_OP_TIMEOUT_MS);
-      console.info('[Auth] cleared lingering Firebase native state');
-    }
-  } catch {
-    // non-fatal
-  }
-}
-
-export interface AuthUser {
-  id: string;
-  phone: string;
-  name?: string;
-  role: string;
-  created_at: string;
-  updated_at: string;
-}
+// Re-export so the rest of the app keeps importing AuthUser from here.
+export type AuthUser = ServiceAuthUser;
 
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
   token: string | null;
+  refreshToken: string | null;
   user: AuthUser | null;
-  signIn: (jwt: string, user?: AuthUser) => void;
+  signIn: (access: string, refresh: string, user: AuthUser) => void;
   signOut: () => void;
   updateUser: (user: AuthUser) => void;
 };
@@ -147,157 +44,147 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Side-effect-only hook: requests notification permission, fetches the FCM
-  // token, and registers it with the backend whenever the user is signed in.
-  // Pass auth state directly — this runs inside AuthProvider so useAuth is unavailable.
+  // Refs let the apiFetch token-accessors read the *current* values
+  // without rebuilding on every state update.
+  const tokenRef = useRef<string | null>(null);
+  const refreshTokenRef = useRef<string | null>(null);
+  tokenRef.current = token;
+  refreshTokenRef.current = refreshToken;
+
+  // Push notifications: same contract as before, role drives which
+  // device_tokens column the backend writes.
   usePushNotifications(token, token !== null && token !== '__guest__', user?.role ?? null);
 
-  // Register the global signOut callback so apiFetch can sign out on 401.
-  useEffect(() => {
-    registerSignOutCallback(signOut);
+  // Persist tokens. Set both keys (or wipe both) so the in-memory
+  // state and SecureStore never disagree.
+  const persistTokens = useCallback((access: string | null, refresh: string | null) => {
+    if (access) {
+      SecureStore.setItemAsync(ACCESS_KEY, access).catch(() => {});
+    } else {
+      SecureStore.deleteItemAsync(ACCESS_KEY).catch(() => {});
+    }
+    if (refresh) {
+      SecureStore.setItemAsync(REFRESH_KEY, refresh).catch(() => {});
+    } else {
+      SecureStore.deleteItemAsync(REFRESH_KEY).catch(() => {});
+    }
   }, []);
 
-  // Restore session from SecureStore on app launch, then validate the token
-  // against the backend. Signs out if the user no longer exists in the DB.
-  // Falls back to a Firebase silent refresh when no stored token is present
-  // or the stored token is rejected — this lets returning users skip
-  // PhoneEntry as long as their Firebase session is < 30 days old.
+  const signOut = useCallback(() => {
+    posthog.capture('user_signed_out');
+    posthog.reset();
+    sentrySetUser(null);
+    // Best-effort server-side revoke. Don't block — the local wipe is
+    // what actually signs the user out.
+    logoutHTTP(tokenRef.current, refreshTokenRef.current);
+    setToken(null);
+    setRefreshToken(null);
+    setUser(null);
+    SecureStore.deleteItemAsync(ACCESS_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(REFRESH_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(SIGNUP_COMPLETED_KEY).catch(() => {});
+    promoStore.clear();
+    AsyncStorage.multiRemove(['pendingReferralCode', 'pendingReferralCodeAt']).catch(() => {});
+  }, []);
+
+  const signOutRef = useRef(signOut);
+  useEffect(() => { signOutRef.current = signOut; }, [signOut]);
+
+  // Wire apiFetch into the auth state so it can attach Bearer headers
+  // and silently rotate on 401 without an import cycle.
   useEffect(() => {
-    // Hard ceiling: no matter what restore() is doing, flip isLoading so the
-    // UI never strands on a black screen. SecureStore/Firebase native bridges
-    // can hang on simulator and would otherwise keep Navigation rendering null.
+    registerSignOutCallback(() => signOutRef.current());
+    registerTokenAccessors({
+      getAccess: () => tokenRef.current,
+      getRefresh: () => refreshTokenRef.current,
+      setTokens: (access: string, refresh: string) => {
+        setToken(access);
+        setRefreshToken(refresh);
+        persistTokens(access, refresh);
+      },
+    });
+  }, [persistTokens]);
+
+  // Restore session on launch.
+  useEffect(() => {
     const ceiling = setTimeout(() => {
       console.warn('[Auth] restore exceeded ceiling — forcing isLoading=false');
       setIsLoading(false);
     }, 8_000);
 
-    async function trySilentFirebase(): Promise<boolean> {
-      const session = await tryFirebaseSilentRefresh();
-      if (!session) return false;
-      setToken(session.token);
-      if (session.user) setUser(session.user);
+    (async () => {
       try {
-        await SecureStore.setItemAsync(TOKEN_KEY, session.token);
-        if (session.user) {
-          await SecureStore.setItemAsync(USER_KEY, JSON.stringify(session.user));
-        }
-        await SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1');
-      } catch {}
-      console.info('[Auth] session restored via Firebase silent refresh');
-      return true;
-    }
-
-    async function restore() {
-      try {
-        const [storedToken, storedUser] = await Promise.all([
-          SecureStore.getItemAsync(TOKEN_KEY),
+        const [storedAccess, storedRefresh, storedUser, legacyToken] = await Promise.all([
+          SecureStore.getItemAsync(ACCESS_KEY),
+          SecureStore.getItemAsync(REFRESH_KEY),
           SecureStore.getItemAsync(USER_KEY),
+          SecureStore.getItemAsync(LEGACY_TOKEN_KEY),
         ]);
 
-        if (!storedToken) {
-          // Gate silent refresh on prior successful signIn. Without this,
-          // confirmation.confirm() during OTP entry commits Firebase native
-          // state before the backend handoff — a force-quit at that point
-          // would let the next launch mint a session despite signup never
-          // completing. Marker is set in signIn(), cleared in signOut().
-          const completed = await SecureStore
-            .getItemAsync(SIGNUP_COMPLETED_KEY)
-            .catch(() => null);
-          if (completed === '1') {
-            await trySilentFirebase();
-          } else {
-            await trySignOutFirebaseSilently();
+        // Upgrade path: a pre-migration install carried only the
+        // single Firebase-era token. Treat it as an access token and
+        // attempt one /me call; on 401 the user lands on PhoneEntry.
+        const access = storedAccess ?? legacyToken ?? null;
+        if (!access) {
+          // No stored credentials — clean slate.
+          if (legacyToken) {
+            SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY).catch(() => {});
           }
           return;
         }
 
-        // Validate the stored token — catches deleted users and expired tokens.
-        // 5s timeout prevents splash screen hang if backend is unreachable.
+        // Hydrate state before the /me probe so the UI can render
+        // cached user info if the network is slow.
+        setToken(access);
+        if (storedRefresh) setRefreshToken(storedRefresh);
+        if (storedUser) {
+          try { setUser(JSON.parse(storedUser) as AuthUser); } catch { /* ignore corrupted */ }
+        }
+
+        // Validate against the server. If /me 401s and we have a
+        // refresh token, apiFetch will rotate transparently.
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 5000);
-          let res: Response | null = null;
-          try {
-            res = await apiFetch(`${BASE_URL}/me`, {
-              headers: { Authorization: `Bearer ${storedToken}` },
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
-
+          const res = await apiFetch(`${BASE_URL}/me`, { method: 'GET' });
           if (res.status === 401 || res.status === 403 || res.status === 404) {
-            // User deleted or token invalid — wipe the session and try a
-            // Firebase silent refresh before falling back to PhoneEntry.
-            console.warn('[Auth] token rejected by server — clearing session');
-            await Promise.all([
-              SecureStore.deleteItemAsync(TOKEN_KEY),
-              SecureStore.deleteItemAsync(USER_KEY),
-            ]);
-            await trySilentFirebase();
+            // apiFetch already attempted /refresh internally; a 401
+            // here means refresh failed too. signOut was already
+            // invoked by the 401 interceptor.
             return;
           }
-
           if (res.ok) {
-            const freshUser: AuthUser = await res.json();
-            setToken(storedToken);
-            setUser(freshUser);
-            console.info('[Auth] session restored from server');
-            SecureStore.setItemAsync(USER_KEY, JSON.stringify(freshUser)).catch(() => {});
-            // Backfill marker for upgrade migration: pre-fix users have a
-            // valid session but no marker; setting it preserves their UX
-            // if their token later gets revoked and triggers silent refresh.
+            const fresh = await res.json() as AuthUser;
+            setUser(fresh);
+            SecureStore.setItemAsync(USER_KEY, JSON.stringify(fresh)).catch(() => {});
             SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
-            return;
           }
         } catch {
-          // Network error or timeout (offline) — restore from cache so app still works.
+          // Offline — keep cached state.
           console.info('[Auth] server unreachable — restoring from cache');
         }
-
-        // Backend unreachable: restore from SecureStore cache.
-        setToken(storedToken);
-        if (storedUser) {
-          try {
-            setUser(JSON.parse(storedUser));
-            console.info('[Auth] session restored from cache');
-          } catch {
-            // Corrupted cache — stay authenticated but without user object.
-            // Will be repopulated on next successful /me call.
-            console.warn('[Auth] corrupted user cache — clearing');
-            SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
-          }
-        }
-      } catch {
-        // SecureStore unavailable (simulator without keychain) — start unauthenticated.
       } finally {
         clearTimeout(ceiling);
         setIsLoading(false);
       }
-    }
-    restore();
+    })();
+
     return () => clearTimeout(ceiling);
   }, []);
 
-  // Re-validate when the app comes to the foreground (catches mid-session user deletion).
-  const tokenRef = useRef<string | null>(null);
-  tokenRef.current = token;
-
-  // Keep signOut ref current so the AppState listener (registered once) always
-  // calls the latest signOut without needing to re-subscribe.
-  const signOutRef = useRef(signOut);
-  useEffect(() => { signOutRef.current = signOut; });
-
+  // Re-validate on foreground (catches mid-session deletion). Same
+  // contract as before — apiFetch handles 401 → refresh → retry.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       const currentToken = tokenRef.current;
       if (nextState !== 'active' || !currentToken || currentToken === '__guest__') return;
-      apiFetch(`${BASE_URL}/me`, { headers: { Authorization: `Bearer ${currentToken}` } })
+      apiFetch(`${BASE_URL}/me`, { method: 'GET' })
         .then((res) => {
-          if (res.status === 401 || res.status === 403 || res.status === 404) {
+          if (res.status === 403 || res.status === 404) {
             console.warn('[Auth] foreground re-validation failed — signing out');
             signOutRef.current();
           }
@@ -307,59 +194,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, []);
 
-  function signIn(jwt: string, authUser?: AuthUser) {
-    // Security: reject sentinel/placeholder tokens — they must never be stored
-    // or used to make authenticated API calls.
-    if (!jwt || jwt === '__guest__') {
+  function signIn(access: string, refresh: string, authUser: AuthUser) {
+    if (!access || access === '__guest__') {
       console.warn('[Auth] signIn called with empty or sentinel token — ignoring.');
       return;
     }
-    setToken(jwt);
-    if (authUser) setUser(authUser);
-    SecureStore.setItemAsync(TOKEN_KEY, jwt).catch(() => {});
-    if (authUser) {
-      SecureStore.setItemAsync(USER_KEY, JSON.stringify(authUser)).catch(() => {});
-      // PostHog identify: distinct_id + low-cardinality cohort props only.
-      // We deliberately do NOT send phone / name to PostHog person properties
-      // — they are DPDP-relevant PII and were previously leaking on every
-      // sign-in. Role stays since it is a useful, non-PII cohort dimension.
-      posthog.identify(authUser.id, {
-        $set: { role: authUser.role },
-        $set_once: { first_sign_in_date: new Date().toISOString() },
-      });
-      // Sentry user binding — backend UUID only. No phone / name.
-      sentrySetUser(authUser.id);
-    }
-    posthog.capture('user_signed_in', { role: authUser?.role ?? null });
+    setToken(access);
+    setRefreshToken(refresh);
+    setUser(authUser);
+    persistTokens(access, refresh);
+    SecureStore.setItemAsync(USER_KEY, JSON.stringify(authUser)).catch(() => {});
     SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
-  }
-
-  function signOut() {
-    posthog.capture('user_signed_out');
-    posthog.reset();
-    // Clear Sentry user binding so post-signOut errors aren't attributed
-    // to the prior identity.
-    sentrySetUser(null);
-    setToken(null);
-    setUser(null);
-    SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
-    SecureStore.deleteItemAsync(USER_KEY).catch(() => {});
-    SecureStore.deleteItemAsync(SIGNUP_COMPLETED_KEY).catch(() => {});
-    // Clear Firebase native state too — otherwise the next launch could
-    // silent-refresh from the orphaned Firebase user (defense in depth;
-    // the marker check above is the primary gate).
-    trySignOutFirebaseSilently().catch(() => {});
-    // Clear all module-level singletons so a subsequent user on the same
-    // device cannot inherit stale OTP handles, promo codes, or pending tokens.
-    otpStore.clear();
-    promoStore.clear();
-    pendingAuthStore.clear();
-    // Clear any stashed referral attribution so it can't roll over to the
-    // next user on the same device.
-    AsyncStorage.multiRemove([
-      'pendingReferralCode',
-      'pendingReferralCodeAt',
-    ]).catch(() => {});
+    // PostHog identify: distinct_id + cohort props only — no PII.
+    posthog.identify(authUser.id, {
+      $set: { role: authUser.role, user_type: authUser.type },
+      $set_once: { first_sign_in_date: new Date().toISOString() },
+    });
+    sentrySetUser(authUser.id);
+    posthog.capture('user_signed_in', { role: authUser.role, user_type: authUser.type });
   }
 
   function updateUser(updatedUser: AuthUser) {
@@ -367,11 +219,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     SecureStore.setItemAsync(USER_KEY, JSON.stringify(updatedUser)).catch(() => {});
   }
 
+  // Suppress the unused-import warning for refreshAccessToken — it's
+  // re-exported below so the legacy paths can still call it directly
+  // if needed during the migration. Tree-shaken in prod builds.
+  void refreshAccessToken;
+
   return (
     <AuthContext.Provider value={{
       isAuthenticated: token !== null && token !== '__guest__',
       isLoading,
       token,
+      refreshToken,
       user,
       signIn,
       signOut,

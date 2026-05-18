@@ -19,6 +19,9 @@ export async function getHealthMetrics(): Promise<HealthMetrics> {
 }
 
 // ── Orders ─────────────────────────────────────────────────────────────
+// Wire-field names match internal/crm/orders/orders.go::Detail exactly:
+// the Go json tags are `price_paise` / `discount_paise` (not _cents). The
+// SPA previously had _cents which silently rendered NaN — fixed here.
 export type Order = {
   id: string;
   customer_name?: string | null;
@@ -27,8 +30,8 @@ export type Order = {
   worker_phone?: string | null;
   category: string;
   status: string;
-  price_cents: number;
-  discount_cents: number;
+  price_paise: number;
+  discount_paise: number;
   promo_code?: string | null;
   created_at: string;
   completed_at?: string | null;
@@ -41,7 +44,23 @@ export type OrderDetail = Order & {
   scheduled_time?: string | null;
   matched_at?: string | null; accepted_at?: string | null;
   started_at?: string | null; arrived_at?: string | null;
+  en_route_at?: string | null;
   cancelled_at?: string | null; cancelled_by?: string | null;
+  services: OrderServiceLine[];
+};
+
+// One row of the booking_services join surfaced via Phase 11B Step 1's
+// extension to the detail query.
+export type OrderServiceLine = {
+  service_id: string;
+  service_name: string;
+  duration_minutes: number;
+  price_paise: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'skipped';
+  display_order: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  skip_reason?: string | null;
 };
 
 export type AvailableWorker = {
@@ -53,13 +72,36 @@ export type AvailableWorker = {
   current_status: string;
 };
 
+export type OrderNote = {
+  id: string;
+  booking_id: string;
+  admin_id: string;
+  admin_email?: string;
+  body: string;
+  created_at: string;
+};
+
 export const ordersApi = {
   list: (p: Record<string, string | number>) => api.get('/admin/orders', { params: p }).then(r => r.data as { items: Order[]; total_count: number; limit: number; offset: number }),
   get: (id: string) => api.get<OrderDetail>(`/admin/orders/${id}`).then(r => r.data),
   cancel: (id: string, reason: string) => api.post(`/admin/orders/${id}/cancel`, { reason }),
   complete: (id: string) => api.post(`/admin/orders/${id}/complete`),
-  availableWorkers: (id: string) => api.get<AvailableWorker[]>(`/admin/orders/${id}/available-workers`).then(r => r.data),
+  availableWorkers: (id: string, radiusKm?: number) =>
+    api.get<AvailableWorker[]>(`/admin/orders/${id}/available-workers`, {
+      params: radiusKm ? { radius_km: radiusKm } : undefined,
+    }).then(r => r.data),
   reassign: (id: string, body: { new_worker_id: string; reason: string }) => api.post(`/admin/orders/${id}/reassign`, body),
+  listNotes: (id: string) =>
+    api.get<{ items: OrderNote[] }>(`/admin/orders/${id}/notes`).then(r => r.data.items ?? []),
+  addNote: (id: string, body: string) =>
+    api.post<OrderNote>(`/admin/orders/${id}/notes`, { body }).then(r => r.data),
+};
+
+export const orderKeys = {
+  all: ['orders'] as const,
+  detail: (id: string) => ['orders', 'detail', id] as const,
+  notes: (id: string) => ['orders', id, 'notes'] as const,
+  availableWorkers: (id: string, radiusKm: number) => ['orders', id, 'available-workers', radiusKm] as const,
 };
 
 // ── Refunds ────────────────────────────────────────────────────────────
@@ -174,11 +216,11 @@ export const experimentsApi = {
 
 // ── Analytics ──────────────────────────────────────────────────────────
 export const analyticsApi = {
-  summary: (params: Record<string, string>) => api.get('/admin/analytics/summary', { params }).then(r => r.data as { orders: number; completed_orders: number; cancelled_orders: number; revenue_cents: number; new_users: number; new_workers: number; avg_order_cents: number }),
+  summary: (params: Record<string, string>) => api.get('/admin/analytics/summary', { params }).then(r => r.data as { orders: number; completed_orders: number; cancelled_orders: number; revenue_paise: number; new_users: number; new_workers: number; avg_order_paise: number }),
   revenueDaily: (params: Record<string, string>) => api.get<{ points: { date: string; value: number }[] }>('/admin/analytics/revenue-daily', { params }).then(r => r.data.points),
   ordersDaily: (params: Record<string, string>) => api.get<{ points: { date: string; value: number }[] }>('/admin/analytics/orders-daily', { params }).then(r => r.data.points),
   signupsDaily: (params: Record<string, string>) => api.get<{ points: { date: string; value: number }[] }>('/admin/analytics/signups-daily', { params }).then(r => r.data.points),
-  byCategory: (params: Record<string, string>) => api.get<{ items: { category: string; orders: number; revenue_cents: number }[] }>('/admin/analytics/by-category', { params }).then(r => r.data.items),
+  byCategory: (params: Record<string, string>) => api.get<{ items: { category: string; orders: number; revenue_paise: number }[] }>('/admin/analytics/by-category', { params }).then(r => r.data.items),
 };
 
 // ── Growth ─────────────────────────────────────────────────────────────

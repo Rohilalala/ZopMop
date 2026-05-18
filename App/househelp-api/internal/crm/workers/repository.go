@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -181,7 +182,20 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		  COALESCE(stats.completed_30d, 0),
 		  COALESCE(stats.earnings_30d_cents, 0),
 		  COALESCE(stats.cancellation_rate, 0),
-		  h.locality
+		  h.locality,
+		  to_char(h.dob, 'YYYY-MM-DD'),
+		  h.gender,
+		  COALESCE(h.languages, '{}'),
+		  h.alt_phone,
+		  h.emergency_contact_name,
+		  h.emergency_contact_phone,
+		  h.photo_url,
+		  h.aadhaar_number,
+		  h.aadhaar_verified,
+		  h.bank_account_number,
+		  h.bank_account_holder_name,
+		  h.bank_ifsc,
+		  h.bank_verified
 		FROM users u
 		JOIN helpers h ON h.id = u.id
 		LEFT JOIN LATERAL (
@@ -210,6 +224,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		lat    *float64
 		lng    *float64
 	)
+	// TODO Phase 12: when row.AdminID's role is not 'superadmin', null out
+	// AadhaarNumber + BankAccountNumber before returning, and audit the read.
 	err := r.read.QueryRow(ctx, q, id).Scan(
 		&d.ID, &d.Phone, &d.Name, &d.AvatarURL, &status,
 		&d.IsAvailable, &d.IsOnline, &d.IsVIP, &d.Rating, &d.TotalJobs, &d.Categories,
@@ -218,6 +234,10 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		&d.SuspendReason, &d.BanReason,
 		&d.CompletedJobs30d, &d.Earnings30dCents, &d.CancellationRate,
 		&d.Locality,
+		&d.DOB, &d.Gender, &d.Languages, &d.AltPhone,
+		&d.EmergencyContactName, &d.EmergencyContactPhone, &d.PhotoURL,
+		&d.AadhaarNumber, &d.AadhaarVerified,
+		&d.BankAccountNumber, &d.BankAccountHolderName, &d.BankIFSC, &d.BankVerified,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -341,6 +361,310 @@ func (r *Repository) HasActiveJob(ctx context.Context, workerID string) (bool, *
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────
+
+// CreateRequest is the admin-driven pro registration payload. Replaces
+// SQL seeding for net-new pros.
+//
+// KYC / payment fields landed in migration 106. All KYC fields optional —
+// pilot pros can be created with just name+phone and have KYC filled in later
+// via PATCH (Phase 12). Plaintext storage is acceptable today; see TODO
+// comments on Detail in model.go for the hardening backlog.
+type CreateRequest struct {
+	Phone             string   `json:"phone"` // 10-digit or +91-prefixed
+	Name              string   `json:"name"`
+	Email             string   `json:"email,omitempty"`
+	Address           string   `json:"address,omitempty"`
+	Locality          string   `json:"locality,omitempty"`            // free-text (validated against localities table elsewhere)
+	WeeklyHoursTarget int      `json:"weekly_hours_target,omitempty"` // 0 → default 80
+	Categories        []string `json:"categories,omitempty"`          // service category slugs
+	ZoneID            string   `json:"zone_id,omitempty"`             // optional; inserts pro_zone_assignments
+	StartActive       bool     `json:"start_active,omitempty"`        // false = approval_status='pending' (in_training)
+
+	// Personal — migration 106.
+	DOB                   string   `json:"dob,omitempty"`                     // YYYY-MM-DD
+	Gender                string   `json:"gender,omitempty"`                  // 'male' | 'female' | 'other'
+	Languages             []string `json:"languages,omitempty"`               // ISO codes or free text
+	AltPhone              string   `json:"alt_phone,omitempty"`
+	EmergencyContactName  string   `json:"emergency_contact_name,omitempty"`
+	EmergencyContactPhone string   `json:"emergency_contact_phone,omitempty"`
+	PhotoURL              string   `json:"photo_url,omitempty"`
+
+	// KYC + payment — migration 106. Plaintext for pilot; Phase 12 encrypts.
+	AadhaarNumber         string `json:"aadhaar_number,omitempty"`
+	BankAccountNumber     string `json:"bank_account_number,omitempty"`
+	BankAccountHolderName string `json:"bank_account_holder_name,omitempty"`
+	BankIFSC              string `json:"bank_ifsc,omitempty"`
+}
+
+// CreateResult is returned to the admin after a successful pro create.
+type CreateResult struct {
+	ID    string `json:"id"`
+	Phone string `json:"phone"`
+}
+
+// ErrPhoneInUse — a user already exists with this phone. Don't reuse it.
+var ErrPhoneInUse = errors.New("phone already in use")
+
+// Create inserts users + helpers atomically. Optionally inserts a
+// pro_zone_assignments row when ZoneID is supplied. Returns the new pro id.
+func (r *Repository) Create(ctx context.Context, req CreateRequest) (*CreateResult, error) {
+	// Normalise phone to E.164 (+91XXXXXXXXXX) — the same shape OTP/login
+	// emits. 10-digit input is auto-prefixed.
+	phone := normalisePhone(req.Phone)
+	if !validPhone(phone) {
+		return nil, fmt.Errorf("invalid phone")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, fmt.Errorf("name required")
+	}
+
+	tx, err := r.write.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var userID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users (phone, name, role, has_accepted_privacy_policy, privacy_policy_accepted_at)
+		VALUES ($1, $2, 'pro', TRUE, now())
+		RETURNING id::text
+	`, phone, strings.TrimSpace(req.Name)).Scan(&userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "users_phone_key") || strings.Contains(err.Error(), "duplicate key") {
+			return nil, ErrPhoneInUse
+		}
+		return nil, fmt.Errorf("insert user: %w", err)
+	}
+
+	weekly := req.WeeklyHoursTarget
+	if weekly <= 0 {
+		weekly = 80
+	}
+	approval := "pending"
+	if req.StartActive {
+		approval = "approved"
+	}
+	categories := req.Categories
+	if categories == nil {
+		categories = []string{}
+	}
+	locality := strings.TrimSpace(req.Locality)
+	var localityArg any
+	if locality == "" {
+		localityArg = nil
+	} else {
+		localityArg = locality
+	}
+
+	// KYC + personal field marshalling. All optional — pass nil where empty
+	// so the column lands NULL (vs. empty string), keeping later "did the
+	// admin supply this?" checks unambiguous.
+	var (
+		dobArg                   any
+		genderArg                any
+		languagesArg             []string
+		altPhoneArg              any
+		emergencyNameArg         any
+		emergencyPhoneArg        any
+		photoURLArg              any
+		aadhaarArg               any
+		bankAcctArg              any
+		bankHolderArg            any
+		bankIFSCArg              any
+	)
+	if s := strings.TrimSpace(req.DOB); s != "" {
+		// Parse here so a bad date fails fast instead of relying on the
+		// postgres cast error. YYYY-MM-DD only.
+		if _, err := time.Parse("2006-01-02", s); err != nil {
+			return nil, fmt.Errorf("invalid dob (want YYYY-MM-DD): %w", err)
+		}
+		dobArg = s
+	}
+	if s := strings.TrimSpace(req.Gender); s != "" {
+		genderArg = s
+	}
+	if len(req.Languages) > 0 {
+		languagesArg = req.Languages
+	} else {
+		languagesArg = []string{}
+	}
+	if s := strings.TrimSpace(req.AltPhone); s != "" {
+		altPhoneArg = s
+	}
+	if s := strings.TrimSpace(req.EmergencyContactName); s != "" {
+		emergencyNameArg = s
+	}
+	if s := strings.TrimSpace(req.EmergencyContactPhone); s != "" {
+		emergencyPhoneArg = s
+	}
+	if s := strings.TrimSpace(req.PhotoURL); s != "" {
+		photoURLArg = s
+	}
+	// TODO Phase 12: encrypt aadhaar_number with KMS-managed key before storing.
+	if s := strings.TrimSpace(req.AadhaarNumber); s != "" {
+		aadhaarArg = s
+	}
+	// TODO Phase 12: encrypt bank_account_number with KMS-managed key before storing.
+	if s := strings.TrimSpace(req.BankAccountNumber); s != "" {
+		bankAcctArg = s
+	}
+	if s := strings.TrimSpace(req.BankAccountHolderName); s != "" {
+		bankHolderArg = s
+	}
+	if s := strings.TrimSpace(req.BankIFSC); s != "" {
+		bankIFSCArg = s
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO helpers (
+			id, address, approval_status, services, locality, weekly_hours_target,
+			dob, gender, languages, alt_phone,
+			emergency_contact_name, emergency_contact_phone, photo_url,
+			aadhaar_number, bank_account_number, bank_account_holder_name, bank_ifsc
+		)
+		VALUES (
+			$1::uuid, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10,
+			$11, $12, $13,
+			$14, $15, $16, $17
+		)
+	`,
+		userID, strings.TrimSpace(req.Address), approval, categories, localityArg, weekly,
+		dobArg, genderArg, languagesArg, altPhoneArg,
+		emergencyNameArg, emergencyPhoneArg, photoURLArg,
+		aadhaarArg, bankAcctArg, bankHolderArg, bankIFSCArg,
+	)
+	if err != nil {
+		// Surface the CHECK constraint as a 400-worthy validation error.
+		if strings.Contains(err.Error(), "helpers_gender_check") {
+			return nil, fmt.Errorf("invalid gender (want male|female|other): %w", err)
+		}
+		return nil, fmt.Errorf("insert helper: %w", err)
+	}
+
+	if strings.TrimSpace(req.ZoneID) != "" {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO pro_zone_assignments (pro_id, zone_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT DO NOTHING
+		`, userID, req.ZoneID)
+		if err != nil {
+			return nil, fmt.Errorf("insert pro_zone_assignments: %w", err)
+		}
+	}
+
+	if email := strings.TrimSpace(req.Email); email != "" {
+		_, err = tx.Exec(ctx, `UPDATE users SET email = $2 WHERE id = $1::uuid`, userID, email)
+		if err != nil {
+			return nil, fmt.Errorf("set email: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return &CreateResult{ID: userID, Phone: phone}, nil
+}
+
+// normalisePhone returns +91XXXXXXXXXX for plain 10-digit input;
+// keeps anything else as-is (validPhone enforces the +91 prefix later).
+func normalisePhone(in string) string {
+	digits := make([]byte, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		if in[i] >= '0' && in[i] <= '9' {
+			digits = append(digits, in[i])
+		}
+	}
+	switch len(digits) {
+	case 10:
+		return "+91" + string(digits)
+	case 12:
+		if digits[0] == '9' && digits[1] == '1' {
+			return "+" + string(digits)
+		}
+	}
+	return strings.TrimSpace(in)
+}
+
+func validPhone(s string) bool {
+	if len(s) != 13 || s[:3] != "+91" {
+		return false
+	}
+	for i := 3; i < 13; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// AddDeduction inserts an admin_pro_deductions row. fortnight_start in the
+// request is optional — if present must be YYYY-MM-DD.
+func (r *Repository) AddDeduction(ctx context.Context, proID, adminID string, req DeductionRequest) (*DeductionRow, error) {
+	var fortnight *time.Time
+	if req.FortnightStart != nil && strings.TrimSpace(*req.FortnightStart) != "" {
+		t, err := time.Parse("2006-01-02", strings.TrimSpace(*req.FortnightStart))
+		if err != nil {
+			return nil, fmt.Errorf("invalid fortnight_start: %w", err)
+		}
+		fortnight = &t
+	}
+
+	row := &DeductionRow{
+		ProID:       proID,
+		AdminID:     adminID,
+		AmountPaise: req.AmountPaise,
+		Reason:      strings.TrimSpace(req.Reason),
+	}
+	err := r.write.QueryRow(ctx, `
+		INSERT INTO admin_pro_deductions (pro_id, admin_id, amount_paise, reason, fortnight_start)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+		RETURNING id::text, created_at, to_char(fortnight_start, 'YYYY-MM-DD')
+	`, proID, adminID, req.AmountPaise, row.Reason, fortnight).
+		Scan(&row.ID, &row.CreatedAt, &row.FortnightStart)
+	if err != nil {
+		// FK violation = unknown pro_id.
+		if strings.Contains(err.Error(), "admin_pro_deductions_pro_id_fkey") {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("insert deduction: %w", err)
+	}
+	if row.FortnightStart != nil && *row.FortnightStart == "" {
+		row.FortnightStart = nil
+	}
+	return row, nil
+}
+
+// ListDeductions returns active (non-reversed) deductions newest-first.
+func (r *Repository) ListDeductions(ctx context.Context, proID string) ([]DeductionRow, error) {
+	rows, err := r.read.Query(ctx, `
+		SELECT id::text, pro_id::text, admin_id::text, amount_paise, reason,
+		       to_char(fortnight_start, 'YYYY-MM-DD'), created_at, reversed_at
+		FROM admin_pro_deductions
+		WHERE pro_id = $1::uuid
+		ORDER BY created_at DESC
+		LIMIT 200
+	`, proID)
+	if err != nil {
+		return nil, fmt.Errorf("list deductions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]DeductionRow, 0)
+	for rows.Next() {
+		var d DeductionRow
+		if err := rows.Scan(&d.ID, &d.ProID, &d.AdminID, &d.AmountPaise, &d.Reason,
+			&d.FortnightStart, &d.CreatedAt, &d.ReversedAt); err != nil {
+			return nil, fmt.Errorf("scan deduction: %w", err)
+		}
+		if d.FortnightStart != nil && *d.FortnightStart == "" {
+			d.FortnightStart = nil
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
 
 // Approve flips approval_status to 'approved'.
 func (r *Repository) Approve(ctx context.Context, workerID string) error {

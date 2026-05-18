@@ -32,13 +32,16 @@ const { width: W } = Dimensions.get('window');
 
 const MATCH_DURATION = 30000;
 const PHASES = [
-  { at: 0,    label: 'Finding available pros near you…' },
+  { at: 0,    label: 'Most bookings confirm in under 30 seconds' },
   { at: 0.35, label: 'Checking availability & ratings…' },
   { at: 0.65, label: 'Almost there — locking in your pro…' },
   { at: 0.88, label: 'Finalising match…' },
 ];
 
-type ScreenState = 'searching' | 'busy' | 'matched';
+// 'busy' = generic dispatch failure (timeout, network).
+// 'no_pros' = backend confirmed invite chain exhausted (booking_status
+// 'no_pro_available'). Different copy + CTAs per spec.
+type ScreenState = 'searching' | 'busy' | 'no_pros' | 'matched';
 
 type Props = {
   route: RouteProp<MainStackParamList, 'InstantMatching'>;
@@ -270,7 +273,15 @@ export default function InstantMatchingScreen({ route }: Props) {
             }
           } else if (status.status === 'failed' || (status.status === 'matched' && !status.helper)) {
             if (pollRef.current) clearInterval(pollRef.current);
-            if (!cancelled) { progress.stopAnimation(); setScreenState('busy'); }
+            if (!cancelled) {
+              progress.stopAnimation();
+              // Backend marks chain-exhausted bookings with booking_status
+              // 'no_pro_available'; everything else (network errors, user
+              // cancels) falls through to the generic busy screen.
+              const nextState: ScreenState =
+                status.booking_status === 'no_pro_available' ? 'no_pros' : 'busy';
+              setScreenState(nextState);
+            }
           }
         } catch { /* network — keep polling */ }
       }, 3000);
@@ -347,6 +358,47 @@ export default function InstantMatchingScreen({ route }: Props) {
     return <BusyScreen onRetry={() => navigation.goBack()} onBack={() => navigation.goBack()} />;
   }
 
+  if (screenState === 'no_pros') {
+    return (
+      <NoProsScreen
+        onWaitAndRetry={() => navigation.goBack()}
+        onReschedule={() => {
+          showError(
+            'Reschedule coming soon. Use the Bookings tab to manage existing bookings.',
+            { title: 'Reschedule unavailable' },
+          );
+          // TODO Phase X: wire a dedicated reschedule flow for instant
+          // bookings. Today the only path is cancel + rebook from cart.
+        }}
+        onCancelRefund={() => {
+          const bid = bookingIdRef.current;
+          const tkn = tokenRef.current;
+          Alert.alert(
+            'Cancel booking?',
+            'The booking is already cancelled because no pros were available. Any payment will be refunded automatically.',
+            [
+              { text: 'Close', style: 'cancel' },
+              {
+                text: 'OK',
+                onPress: () => {
+                  // Best-effort cancel — server may have already done it on
+                  // invite exhaustion. Idempotent either way.
+                  if (bid && tkn && tkn !== '__guest__') {
+                    apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tkn}` },
+                    }).catch(() => {});
+                  }
+                  navigationRef.current.goBack();
+                },
+              },
+            ],
+          );
+        }}
+      />
+    );
+  }
+
   if (screenState === 'matched') {
     return <MatchedFlash />;
   }
@@ -376,7 +428,7 @@ export default function InstantMatchingScreen({ route }: Props) {
           </View>
         </View>
 
-        <Text style={s.title}>Finding your Pro</Text>
+        <Text style={s.title}>Finding your pro...</Text>
         <Text style={s.phaseLabel}>{PHASES[phaseIdx].label}</Text>
 
         <View style={s.serviceChip}>
@@ -420,6 +472,43 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
         </TouchableOpacity>
         <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={onBack}>
           <Text style={s.backBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </SafeAreaView>
+  );
+}
+
+function NoProsScreen({
+  onWaitAndRetry,
+  onReschedule,
+  onCancelRefund,
+}: {
+  onWaitAndRetry: () => void;
+  onReschedule: () => void;
+  onCancelRefund: () => void;
+}) {
+  const fadeIn = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+  }, [fadeIn]);
+  return (
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+      <Bloom />
+      <Animated.View style={[s.container, { opacity: fadeIn }]}>
+        <GlassCard radius={64} hero style={s.iconCircle}>
+          <Feather name="users" size={44} color={C.amber} />
+        </GlassCard>
+        <View style={{ height: 28 }} />
+        <Text style={s.title}>No pros available right now</Text>
+        <Text style={s.busySub}>Try again in a few minutes or reschedule for later</Text>
+        <TouchableOpacity style={s.retryBtn} activeOpacity={0.88} onPress={onWaitAndRetry}>
+          <Text style={s.retryBtnText}>Wait and retry</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.secondaryBtn} activeOpacity={0.88} onPress={onReschedule}>
+          <Text style={s.secondaryBtnText}>Reschedule</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={onCancelRefund}>
+          <Text style={s.backBtnText}>Cancel and refund</Text>
         </TouchableOpacity>
       </Animated.View>
     </SafeAreaView>
@@ -578,5 +667,20 @@ const s = StyleSheet.create({
     fontFamily: FontFamily.medium,
     fontSize: 14,
     color: C.textSecondary,
+  },
+  secondaryBtn: {
+    borderRadius: 999,
+    paddingVertical: 14,
+    paddingHorizontal: 44,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.glassBorderHi,
+    backgroundColor: C.glassHi,
+  },
+  secondaryBtnText: {
+    fontFamily: FontFamily.semibold,
+    fontSize: 14,
+    color: C.white,
+    letterSpacing: 0.2,
   },
 });

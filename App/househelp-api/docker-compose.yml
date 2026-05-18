@@ -53,6 +53,29 @@ services:
       retries: 6
       start_period: 30s
 
+  crm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: househelp-api:local
+    container_name: househelp-crm-api
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-househelp}:${POSTGRES_PASSWORD:-localdev123}@postgres:5432/${POSTGRES_DB:-househelp_db}?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      CRM_API_PORT: "8091"
+      CRM_REFRESH_COOKIE_SECURE: "false"
+    entrypoint: ["/usr/local/bin/crm-api"]
+    ports:
+      - "8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   postgres:
     image: postgis/postgis:16-3.4-alpine
     container_name: househelp-postgres

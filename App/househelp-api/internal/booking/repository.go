@@ -53,6 +53,8 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise,
 		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
+		        accepted_at, en_route_at, arrived_at, started_at, completed_at,
+		        pro_earnings_paise, actual_duration_minutes, customer_rating_pending,
 		        created_at, updated_at
 		 FROM bookings WHERE id = $1`,
 		bookingID,
@@ -61,6 +63,8 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
 		&b.DiscountPaise,
 		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
+		&b.AcceptedAt, &b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
+		&b.ProEarningsPaise, &b.ActualDurationMinutes, &b.CustomerRatingPending,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
@@ -78,6 +82,67 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	}
 
 	return b, nil
+}
+
+// GetBookingDetailHelper loads the assigned pro's customer-facing slice.
+// Returns nil with no error when the booking has no helper assigned.
+// Phone masking is the caller's responsibility — this returns the raw value.
+func (r *Repository) GetBookingDetailHelper(ctx context.Context, helperID string) (*BookingDetailHelper, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	h := &BookingDetailHelper{}
+	err := r.db.QueryRow(queryCtx,
+		`SELECT u.id::text, COALESCE(u.name,''), COALESCE(u.phone,''),
+		        COALESCE(hp.rating, 5.0), COALESCE(hp.total_jobs, 0),
+		        COALESCE(u.avatar_url, '')
+		 FROM users u
+		 JOIN helpers hp ON hp.id = u.id
+		 WHERE u.id = $1`,
+		helperID,
+	).Scan(&h.ID, &h.Name, &h.Phone, &h.Rating, &h.TotalJobs, &h.PhotoURL)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to fetch helper detail: %w", err)
+	}
+	return h, nil
+}
+
+// GetBookingDetailServices returns every booking_services row for the booking
+// joined to its service_categories row for the display name. Ordered by
+// display_order ascending — the canonical task checklist sequence.
+func (r *Repository) GetBookingDetailServices(ctx context.Context, bookingID string) ([]BookingDetailService, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := r.db.Query(queryCtx,
+		`SELECT bs.service_id::text, COALESCE(sc.name, ''), bs.duration_minutes,
+		        bs.price_paise, bs.status, bs.display_order,
+		        bs.started_at, bs.completed_at, bs.skip_reason
+		 FROM booking_services bs
+		 LEFT JOIN service_categories sc ON sc.id = bs.service_id
+		 WHERE bs.booking_id = $1
+		 ORDER BY bs.display_order ASC, bs.id ASC`,
+		bookingID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query booking services: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]BookingDetailService, 0)
+	for rows.Next() {
+		var s BookingDetailService
+		if err := rows.Scan(&s.ServiceID, &s.ServiceName, &s.DurationMinutes,
+			&s.PricePaise, &s.Status, &s.DisplayOrder,
+			&s.StartedAt, &s.CompletedAt, &s.SkipReason); err != nil {
+			return nil, fmt.Errorf("scan booking service: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // GetPendingBookingByID retrieves a pending booking by ID without IDOR checks.

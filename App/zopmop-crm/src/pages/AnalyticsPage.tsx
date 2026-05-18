@@ -4,13 +4,13 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 
 import { analyticsApi } from '@/api/all';
 import { Card, EmptyState, Skeleton } from '@/components/ui';
+import { formatRupees } from '@/lib/formatters';
 
 const PRESETS: { label: string; days: number }[] = [
   { label: '7d',  days: 7 },
   { label: '30d', days: 30 },
   { label: '90d', days: 90 },
 ];
-const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
 export function AnalyticsPage() {
   const [days, setDays] = useState(30);
@@ -43,8 +43,8 @@ export function AnalyticsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Orders"            value={summary.data?.orders} />
         <Stat label="Completed"         value={summary.data?.completed_orders} />
-        <Stat label="Revenue"           value={summary.data ? fmt(summary.data.revenue_cents) : undefined} />
-        <Stat label="Avg order"         value={summary.data ? fmt(summary.data.avg_order_cents) : undefined} />
+        <Stat label="Revenue"           value={summary.data ? formatRupees(summary.data.revenue_paise) : undefined} />
+        <Stat label="Avg order"         value={summary.data ? formatRupees(summary.data.avg_order_paise) : undefined} />
         <Stat label="New customers"     value={summary.data?.new_users} />
         <Stat label="New pros"          value={summary.data?.new_workers} />
         <Stat label="Cancelled"         value={summary.data?.cancelled_orders} />
@@ -56,7 +56,7 @@ export function AnalyticsPage() {
             <CartesianGrid strokeDasharray="3 3" stroke="#2A2A3A" vertical={false} />
             <XAxis dataKey="date" tick={{ fill: '#8888AA', fontSize: 10 }} />
             <YAxis tick={{ fill: '#8888AA', fontSize: 10 }} tickFormatter={(v) => '₹' + Math.round(v / 100).toLocaleString('en-IN')} />
-            <Tooltip contentStyle={{ background: '#1A1A24', border: '1px solid #2A2A3A', borderRadius: 12 }} formatter={(v: number) => fmt(v)} />
+            <Tooltip contentStyle={{ background: '#1A1A24', border: '1px solid #2A2A3A', borderRadius: 12 }} formatter={(v: number) => formatRupees(v)} />
             <Bar dataKey="value" fill="#6C63FF" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ChartCard>
@@ -94,7 +94,7 @@ export function AnalyticsPage() {
                     <tr key={r.category} className="border-t border-border">
                       <td className="py-2">{r.category}</td>
                       <td className="py-2 text-right tabular-nums">{r.orders}</td>
-                      <td className="py-2 text-right tabular-nums">{fmt(r.revenue_cents)}</td>
+                      <td className="py-2 text-right tabular-nums">{formatRupees(r.revenue_paise)}</td>
                     </tr>
                   ))}
                 </tbody>
