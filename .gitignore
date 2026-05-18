@@ -85,3 +85,4 @@ App/zopmop-crm/tsconfig.tsbuildinfo
 
 # PostHog wizard setup reports
 **/posthog-setup-report.md
+zopmop-pr7-review.patch

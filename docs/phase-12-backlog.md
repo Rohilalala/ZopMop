@@ -108,3 +108,9 @@ priority bucket. Priorities are P0 (regulatory / security blockers), P1
 - **P2 — Remove the unused `proMode` zustand store + sidebar toggle** if no
   page consumes it after the OrdersPage drawer was deleted in Phase H.
   (`grep proMode src/` should be empty.)
+
+## Zone geometry
+
+- **P2 — CRM polygon editor** — admin can draw multi-vertex zone boundaries instead of circles; replaces lat/lon/radius_km when set. Today `internal/crm/zones/zones.go:2` confirms circle-only.
+- **P2 — Dispatcher adopts `service_zones.boundary`** — ST_Contains/ST_Within check when boundary is set; falls back to `pro_zone_assignments` + `helpers.locality` otherwise. Today `dispatch.go:181` only JOINs for zone name; the GEOGRAPHY(POLYGON) column from migration 100 is dead.
+
