@@ -51,6 +51,7 @@ import {
   type BookingDetail,
   type TrackingResponse,
 } from '../../api/matching';
+import { cancelBooking, keepLookingBooking } from '../../api/bookings';
 import { onShiftEvent } from '../../utils/shiftEvents';
 import { showSuccess, showError } from '../../utils/toast';
 import polyline from '@mapbox/polyline';
@@ -64,11 +65,21 @@ type SubState =
   | 'arrived'
   | 'in_progress'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'no_pro_available'
+  | 'no_show'
+  | 'pending_action';
 
 function deriveSubState(d: BookingDetail | null): SubState {
   if (!d) return 'dispatching';
   if (d.status === 'cancelled') return 'cancelled';
+  // Failed-match terminal/decision states. Backend (migration 101) emits
+  // these when dispatch exhausts the pool, a pro no-shows, or the stealth
+  // search window expires. Must come before the timestamp checks below so a
+  // partially-stamped booking that later fails still surfaces the right UI.
+  if (d.status === 'no_pro_available') return 'no_pro_available';
+  if (d.status === 'no_show') return 'no_show';
+  if (d.status === 'pending_customer_action') return 'pending_action';
   if (d.completed_at) return 'completed';
   if (d.started_at) return 'in_progress';
   if (d.arrived_at) return 'arrived';
@@ -214,6 +225,45 @@ export default function TrackLiveScreen() {
   const onMessagePro = () => {
     if (!bookingId) return;
     navigation.navigate('Chat', { bookingId, helperName });
+  };
+
+  // ── Failed-match recovery actions ─────────────────────────────────────────
+  // Guards against double-tap while a request is in flight. `actionBusy`
+  // disables every CTA on the failed-match panels.
+  const [actionBusy, setActionBusy] = useState(false);
+
+  const goHome = () => navigation.navigate('Tabs', { screen: 'Home' });
+
+  // Keep Looking — only valid in pending_customer_action (stealth window
+  // expired). Extends the search 15 min, then we refetch so the panel flips
+  // back to the dispatching spinner.
+  const onKeepLooking = async () => {
+    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await keepLookingBooking(token, bookingId);
+      showSuccess("We're looking again — hang tight");
+      await fetchDetail();
+    } catch (e) {
+      showError((e as Error)?.message ?? 'Could not extend the search');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  // Cancel — used by the pending_action panel's secondary CTA. no_pro_available
+  // / no_show are already terminal server-side, so those panels just route
+  // home rather than issue a redundant cancel.
+  const onCancelBooking = async () => {
+    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await cancelBooking(token, bookingId);
+      goHome();
+    } catch (e) {
+      showError((e as Error)?.message ?? 'Could not cancel the booking');
+      setActionBusy(false);
+    }
   };
 
   // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
@@ -551,6 +601,75 @@ export default function TrackLiveScreen() {
                 style={styles.primaryCta}
               >
                 <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Book again</Text>
+              </PressFx>
+            </View>
+          )}
+
+          {/* No pros available: dispatch exhausted the pool. Terminal. */}
+          {subState === 'no_pro_available' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="alert-triangle" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>No pros available right now</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                We couldn't find a pro nearby for your booking. This can happen
+                during peak hours or in newer service areas.
+              </Text>
+              <PressFx onPress={goHome} style={styles.primaryCta}>
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Try again</Text>
+              </PressFx>
+              <PressFx onPress={goHome} style={styles.secondaryCta}>
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Back to home</Text>
+              </PressFx>
+            </View>
+          )}
+
+          {/* No-show: assigned pro never arrived. Terminal, no charge. */}
+          {subState === 'no_show' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="user-x" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>Pro didn't show up</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                Your assigned pro didn't arrive. You haven't been charged.
+              </Text>
+              <PressFx onPress={goHome} style={styles.primaryCta}>
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Find another pro</Text>
+              </PressFx>
+              <PressFx
+                onPress={() => navigation.navigate('HelpSupport')}
+                style={styles.secondaryCta}
+              >
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Contact support</Text>
+              </PressFx>
+            </View>
+          )}
+
+          {/* Pending customer action: stealth search window expired. The
+              customer decides — keep looking (extends 15 min) or cancel. */}
+          {subState === 'pending_action' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="clock" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>Still looking for a pro</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                We haven't matched you with a pro yet. Want us to keep looking
+                for a little longer?
+              </Text>
+              <PressFx
+                onPress={onKeepLooking}
+                style={[styles.primaryCta, actionBusy && { opacity: 0.5 }]}
+              >
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Keep looking</Text>
+              </PressFx>
+              <PressFx
+                onPress={onCancelBooking}
+                style={[styles.secondaryCta, actionBusy && { opacity: 0.5 }]}
+              >
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Cancel booking</Text>
               </PressFx>
             </View>
           )}
@@ -1483,6 +1602,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,90,90,0.4)',
   },
+  warnIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(245,163,0,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.4)',
+  },
   primaryCta: {
     marginTop: 14,
     backgroundColor: AMBER,
@@ -1491,6 +1620,17 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  secondaryCta: {
+    marginTop: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryCtaText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
   },
 
   assignedHint: {
