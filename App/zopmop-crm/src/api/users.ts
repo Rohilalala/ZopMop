@@ -13,7 +13,9 @@ export type UserListItem = {
   is_vip: boolean;
   joined_at: string;
   total_orders: number;
-  ltv_cents: number;
+  // Wire field is `ltv_paise` per internal/crm/users/model.go — the legacy
+  // `_cents` naming was a transcription error that silently rendered ₹NaN.
+  ltv_paise: number;
   last_active_at?: string | null;
 };
 
@@ -21,7 +23,7 @@ export type UserDetail = UserListItem & {
   suspend_reason?: string | null;
   ban_reason?: string | null;
   banned_at?: string | null;
-  avg_order_cents: number;
+  avg_order_paise: number;
   active_orders: number;
   preferred_categories: { category: string; count: number }[];
 };
@@ -37,7 +39,7 @@ export type Order = {
   id: string;
   category: string;
   status: string;
-  price_cents: number;
+  price_paise: number;
   created_at: string;
   completed_at?: string | null;
 };

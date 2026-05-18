@@ -43,6 +43,7 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 	read := middleware.RequirePermission("workers.read")
 	g.Get("/",                   read, h.List)
 	g.Get("/live",               read, h.LivePins)
+	g.Post("/",                  middleware.RequirePermission("workers.create"), h.Create)
 	g.Get("/:id",                read, h.Get)
 	g.Get("/:id/jobs",           read, h.Jobs)
 	g.Get("/:id/active-job",     read, h.ActiveJob)
@@ -51,8 +52,59 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g.Post("/:id/suspend",       middleware.RequirePermission("workers.suspend"), h.Suspend)
 	g.Post("/:id/unsuspend",     middleware.RequirePermission("workers.unsuspend"), h.Unsuspend)
 	g.Post("/:id/force-offline", middleware.RequirePermission("workers.force_offline"), h.ForceOffline)
+	g.Post("/:id/deductions",    middleware.RequirePermission("workers.deduct"), h.AddDeduction)
+	g.Get("/:id/deductions",     read, h.ListDeductions)
 	g.Put("/:id/categories",     middleware.RequirePermission("workers.set_categories"), h.SetCategories)
 	g.Patch("/:id/locality",     middleware.RequirePermission("workers.suspend"), h.SetLocality)
+}
+
+// Create handles POST /workers — admin-initiated pro registration.
+func (h *Handler) Create(c *fiber.Ctx) error {
+	var req CreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	out, err := h.repo.Create(c.UserContext(), req)
+	if err != nil {
+		if errors.Is(err, ErrPhoneInUse) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "phone already in use"})
+		}
+		log.Warn().Err(err).Msg("[crm.workers] create failed")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "worker.create", out.ID, nil, fiber.Map{"phone": out.Phone, "name": req.Name})
+	return c.Status(fiber.StatusCreated).JSON(out)
+}
+
+// AddDeduction handles POST /workers/:id/deductions — manual fortnight
+// deduction. Body: {amount_paise, reason, fortnight_start?}.
+func (h *Handler) AddDeduction(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req DeductionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if req.AmountPaise <= 0 || strings.TrimSpace(req.Reason) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount_paise > 0 and reason required"})
+	}
+	adminID, _ := c.Locals("crmAdminID").(string)
+	row, err := h.repo.AddDeduction(c.UserContext(), id, adminID, req)
+	if err != nil {
+		return h.errResp(c, err)
+	}
+	h.audit(c, "worker.deduction.add", id, nil, row)
+	return c.Status(fiber.StatusCreated).JSON(row)
+}
+
+// ListDeductions handles GET /workers/:id/deductions.
+func (h *Handler) ListDeductions(c *fiber.Ctx) error {
+	id := c.Params("id")
+	rows, err := h.repo.ListDeductions(c.UserContext(), id)
+	if err != nil {
+		log.Error().Err(err).Msg("[crm.workers] list deductions failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+	return c.JSON(fiber.Map{"items": rows})
 }
 
 // setLocalityRequest is the input body for SetLocality. Empty/whitespace

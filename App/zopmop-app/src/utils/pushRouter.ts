@@ -15,6 +15,7 @@
 
 import { navigate } from '../navigation/navigationRef';
 import { showInfo, showSuccess } from './toast';
+import { emitShiftEvent } from './shiftEvents';
 
 type FcmMessageData = Record<string, string> | undefined;
 
@@ -29,7 +30,7 @@ type FcmMessageData = Record<string, string> | undefined;
 // ProScheduledInvite). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
 // REBOOK_AVAILABLE are customer-facing toasts/redirects and stay open.
 // When new Pro-targeted types are added, append them here.
-const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE'];
+const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE', 'booking_offer'];
 
 export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) {
   if (!data || !data.type) return;
@@ -48,19 +49,8 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
   }
 
   switch (data.type) {
-    case 'SCHEDULED_INVITE': {
-      if (!bookingId) return;
-      const scheduledTime = data.scheduled_time ?? '';
-      const durationMinutes = parseInt(data.duration_minutes ?? '60', 10) || 60;
-      const customerArea = data.locality ?? 'Customer area';
-      navigate('ProScheduledInvite', {
-        bookingId,
-        scheduledTime,
-        durationMinutes,
-        customerArea,
-      });
-      return;
-    }
+    // Legacy SCHEDULED_INVITE path is now handled by the
+    // booking_offer case below — both share the same emit/route.
 
     case 'BOOKING_ACCEPTED': {
       const helperName = data.helper_name ?? 'Your pro';
@@ -97,6 +87,62 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       // require knowing the original cart shape, which the push doesn't
       // carry — keep it simple.
       navigate('Bookings');
+      return;
+    }
+
+    case 'zone_approval_granted': {
+      emitShiftEvent({
+        type: 'zone_approval_granted',
+        request_id: data.request_id,
+        commitment_id: data.commitment_id,
+      });
+      return;
+    }
+
+    case 'zone_drift_warning': {
+      emitShiftEvent({
+        type: 'zone_drift_warning',
+        commitment_id: data.commitment_id,
+      });
+      return;
+    }
+
+    case 'booking_offer':
+    case 'SCHEDULED_INVITE': {
+      // SCHEDULED_INVITE is the wire name from backend Phase 10; the
+      // pro app treats every invite as a booking_offer regardless of
+      // whether it's a stealth-instant or scheduled flow.
+      if (!bookingId) return;
+      const offer = {
+        booking_id: bookingId,
+        customer_first_name: data.customer_first_name,
+        address_summary: data.address_summary,
+        task_list_json: data.task_list_json,
+        estimated_earnings_paise: data.estimated_earnings_paise ? parseInt(data.estimated_earnings_paise, 10) : undefined,
+        estimated_duration_minutes: data.estimated_duration_minutes ? parseInt(data.estimated_duration_minutes, 10) : undefined,
+        time_remaining_sec: data.time_remaining_sec ? parseInt(data.time_remaining_sec, 10) : 25,
+        received_at_ms: Date.now(),
+      };
+      emitShiftEvent({ type: 'booking_offer', payload: offer });
+      // Background-tap deep-link: navigate to JobOffer screen so the
+      // pro lands on it after tapping the notification. The
+      // foreground modal listener (in MainNavigator) will also fire
+      // on the same emit but is a no-op if the screen is already
+      // mounted.
+      navigate('JobOffer', { booking_id: bookingId });
+      return;
+    }
+
+    case 'booking_status_change':
+    case 'pro_en_route':
+    case 'pro_arrived':
+    case 'job_started':
+    case 'job_completed': {
+      emitShiftEvent({
+        type: 'booking_status_change',
+        booking_id: bookingId,
+        status: data.status,
+      });
       return;
     }
 

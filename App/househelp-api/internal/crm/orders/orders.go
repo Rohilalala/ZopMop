@@ -49,18 +49,34 @@ type ListItem struct {
 // Detail is the per-order drawer payload, including the timeline.
 type Detail struct {
 	ListItem
-	CustomerID    string     `json:"customer_id"`
-	WorkerID      *string    `json:"worker_id,omitempty"`
-	Address       string     `json:"address"`
-	Lat           float64    `json:"lat"`
-	Lng           float64    `json:"lng"`
-	ScheduledTime *time.Time `json:"scheduled_time,omitempty"`
-	MatchedAt     *time.Time `json:"matched_at,omitempty"`
-	AcceptedAt    *time.Time `json:"accepted_at,omitempty"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	ArrivedAt     *time.Time `json:"arrived_at,omitempty"`
-	CancelledAt   *time.Time `json:"cancelled_at,omitempty"`
-	CancelledBy   *string    `json:"cancelled_by,omitempty"`
+	CustomerID    string         `json:"customer_id"`
+	WorkerID      *string        `json:"worker_id,omitempty"`
+	Address       string         `json:"address"`
+	Lat           float64        `json:"lat"`
+	Lng           float64        `json:"lng"`
+	ScheduledTime *time.Time     `json:"scheduled_time,omitempty"`
+	MatchedAt     *time.Time     `json:"matched_at,omitempty"`
+	AcceptedAt    *time.Time     `json:"accepted_at,omitempty"`
+	StartedAt     *time.Time     `json:"started_at,omitempty"`
+	ArrivedAt     *time.Time     `json:"arrived_at,omitempty"`
+	CancelledAt   *time.Time     `json:"cancelled_at,omitempty"`
+	CancelledBy   *string        `json:"cancelled_by,omitempty"`
+	EnRouteAt     *time.Time     `json:"en_route_at,omitempty"`
+	CompletedAt2  *time.Time     `json:"-"`
+	Services      []ServiceLine  `json:"services"`
+}
+
+// ServiceLine is one row of the order's task checklist (booking_services join).
+type ServiceLine struct {
+	ServiceID       string     `json:"service_id"`
+	ServiceName     string     `json:"service_name"`
+	DurationMinutes int        `json:"duration_minutes"`
+	PricePaise      int        `json:"price_paise"`
+	Status          string     `json:"status"`
+	DisplayOrder    int        `json:"display_order"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	SkipReason      *string    `json:"skip_reason,omitempty"`
 }
 
 // CancelRequest is the body of POST /orders/:id/cancel.
@@ -227,7 +243,7 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	return items, total, nil
 }
 
-// Get returns the per-order detail.
+// Get returns the per-order detail with the per-service task list.
 func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	const q = `
 		SELECT b.id::text, cu.name, COALESCE(cu.phone, '(deleted)'), hu.name, hu.phone,
@@ -237,7 +253,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		       b.customer_id::text, b.helper_id::text,
 		       b.address, b.lat::float8, b.lng::float8,
 		       b.scheduled_time, b.matched_at, b.accepted_at,
-		       b.started_at, b.arrived_at, b.cancelled_at, b.cancelled_by
+		       b.started_at, b.arrived_at, b.cancelled_at, b.cancelled_by,
+		       b.en_route_at
 		FROM bookings b
 		LEFT JOIN users cu ON cu.id = b.customer_id AND cu.deleted_at IS NULL
 		LEFT JOIN users hu ON hu.id = b.helper_id AND hu.deleted_at IS NULL
@@ -253,6 +270,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		&d.Address, &d.Lat, &d.Lng,
 		&d.ScheduledTime, &d.MatchedAt, &d.AcceptedAt,
 		&d.StartedAt, &d.ArrivedAt, &d.CancelledAt, &d.CancelledBy,
+		&d.EnRouteAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -260,7 +278,92 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get order: %w", err)
 	}
+
+	// Per-service task list. A failed join shouldn't fail the whole
+	// detail — empty Services is acceptable for legacy single-category
+	// rows that pre-date booking_services.
+	rows, sErr := r.read.Query(ctx, `
+		SELECT bs.service_id::text, COALESCE(sc.name, ''), bs.duration_minutes,
+		       bs.price_paise, bs.status, bs.display_order,
+		       bs.started_at, bs.completed_at, bs.skip_reason
+		FROM booking_services bs
+		LEFT JOIN service_categories sc ON sc.id = bs.service_id
+		WHERE bs.booking_id = $1::uuid
+		ORDER BY bs.display_order ASC, bs.id ASC
+	`, id)
+	if sErr == nil {
+		defer rows.Close()
+		d.Services = make([]ServiceLine, 0)
+		for rows.Next() {
+			var s ServiceLine
+			if err := rows.Scan(&s.ServiceID, &s.ServiceName, &s.DurationMinutes,
+				&s.PricePaise, &s.Status, &s.DisplayOrder,
+				&s.StartedAt, &s.CompletedAt, &s.SkipReason); err != nil {
+				return nil, fmt.Errorf("scan service line: %w", err)
+			}
+			d.Services = append(d.Services, s)
+		}
+	} else {
+		d.Services = []ServiceLine{}
+	}
 	return &d, nil
+}
+
+// AddNote inserts an admin_booking_notes row attached to this order.
+// Returns the persisted shape including the admin's email for display.
+func (r *Repository) AddNote(ctx context.Context, bookingID, adminID, body string) (*NoteRow, error) {
+	// Booking existence check — return 404 before INSERTing a dangling row.
+	var exists bool
+	if err := r.read.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM bookings WHERE id = $1::uuid)`, bookingID,
+	).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("check booking: %w", err)
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	row := &NoteRow{BookingID: bookingID, AdminID: adminID, Body: body}
+	err := r.write.QueryRow(ctx, `
+		INSERT INTO admin_booking_notes (booking_id, admin_id, body)
+		VALUES ($1::uuid, $2::uuid, $3)
+		RETURNING id::text, created_at
+	`, bookingID, adminID, body).Scan(&row.ID, &row.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("insert note: %w", err)
+	}
+	// Best-effort email join.
+	_ = r.read.QueryRow(ctx,
+		`SELECT email FROM crm_admins WHERE id = $1::uuid`, adminID,
+	).Scan(&row.AdminEmail)
+	return row, nil
+}
+
+// ListNotes returns notes for the booking newest-first, with admin email
+// joined in for display.
+func (r *Repository) ListNotes(ctx context.Context, bookingID string) ([]NoteRow, error) {
+	rows, err := r.read.Query(ctx, `
+		SELECT n.id::text, n.booking_id::text, n.admin_id::text,
+		       COALESCE(a.email::text, ''), n.body, n.created_at
+		FROM admin_booking_notes n
+		LEFT JOIN crm_admins a ON a.id = n.admin_id
+		WHERE n.booking_id = $1::uuid
+		ORDER BY n.created_at DESC
+		LIMIT 200
+	`, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("list notes: %w", err)
+	}
+	defer rows.Close()
+	out := make([]NoteRow, 0)
+	for rows.Next() {
+		var n NoteRow
+		if err := rows.Scan(&n.ID, &n.BookingID, &n.AdminID, &n.AdminEmail, &n.Body, &n.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan note: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // Cancel marks an order cancelled. Refuses to cancel completed orders —
@@ -560,9 +663,60 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g.Get("/",                       read, h.List)
 	g.Get("/:id",                    read, h.Get)
 	g.Get("/:id/available-workers",  read, h.AvailableWorkers)
+	g.Get("/:id/notes",              read, h.ListNotes)
+	g.Post("/:id/notes",             middleware.RequirePermission("orders.add_note"), h.AddNote)
 	g.Post("/:id/cancel",            middleware.RequirePermission("orders.cancel"), h.Cancel)
 	g.Post("/:id/complete",          middleware.RequirePermission("orders.complete"), h.Complete)
 	g.Post("/:id/reassign",          middleware.RequirePermission("orders.reassign"), h.Reassign)
+}
+
+// NoteRequest is the body of POST /orders/:id/notes.
+type NoteRequest struct {
+	Body string `json:"body"`
+}
+
+// NoteRow is one persisted admin note attached to a booking.
+type NoteRow struct {
+	ID         string    `json:"id"`
+	BookingID  string    `json:"booking_id"`
+	AdminID    string    `json:"admin_id"`
+	AdminEmail string    `json:"admin_email,omitempty"`
+	Body       string    `json:"body"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// AddNote handles POST /orders/:id/notes.
+func (h *Handler) AddNote(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var req NoteRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	body := strings.TrimSpace(req.Body)
+	if body == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "body required"})
+	}
+	adminID, _ := c.Locals("crmAdminID").(string)
+	row, err := h.repo.AddNote(c.UserContext(), id, adminID, body)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "order not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to add note"})
+	}
+	h.audit(c, "order.note.add", id, nil, row)
+	return c.Status(fiber.StatusCreated).JSON(row)
+}
+
+// ListNotes handles GET /orders/:id/notes.
+func (h *Handler) ListNotes(c *fiber.Ctx) error {
+	id := c.Params("id")
+	rows, err := h.repo.ListNotes(c.UserContext(), id)
+	if err != nil {
+		log.Error().Err(err).Msg("[crm.orders] list notes failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+	return c.JSON(fiber.Map{"items": rows})
 }
 
 // List handles GET /orders.

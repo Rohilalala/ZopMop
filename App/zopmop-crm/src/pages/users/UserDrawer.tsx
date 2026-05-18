@@ -41,14 +41,23 @@ export function UserDrawer({ userId, onClose }: { userId: string | null; onClose
     qc.invalidateQueries({ queryKey: ['users'] });
   };
 
+  const notFound = userQ.isError && (userQ.error as { response?: { status?: number } })?.response?.status === 404;
+
   return (
     <Drawer open={open} onClose={onClose} width="max-w-2xl">
-      {userQ.isLoading || !userQ.data ? (
+      {userQ.isLoading ? (
         <div className="p-8 space-y-4">
           <Skeleton className="h-20" />
           <Skeleton className="h-32" />
         </div>
-      ) : (
+      ) : notFound || (userQ.isError && !userQ.data) ? (
+        <div className="p-8">
+          <EmptyState
+            title="User not found"
+            body="This user may have been deleted, or the link is stale."
+          />
+        </div>
+      ) : userQ.data ? (
         <>
           <Header user={userQ.data} onActed={invalidate} />
           <Tabs current={tab} onChange={setTab} />
@@ -56,7 +65,7 @@ export function UserDrawer({ userId, onClose }: { userId: string | null; onClose
           {tab === 'orders'   && <OrdersTab userId={userQ.data.id} />}
           {tab === 'notes'    && <NotesTab userId={userQ.data.id} />}
         </>
-      )}
+      ) : null}
     </Drawer>
   );
 }
@@ -332,12 +341,15 @@ function Tabs({ current, onChange }: { current: Tab; onChange: (t: Tab) => void 
 }
 
 function OverviewTab({ user }: { user: UserDetail }) {
-  const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  // Backend computes avg_order_paise server-side, but for a user with 0
+  // orders the column comes back as 0 / null — show "—" so the card doesn't
+  // read "₹0" or (worst) "₹NaN" when the field is undefined.
+  const avg = user.total_orders > 0 ? formatRupees(user.avg_order_paise) : '—';
   return (
     <div className="p-8 grid grid-cols-2 gap-4">
-      <Stat label="Lifetime value" value={fmt(user.ltv_cents)} />
+      <Stat label="Lifetime value" value={formatRupees(user.ltv_paise)} />
       <Stat label="Total orders"   value={String(user.total_orders)} />
-      <Stat label="Avg order"      value={fmt(user.avg_order_cents)} />
+      <Stat label="Avg order"      value={avg} />
       <Stat label="Active orders"  value={String(user.active_orders)} />
       <Stat label="Joined"         value={new Date(user.joined_at).toLocaleDateString()} />
       <Stat label="Last active"    value={user.last_active_at ? new Date(user.last_active_at).toLocaleString() : '—'} />
@@ -371,7 +383,6 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function OrdersTab({ userId }: { userId: string }) {
   const q = useQuery({ queryKey: ['user-orders', userId], queryFn: () => getUserOrders(userId) });
-  const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
   if (q.isLoading) return <div className="p-8"><Skeleton className="h-32" /></div>;
   if ((q.data?.length ?? 0) === 0) {
     return <div className="p-8"><EmptyState title="No orders" body="This user hasn't placed any orders yet." /></div>;
@@ -392,7 +403,7 @@ function OrdersTab({ userId }: { userId: string }) {
                 : o.status === 'cancelled' ? 'danger'
                 : 'info'
               }>{o.status}</StatusPill></td>
-              <td className="py-2 text-right tabular-nums">{fmt(o.price_cents)}</td>
+              <td className="py-2 text-right tabular-nums">{formatRupees(o.price_paise)}</td>
               <td className="py-2 text-right text-text-secondary">{new Date(o.created_at).toLocaleDateString()}</td>
             </tr>
           ))}

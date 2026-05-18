@@ -22,9 +22,11 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'RoleSelection', 'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup',
 	'RoomiesWelcome', 'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
 	'YourExperts', 'ZopIntro',
-	// Pro flows (also gated per-screen via useProRoleGate from C-9)
-	'ProActive', 'ProDashboard', 'ProDeclareLeave', 'ProLeaveHistory',
-	'ProMatched', 'ProOnboarding', 'ProProfile', 'ProScheduledInvite',
+	// Pro flows (also gated per-screen via useProRoleGate from C-9).
+	// Phase 10: ProActive/ProMatched/ProScheduledInvite retired —
+	// replaced by JobDetail + JobOffer.
+	'ProDashboard', 'ProDeclareLeave', 'ProLeaveHistory',
+	'ProOnboarding', 'ProProfile', 'JobDetail', 'JobOffer',
 ]);
 
 // SDUI deep_link actions are restricted to https. First-party tel: and

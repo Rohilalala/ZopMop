@@ -178,46 +178,6 @@ func TestMapVerifyOTPError_HandlesExpectedAndUnexpectedErrors(t *testing.T) {
 	}
 }
 
-func TestMapVerifyFirebaseError_SanitizesUnexpectedError(t *testing.T) {
-	t.Parallel()
-
-	app := fiber.New()
-	app.Get("/known", func(c *fiber.Ctx) error {
-		return mapVerifyFirebaseError(c, ErrInvalidFirebaseToken)
-	})
-	app.Get("/unknown", func(c *fiber.Ctx) error {
-		return mapVerifyFirebaseError(c, errors.New("firebase init failed: open /secrets/key.json: no such file"))
-	})
-
-	knownReq := httptest.NewRequest("GET", "/known", nil)
-	knownResp, err := app.Test(knownReq)
-	if err != nil {
-		t.Fatalf("known request failed: %v", err)
-	}
-	if knownResp.StatusCode != fiber.StatusUnauthorized {
-		t.Fatalf("expected known status %d, got %d", fiber.StatusUnauthorized, knownResp.StatusCode)
-	}
-	var knownBody map[string]string
-	if err := json.NewDecoder(knownResp.Body).Decode(&knownBody); err != nil {
-		t.Fatalf("failed decoding known response body: %v", err)
-	}
-	if knownBody["error"] != "invalid firebase token" {
-		t.Fatalf("expected known firebase error, got %q", knownBody["error"])
-	}
-
-	unknownReq := httptest.NewRequest("GET", "/unknown", nil)
-	unknownResp, err := app.Test(unknownReq)
-	if err != nil {
-		t.Fatalf("unknown request failed: %v", err)
-	}
-	if unknownResp.StatusCode != fiber.StatusInternalServerError {
-		t.Fatalf("expected unknown status %d, got %d", fiber.StatusInternalServerError, unknownResp.StatusCode)
-	}
-	var unknownBody map[string]string
-	if err := json.NewDecoder(unknownResp.Body).Decode(&unknownBody); err != nil {
-		t.Fatalf("failed decoding unknown response body: %v", err)
-	}
-	if unknownBody["error"] != "failed to verify firebase token" {
-		t.Fatalf("expected sanitized unknown firebase error, got %q", unknownBody["error"])
-	}
-}
+// TestMapVerifyFirebaseError removed in Phase 9 — Firebase Auth
+// archived to _legacy/firebase_auth/. The MSG91 flow has no
+// equivalent error-mapping shim because /auth/firebase is gone.

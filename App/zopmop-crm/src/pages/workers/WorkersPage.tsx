@@ -1,10 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronUp, Search, Star } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Search, Star } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { listWorkers, type ListParams, type Status, type WorkerListItem } from '@/api/workers';
+import { Can } from '@/auth/Can';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { WorkerDrawer } from './WorkerDrawer';
+
+// UUID v4-ish guard. Audit/order/email links may pass anything in ?id= —
+// drop quietly on bad input rather than firing a bogus GET /workers/<garbage>.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // WorkersPage: same shape as UsersPage but driven by the workers endpoint.
 // Adds an "online only" filter and a category-string match.
@@ -26,7 +32,27 @@ export function WorkersPage() {
     limit: PAGE_SIZE,
     offset: 0,
   });
+  // Drawer state is driven by ?id= in the URL so deep links from AuditPage
+  // and OrderDetailPage open the right worker. Browser back / forward also
+  // wires through useSearchParams, so popstate closes the drawer for free.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [drawerId, setDrawerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const raw = searchParams.get('id');
+    setDrawerId(raw && UUID_RE.test(raw) ? raw : null);
+  }, [searchParams]);
+
+  const openDrawer = (id: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('id', id);
+    setSearchParams(sp);
+  };
+  const closeDrawer = () => {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete('id');
+    setSearchParams(sp);
+  };
 
   const q = useQuery({
     queryKey: ['workers', params],
@@ -52,11 +78,19 @@ export function WorkersPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Workers</h1>
-        <p className="text-sm text-text-secondary mt-1">
-          Pro accounts. Approve applications, manage suspensions, monitor performance.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Workers</h1>
+          <p className="text-sm text-text-secondary mt-1">
+            Pro accounts. Approve applications, manage suspensions, monitor performance.
+          </p>
+        </div>
+        <Can perm="workers.create">
+          <Link to="/workers/new" className="btn-primary shrink-0">
+            <Plus className="w-4 h-4" />
+            New Pro
+          </Link>
+        </Can>
       </div>
 
       <Card className="!p-4">
@@ -119,7 +153,7 @@ export function WorkersPage() {
               </td></tr>
             ) : (
               q.data?.items.map((w, i) => (
-                <Row key={w.id} worker={w} alt={i % 2 === 1} onClick={() => setDrawerId(w.id)} />
+                <Row key={w.id} worker={w} alt={i % 2 === 1} onClick={() => openDrawer(w.id)} />
               ))
             )}
           </tbody>
@@ -147,7 +181,7 @@ export function WorkersPage() {
         )}
       </Card>
 
-      <WorkerDrawer workerId={drawerId} onClose={() => setDrawerId(null)} />
+      <WorkerDrawer workerId={drawerId} onClose={closeDrawer} />
     </div>
   );
 }

@@ -27,6 +27,7 @@ var permissions = map[string]string{
 	"users.add_note":  RoleSupport,
 
 	// workers
+	"workers.create":         RoleAdmin,
 	"workers.approve":        RoleAdmin,
 	"workers.reject":         RoleAdmin,
 	"workers.suspend":        RoleAdmin,
@@ -34,11 +35,14 @@ var permissions = map[string]string{
 	"workers.force_offline":  RoleAdmin,
 	"workers.set_categories": RoleAdmin,
 	"workers.add_note":       RoleSupport,
+	"workers.deduct":         RoleAdmin, // manual fortnight deduction
+	"workers.update":         RoleAdmin, // generic update gate (leave allocate, etc.)
 
 	// orders
 	"orders.cancel":   RoleAdmin,
 	"orders.complete": RoleAdmin,
 	"orders.reassign": RoleAdmin,
+	"orders.add_note": RoleSupport,
 
 	// refunds
 	"refunds.approve_full":    RoleSupport, // full refund — support OK
@@ -106,6 +110,14 @@ var permissions = map[string]string{
 
 	// growth — waitlist (default admin)
 	"waitlist.create": RoleAdmin,
+
+	// leaves
+	"leaves.deduct": RoleAdmin, // negative-days allocate (deduction)
+
+	// zone approvals (Phase 11B re-mounted on crm-api)
+	"zones.approval.read":    RoleSupport,
+	"zones.approval.approve": RoleAdmin,
+	"zones.approval.reject":  RoleAdmin,
 
 	// SUPERADMIN-only
 	"flags.update":       RoleSuperadmin,

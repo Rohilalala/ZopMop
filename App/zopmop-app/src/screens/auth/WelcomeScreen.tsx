@@ -8,7 +8,7 @@ import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
-import { pendingAuthStore } from '../../utils/pendingAuthStore';
+import { useAuth } from '../../context/AuthContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Welcome'>;
@@ -22,8 +22,8 @@ export default function WelcomeScreen({ navigation, route }: Props) {
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
 
-  const storedName = pendingAuthStore.get()?.user?.name;
-  const name = storedName?.trim() || route.params.name?.trim() || 'friend';
+  const { user } = useAuth();
+  const name = user?.name?.trim() || route.params.name?.trim() || 'friend';
   const firstName = name.split(/\s+/)[0];
 
   const titleOpacity = useRef(new Animated.Value(0)).current;

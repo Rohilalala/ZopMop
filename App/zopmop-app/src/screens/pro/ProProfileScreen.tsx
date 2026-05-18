@@ -1,161 +1,232 @@
-// ProProfileScreen — read-only profile for pros plus a link to leave history.
-// Kept intentionally minimal: name, phone, role/status. Pros edit profile from
-// onboarding; this is the dashboard entry point, not a settings page.
-
-import React, { useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  RefreshControl,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import Constants from 'expo-constants';
+
 import type { MainStackParamList } from '../../types/navigation';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { useProRoleGate } from '../../hooks/useRoleGate';
-import { FontFamily } from '../../theme';
-import OfflineBanner from '../../components/OfflineBanner';
+import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
+import { getCurrentZone, getFortnightProgress, type ZoneInfo, type FortnightProgress } from '../../api/shifts';
+import { t } from '../../i18n';
 
-type Nav = NativeStackNavigationProp<MainStackParamList>;
+const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
+
+function formatPhone10(phone?: string): string {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  const last10 = digits.slice(-10);
+  return `${last10.slice(0, 5)} ${last10.slice(5)}`;
+}
+
+function avatarInitial(name?: string): string {
+  if (!name) return '?';
+  const first = name.trim()[0];
+  return first ? first.toUpperCase() : '?';
+}
+
+function shortEmployeeId(id?: string): string {
+  if (!id) return '';
+  return id.replace(/-/g, '').slice(0, 8).toUpperCase();
+}
+
+function paiseToRupeesShort(p: number): string {
+  return `₹${Math.round(p / 100).toLocaleString('en-IN')}`;
+}
 
 export default function ProProfileScreen() {
-  useProRoleGate();
-  const nav = useNavigation<Nav>();
-  const { user } = useAuth();
+  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const { user, signOut } = useAuth();
   const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const styles = useMemo(() => createStyles(c), [c]);
 
+  const [zone, setZone] = useState<ZoneInfo | null>(null);
+  const [progress, setProgress] = useState<FortnightProgress | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const initial = (user?.name?.[0] ?? user?.phone?.[0] ?? '?').toUpperCase();
 
-  function handleRefresh() {
+  const load = useCallback(async () => {
+    const [zoneRes, progRes] = await Promise.allSettled([
+      getCurrentZone(),
+      getFortnightProgress(),
+    ]);
+    if (zoneRes.status === 'fulfilled') setZone(zoneRes.value);
+    if (progRes.status === 'fulfilled') setProgress(progRes.value);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // Profile data comes from auth context; brief visual refresh is sufficient.
-    setTimeout(() => setRefreshing(false), 500);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  function handleLogout() {
+    Alert.alert(
+      t('profile.logout'),
+      t('profile.logoutConfirm'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('profile.logout'), style: 'destructive', onPress: signOut },
+      ],
+    );
   }
 
+  function handleSupport() {
+    const tel = `tel:${SUPPORT_PHONE}`;
+    Linking.canOpenURL(tel).then((ok) => { if (ok) Linking.openURL(tel); });
+  }
+
+  function handleAbout() {
+    const version = Constants.expoConfig?.version ?? '1.0.0';
+    const build = Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode ?? '';
+    Alert.alert('ZopMop', `${t('profile.version')}: ${version}${build ? ` (${build})` : ''}`);
+  }
+
+  const onlineH = progress ? Math.round((progress.online_minutes / 60) * 10) / 10 : 0;
+  const earnings = progress ? paiseToRupeesShort(progress.projected_pay_paise) : '—';
+
   return (
-    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      <OfflineBanner />
-      <View style={s.headerBar}>
-        <TouchableOpacity onPress={() => nav.goBack()} accessibilityLabel="Go back" accessibilityRole="button" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name="arrow-left" size={20} color={c.text} />
-        </TouchableOpacity>
-        <Text style={s.headerTitle}>Profile</Text>
-        <View style={{ width: 28 }} />
-      </View>
-
+    <SafeAreaView style={[styles.safe, { backgroundColor: c.background }]} edges={['top']}>
       <ScrollView
-        contentContainerStyle={s.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />}
       >
-        <View style={s.avatarWrap}>
-          <View style={s.avatar}>
-            <Text style={s.avatarText}>{initial}</Text>
+        <View style={styles.headerWrap}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{avatarInitial(user?.name)}</Text>
           </View>
-          <Text style={s.name}>{user?.name || 'Pro'}</Text>
-          <Text style={s.role}>{(user?.role || '').toUpperCase()}</Text>
+          <Text style={styles.name}>{user?.name ?? ''}</Text>
+          <Text style={styles.phone}>{formatPhone10(user?.phone)}</Text>
+          <Text style={styles.empId}>{t('profile.employeeId')} · {shortEmployeeId(user?.id)}</Text>
         </View>
 
-        <View style={s.card}>
-          <Row icon="phone" label="Phone" value={user?.phone || '—'} />
-          <Divider />
-          <Row icon="user-check" label="Account status" value={user ? 'Active' : 'Unknown'} />
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Feather name="map-pin" size={16} color={c.accent} />
+            <Text style={styles.cardHeaderText}>{t('profile.assignedArea')}</Text>
+          </View>
+          {zone ? (
+            <Text style={styles.zoneName}>{zone.name}</Text>
+          ) : (
+            <Text style={styles.zoneMuted}>{t('profile.noZone')}</Text>
+          )}
         </View>
 
-        <TouchableOpacity
-          style={s.linkRow}
-          activeOpacity={0.7}
-          onPress={() => nav.navigate('ProLeaveHistory')}
-        >
-          <Feather name="calendar" size={16} color={c.text} style={{ marginRight: 12 }} />
-          <Text style={s.linkLabel}>Leave history</Text>
-          <Feather name="chevron-right" size={16} color={c.textMuted} />
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Feather name="bar-chart-2" size={16} color={c.accent} />
+            <Text style={styles.cardHeaderText}>{t('profile.thisFortnight')}</Text>
+          </View>
+          <View style={styles.statsRow}>
+            <View style={styles.statCell}>
+              <Text style={styles.statLabel}>{t('profile.onlineHours')}</Text>
+              <Text style={styles.statValue}>{onlineH} / 80</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statCell}>
+              <Text style={styles.statLabel}>{t('profile.totalEarnings')}</Text>
+              <Text style={styles.statValue}>{earnings}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <SettingsRow
+            colors={c}
+            icon="globe"
+            label={t('profile.changeLanguage')}
+            onPress={() => navigation.navigate('LanguageToggle')}
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            colors={c}
+            icon="phone"
+            label={t('profile.support')}
+            onPress={handleSupport}
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            colors={c}
+            icon="info"
+            label={t('profile.about')}
+            onPress={handleAbout}
+          />
+        </View>
+
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Feather name="log-out" size={16} color={c.accent} />
+          <Text style={styles.logoutText}>{t('profile.logout')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Row({ icon, label, value }: { icon: React.ComponentProps<typeof Feather>['name']; label: string; value: string }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+function SettingsRow({
+  colors,
+  icon,
+  label,
+  onPress,
+}: { colors: ReturnType<typeof useColors>; icon: React.ComponentProps<typeof Feather>['name']; label: string; onPress: () => void }) {
   return (
-    <View style={s.row}>
-      <Feather name={icon} size={16} color={c.textMuted} style={{ marginRight: 12 }} />
-      <View style={{ flex: 1 }}>
-        <Text style={s.rowLabel}>{label}</Text>
-        <Text style={s.rowValue}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function Divider() {
-  const c = useColors();
-  return (
-    <View
-      style={{
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: c.border ?? 'rgba(255,255,255,0.06)',
-        marginLeft: 28,
-      }}
-    />
+    <TouchableOpacity
+      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.base, gap: Spacing.base }}
+      onPress={onPress}
+    >
+      <Feather name={icon} size={18} color={colors.text} />
+      <Text style={{ flex: 1, color: colors.text, fontFamily: FontFamily.medium, fontSize: FontSize.base }}>{label}</Text>
+      <Feather name="chevron-right" size={18} color={colors.textMuted} />
+    </TouchableOpacity>
   );
 }
 
 function createStyles(c: ReturnType<typeof useColors>) {
   return StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    headerBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-    },
-    headerTitle: { color: c.text, fontFamily: FontFamily.bold, fontSize: 16 },
-    content: { padding: 16, gap: 16 },
-    avatarWrap: { alignItems: 'center', marginTop: 8 },
+    safe: { flex: 1 },
+    scroll: { padding: Spacing.lg, gap: Spacing.base, paddingBottom: Spacing['3xl'] },
+    headerWrap: { alignItems: 'center', gap: 6, paddingVertical: Spacing.lg },
     avatar: {
-      width: 84,
-      height: 84,
-      borderRadius: 42,
-      backgroundColor: 'rgba(245,163,0,0.12)',
-      borderWidth: 2,
-      borderColor: 'rgba(245,163,0,0.45)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 12,
+      width: 80, height: 80, borderRadius: 40,
+      backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 2, borderColor: c.accent,
     },
-    avatarText: { color: c.primary, fontFamily: FontFamily.bold, fontSize: 32 },
-    name: { color: c.text, fontFamily: FontFamily.bold, fontSize: 18 },
-    role: {
-      marginTop: 4,
-      color: c.textMuted,
-      fontFamily: FontFamily.medium,
-      fontSize: 11,
-      letterSpacing: 1.2,
-    },
+    avatarText: { fontFamily: FontFamily.bold, fontSize: 36, color: c.accent },
+    name: { fontFamily: FontFamily.bold, fontSize: FontSize.xl, color: c.text, marginTop: Spacing.sm },
+    phone: { fontFamily: FontFamily.medium, fontSize: FontSize.base, color: c.textSecondary },
+    empId: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted, letterSpacing: 1 },
     card: {
-      backgroundColor: c.surface,
-      borderRadius: 16,
-      paddingVertical: 4,
-      borderWidth: 1,
-      borderColor: c.border,
+      backgroundColor: c.surface, borderRadius: Radius.lg, padding: Spacing.lg,
+      borderWidth: 1, borderColor: c.border, gap: Spacing.sm,
     },
-    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 },
-    rowLabel: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 },
-    rowValue: { color: c.text, fontFamily: FontFamily.medium, fontSize: 14, marginTop: 2 },
-    linkRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      backgroundColor: c.surface,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: c.border,
+    cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    cardHeaderText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.textSecondary, textTransform: 'uppercase', letterSpacing: 1 },
+    zoneName: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    zoneMuted: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textMuted },
+    statsRow: { flexDirection: 'row', alignItems: 'center', paddingTop: Spacing.sm },
+    statCell: { flex: 1, gap: 4 },
+    statLabel: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textSecondary },
+    statValue: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
+    statDivider: { width: 1, height: 32, backgroundColor: c.border },
+    rowDivider: { height: 1, backgroundColor: c.border, marginLeft: Spacing.base + 18 + Spacing.base },
+    logoutBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+      gap: Spacing.sm, marginTop: Spacing.lg,
+      paddingVertical: Spacing.base, borderRadius: Radius.lg,
+      borderWidth: 1, borderColor: c.accent,
     },
-    linkLabel: { flex: 1, color: c.text, fontFamily: FontFamily.medium, fontSize: 14 },
+    logoutText: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.accent },
   });
 }

@@ -162,21 +162,35 @@ func (e *ErrUnpaidBookings) Error() string {
 	return fmt.Sprintf("customer has %d unpaid booking(s) totaling %d paise", e.Count, e.TotalPaise)
 }
 
+// Notifier is the narrow surface the booking service needs to push
+// data-only messages to a user (typically the customer when the pro
+// transitions through en_route/arrived/etc.). Mirrors the shape of
+// internal/notification.Service.SendData so the concrete adapter is
+// a one-liner in cmd/api/main.go.
+type Notifier interface {
+	SendData(ctx context.Context, userID string, data map[string]string) error
+}
+
 // Service handles booking business logic.
 type Service struct {
-	repo         *Repository
-	db           *pgxpool.Pool
-	rdb          *redis.Client
-	configSvc    *config_manager.Service
-	matchBatcher *matching.Batcher    // nil-safe; only used for instant bookings
-	matchEngine  *matching.Engine     // nil-safe; used for status queries
-	maps         *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
-	analytics    *analytics.Service   // nil-safe; fire-and-forget event tracking
-	webhooks     *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
-	ledger       *payments.Ledger     // nil-safe; charge-row writer
-	wallet       WalletDebiter        // nil-safe; payment_source="wallet" flow
-	referrals    ReferralCompleter    // nil-safe; referral reward on completion
+	repo          *Repository
+	db            *pgxpool.Pool
+	rdb           *redis.Client
+	configSvc     *config_manager.Service
+	matchBatcher  *matching.Batcher    // nil-safe; only used for instant bookings
+	matchEngine   *matching.Engine     // nil-safe; used for status queries
+	maps          *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
+	analytics     *analytics.Service   // nil-safe; fire-and-forget event tracking
+	webhooks      *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
+	ledger        *payments.Ledger     // nil-safe; charge-row writer
+	wallet        WalletDebiter        // nil-safe; payment_source="wallet" flow
+	referrals     ReferralCompleter    // nil-safe; referral reward on completion
+	notifications Notifier             // nil-safe; FCM data push to customer
 }
+
+// SetNotifier wires the FCM data-push surface. nil-safe — leaving it
+// unset disables customer pushes for en_route/arrived/etc.
+func (s *Service) SetNotifier(n Notifier) { s.notifications = n }
 
 // SetPaymentsLedger wires the payments ledger so booking confirmation can
 // open a pending charge row. nil-safe — leaving it unset disables ledger
@@ -544,6 +558,45 @@ func (s *Service) GetBooking(ctx context.Context, bookingID, requestingUserID st
 		b.FreeCancelUntil = &deadline
 	}
 	return b, nil
+}
+
+// GetBookingDetail returns the enriched booking shape used by TrackLiveScreen:
+// the base booking + the assigned helper (when present, with phone masking
+// driven by the booking lifecycle stage) + every booking_services row.
+//
+// Phone masking rule: middle-mask (98XXXXX210) while the booking has not
+// yet been accepted by a pro. Once the pro accepts, the customer is given
+// the full 10-digit number so they can call. Cancelled / terminal-state
+// bookings keep the unmasked number — at that point the privacy window
+// is moot and customers may still need to follow up.
+func (s *Service) GetBookingDetail(ctx context.Context, bookingID, requestingUserID string) (*BookingDetail, error) {
+	b, err := s.GetBooking(ctx, bookingID, requestingUserID)
+	if err != nil {
+		return nil, err
+	}
+	detail := &BookingDetail{Booking: *b}
+
+	if b.HelperID != nil {
+		h, herr := s.repo.GetBookingDetailHelper(ctx, *b.HelperID)
+		if herr != nil {
+			return nil, herr
+		}
+		if h != nil {
+			// Mask the phone for the customer pre-accept. Once the booking
+			// is accepted (or has moved past), reveal the full number.
+			if b.AcceptedAt == nil && b.Status == StatusPending {
+				h.Phone = MaskPhone(h.Phone)
+			}
+			detail.Helper = h
+		}
+	}
+
+	services, serr := s.repo.GetBookingDetailServices(ctx, bookingID)
+	if serr != nil {
+		return nil, serr
+	}
+	detail.Services = services
+	return detail, nil
 }
 
 // CancelBooking cancels a booking. Free if requested more than 30m before
@@ -1363,22 +1416,33 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 			helper.ETAMinutes = 30
 		}
 
-		arrived, arrErr := s.repo.IsBookingArrived(ctx, bookingID)
-		if arrErr != nil {
-			log.Warn().Err(arrErr).Str("booking_id", bookingID).Msg("IsBookingArrived failed (run migration 038?)")
-		}
 		return &MatchStatusResponse{
 			Status:        "matched",
 			Helper:        &helper,
 			BookingStatus: string(booking.Status),
-			Arrived:       arrived,
+			EnRoute:       booking.EnRouteAt != nil,
+			Arrived:       booking.ArrivedAt != nil,
+			InProgress:    booking.StartedAt != nil,
+			Completed:     booking.CompletedAt != nil,
 		}, nil
 	}
 
 	// If the booking is cancelled, report failed immediately — check this before
 	// Redis so a cancelled-but-still-in-Redis booking doesn't falsely show "searching".
 	if booking.Status == StatusCancelled {
-		return &MatchStatusResponse{Status: "failed", BookingStatus: string(booking.Status)}, nil
+		// Distinguish "no pro available" (invite chain exhausted, server-side
+		// cancel) from a user-initiated cancel so the customer app can surface
+		// the right CTAs. invite_exhausted_at is set by the dispatch worker
+		// only when the chain has rolled through every eligible pro.
+		bookingStatus := string(booking.Status)
+		var inviteExhaustedAt *time.Time
+		_ = s.db.QueryRow(ctx,
+			`SELECT invite_exhausted_at FROM bookings WHERE id = $1`, bookingID,
+		).Scan(&inviteExhaustedAt)
+		if inviteExhaustedAt != nil {
+			bookingStatus = "no_pro_available"
+		}
+		return &MatchStatusResponse{Status: "failed", BookingStatus: bookingStatus}, nil
 	}
 
 	// Booking not yet accepted. Check if it's still in the match window via Redis.
@@ -1737,17 +1801,58 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 	}
 	defer tx.Rollback(context.Background())
 
-	var customerID string
+	var (
+		customerID  string
+		startedAt   *time.Time
+		completedAt time.Time
+	)
 	if err := tx.QueryRow(txCtx,
-		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW()
+		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW(),
+		                    customer_rating_pending = true
 		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'
-		 RETURNING customer_id::text`,
+		 RETURNING customer_id::text, started_at, completed_at`,
 		bookingID, helperID,
-	).Scan(&customerID); err != nil {
+	).Scan(&customerID, &startedAt, &completedAt); err != nil {
 		if err == pgx.ErrNoRows {
 			return fmt.Errorf("booking not found or cannot be completed")
 		}
 		return fmt.Errorf("failed to complete booking: %w", err)
+	}
+
+	// Compute actual duration + earnings snapshot. If started_at is
+	// nil (data drift), fall back to total_duration_minutes from the
+	// booking row so the pro is never under-paid.
+	actualMin := 0
+	if startedAt != nil {
+		actualMin = int(completedAt.Sub(*startedAt).Minutes())
+	}
+	if actualMin <= 0 {
+		_ = tx.QueryRow(txCtx,
+			`SELECT COALESCE(total_duration_minutes, 60) FROM bookings WHERE id = $1`,
+			bookingID,
+		).Scan(&actualMin)
+	}
+	earnings := ComputeBookingEarnings(actualMin, completedAt)
+	if _, err := tx.Exec(txCtx,
+		`UPDATE bookings
+		    SET actual_duration_minutes = $2,
+		        pro_earnings_paise      = $3
+		  WHERE id = $1`,
+		bookingID, actualMin, earnings.TotalPaise,
+	); err != nil {
+		return fmt.Errorf("failed to write earnings snapshot: %w", err)
+	}
+
+	// Mark any still-pending booking_services rows completed too —
+	// pro tapped "finish job" so all line items are considered done.
+	if _, err := tx.Exec(txCtx,
+		`UPDATE booking_services
+		    SET status       = 'completed',
+		        completed_at = COALESCE(completed_at, now())
+		  WHERE booking_id = $1 AND status NOT IN ('completed', 'skipped')`,
+		bookingID,
+	); err != nil {
+		return fmt.Errorf("failed to flush booking_services: %w", err)
 	}
 
 	if p, merr := json.Marshal(map[string]any{"booking_id": bookingID, "customer_id": customerID, "helper_id": helperID}); merr == nil {

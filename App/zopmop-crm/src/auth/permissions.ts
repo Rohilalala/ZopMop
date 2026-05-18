@@ -10,6 +10,7 @@ export const PERMISSIONS = {
   'users.add_note': 'support',
 
   // workers
+  'workers.create': 'admin',
   'workers.approve': 'admin',
   'workers.reject': 'admin',
   'workers.suspend': 'admin',
@@ -17,11 +18,14 @@ export const PERMISSIONS = {
   'workers.force_offline': 'admin',
   'workers.set_categories': 'admin',
   'workers.add_note': 'support',
+  'workers.deduct': 'admin',
+  'workers.update': 'admin',
 
   // orders
   'orders.cancel': 'admin',
   'orders.complete': 'admin',
   'orders.reassign': 'admin',
+  'orders.add_note': 'support',
 
   // refunds
   'refunds.approve_full': 'support',
@@ -86,6 +90,17 @@ export const PERMISSIONS = {
 
   // tickets
   'tickets.resolve': 'support',
+
+  // leaves
+  'leaves.deduct': 'admin',
+
+  // zone approvals (Phase 11B)
+  'zones.approval.read': 'support',
+  'zones.approval.approve': 'admin',
+  'zones.approval.reject': 'admin',
+
+  // audit
+  'audit.read': 'admin',
 
   // growth — waitlist
   'waitlist.create': 'admin',

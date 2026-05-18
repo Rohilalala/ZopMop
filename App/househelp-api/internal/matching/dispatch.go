@@ -25,9 +25,12 @@ package matching
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -141,13 +144,28 @@ type helperEligibility struct {
 
 // checkEligibility runs the leave / locality / overlap / activeness checks for
 // a single pro. Cheap query — one round-trip, all gates together.
+//
+// Phase 10 addition: shift-aware gates. A pro is eligible only when an open
+// shift_sessions row exists (online_at IS NOT NULL AND offline_at IS NULL)
+// AND their current shift_commitment has enough remaining time to absorb
+// the booking duration + a 15-minute buffer for travel/wrap. Stops the
+// "offered to a pro 30 min from end-of-shift" class of bug.
+//
+// Zone resolution: pro_zone_assignments is the source of truth when an
+// active assignment exists; helpers.locality is the legacy fallback for
+// pros that haven't been formally zone-assigned yet. Phase 12 cleanup:
+// drop the locality fallback once CRM has migrated every active pro to
+// pro_zone_assignments.
 func (d *Dispatcher) checkEligibility(ctx context.Context, helperID string, b *scheduledBookingRow) (helperEligibility, error) {
 	var (
-		isActive    bool
-		isApproved  bool
-		helperLoc   *string
-		onLeave     bool
-		overlapping bool
+		isActive      bool
+		isApproved    bool
+		helperLoc     *string
+		zoneName      *string
+		onLeave       bool
+		overlapping   bool
+		shiftOnline   bool
+		remainingMin  *int
 	)
 	scheduledDate := b.ScheduledTime.Format("2006-01-02")
 	durationInterval := time.Duration(b.DurationMinutes) * time.Minute
@@ -158,6 +176,12 @@ func (d *Dispatcher) checkEligibility(ctx context.Context, helperID string, b *s
 		    (u.banned_at IS NULL AND u.deleted_at IS NULL)            AS is_active,
 		    COALESCE(h.approval_status = 'approved', false)            AS is_approved,
 		    h.locality                                                 AS helper_locality,
+		    (
+		        SELECT z.name FROM pro_zone_assignments a
+		          JOIN service_zones z ON z.id = a.zone_id
+		         WHERE a.pro_id = $1::uuid AND a.effective_to IS NULL
+		         LIMIT 1
+		    )                                                          AS zone_name,
 		    EXISTS (
 		        SELECT 1 FROM pro_leaves pl
 		        WHERE pl.pro_id = $1::uuid
@@ -172,12 +196,34 @@ func (d *Dispatcher) checkEligibility(ctx context.Context, helperID string, b *s
 		          AND ob.scheduled_time IS NOT NULL
 		          AND ob.scheduled_time < $4
 		          AND (ob.scheduled_time + (COALESCE(ob.total_duration_minutes, 60) || ' minutes')::interval) > $3
-		    )                                                          AS overlapping
+		    )                                                          AS overlapping,
+		    EXISTS (
+		        SELECT 1
+		          FROM shift_sessions ss
+		         WHERE ss.pro_id    = $1::uuid
+		           AND ss.online_at  IS NOT NULL
+		           AND ss.offline_at IS NULL
+		    )                                                          AS shift_online,
+		    (
+		        SELECT FLOOR(
+		            EXTRACT(EPOCH FROM (
+		                (sc.shift_date + sc.end_time)
+		                  AT TIME ZONE 'Asia/Kolkata'
+		                - now()
+		            )) / 60
+		        )::int
+		          FROM shift_commitments sc
+		          JOIN shift_sessions ss ON ss.shift_commitment_id = sc.id
+		         WHERE ss.pro_id = $1::uuid
+		           AND ss.online_at  IS NOT NULL
+		           AND ss.offline_at IS NULL
+		         LIMIT 1
+		    )                                                          AS remaining_shift_min
 		FROM users u
 		LEFT JOIN helpers h ON h.id = u.id
 		WHERE u.id = $1::uuid
 	`, helperID, scheduledDate, b.ScheduledTime, windowEnd, b.ID).Scan(
-		&isActive, &isApproved, &helperLoc, &onLeave, &overlapping,
+		&isActive, &isApproved, &helperLoc, &zoneName, &onLeave, &overlapping, &shiftOnline, &remainingMin,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -195,13 +241,34 @@ func (d *Dispatcher) checkEligibility(ctx context.Context, helperID string, b *s
 		return helperEligibility{HelperID: helperID, SkipReason: "on leave"}, nil
 	case overlapping:
 		return helperEligibility{HelperID: helperID, SkipReason: "overlapping booking"}, nil
+	case !shiftOnline:
+		return helperEligibility{HelperID: helperID, SkipReason: "not online"}, nil
 	}
-	// Locality match — case-insensitive. If booking has no locality, accept any.
+
+	// Remaining-shift-time gate: must have enough runway for the
+	// booking duration plus a 15-minute travel/wrap buffer. Skip when
+	// remainingMin is unavailable (lets pros without a wired
+	// commitment still appear — failure-open to avoid starving the
+	// pool during partial rollout).
+	if remainingMin != nil && *remainingMin < b.DurationMinutes+15 {
+		return helperEligibility{HelperID: helperID, SkipReason: "shift ending soon"}, nil
+	}
+
+	// Zone/locality match. Primary: pro_zone_assignments. Fallback:
+	// helpers.locality. If booking has no locality at all, accept any.
 	if b.Locality != nil && *b.Locality != "" {
-		if helperLoc == nil || !equalsCI(*helperLoc, *b.Locality) {
-			return helperEligibility{HelperID: helperID, SkipReason: "locality mismatch"}, nil
+		matched := false
+		if zoneName != nil && *zoneName != "" {
+			matched = equalsCI(*zoneName, *b.Locality)
+		}
+		if !matched && helperLoc != nil {
+			matched = equalsCI(*helperLoc, *b.Locality)
+		}
+		if !matched {
+			return helperEligibility{HelperID: helperID, SkipReason: "zone/locality mismatch"}, nil
 		}
 	}
+
 	return helperEligibility{HelperID: helperID, Eligible: true}, nil
 }
 
@@ -310,14 +377,26 @@ func (d *Dispatcher) inviteSinglePro(ctx context.Context, b *scheduledBookingRow
 	// the pro might still see the invite via the existing poll endpoint.
 	if d.notifications != nil {
 		dat := map[string]string{
-			"type":            "SCHEDULED_INVITE",
-			"booking_id":      b.ID,
-			"customer_id":     b.CustomerID,
-			"scheduled_time":  b.ScheduledTime.UTC().Format(time.RFC3339),
+			"type":             "SCHEDULED_INVITE",
+			"booking_id":       b.ID,
+			"customer_id":      b.CustomerID,
+			"scheduled_time":   b.ScheduledTime.UTC().Format(time.RFC3339),
 			"duration_minutes": fmt.Sprintf("%d", b.DurationMinutes),
+			"time_remaining_sec": fmt.Sprintf("%d", int(perProInviteWait.Seconds())),
 		}
 		if b.Locality != nil {
 			dat["locality"] = *b.Locality
+		}
+		// Rich offer payload — pro app uses these to render the
+		// JobOffer card without an extra GET round-trip. All values
+		// are best-effort; the chain proceeds even if enrichment
+		// fails.
+		if extras, err := d.fetchOfferEnrichment(ctx, b.ID, b.CustomerID, b.DurationMinutes); err == nil {
+			for k, v := range extras {
+				dat[k] = v
+			}
+		} else {
+			log.Warn().Err(err).Str("booking_id", b.ID).Msg("[dispatch] offer enrichment failed (continuing)")
 		}
 		if perr := d.notifications.SendData(ctx, helperID, dat); perr != nil {
 			log.Warn().Err(perr).Str("helper_id", helperID).Str("booking_id", b.ID).Msg("[dispatch] data push failed")
@@ -518,4 +597,87 @@ func (d *Dispatcher) helperName(ctx context.Context, helperID string) string {
 		return "Your pro"
 	}
 	return name
+}
+
+// offerTaskItem is the per-service line surfaced on the pro's offer
+// card. Mirrored in app/api/jobs.ts; keep in sync.
+type offerTaskItem struct {
+	ServiceName   string `json:"service_name"`
+	DurationMinutes int  `json:"duration_minutes"`
+	Quantity      int    `json:"quantity"`
+	DisplayOrder  int    `json:"display_order"`
+}
+
+// fetchOfferEnrichment loads the rich-offer payload (task list,
+// customer first name, masked address, estimated earnings) used by
+// the pro app's JobOfferScreen. Failure is non-fatal — invite chain
+// still proceeds with the minimal SCHEDULED_INVITE payload.
+//
+// Earnings preview uses the base rate × duration only (no peak /
+// weekend surcharge calc at offer time; the actual paid amount is
+// re-computed at /complete and may differ if the job runs over/under).
+func (d *Dispatcher) fetchOfferEnrichment(ctx context.Context, bookingID, customerID string, durationMin int) (map[string]string, error) {
+	out := map[string]string{}
+
+	// Customer first name + address summary.
+	var (
+		custName *string
+		address  *string
+		locality *string
+	)
+	if err := d.db.QueryRow(ctx, `
+		SELECT u.name, b.address, b.locality
+		  FROM users u
+		  JOIN bookings b ON b.id = $1::uuid
+		 WHERE u.id = $2::uuid
+	`, bookingID, customerID).Scan(&custName, &address, &locality); err != nil {
+		return nil, fmt.Errorf("fetch customer: %w", err)
+	}
+	if custName != nil && *custName != "" {
+		out["customer_first_name"] = strings.SplitN(strings.TrimSpace(*custName), " ", 2)[0]
+	}
+	if locality != nil && *locality != "" {
+		out["address_summary"] = *locality
+	} else if address != nil && *address != "" {
+		// Best-effort summary: keep up to two comma-separated trailing chunks.
+		parts := strings.Split(*address, ",")
+		if n := len(parts); n > 2 {
+			parts = parts[n-2:]
+		}
+		out["address_summary"] = strings.TrimSpace(strings.Join(parts, ","))
+	}
+
+	// Task list — booking_services rows ordered by display_order.
+	rows, err := d.db.Query(ctx, `
+		SELECT COALESCE(sc.name, ''), COALESCE(bs.duration_minutes, 0),
+		       COALESCE(bs.quantity, 1), COALESCE(bs.display_order, 0)
+		  FROM booking_services bs
+		  LEFT JOIN service_categories sc ON sc.id = bs.service_id
+		 WHERE bs.booking_id = $1::uuid
+		 ORDER BY COALESCE(bs.display_order, 0)
+	`, bookingID)
+	if err != nil {
+		return out, fmt.Errorf("fetch services: %w", err)
+	}
+	defer rows.Close()
+	var tasks []offerTaskItem
+	for rows.Next() {
+		var t offerTaskItem
+		if err := rows.Scan(&t.ServiceName, &t.DurationMinutes, &t.Quantity, &t.DisplayOrder); err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+	if encoded, jerr := json.Marshal(tasks); jerr == nil {
+		out["task_list_json"] = string(encoded)
+	}
+
+	// Earnings preview: base rate × duration, no surcharges at offer
+	// time. Mirrors booking.ComputeBookingEarnings base path.
+	const baseRatePaisePerHour = 8000
+	estEarnings := int64(math.Round(float64(durationMin) / 60.0 * baseRatePaisePerHour))
+	out["estimated_earnings_paise"] = fmt.Sprintf("%d", estEarnings)
+	out["estimated_duration_minutes"] = fmt.Sprintf("%d", durationMin)
+
+	return out, nil
 }

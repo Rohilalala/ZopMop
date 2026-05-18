@@ -14,18 +14,16 @@ import {
 } from 'react-native';
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getAuth, signInWithPhoneNumber } from '@react-native-firebase/auth';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
-import { otpStore } from '../../utils/otpStore';
 import { haptics } from '../../utils/haptics';
-import { BASE_URL } from '../../api/config';
 import { IndiaFlag } from '../../components/ui/IndiaFlag';
 import { posthog } from '../../config/posthog';
+import { sendOTP, AuthError } from '../../services/auth';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'PhoneEntry'>;
@@ -97,44 +95,27 @@ export default function PhoneEntryScreen({ navigation }: Props) {
     const fullPhone = `${COUNTRY_CODE}${phone.replace(/\s/g, '')}`;
 
     try {
-      // Ask the backend whether this phone is new — drives the privacy-policy
-      // checkbox on the OTP screen. Run in parallel with Firebase OTP send.
-      // Failure (offline, cooldown 429, etc.) defaults isNewUser=false; the
-      // verify-otp call still tolerates either branch.
-      const isNewUserPromise = (async () => {
-        try {
-          const res = await fetch(`${BASE_URL}/auth/send-otp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone: fullPhone }),
-          });
-          if (!res.ok) return false;
-          const data = await res.json();
-          return Boolean(data?.is_new_user);
-        } catch {
-          return false;
-        }
-      })();
-
-      const firebaseAuth = getAuth();
-      if (__DEV__) {
-        firebaseAuth.settings.appVerificationDisabledForTesting = true;
-      }
-      // @ts-ignore
-      const confirmation = await signInWithPhoneNumber(firebaseAuth, fullPhone);
-      otpStore.set(confirmation);
-      const isNewUser = await isNewUserPromise;
-      posthog.capture('otp_requested', { is_new_user: isNewUser });
-      navigation.navigate('OTPVerification', { phone: fullPhone, isNewUser });
+      const resp = await sendOTP(fullPhone);
+      posthog.capture('otp_requested', { is_new_user: resp.is_new_user });
+      navigation.navigate('OTPVerification', { phone: fullPhone, isNewUser: resp.is_new_user });
     } catch (err: any) {
-      const msg =
-        err?.code === 'auth/invalid-phone-number'
-          ? 'Invalid phone number. Please check and try again.'
-          : err?.code === 'auth/too-many-requests'
-            ? 'Too many attempts. Please try again later.'
-            : `Failed to send verification code. (${err?.code ?? err?.message ?? 'unknown'})`;
       haptics.error();
-      setError(msg);
+      if (err instanceof AuthError) {
+        if (err.code === 'OTP_RATE_LIMITED') {
+          const mins = err.retryAfter ? Math.ceil(err.retryAfter / 60) : 0;
+          setError(mins > 0
+            ? `Too many attempts. Please try again in ${mins} minute${mins > 1 ? 's' : ''}.`
+            : 'Too many attempts. Please try again later.');
+        } else if (err.status === 422) {
+          setError('Invalid phone number. Please check and try again.');
+        } else if (err.status === 403) {
+          setError(err.message || 'This account has been suspended. Contact support.');
+        } else {
+          setError(err.message || 'Failed to send verification code.');
+        }
+      } else {
+        setError('Network error. Check your connection and try again.');
+      }
     } finally {
       setLoading(false);
     }

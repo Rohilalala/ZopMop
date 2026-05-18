@@ -95,7 +95,7 @@ func (h *Handler) clearAuthCookie(c *fiber.Ctx) {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/send-otp", h.SendOTP)
 	router.Post("/verify-otp", h.VerifyOTP)
-	router.Post("/firebase", h.VerifyFirebase)
+	router.Post("/refresh", h.Refresh)
 	router.Post("/logout", h.Logout)
 }
 
@@ -272,22 +272,30 @@ func (h *Handler) DeleteMe(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "account deleted"})
 }
 
-// Logout clears the auth cookie. Safe to call unauthenticated — cookie auth
-// clients call this to evict the HttpOnly cookie; mobile / Bearer clients can
-// drop the token client-side and need not call this.
+// Logout clears the auth cookie AND revokes the supplied refresh
+// token if one is provided in the body. Safe to call unauthenticated.
+// Cookie-based browser clients send an empty body; mobile clients
+// pass {refresh_token: "..."} so the row can be marked revoked
+// server-side and a stolen plaintext can't be reused.
 func (h *Handler) Logout(c *fiber.Ctx) error {
+	var req LogoutRequest
+	_ = c.BodyParser(&req)
+	if req.RefreshToken != "" && h.service != nil {
+		if err := h.service.RevokeRefresh(c.UserContext(), req.RefreshToken); err != nil {
+			log.Warn().Err(err).Msg("[auth] logout revoke refresh failed (non-fatal)")
+		}
+	}
 	h.clearAuthCookie(c)
 	return c.JSON(fiber.Map{"message": "logged out"})
 }
 
 // SendOTP handles POST /auth/send-otp.
 //
-// Two-tier rate limit applies:
-//  1. The route-level IP limiter (SensitivePublicRateLimit, 20/min) catches
-//     burst floods from one address.
-//  2. This per-phone Redis counter (3 sends per 5 minutes) catches the case
-//     where many addresses pile onto a single victim's number to drain SMS
-//     credits or trigger SMS-bombing.
+// Post-Firebase MSG91 flow. Per-phone (3/15m) + per-IP (5/15m)
+// limits are enforced inside the service via the OTPRateLimiter —
+// duplicating them here would burn the counter twice per call.
+// MSG91_DEV_MODE=true short-circuits the SMS call and seeds the
+// hardcoded OTP "9999" so testers can complete the flow.
 func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	var req OTPRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -301,27 +309,11 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	if h.rdb != nil {
-		const otpMaxPerWindow = 3
-		const otpWindow = 5 * time.Minute
-		key := fmt.Sprintf("otp:phone:%s", req.Phone)
-		ctx, cancel := context.WithTimeout(c.UserContext(), 500*time.Millisecond)
-		defer cancel()
-		count, incrErr := h.rdb.Incr(ctx, key).Result()
-		if incrErr == nil {
-			if count == 1 {
-				_ = h.rdb.Expire(ctx, key, otpWindow).Err()
-			}
-			if count > otpMaxPerWindow {
-				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-					"error": "too many OTP requests for this number — try again in a few minutes",
-					"code":  "OTP_RATE_LIMITED",
-				})
-			}
-		}
+	if h.service == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "auth service not ready"})
 	}
 
-	otp, isNewUser, err := h.service.SendOTP(c.UserContext(), req.Phone)
+	otp, isNewUser, err := h.service.SendOTPMSG91(c.UserContext(), req.Phone, c.IP())
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("failed to send OTP")
 		return mapSendOTPError(c, err)
@@ -338,28 +330,11 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(response)
 }
 
-// VerifyFirebase handles POST /auth/firebase.
-func (h *Handler) VerifyFirebase(c *fiber.Ctx) error {
-	var req FirebaseAuthRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
-	}
-
-	if req.FirebaseToken == "" {
-		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": "firebase_token is required"})
-	}
-
-	loginResp, err := h.service.VerifyFirebaseToken(c.UserContext(), req.FirebaseToken, req.HasAcceptedPrivacyPolicy)
-	if err != nil {
-		log.Error().Err(err).Msg("firebase auth failed")
-		return mapVerifyFirebaseError(c, err)
-	}
-
-	h.setAuthCookie(c, loginResp.Token, h.service.JWTExpiry())
-	return c.Status(fiber.StatusOK).JSON(loginResp)
-}
-
-// VerifyOTP handles POST /auth/verify-otp.
+// VerifyOTP handles POST /auth/verify-otp. Hits MSG91, upserts the
+// user, and issues both access + refresh tokens. The access JWT is
+// also mirrored into the HttpOnly auth_token cookie so cookie-based
+// browser clients (admin dashboard) keep working without code
+// changes; mobile clients use the access_token from the body.
 func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 	var req OTPVerifyRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -373,17 +348,57 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	loginResp, err := h.service.VerifyOTP(c.UserContext(), req.Phone, req.Code, req.HasAcceptedPrivacyPolicy)
+	if h.service == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "auth service not ready"})
+	}
+
+	loginResp, err := h.service.VerifyOTPMSG91(c.UserContext(), req.Phone, req.Code, req.HasAcceptedPrivacyPolicy)
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("OTP verification failed")
 		return mapVerifyOTPError(c, err)
 	}
 
-	h.setAuthCookie(c, loginResp.Token, h.service.JWTExpiry())
+	h.setAuthCookie(c, loginResp.AccessToken, h.service.AccessTTL())
 	return c.Status(fiber.StatusOK).JSON(loginResp)
 }
 
-// Me handles GET /me — returns the authenticated user's profile.
+// Refresh handles POST /auth/refresh. Rotates the refresh token —
+// the prior plaintext becomes single-use, a new one is returned.
+// Refresh-token plaintext travels in the JSON body so it never
+// shows up in URL logs or Referer headers.
+func (h *Handler) Refresh(c *fiber.Ctx) error {
+	var req RefreshRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+	if h.service == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "auth service not ready"})
+	}
+
+	loginResp, err := h.service.Refresh(c.UserContext(), req.RefreshToken)
+	if err != nil {
+		// Any reason maps to 401. Never leak whether the row existed,
+		// was revoked, or expired — that's an oracle.
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid refresh token",
+			"code":  "REFRESH_INVALID",
+		})
+	}
+
+	h.setAuthCookie(c, loginResp.AccessToken, h.service.AccessTTL())
+	return c.Status(fiber.StatusOK).JSON(loginResp)
+}
+
+// Me handles GET /me — returns the authenticated user's profile in
+// the UserView shape (with `type` derived from role + the
+// has_accepted_privacy_policy flag). Matches the body of
+// verify-otp/refresh so clients can deserialize into a single type.
 func (h *Handler) Me(c *fiber.Ctx) error {
 	userID, ok := c.Locals("userID").(string)
 	if !ok || userID == "" {
@@ -399,7 +414,7 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch profile"})
 	}
 
-	return c.JSON(user)
+	return c.JSON(user.ToView())
 }
 
 // UpdateMe handles PUT /me — updates name and/or email.
@@ -427,7 +442,7 @@ func (h *Handler) UpdateMe(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update profile"})
 	}
 
-	return c.JSON(user)
+	return c.JSON(user.ToView())
 }
 
 // OnboardPro handles POST /me/onboard-pro — upgrades a user to 'pro' and creates a helper record.
@@ -519,6 +534,15 @@ func (h *Handler) RegisterDevice(c *fiber.Ctx) error {
 }
 
 func mapSendOTPError(c *fiber.Ctx, err error) error {
+	if rl, ok := IsRateLimited(err); ok {
+		c.Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds())))
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error":       "too many requests",
+			"code":        "OTP_RATE_LIMITED",
+			"scope":       rl.Scope,
+			"retry_after": int(rl.RetryAfter.Seconds()),
+		})
+	}
 	var otpLocked *ErrOTPLocked
 	if errors.As(err, &otpLocked) {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": otpLocked.Error()})
@@ -531,10 +555,26 @@ func mapSendOTPError(c *fiber.Ctx, err error) error {
 			"retry_after": int(otpCooldown.RetryAfter.Seconds()),
 		})
 	}
+	var accountSuspended *ErrAccountSuspended
+	if errors.As(err, &accountSuspended) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": accountSuspended.Error()})
+	}
+	if errors.Is(err, ErrMSG91Misconfigured) {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OTP gateway unavailable"})
+	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to send OTP"})
 }
 
 func mapVerifyOTPError(c *fiber.Ctx, err error) error {
+	if rl, ok := IsRateLimited(err); ok {
+		c.Set("Retry-After", strconv.Itoa(int(rl.RetryAfter.Seconds())))
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error":       "too many verification attempts",
+			"code":        "OTP_RATE_LIMITED",
+			"scope":       rl.Scope,
+			"retry_after": int(rl.RetryAfter.Seconds()),
+		})
+	}
 	var otpLocked *ErrOTPLocked
 	if errors.As(err, &otpLocked) {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": otpLocked.Error()})
@@ -558,18 +598,3 @@ func mapVerifyOTPError(c *fiber.Ctx, err error) error {
 	}
 }
 
-func mapVerifyFirebaseError(c *fiber.Ctx, err error) error {
-	var accountSuspended *ErrAccountSuspended
-	if errors.As(err, &accountSuspended) {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": accountSuspended.Error()})
-	}
-
-	switch {
-	case errors.Is(err, ErrInvalidFirebaseToken), errors.Is(err, ErrFirebasePhoneMissing):
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid firebase token"})
-	case errors.Is(err, ErrFirebaseClientUnavailable):
-		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "authentication provider unavailable"})
-	default:
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to verify firebase token"})
-	}
-}

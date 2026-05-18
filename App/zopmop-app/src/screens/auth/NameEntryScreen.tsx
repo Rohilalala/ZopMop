@@ -21,7 +21,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { updateMe } from '../../api/users';
-import { pendingAuthStore } from '../../utils/pendingAuthStore';
+import { useAuth } from '../../context/AuthContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NameEntry'>;
@@ -39,6 +39,7 @@ function sanitizeName(raw: string): string {
 
 export default function NameEntryScreen({ navigation, route }: Props) {
   const { phone } = route.params;
+  const { token, updateUser } = useAuth();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
   const [name, setName] = useState('');
@@ -97,10 +98,9 @@ export default function NameEntryScreen({ navigation, route }: Props) {
     setLoading(true);
 
     try {
-      const pending = pendingAuthStore.get();
-      if (pending?.token) {
-        const updatedUser = await updateMe(pending.token, sanitized);
-        pendingAuthStore.set(pending.token, updatedUser);
+      if (token) {
+        const updatedUser = await updateMe(token, sanitized);
+        updateUser(updatedUser);
       }
       navigation.replace('Location', { phone, name: sanitized });
     } catch {

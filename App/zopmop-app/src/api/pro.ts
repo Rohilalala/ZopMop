@@ -5,10 +5,16 @@ import { BASE_URL, authHeaders } from './config';
 
 export type HelperBookingStatus =
   | 'pending'
+  | 'searching'
+  | 'dispatching'
   | 'accepted'
+  | 'arrived'
   | 'in_progress'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'pending_customer_action'
+  | 'no_pro_available'
+  | 'no_show';
 
 export interface HelperBooking {
   id: string;
