@@ -20,6 +20,7 @@ import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { usePermission } from '@/auth/usePermission';
+import { formatRupees } from '@/lib/formatters';
 
 // UserDrawer: tabbed detail view. Overview | Orders | Notes.
 

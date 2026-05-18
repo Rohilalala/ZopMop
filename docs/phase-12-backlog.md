@@ -114,3 +114,7 @@ priority bucket. Priorities are P0 (regulatory / security blockers), P1
 - **P2 — CRM polygon editor** — admin can draw multi-vertex zone boundaries instead of circles; replaces lat/lon/radius_km when set. Today `internal/crm/zones/zones.go:2` confirms circle-only.
 - **P2 — Dispatcher adopts `service_zones.boundary`** — ST_Contains/ST_Within check when boundary is set; falls back to `pro_zone_assignments` + `helpers.locality` otherwise. Today `dispatch.go:181` only JOINs for zone name; the GEOGRAPHY(POLYGON) column from migration 100 is dead.
 
+## CRM worker management
+
+- **P1 — Rebuild WorkerDrawer with 4 tabs.** Phase D claim of 803 LOC was hallucination; file was committed empty. Need full Profile/Performance/Actions/Deductions structure with manual deduction form, leave adjustment, send notification, deductions history per Phase D spec. ~2-3 hours of focused work.
+
