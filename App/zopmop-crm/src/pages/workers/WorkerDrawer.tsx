@@ -1,36 +1,1284 @@
+import { useEffect, useState } from 'react';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { format, formatDistanceToNow } from 'date-fns';
+import {
+  AlertTriangle,
+  Bell,
+  BadgeCheck,
+  Briefcase,
+  CalendarDays,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  IndianRupee,
+  Star,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
+import {
+  addDeduction,
+  approveWorker,
+  forceOffline,
+  getWorker,
+  getWorkerJobs,
+  listDeductions,
+  rejectWorker,
+  setWorkerCategories,
+  setWorkerLocality,
+  suspendWorker,
+  unsuspendWorker,
+  workerActiveJob,
+  workerKeys,
+  type Status,
+  type WorkerDetail,
+} from '@/api/workers';
+import { allocateLeave, getBalances } from '@/api/leaves';
+import { listLocalities } from '@/api/localities';
+import { growthApi } from '@/api/all';
+import { Can } from '@/auth/Can';
+import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { Drawer } from '@/components/ui/Drawer';
+import { ConfirmModal, Modal } from '@/components/ui/Modal';
+import { showToast } from '@/components/ui/Toast';
+import { formatRupees, formatRupeesExact } from '@/lib/formatters';
 
-// Placeholder. Phase D's reported 803-LOC 4-tab drawer was a
-// hallucination — the file was committed empty in 89f568f. This stub
-// satisfies WorkersPage's import contract and shows admin workarounds
-// until the real rebuild lands (filed P1 in docs/phase-12-backlog.md).
+// WorkerDrawer — full 4-tab worker detail panel. Rebuilt from scratch after
+// Phase D's reported 803-LOC implementation turned out to be an empty commit
+// (89f568f shipped 0 bytes; a317839 stubbed it so CI could pass).
+//
+// Every API contract here was verified against src/api/*.ts before use — no
+// invented fields. Where the WorkerDetail payload lacks something the Phase D
+// spec asked for (email, weekly_hours_target), the row is omitted rather than
+// faked: Fiber's struct unmarshal silently drops unknown keys, so a fabricated
+// field would make the UI lie about what is actually persisted.
 
-interface WorkerDrawerProps {
-  workerId: string | null;
-  onClose: () => void;
+type TabId = 'profile' | 'performance' | 'actions' | 'deductions';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'performance', label: 'Performance' },
+  { id: 'actions', label: 'Actions' },
+  { id: 'deductions', label: 'Deductions' },
+];
+
+// Mirrors WorkerNewPage's CATEGORY_OPTIONS. Kept local rather than imported so
+// the drawer doesn't pull the whole registration page into its chunk.
+const CATEGORY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'utensils', label: 'Utensils' },
+  { value: 'sweep_mop', label: 'Sweep & Mop' },
+  { value: 'dusting', label: 'Dusting' },
+  { value: 'bathroom', label: 'Bathroom' },
+  { value: 'kitchen_prep', label: 'Kitchen Prep' },
+  { value: 'laundry', label: 'Laundry' },
+  { value: 'ironing', label: 'Ironing' },
+  { value: 'balcony', label: 'Balcony' },
+];
+
+const STATUS_TONE: Record<Status, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  active: 'success',
+  pending: 'warning',
+  rejected: 'danger',
+  suspended: 'danger',
+  banned: 'danger',
+};
+
+function cap(s: string | null | undefined): string {
+  if (!s) return '—';
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function WorkerDrawer({ workerId, onClose }: WorkerDrawerProps) {
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d, yyyy');
+}
+
+function fmtRel(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? '—'
+    : formatDistanceToNow(d, { addSuffix: true });
+}
+
+// Mask all but the last 4 digits, grouping the X prefix into the bank/aadhaar
+// shape the spec asked for. The visible suffix is the last 4 of the raw value.
+function maskTail(raw: string | null | undefined, groups: number[]): string {
+  if (!raw) return '—';
+  const last4 = raw.slice(-4);
+  const prefix = groups.map((n) => 'X'.repeat(n)).join('-');
+  return `${prefix}-${last4}`;
+}
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+export function WorkerDrawer({
+  workerId,
+  onClose,
+}: {
+  workerId: string | null;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<TabId>('profile');
+
+  // Reset to the first tab whenever a different worker is opened.
+  useEffect(() => {
+    setTab('profile');
+  }, [workerId]);
+
+  const detailQ = useQuery({
+    queryKey: workerId
+      ? workerKeys.detail(workerId)
+      : ['workers', 'detail', 'none'],
+    queryFn: () => getWorker(workerId as string),
+    enabled: !!workerId,
+  });
+
+  const worker = detailQ.data;
+
   return (
     <Drawer open={workerId != null} onClose={onClose}>
-      <div className="p-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold">Worker Detail</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Full worker detail view is being rebuilt. For pilot use, manage workers via:
-          </p>
-        </div>
-        <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-          <li>Manual deductions: SQL on admin_pro_deductions</li>
-          <li>Leave adjustments: POST /admin/pro/:id/leave/allocate (curl)</li>
-          <li>Push notifications: /push page (target_kind=specific, user_ids=[workerId])</li>
-        </ul>
-        {workerId && (
-          <p className="text-xs text-muted-foreground font-mono">
-            Worker ID: {workerId}
-          </p>
+      <div className="flex flex-col h-full">
+        {detailQ.isLoading && (
+          <div className="p-6 space-y-4">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-8 w-2/3" />
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+        )}
+
+        {detailQ.isError && (
+          <div className="p-6">
+            <EmptyState
+              icon={<AlertTriangle className="w-8 h-8" />}
+              title="Worker not found"
+              body="Stale link — this worker may have been removed, or the id in the URL is no longer valid."
+            />
+          </div>
+        )}
+
+        {worker && (
+          <>
+            <Header worker={worker} />
+
+            <div className="px-6 border-b border-border flex gap-1">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`px-3 py-2.5 text-sm font-medium border-b-2 transition -mb-px ${
+                    tab === t.id
+                      ? 'border-primary text-text-primary'
+                      : 'border-transparent text-text-muted hover:text-text-secondary'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {tab === 'profile' && <ProfileTab worker={worker} qc={qc} />}
+              {tab === 'performance' && (
+                <PerformanceTab worker={worker} navigate={navigate} />
+              )}
+              {tab === 'actions' && <ActionsTab worker={worker} qc={qc} />}
+              {tab === 'deductions' && (
+                <DeductionsTab workerId={worker.id} />
+              )}
+            </div>
+          </>
         )}
       </div>
     </Drawer>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Header
+// ──────────────────────────────────────────────────────────────────────────
+
+function Header({ worker }: { worker: WorkerDetail }) {
+  const initial = (worker.name?.trim()?.[0] ?? '?').toUpperCase();
+  return (
+    <div className="p-6 pr-12 flex items-start gap-4 border-b border-border">
+      <div className="w-12 h-12 rounded-full bg-surface-elevated border border-border flex items-center justify-center text-lg font-semibold text-text-primary shrink-0">
+        {initial}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-lg font-semibold text-text-primary truncate">
+            {worker.name || 'Unnamed worker'}
+          </h2>
+          <StatusPill tone={STATUS_TONE[worker.status]}>
+            {cap(worker.status)}
+          </StatusPill>
+          {worker.is_online && <StatusPill tone="success">Online</StatusPill>}
+        </div>
+        <p className="text-sm text-text-secondary mt-1">{worker.phone}</p>
+        <p className="text-xs text-text-muted mt-0.5">
+          {worker.locality || 'No locality set'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Shared bits
+// ──────────────────────────────────────────────────────────────────────────
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-4 py-1.5 text-sm">
+      <span className="text-text-muted shrink-0">{label}</span>
+      <span className="text-text-primary text-right break-words">{value}</span>
+    </div>
+  );
+}
+
+function Chips({ items }: { items: string[] }) {
+  if (!items.length) return <span className="text-text-primary">—</span>;
+  return (
+    <span className="flex flex-wrap gap-1 justify-end">
+      {items.map((c) => (
+        <span
+          key={c}
+          className="pill border-border text-text-secondary bg-surface-elevated"
+        >
+          {CATEGORY_OPTIONS.find((o) => o.value === c)?.label ?? c}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-xs uppercase tracking-wider text-text-muted mb-3">
+      {children}
+    </h3>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 1 — Profile
+// ──────────────────────────────────────────────────────────────────────────
+
+function ProfileTab({
+  worker,
+  qc,
+}: {
+  worker: WorkerDetail;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const [showAadhaar, setShowAadhaar] = useState(false);
+  const [showBank, setShowBank] = useState(false);
+  const [editLoc, setEditLoc] = useState(false);
+  const [editCats, setEditCats] = useState(false);
+
+  const [reasonModal, setReasonModal] = useState<null | 'suspend' | 'reject'>(
+    null,
+  );
+  const [reason, setReason] = useState('');
+  const [confirm, setConfirm] = useState<
+    null | 'unsuspend' | 'approve' | 'offline'
+  >(null);
+
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: workerKeys.detail(worker.id) });
+
+  const localitiesQ = useQuery({
+    queryKey: ['localities', 'active'],
+    queryFn: () => listLocalities({ activeOnly: true }),
+    enabled: editLoc,
+  });
+
+  const locMut = useMutation({
+    mutationFn: (loc: string) => setWorkerLocality(worker.id, loc),
+    onSuccess: (canonical) => {
+      showToast({
+        kind: 'success',
+        message: `Locality set to ${canonical || '—'}`,
+      });
+      setEditLoc(false);
+      invalidate();
+    },
+  });
+
+  const catMut = useMutation({
+    mutationFn: (cats: string[]) => setWorkerCategories(worker.id, cats),
+    onSuccess: () => {
+      showToast({ kind: 'success', message: 'Categories updated' });
+      setEditCats(false);
+      invalidate();
+    },
+  });
+
+  const lifecycleMut = useMutation({
+    mutationFn: async (
+      kind: 'suspend' | 'reject' | 'unsuspend' | 'approve' | 'offline',
+    ) => {
+      if (kind === 'suspend') return suspendWorker(worker.id, reason);
+      if (kind === 'reject') return rejectWorker(worker.id, reason);
+      if (kind === 'unsuspend') return unsuspendWorker(worker.id);
+      if (kind === 'approve') return approveWorker(worker.id);
+      return forceOffline(worker.id);
+    },
+    onSuccess: (_d, kind) => {
+      showToast({ kind: 'success', message: `Worker ${kind} done` });
+      setReason('');
+      setReasonModal(null);
+      setConfirm(null);
+      invalidate();
+    },
+    onError: () =>
+      showToast({ kind: 'error', message: 'Action failed — try again' }),
+  });
+
+  const [catDraft, setCatDraft] = useState<string[]>(worker.categories);
+  useEffect(() => setCatDraft(worker.categories), [worker.categories]);
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <SectionTitle>Personal Info</SectionTitle>
+        <Field label="Name" value={worker.name || '—'} />
+        <Field label="Date of birth" value={fmtDate(worker.dob)} />
+        <Field label="Gender" value={cap(worker.gender)} />
+        <Field
+          label="Languages"
+          value={<Chips items={worker.languages ?? []} />}
+        />
+      </Card>
+
+      <Card>
+        <SectionTitle>Contact Info</SectionTitle>
+        <Field label="Phone" value={worker.phone} />
+        <Field label="Alt phone" value={worker.alt_phone || '—'} />
+        <Field label="Address" value={worker.address || '—'} />
+        <Field
+          label="Emergency contact"
+          value={
+            worker.emergency_contact_name || worker.emergency_contact_phone
+              ? `${worker.emergency_contact_name || '—'} · ${
+                  worker.emergency_contact_phone || '—'
+                }`
+              : '—'
+          }
+        />
+      </Card>
+
+      <Card>
+        <SectionTitle>Work Info</SectionTitle>
+
+        <div className="flex justify-between gap-4 py-1.5 text-sm items-start">
+          <span className="text-text-muted shrink-0">Locality</span>
+          {editLoc ? (
+            <div className="flex flex-col items-end gap-2">
+              <select
+                className="input"
+                defaultValue={worker.locality ?? ''}
+                onChange={(e) => locMut.mutate(e.target.value)}
+                disabled={locMut.isPending || localitiesQ.isLoading}
+              >
+                <option value="">— Clear —</option>
+                {(localitiesQ.data ?? []).map((l) => (
+                  <option key={l.id} value={l.name}>
+                    {l.name} ({l.city})
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn-ghost !py-1 !px-2 text-xs"
+                onClick={() => setEditLoc(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <span className="text-text-primary text-right">
+              {worker.locality || '—'}{' '}
+              <button
+                className="text-primary text-xs ml-2"
+                onClick={() => setEditLoc(true)}
+              >
+                Edit
+              </button>
+            </span>
+          )}
+        </div>
+
+        <div className="flex justify-between gap-4 py-1.5 text-sm items-start">
+          <span className="text-text-muted shrink-0">Categories</span>
+          {editCats ? (
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-wrap gap-1.5 justify-end max-w-xs">
+                {CATEGORY_OPTIONS.map((c) => {
+                  const on = catDraft.includes(c.value);
+                  return (
+                    <button
+                      key={c.value}
+                      onClick={() =>
+                        setCatDraft((d) =>
+                          on
+                            ? d.filter((x) => x !== c.value)
+                            : [...d, c.value],
+                        )
+                      }
+                      className={`pill ${
+                        on
+                          ? 'border-primary/30 text-primary/90 bg-primary/10'
+                          : 'border-border text-text-muted bg-surface-elevated'
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="btn-ghost !py-1 !px-2 text-xs"
+                  onClick={() => {
+                    setCatDraft(worker.categories);
+                    setEditCats(false);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary !py-1 !px-2 text-xs"
+                  disabled={catMut.isPending}
+                  onClick={() => catMut.mutate(catDraft)}
+                >
+                  {catMut.isPending ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <span className="text-text-primary text-right inline-flex items-center gap-2">
+              <Chips items={worker.categories} />
+              <button
+                className="text-primary text-xs"
+                onClick={() => setEditCats(true)}
+              >
+                Edit
+              </button>
+            </span>
+          )}
+        </div>
+
+        <Field
+          label="Approval status"
+          value={
+            <StatusPill tone={STATUS_TONE[worker.status]}>
+              {cap(worker.status)}
+            </StatusPill>
+          }
+        />
+      </Card>
+
+      {/* PII — visually separated, handled with care. */}
+      <div className="rounded-lg border border-warning/20 bg-warning/5 p-5 space-y-4">
+        <div className="flex items-center gap-2 text-warning">
+          <AlertTriangle className="w-4 h-4" />
+          <h3 className="text-xs uppercase tracking-wider font-semibold">
+            PII — handle carefully
+          </h3>
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex justify-between gap-4 text-sm items-center">
+            <span className="text-text-muted">Aadhaar</span>
+            <span className="flex items-center gap-2 text-text-primary font-mono">
+              {showAadhaar
+                ? worker.aadhaar_number || '—'
+                : maskTail(worker.aadhaar_number, [4, 4])}
+              {worker.aadhaar_number && (
+                <button
+                  onClick={() => setShowAadhaar((v) => !v)}
+                  className="text-text-muted hover:text-text-primary"
+                  aria-label="toggle aadhaar"
+                >
+                  {showAadhaar ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              )}
+              {worker.aadhaar_verified ? (
+                <CheckCircle2 className="w-4 h-4 text-success" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-warning" />
+              )}
+            </span>
+          </div>
+
+          <Field
+            label="Bank holder"
+            value={worker.bank_account_holder_name || '—'}
+          />
+
+          <div className="flex justify-between gap-4 text-sm items-center">
+            <span className="text-text-muted">Bank account</span>
+            <span className="flex items-center gap-2 text-text-primary font-mono">
+              {showBank
+                ? worker.bank_account_number || '—'
+                : maskTail(worker.bank_account_number, [3, 4])}
+              {worker.bank_account_number && (
+                <button
+                  onClick={() => setShowBank((v) => !v)}
+                  className="text-text-muted hover:text-text-primary"
+                  aria-label="toggle bank account"
+                >
+                  {showBank ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              )}
+              {worker.bank_verified ? (
+                <CheckCircle2 className="w-4 h-4 text-success" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-warning" />
+              )}
+            </span>
+          </div>
+
+          <Field label="IFSC" value={worker.bank_ifsc || '—'} />
+        </div>
+
+        {worker.photo_url && (
+          <a
+            href={worker.photo_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block"
+          >
+            <img
+              src={worker.photo_url}
+              alt="worker"
+              className="w-20 h-20 rounded object-cover border border-border"
+            />
+          </a>
+        )}
+
+        <p className="text-xs text-text-muted">
+          Reveal is local to this view — no audit endpoint yet (Phase 12 P0).
+        </p>
+      </div>
+
+      {/* Lifecycle action buttons */}
+      <div className="flex flex-wrap gap-2">
+        {worker.status === 'active' && (
+          <button
+            className="btn-danger"
+            onClick={() => setReasonModal('suspend')}
+          >
+            Suspend
+          </button>
+        )}
+        {worker.status === 'suspended' && (
+          <button
+            className="btn-primary"
+            onClick={() => setConfirm('unsuspend')}
+          >
+            Reactivate
+          </button>
+        )}
+        {worker.status === 'pending' && (
+          <>
+            <button
+              className="btn-primary"
+              onClick={() => setConfirm('approve')}
+            >
+              Approve
+            </button>
+            <button
+              className="btn-danger"
+              onClick={() => setReasonModal('reject')}
+            >
+              Reject
+            </button>
+          </>
+        )}
+        {worker.is_online && (
+          <button
+            className="btn-ghost"
+            onClick={() => setConfirm('offline')}
+          >
+            Force offline
+          </button>
+        )}
+      </div>
+
+      {/* Reason prompt for suspend / reject (free-text, so not ConfirmModal) */}
+      <Modal
+        open={reasonModal != null}
+        onClose={() => {
+          setReasonModal(null);
+          setReason('');
+        }}
+        title={reasonModal === 'reject' ? 'Reject worker' : 'Suspend worker'}
+      >
+        <p className="text-sm text-text-secondary mb-4">
+          This is logged against your admin id. Provide a reason.
+        </p>
+        <textarea
+          className="input min-h-[90px] w-full"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Reason"
+        />
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              setReasonModal(null);
+              setReason('');
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn-danger"
+            disabled={reason.trim().length < 3 || lifecycleMut.isPending}
+            onClick={() =>
+              lifecycleMut.mutate(reasonModal as 'suspend' | 'reject')
+            }
+          >
+            {lifecycleMut.isPending ? 'Working…' : 'Confirm'}
+          </button>
+        </div>
+      </Modal>
+
+      <ConfirmModal
+        open={confirm != null}
+        onClose={() => setConfirm(null)}
+        onConfirm={() =>
+          lifecycleMut.mutateAsync(
+            confirm as 'unsuspend' | 'approve' | 'offline',
+          )
+        }
+        title={
+          confirm === 'approve'
+            ? 'Approve worker'
+            : confirm === 'unsuspend'
+              ? 'Reactivate worker'
+              : 'Force worker offline'
+        }
+        impact={
+          confirm === 'approve'
+            ? 'Worker can start receiving jobs immediately.'
+            : confirm === 'unsuspend'
+              ? 'Worker returns to active and can be matched again.'
+              : 'Worker is pushed offline and drops out of matching until they re-open the app.'
+        }
+        confirmLabel="Confirm"
+        destructive={confirm === 'offline'}
+      />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 2 — Performance
+// ──────────────────────────────────────────────────────────────────────────
+
+function Stat({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-center gap-1.5 text-text-muted text-xs mb-1">
+        {icon}
+        {label}
+      </div>
+      <div className="text-lg font-semibold text-text-primary">{value}</div>
+    </div>
+  );
+}
+
+function PerformanceTab({
+  worker,
+  navigate,
+}: {
+  worker: WorkerDetail;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  const activeQ = useQuery({
+    queryKey: ['workers', worker.id, 'active-job'],
+    queryFn: () => workerActiveJob(worker.id),
+  });
+
+  const jobsQ = useQuery({
+    queryKey: ['workers', worker.id, 'jobs'],
+    queryFn: () => getWorkerJobs(worker.id),
+  });
+
+  const jobs = (jobsQ.data ?? []).slice(0, 10);
+
+  return (
+    <div className="space-y-5">
+      {activeQ.data?.has_active && activeQ.data.booking_id && (
+        <button
+          onClick={() => navigate(`/orders?id=${activeQ.data!.booking_id}`)}
+          className="w-full text-left rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm text-success/90 hover:bg-success/15 transition"
+        >
+          Currently working — view active order →
+        </button>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Stat
+          icon={<Star className="w-3.5 h-3.5" />}
+          label="Rating"
+          value={worker.rating != null ? worker.rating.toFixed(1) : '—'}
+        />
+        <Stat
+          icon={<Briefcase className="w-3.5 h-3.5" />}
+          label="Total jobs"
+          value={worker.total_jobs ?? '—'}
+        />
+        <Stat
+          icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+          label="Completed (30d)"
+          value={worker.completed_jobs_30d ?? '—'}
+        />
+        <Stat
+          icon={<IndianRupee className="w-3.5 h-3.5" />}
+          label="Earnings (30d)"
+          value={formatRupees(worker.earnings_30d_cents)}
+        />
+        <Stat
+          icon={<AlertTriangle className="w-3.5 h-3.5" />}
+          label="Cancellation rate"
+          value={
+            worker.cancellation_rate != null
+              ? `${(worker.cancellation_rate * 100).toFixed(1)}%`
+              : '—'
+          }
+        />
+        <Stat
+          icon={<CalendarDays className="w-3.5 h-3.5" />}
+          label="Joined"
+          value={fmtRel(worker.joined_at)}
+        />
+      </div>
+
+      <Card>
+        <SectionTitle>Recent Jobs</SectionTitle>
+        {jobsQ.isLoading && <Skeleton className="h-24 w-full" />}
+        {!jobsQ.isLoading && jobs.length === 0 && (
+          <EmptyState title="No completed jobs yet" />
+        )}
+        {jobs.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-text-muted text-xs">
+                <tr className="text-left">
+                  <th className="py-2 pr-3">Booking</th>
+                  <th className="py-2 pr-3">Category</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Completed</th>
+                  <th className="py-2 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((j) => (
+                  <tr
+                    key={j.id}
+                    onClick={() => navigate(`/orders?id=${j.id}`)}
+                    className="border-t border-border cursor-pointer hover:bg-surface-elevated"
+                  >
+                    <td className="py-2 pr-3 font-mono">{shortId(j.id)}</td>
+                    <td className="py-2 pr-3">
+                      {CATEGORY_OPTIONS.find((o) => o.value === j.category)
+                        ?.label ?? j.category}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <StatusPill
+                        tone={
+                          j.status === 'completed' ? 'success' : 'neutral'
+                        }
+                      >
+                        {cap(j.status)}
+                      </StatusPill>
+                    </td>
+                    <td className="py-2 pr-3 text-text-secondary">
+                      {fmtRel(j.completed_at ?? j.created_at)}
+                    </td>
+                    <td className="py-2 text-right">
+                      {formatRupees(j.price_paise)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 3 — Actions
+// ──────────────────────────────────────────────────────────────────────────
+
+const deductionSchema = z.object({
+  amount: z.coerce.number().positive('Amount must be greater than 0'),
+  reason: z.string().trim().min(5, 'Reason must be at least 5 characters'),
+  fortnight_start: z.string().optional(),
+});
+type DeductionForm = z.input<typeof deductionSchema>;
+
+const leaveSchema = z.object({
+  days: z.coerce
+    .number()
+    .int()
+    .refine((n) => n !== 0, 'Days cannot be 0'),
+  reason: z.string().trim().min(5, 'Reason must be at least 5 characters'),
+});
+type LeaveForm = z.input<typeof leaveSchema>;
+
+const pushSchema = z.object({
+  title: z.string().trim().min(1).max(80),
+  body: z.string().trim().min(1).max(240),
+});
+type PushForm = z.input<typeof pushSchema>;
+
+function ActionsTab({
+  worker,
+  qc,
+}: {
+  worker: WorkerDetail;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  return (
+    <div className="space-y-5">
+      <Can perm="workers.deduct">
+        <DeductionCard workerId={worker.id} qc={qc} />
+      </Can>
+      <Can perm="workers.update">
+        <LeaveCard workerId={worker.id} qc={qc} />
+      </Can>
+      <Can perm="push.send">
+        <PushCard worker={worker} />
+      </Can>
+    </div>
+  );
+}
+
+function DeductionCard({
+  workerId,
+  qc,
+}: {
+  workerId: string;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<DeductionForm>({
+    resolver: zodResolver(deductionSchema),
+  });
+
+  const mut = useMutation({
+    mutationFn: (v: DeductionForm) =>
+      addDeduction(workerId, {
+        amount_paise: Math.round(Number(v.amount) * 100),
+        reason: String(v.reason),
+        fortnight_start: v.fortnight_start || undefined,
+      }),
+    onSuccess: (_d, v) => {
+      showToast({
+        kind: 'success',
+        message: `Deduction of ₹${Number(v.amount)} applied`,
+      });
+      reset();
+      qc.invalidateQueries({ queryKey: workerKeys.deductions(workerId) });
+      qc.invalidateQueries({ queryKey: workerKeys.detail(workerId) });
+    },
+    onError: () =>
+      showToast({ kind: 'error', message: 'Deduction failed — try again' }),
+  });
+
+  return (
+    <Card>
+      <SectionTitle>Manual Deduction</SectionTitle>
+      <form className="space-y-3" onSubmit={handleSubmit((v) => mut.mutate(v))}>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">
+            Amount (₹)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            className="input w-full"
+            {...register('amount')}
+          />
+          {errors.amount && (
+            <p className="text-xs text-danger mt-1">
+              {errors.amount.message}
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Reason</label>
+          <textarea
+            className="input w-full min-h-[70px]"
+            {...register('reason')}
+          />
+          {errors.reason && (
+            <p className="text-xs text-danger mt-1">
+              {errors.reason.message}
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">
+            Fortnight start (optional)
+          </label>
+          <input
+            type="date"
+            className="input w-full"
+            {...register('fortnight_start')}
+          />
+        </div>
+        <button
+          className="btn-primary w-full"
+          disabled={mut.isPending}
+          type="submit"
+        >
+          {mut.isPending ? 'Applying…' : 'Apply deduction'}
+        </button>
+      </form>
+    </Card>
+  );
+}
+
+function LeaveCard({
+  workerId,
+  qc,
+}: {
+  workerId: string;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const {
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    formState: { errors },
+  } = useForm<LeaveForm>({ resolver: zodResolver(leaveSchema) });
+
+  const [pendingNeg, setPendingNeg] = useState<LeaveForm | null>(null);
+
+  const balQ = useQuery({
+    queryKey: ['leaves', 'balance', workerId],
+    queryFn: () => getBalances(workerId),
+  });
+  const balance = balQ.data?.[0]?.balance ?? null;
+
+  const days = Number(watch('days') || 0);
+
+  const mut = useMutation({
+    mutationFn: (v: LeaveForm) =>
+      allocateLeave(workerId, Number(v.days), String(v.reason)),
+    onSuccess: (res) => {
+      showToast({
+        kind: 'success',
+        message: `New balance: ${res.new_balance} days`,
+      });
+      reset();
+      setPendingNeg(null);
+      qc.invalidateQueries({ queryKey: ['leaves', 'balance', workerId] });
+      qc.invalidateQueries({ queryKey: workerKeys.detail(workerId) });
+    },
+    onError: () =>
+      showToast({ kind: 'error', message: 'Leave adjustment failed' }),
+  });
+
+  function submit(v: LeaveForm) {
+    if (Number(v.days) < 0) {
+      setPendingNeg(v);
+      return;
+    }
+    mut.mutate(v);
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Leave Adjustment</SectionTitle>
+      <form className="space-y-3" onSubmit={handleSubmit(submit)}>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">
+            Days (+ grant / − deduct)
+          </label>
+          <input
+            type="number"
+            step="1"
+            className={`input w-full ${
+              days > 0 ? 'text-success' : days < 0 ? 'text-danger' : ''
+            }`}
+            {...register('days')}
+          />
+          {errors.days && (
+            <p className="text-xs text-danger mt-1">{errors.days.message}</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs text-text-muted mb-1">Reason</label>
+          <textarea
+            className="input w-full min-h-[70px]"
+            {...register('reason')}
+          />
+          {errors.reason && (
+            <p className="text-xs text-danger mt-1">
+              {errors.reason.message}
+            </p>
+          )}
+        </div>
+        <button
+          className="btn-primary w-full"
+          disabled={mut.isPending}
+          type="submit"
+        >
+          {mut.isPending ? 'Saving…' : 'Apply adjustment'}
+        </button>
+      </form>
+      <p className="text-xs text-text-muted mt-3">
+        Current leave balance:{' '}
+        <span className="text-text-primary font-medium">
+          {balQ.isLoading
+            ? '…'
+            : balance != null
+              ? `${balance} days`
+              : '—'}
+        </span>
+      </p>
+
+      <ConfirmModal
+        open={pendingNeg != null}
+        onClose={() => setPendingNeg(null)}
+        onConfirm={() => {
+          if (pendingNeg) return mut.mutateAsync(pendingNeg);
+        }}
+        title="Deduct leave days"
+        impact={
+          <>
+            This removes{' '}
+            <b>{Math.abs(Number(pendingNeg?.days ?? 0))}</b> day(s).
+            {balance != null && (
+              <>
+                {' '}
+                Projected balance:{' '}
+                <b>{balance + Number(pendingNeg?.days ?? 0)}</b> days.
+              </>
+            )}
+          </>
+        }
+        confirmLabel="Deduct"
+        destructive
+      />
+    </Card>
+  );
+}
+
+function PushCard({ worker }: { worker: WorkerDetail }) {
+  const {
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    formState: { errors },
+  } = useForm<PushForm>({ resolver: zodResolver(pushSchema) });
+
+  const title = watch('title') ?? '';
+  const body = watch('body') ?? '';
+
+  const mut = useMutation({
+    mutationFn: async (v: PushForm) => {
+      const created = await growthApi.createPush({
+        target_kind: 'specific',
+        user_ids: [worker.id],
+        title: String(v.title),
+        body: String(v.body),
+      });
+      await growthApi.sendPush(created.id);
+    },
+    onSuccess: () => {
+      showToast({ kind: 'success', message: 'Push sent' });
+      reset();
+    },
+    onError: () =>
+      showToast({
+        kind: 'error',
+        message: 'Campaign created but failed to send. Retry from Push page.',
+      }),
+  });
+
+  return (
+    <Card>
+      <SectionTitle>Send Push Notification</SectionTitle>
+      <form className="space-y-3" onSubmit={handleSubmit((v) => mut.mutate(v))}>
+        <div>
+          <div className="flex justify-between text-xs text-text-muted mb-1">
+            <span>Title</span>
+            <span>{String(title).length}/80</span>
+          </div>
+          <input
+            className="input w-full"
+            maxLength={80}
+            {...register('title')}
+          />
+          {errors.title && (
+            <p className="text-xs text-danger mt-1">
+              {errors.title.message}
+            </p>
+          )}
+        </div>
+        <div>
+          <div className="flex justify-between text-xs text-text-muted mb-1">
+            <span>Body</span>
+            <span>{String(body).length}/240</span>
+          </div>
+          <textarea
+            className="input w-full min-h-[80px]"
+            maxLength={240}
+            {...register('body')}
+          />
+          {errors.body && (
+            <p className="text-xs text-danger mt-1">{errors.body.message}</p>
+          )}
+        </div>
+        <button
+          className="btn-primary w-full inline-flex items-center justify-center gap-2"
+          disabled={mut.isPending}
+          type="submit"
+        >
+          <Bell className="w-4 h-4" />
+          {mut.isPending ? 'Sending…' : 'Send to this worker'}
+        </button>
+      </form>
+    </Card>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 4 — Deductions
+// ──────────────────────────────────────────────────────────────────────────
+
+function DeductionsTab({ workerId }: { workerId: string }) {
+  return (
+    <Can
+      perm="workers.deduct"
+      fallback={
+        <EmptyState
+          icon={<BadgeCheck className="w-8 h-8" />}
+          title="Not permitted"
+          body="You need the workers.deduct permission to view deduction history."
+        />
+      }
+    >
+      <DeductionsTable workerId={workerId} />
+    </Can>
+  );
+}
+
+function DeductionsTable({ workerId }: { workerId: string }) {
+  const q = useQuery({
+    queryKey: workerKeys.deductions(workerId),
+    queryFn: () => listDeductions(workerId),
+  });
+
+  if (q.isLoading) return <Skeleton className="h-40 w-full" />;
+
+  const rows = q.data ?? [];
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={<IndianRupee className="w-8 h-8" />}
+        title="No deductions recorded for this pro"
+      />
+    );
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Deduction History</SectionTitle>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-text-muted text-xs">
+            <tr className="text-left">
+              <th className="py-2 pr-3">Date</th>
+              <th className="py-2 pr-3 text-right">Amount</th>
+              <th className="py-2 pr-3">Reason</th>
+              <th className="py-2 pr-3">Fortnight</th>
+              <th className="py-2">Applied by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => (
+              <tr
+                key={d.id}
+                className={`border-t border-border ${
+                  d.reversed_at ? 'opacity-50' : ''
+                }`}
+              >
+                <td className="py-2 pr-3 text-text-secondary">
+                  {fmtDate(d.created_at)}
+                </td>
+                <td className="py-2 pr-3 text-right font-medium">
+                  {formatRupeesExact(d.amount_paise)}
+                </td>
+                <td className="py-2 pr-3 break-words max-w-[180px]">
+                  {d.reason}
+                  {d.reversed_at && (
+                    <span className="text-xs text-danger ml-1">
+                      (reversed)
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 pr-3 text-text-secondary">
+                  {d.fortnight_start ? fmtDate(d.fortnight_start) : 'Current'}
+                </td>
+                <td className="py-2 font-mono text-xs text-text-muted">
+                  {shortId(d.admin_id)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-text-muted mt-3">
+        Showing up to 200 most recent. Server caps deduction history.
+        Applied-by shows the admin UUID prefix — Phase 12 will join the email.
+      </p>
+    </Card>
   );
 }
