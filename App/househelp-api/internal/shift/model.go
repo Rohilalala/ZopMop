@@ -35,6 +35,9 @@ var (
 	ErrNoZoneAssigned       = errors.New("pro has no active zone assignment")
 	ErrApprovalPending      = errors.New("a zone approval is already pending")
 	ErrBookingNotOwnedByPro = errors.New("booking is not owned by this pro")
+	// ErrAlreadyReviewed — DecideZoneApproval matched 0 rows because the
+	// request was already approved/rejected (admin race). Handler maps to 409.
+	ErrAlreadyReviewed = errors.New("zone approval already reviewed")
 )
 
 // Commitment is the public view of one shift_commitments row.

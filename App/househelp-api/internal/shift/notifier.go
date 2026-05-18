@@ -62,6 +62,26 @@ func (s *Service) PushZoneApprovalPending(ctx context.Context, requestID, proID,
 	})
 }
 
+// PushZoneApprovalRejected notifies the pro that admin rejected their
+// outside-zone request. Body interpolates the admin's notes when present
+// so the pro knows why and what to do next.
+func (s *Service) PushZoneApprovalRejected(ctx context.Context, proID, requestID, notes string) {
+	if s.ntf == nil {
+		return
+	}
+	body := "Your zone exception request was rejected. Please head to your assigned zone."
+	if notes != "" {
+		body = "Reason: " + notes + ". Please head to your assigned zone to go online."
+	}
+	_ = s.ntf.PushToPro(ctx, proID,
+		"Zone exception rejected",
+		body,
+		map[string]string{
+			"type":       "zone_approval_rejected",
+			"request_id": requestID,
+		})
+}
+
 // PushZoneApprovalGranted notifies the pro that admin approved
 // their outside-zone request. Hindi copy per spec.
 func (s *Service) PushZoneApprovalGranted(ctx context.Context, proID, requestID, commitmentID string) {

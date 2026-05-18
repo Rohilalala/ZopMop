@@ -333,7 +333,25 @@ func (s *Service) ApproveZoneRequest(ctx context.Context, requestID, adminID str
 
 // RejectZoneRequest is the admin path. status='rejected'.
 func (s *Service) RejectZoneRequest(ctx context.Context, requestID, adminID, notes string) error {
-	return s.repo.DecideZoneApproval(ctx, requestID, "rejected", adminID, notes)
+	if err := s.repo.DecideZoneApproval(ctx, requestID, "rejected", adminID, notes); err != nil {
+		// ErrAlreadyReviewed (or any error) → no push. Caller maps to 409.
+		return err
+	}
+	if s.ntf != nil {
+		go func() {
+			ctxBG, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			proID, _, _, err := s.repo.ZoneApprovalByID(ctxBG, requestID)
+			if err != nil || proID == "" {
+				log.Warn().Err(err).Str("request_id", requestID).Msg("[shift] fetch pro_id for rejection push failed")
+				return
+			}
+			// Push failure must not roll back the rejection — DB is the
+			// source of truth. PushZoneApprovalRejected swallows + logs.
+			s.PushZoneApprovalRejected(ctxBG, proID, requestID, notes)
+		}()
+	}
+	return nil
 }
 
 // ─── Cancellations ────────────────────────────────────────────────

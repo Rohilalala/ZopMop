@@ -45,6 +45,10 @@ var (
 	// InvalidState = pre-accept / post-complete / cancelled / etc.
 	ErrContactForbidden    = errors.New("not assigned to this booking")
 	ErrContactInvalidState = errors.New("booking not in a state that allows contact reveal")
+	// ErrContactAuditFailed — the pro_contact_reveals audit row could not
+	// be persisted. Migration 102 mandates the audit row before any
+	// unmasked-phone disclosure, so this maps to 500 and returns NO PII.
+	ErrContactAuditFailed = errors.New("contact reveal audit write failed")
 )
 
 // ContactResponse is the body returned by POST /pro/jobs/:id/contact.
@@ -245,6 +249,11 @@ func (h *JobsHandler) RevealContact(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"error":      "booking not in a state that allows contact reveal",
 				"error_code": "INVALID_STATE",
+			})
+		case errors.Is(err, ErrContactAuditFailed):
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "audit_write_failed",
+				"message": "Contact reveal failed. Please try again.",
 			})
 		default:
 			log.Error().Err(err).Str("booking_id", bookingID).Msg("[jobs] contact reveal failed")
@@ -496,14 +505,40 @@ func (s *Service) RevealCustomerContact(ctx context.Context, bookingID, helperID
 		return nil, ErrContactInvalidState
 	}
 
-	// Audit row insert is best-effort relative to the response — if the
-	// audit write fails we still reveal (the alternative is breaking the
-	// operational flow for a logging blip). Logged for ops follow-up.
-	if _, aerr := s.db.Exec(queryCtx, `
+	// Audit-or-bust: migration 102's header mandates a pro_contact_reveals
+	// row before any unmasked-phone disclosure (privacy review). Wrap the
+	// audit INSERT + the customer phone read in one transaction. If the
+	// audit write fails we ROLLBACK and return ErrContactAuditFailed with
+	// NO PII — never reveal a number without a guaranteed audit record.
+	tx, terr := s.db.Begin(queryCtx)
+	if terr != nil {
+		log.Error().Err(terr).Str("booking_id", bookingID).Str("pro_id", helperID).Msg("[jobs] contact reveal: begin tx failed")
+		return nil, ErrContactAuditFailed
+	}
+	defer tx.Rollback(queryCtx) // no-op after a successful Commit
+
+	if _, aerr := tx.Exec(queryCtx, `
 		INSERT INTO pro_contact_reveals (booking_id, pro_id, pro_user_agent)
 		VALUES ($1::uuid, $2::uuid, NULLIF($3, ''))
 	`, bookingID, helperID, userAgent); aerr != nil {
-		log.Warn().Err(aerr).Str("booking_id", bookingID).Str("pro_id", helperID).Msg("[jobs] contact reveal audit insert failed")
+		log.Error().Err(aerr).Str("booking_id", bookingID).Str("pro_id", helperID).Msg("[jobs] contact reveal audit insert failed")
+		return nil, ErrContactAuditFailed
+	}
+
+	// Read the phone within the same tx so the disclosed number is
+	// consistent with the audited reveal.
+	if rerr := tx.QueryRow(queryCtx, `
+		SELECT COALESCE(u.phone,''), COALESCE(u.name,'')
+		FROM bookings b JOIN users u ON u.id = b.customer_id
+		WHERE b.id = $1
+	`, bookingID).Scan(&customerPhone, &customerName); rerr != nil {
+		log.Error().Err(rerr).Str("booking_id", bookingID).Str("pro_id", helperID).Msg("[jobs] contact reveal: phone read in tx failed")
+		return nil, ErrContactAuditFailed
+	}
+
+	if cerr := tx.Commit(queryCtx); cerr != nil {
+		log.Error().Err(cerr).Str("booking_id", bookingID).Str("pro_id", helperID).Msg("[jobs] contact reveal: commit failed")
+		return nil, ErrContactAuditFailed
 	}
 
 	// Strip +91 / 91 country code if present; the pro app pipes the value

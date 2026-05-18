@@ -6,6 +6,8 @@ package zoneapprovals
 
 import (
 	"context"
+	"errors"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog/log"
 
@@ -48,6 +50,13 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 	id := c.Params("id")
 	adminID, _ := c.Locals("crmAdminID").(string)
 	if err := h.svc.ApproveZoneRequest(c.UserContext(), id, adminID); err != nil {
+		if errors.Is(err, shift.ErrAlreadyReviewed) {
+			// Admin race / stale UI — no state change, no audit, no push.
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":   "already_reviewed",
+				"message": "This request was already reviewed by another admin",
+			})
+		}
 		log.Warn().Err(err).Str("request_id", id).Msg("[crm.zone-approvals] approve failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -66,6 +75,13 @@ func (h *Handler) Reject(c *fiber.Ctx) error {
 	var req rejectRequest
 	_ = c.BodyParser(&req)
 	if err := h.svc.RejectZoneRequest(c.UserContext(), id, adminID, req.Notes); err != nil {
+		if errors.Is(err, shift.ErrAlreadyReviewed) {
+			// Admin race / stale UI — no state change, no audit, no push.
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":   "already_reviewed",
+				"message": "This request was already reviewed by another admin",
+			})
+		}
 		log.Warn().Err(err).Str("request_id", id).Msg("[crm.zone-approvals] reject failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}

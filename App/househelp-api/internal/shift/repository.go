@@ -471,7 +471,7 @@ func (r *Repository) ListPendingZoneApprovals(ctx context.Context) ([]ZoneApprov
 func (r *Repository) DecideZoneApproval(ctx context.Context, requestID, status, adminID, notes string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err := r.db.Exec(ctx, `
+	cmd, err := r.db.Exec(ctx, `
 		UPDATE zone_approval_requests
 		   SET status      = $2,
 		       reviewed_by = $3,
@@ -479,7 +479,16 @@ func (r *Repository) DecideZoneApproval(ctx context.Context, requestID, status, 
 		       notes       = NULLIF($4,'')
 		 WHERE id = $1 AND status = 'pending'
 	`, requestID, status, adminID, notes)
-	return err
+	if err != nil {
+		return err
+	}
+	// 0 rows → request was already approved/rejected (admin race or
+	// stale UI). Surface as ErrAlreadyReviewed so the caller skips the
+	// audit row + push instead of reporting a phantom success.
+	if cmd.RowsAffected() == 0 {
+		return ErrAlreadyReviewed
+	}
+	return nil
 }
 
 // ZoneApprovalByID fetches just the pro_id + commitment_id + status
