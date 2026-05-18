@@ -396,7 +396,25 @@ counter-parties redacted. See `internal/compliance/export.go`.
 
 ## Contributing
 
-This repo is currently private. If you have access, branch off `main`, keep commits focused, and open a PR with a description and a screenshot or screen recording for UI changes.
+This repo is currently private. If you have access, keep commits focused, and open a PR with a description and a screenshot or screen recording for UI changes.
+
+### Branching
+
+- **`main`** — production-ready. Deploys to production (when applicable).
+- **`develop`** — integration / pre-prod. All feature work merges here first for end-to-end testing.
+- **`feature/*`** — short-lived feature branches.
+
+Flow:
+
+1. Branch off `develop`: `git checkout develop && git pull && git checkout -b feature/your-feature`
+2. Build feature. Commit frequently. Push to remote.
+3. Open PR to `develop`. Self-review, merge.
+4. End-to-end test on `develop` (real-device smokes, full booking lifecycle, CRM walkthrough).
+5. When `develop` is stable and tested, merge `develop` → `main`.
+
+Never merge feature branches directly to `main`. Always go through `develop`.
+
+**Hotfix exception:** for a critical production bug, branch off `main`, fix, then merge to `main` **and** `develop` simultaneously to keep them in sync.
 
 ## License
 
