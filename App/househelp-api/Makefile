@@ -1,8 +1,9 @@
 # Local backend testing helpers.
 # Run all targets from App/househelp-api/.
 
-DEPLOY_BRANCH := main
-COMPOSE       := docker compose
+DEPLOY_BRANCH      := main      # Railway prod gate — do not change
+INTEGRATION_BRANCH := develop   # feature work cuts from here
+COMPOSE            := docker compose
 
 .PHONY: help check-env up down restart migrate logs ps psql redis-cli reset-db lan-ip new-feature preflight test vet
 
@@ -18,8 +19,8 @@ help:
 	@echo "  make redis-cli                redis-cli into redis"
 	@echo "  make reset-db                 DROP postgres volume and recreate (asks first)"
 	@echo "  make lan-ip                   print this machine's LAN IP for Expo client config"
-	@echo "  make new-feature name=foo     cut feature/foo from $(DEPLOY_BRANCH)"
-	@echo "  make preflight                run scripts/preflight.sh (gate before PR into $(DEPLOY_BRANCH))"
+	@echo "  make new-feature name=foo     cut feature/foo from $(INTEGRATION_BRANCH)"
+	@echo "  make preflight                run scripts/preflight.sh (gate before PR into $(INTEGRATION_BRANCH))"
 	@echo "  make vet                      go vet ./..."
 	@echo "  make test                     go test ./..."
 
@@ -87,7 +88,7 @@ new-feature:
 ifndef name
 	@echo "Usage: make new-feature name=<branch-suffix>"; exit 1
 endif
-	git checkout $(DEPLOY_BRANCH)
+	git checkout $(INTEGRATION_BRANCH)
 	git pull --ff-only
 	git checkout -b feature/$(name)
 	@echo "On feature/$(name). Build, test, then run 'make preflight' before opening a PR."
