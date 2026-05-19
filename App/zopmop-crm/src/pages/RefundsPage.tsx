@@ -111,9 +111,9 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
   const canReject         = usePermission('refunds.reject');
 
   const partialCents = partial ? Number(partial) * 100 : 0;
-  const isPartial = !!partial && partialCents > 0 && partialCents < r.amount_cents;
+  const isPartial = !!partial && partialCents > 0 && partialCents < r.amount_paise;
   const canApproveNow = isPartial ? canApprovePartial : canApproveFull;
-  const effectiveAmount = isPartial ? partialCents : r.amount_cents;
+  const effectiveAmount = isPartial ? partialCents : r.amount_paise;
 
   const isCod = r.payment_method === 'cod';
   // Block automatic approval if the refund is non-COD but lacks a payment ref
@@ -123,7 +123,7 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
   const approve = useMutation({
     mutationFn: () => refundsApi.approve(r.id, {
       reason,
-      ...(isPartial ? { amount_cents: partialCents } : {}),
+      ...(isPartial ? { amount_paise: partialCents } : {}),
     }),
     onSuccess: (data) => {
       const amount = fmt(effectiveAmount);
@@ -175,7 +175,7 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
   const isProcessed = r.status === 'processed';
   const isManual = r.status === 'processed_manual';
   const isGatewayError = r.status === 'gateway_error';
-  const displayedAmount = r.partial_amount_cents && r.partial_amount_cents > 0 ? r.partial_amount_cents : r.amount_cents;
+  const displayedAmount = r.partial_amount_paise && r.partial_amount_paise > 0 ? r.partial_amount_paise : r.amount_paise;
 
   return (
     <>
@@ -186,8 +186,8 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
         </td>
         <td className="px-4 py-3 text-right tabular-nums">
           <div>{fmt(displayedAmount)}</div>
-          {r.partial_amount_cents && r.partial_amount_cents > 0 && r.partial_amount_cents < r.amount_cents && (
-            <div className="text-[11px] text-text-muted">of {fmt(r.amount_cents)}</div>
+          {r.partial_amount_paise && r.partial_amount_paise > 0 && r.partial_amount_paise < r.amount_paise && (
+            <div className="text-[11px] text-text-muted">of {fmt(r.amount_paise)}</div>
           )}
         </td>
         <td className="px-4 py-3"><MethodBadge method={r.payment_method} /></td>
@@ -257,7 +257,7 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
         <div className="text-sm text-text-secondary space-y-4">
           <dl className="grid grid-cols-[140px_1fr] gap-y-2 gap-x-3 text-sm">
             <dt className="text-text-muted">Original amount</dt>
-            <dd className="text-text-primary tabular-nums">{fmt(r.amount_cents)}</dd>
+            <dd className="text-text-primary tabular-nums">{fmt(r.amount_paise)}</dd>
             <dt className="text-text-muted">Refund amount</dt>
             <dd className="text-text-primary tabular-nums">{fmt(effectiveAmount)}{isPartial && <span className="text-text-muted"> (partial)</span>}</dd>
             <dt className="text-text-muted">Payment method</dt>
@@ -278,7 +278,7 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
           )}
 
           <div className="space-y-2">
-            <p className="text-xs text-text-muted">Full amount = {fmt(r.amount_cents)}. Leave partial blank to approve full.</p>
+            <p className="text-xs text-text-muted">Full amount = {fmt(r.amount_paise)}. Leave partial blank to approve full.</p>
             <input className="input" placeholder="Partial amount in ₹ (optional)" value={partial} onChange={(e) => setPartial(e.target.value.replace(/\D/g, ''))} />
             <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
           </div>

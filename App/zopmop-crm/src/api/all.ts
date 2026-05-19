@@ -120,7 +120,7 @@ export type Refund = {
   user_id: string;
   user_name?: string | null;
   user_phone: string;
-  amount_cents: number;
+  amount_paise: number;
   source: string;
   source_ref?: string | null;
   status: RefundStatus;
@@ -132,7 +132,7 @@ export type Refund = {
   gateway_refund_id?: string | null;
   processed_at?: string | null;
   error_message?: string | null;
-  partial_amount_cents?: number | null;
+  partial_amount_paise?: number | null;
   approved_at?: string | null;
 };
 
@@ -151,18 +151,18 @@ export type RefundFromOrderResponse = {
 
 export const refundsApi = {
   list: (p: Record<string, string | number>) => api.get('/admin/refunds', { params: p }).then(r => r.data as { items: Refund[]; total_count: number }),
-  approve: (id: string, body: { amount_cents?: number; reason: string }) =>
+  approve: (id: string, body: { amount_paise?: number; reason: string }) =>
     api.post<RefundApproveResponse>(`/admin/refunds/${id}/approve`, body).then(r => r.data),
   reject:  (id: string, reason: string) => api.post(`/admin/refunds/${id}/reject`, { reason }),
   retry:   (id: string) => api.post(`/admin/refunds/${id}/retry`).then(() => undefined),
-  fromOrder: (orderId: string, body: { amount_cents: number; reason: string }) =>
+  fromOrder: (orderId: string, body: { amount_paise: number; reason: string }) =>
     api.post<RefundFromOrderResponse>(`/admin/refunds/from-order/${orderId}`, body).then(r => r.data),
 };
 
 // ── Promos ─────────────────────────────────────────────────────────────
 export type Promo = {
   id: string; code: string; name?: string | null; description?: string | null;
-  discount_type: string; discount_value: number; min_order_cents: number;
+  discount_type: string; discount_value: number; min_order_paise: number;
   max_uses: number; uses_count: number; max_per_user: number; is_active: boolean;
   starts_at?: string | null; expires_at?: string | null;
   audience: string; audience_user_ids: string[]; categories: string[]; stackable: boolean;
@@ -176,7 +176,7 @@ export const promosApi = {
   update: (id: string, body: Partial<Promo>) => api.put(`/admin/promos/${id}`, body),
   activate: (id: string) => api.post(`/admin/promos/${id}/activate`),
   deactivate: (id: string) => api.post(`/admin/promos/${id}/deactivate`),
-  stats: (id: string) => api.get<{ redemptions: number; unique_users: number; discount_cents: number; revenue_cents: number }>(`/admin/promos/${id}/stats`).then(r => r.data),
+  stats: (id: string) => api.get<{ redemptions: number; unique_users: number; discount_paise: number; revenue_paise: number }>(`/admin/promos/${id}/stats`).then(r => r.data),
 };
 
 // ── Banners ────────────────────────────────────────────────────────────

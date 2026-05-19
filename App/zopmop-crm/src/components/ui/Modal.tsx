@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 
+import { showToast } from '@/components/ui/Toast';
+
 // Modal: frosted-glass backdrop (per design system), centered card, ESC + click
 // outside to close. Accessibility: focus is NOT trapped here — keep modals
 // shallow, use Drawer for deep workflows.
@@ -96,8 +98,21 @@ export function ConfirmModal({
   async function go() {
     if (busy) return;
     setBusy(true);
-    try { await onConfirm(); }
-    finally { setBusy(false); }
+    try {
+      await onConfirm();
+    } catch (err) {
+      // onConfirm rejected (axios mutation failed). The API interceptor
+      // already surfaced a toast with the server message; swallow here so
+      // it doesn't become an uncaught promise rejection, and keep the
+      // modal open so the user can correct input and retry.
+      const msg = (err as { response?: { data?: { message?: string; error?: string } } })
+        ?.response?.data;
+      if (!msg?.message && !msg?.error) {
+        showToast({ kind: 'error', message: 'Action failed. Please try again.' });
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (

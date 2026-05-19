@@ -114,6 +114,29 @@ priority bucket. Priorities are P0 (regulatory / security blockers), P1
 - **P2 — CRM polygon editor** — admin can draw multi-vertex zone boundaries instead of circles; replaces lat/lon/radius_km when set. Today `internal/crm/zones/zones.go:2` confirms circle-only.
 - **P2 — Dispatcher adopts `service_zones.boundary`** — ST_Contains/ST_Within check when boundary is set; falls back to `pro_zone_assignments` + `helpers.locality` otherwise. Today `dispatch.go:181` only JOINs for zone name; the GEOGRAPHY(POLYGON) column from migration 100 is dead.
 
+## Pre-pilot bug batch carry-overs
+
+- **P2 — NEW-2: Analytics revenue chart Y-axis collapsed.** Revenue chart on
+  `AnalyticsPage` renders with a degenerate Y-axis (all bars flat / scale
+  collapsed to zero range). Chart-scaling bug, not a data bug — the
+  `/admin/analytics/revenue-daily` points return correct `value`s. Suspect
+  the domain calc when all points share a magnitude or a single non-zero
+  point. MEDIUM. Deferred out of the pre-pilot bug batch.
+- **P2 — BUG #6: "Flags cards vanish on toggle off" — UNREPRODUCIBLE as
+  specified; needs a live repro.** The batch spec attributed this to a
+  "render filter excluding off flags" in `FlagsPage.tsx`. Investigated:
+  there is NO such filter — `FlagsPage` groups by `def.category` and renders
+  every flag unconditionally, and the backend `flags.Service.List`
+  (`internal/crm/flags/flags.go:71-88`) + `Handler.List`
+  (`handler.go:47-54`) return every registered flag regardless of value
+  (a `false`/empty value round-trips fine). No code path drops "off" flags.
+  The Modal.tsx fix (BUG #2) now surfaces any silent error, so the next step
+  is a live repro capturing the exact flag key + Network/Console output when
+  a card disappears (likely a transient `listFlags` refetch error or a
+  specific flag's value failing `JSON.unmarshal` server-side, not a filter).
+  No code changed — fixing non-existent filter code was declined per
+  root-cause-before-fix discipline.
+
 ## CRM worker management
 
 - **P1 — Rebuild WorkerDrawer with 4 tabs.** Phase D claim of 803 LOC was hallucination; file was committed empty. Need full Profile/Performance/Actions/Deductions structure with manual deduction form, leave adjustment, send notification, deductions history per Phase D spec. ~2-3 hours of focused work.
