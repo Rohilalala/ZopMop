@@ -120,7 +120,7 @@ export type Refund = {
   user_id: string;
   user_name?: string | null;
   user_phone: string;
-  amount_cents: number;
+  amount_paise: number;
   source: string;
   source_ref?: string | null;
   status: RefundStatus;
@@ -132,7 +132,7 @@ export type Refund = {
   gateway_refund_id?: string | null;
   processed_at?: string | null;
   error_message?: string | null;
-  partial_amount_cents?: number | null;
+  partial_amount_paise?: number | null;
   approved_at?: string | null;
 };
 
@@ -151,11 +151,11 @@ export type RefundFromOrderResponse = {
 
 export const refundsApi = {
   list: (p: Record<string, string | number>) => api.get('/admin/refunds', { params: p }).then(r => r.data as { items: Refund[]; total_count: number }),
-  approve: (id: string, body: { amount_cents?: number; reason: string }) =>
+  approve: (id: string, body: { amount_paise?: number; reason: string }) =>
     api.post<RefundApproveResponse>(`/admin/refunds/${id}/approve`, body).then(r => r.data),
   reject:  (id: string, reason: string) => api.post(`/admin/refunds/${id}/reject`, { reason }),
   retry:   (id: string) => api.post(`/admin/refunds/${id}/retry`).then(() => undefined),
-  fromOrder: (orderId: string, body: { amount_cents: number; reason: string }) =>
+  fromOrder: (orderId: string, body: { amount_paise: number; reason: string }) =>
     api.post<RefundFromOrderResponse>(`/admin/refunds/from-order/${orderId}`, body).then(r => r.data),
 };
 

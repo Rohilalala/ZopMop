@@ -727,7 +727,7 @@ function RefundModal({
   const m = useMutation({
     mutationFn: () =>
       refundsApi.fromOrder(order.id, {
-        amount_cents: Math.round(amount * 100),
+        amount_paise: Math.round(amount * 100),
         reason: reason.trim(),
       }),
     onSuccess: (res) => {

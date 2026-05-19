@@ -942,7 +942,7 @@ func (r *Repository) CreatePendingForBooking(
 // booking and immediately runs the gateway. Mirrors the Approve flow but
 // without requiring an existing pending row.
 //
-// Body: { amount_cents (required, > 0), reason (required) }
+// Body: { amount_paise (required, > 0), reason (required) }
 func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 	orderID := c.Params("orderId")
 	if orderID == "" {
@@ -954,7 +954,7 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "reason required"})
 	}
 	if req.AmountCents == nil || *req.AmountCents <= 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount_cents must be greater than zero"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount_paise must be greater than zero"})
 	}
 	amount := *req.AmountCents
 
