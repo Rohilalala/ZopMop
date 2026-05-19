@@ -100,15 +100,32 @@ func AuthMiddleware(jwtKeys []JWTKey, checker SuspensionChecker) fiber.Handler {
 			})
 		}
 
-		// Extract user ID and role from claims.
-		userIDStr, ok := claims["user_id"].(string)
-		if !ok || userIDStr == "" {
+		// Extract user ID + role. New MSG91-issued tokens carry both
+		// the spec claims {uid, typ, phn} and the legacy
+		// {user_id, role, is_suspended} pair (dual-write). Read uid
+		// first, fall back to user_id so old Firebase-era tokens
+		// keep validating during the cut-over.
+		userIDStr, _ := claims["uid"].(string)
+		if userIDStr == "" {
+			userIDStr, _ = claims["user_id"].(string)
+		}
+		if userIDStr == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "authentication required",
 			})
 		}
 
 		role, _ := claims["role"].(string)
+		typ, _ := claims["typ"].(string)
+		if typ == "" {
+			// Map legacy role → user_type on the fly so AuthCustomer
+			// / AuthPro can branch without a re-issue.
+			if role == "pro" {
+				typ = "pro"
+			} else {
+				typ = "customer"
+			}
+		}
 
 		// Live suspension check — closes the JWT-staleness gap that
 		// audit A5-06 flagged. PK lookup against users.is_suspended.
@@ -144,13 +161,42 @@ func AuthMiddleware(jwtKeys []JWTKey, checker SuspensionChecker) fiber.Handler {
 			})
 		}
 
-		// Store in Fiber locals for downstream handlers.
+		// Store in Fiber locals for downstream handlers. Dual-write
+		// so handlers reading the new "user_type" local AND those
+		// still reading the legacy "role" local keep working.
 		c.Locals(LocalsKeyUserID, userIDStr)
 		c.Locals("role", role)
+		c.Locals(LocalsKeyUserType, typ)
 
 		return c.Next()
 	}
 }
+
+// RequireUserType is the spec's AuthCustomer / AuthPro gate. Must be
+// chained after AuthMiddleware so c.Locals(LocalsKeyUserType) is
+// populated. Rejects with 403 when the JWT typ claim doesn't match
+// the supplied target.
+func RequireUserType(expected string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		got, _ := c.Locals(LocalsKeyUserType).(string)
+		if got != expected {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error": "insufficient permissions",
+				"code":  "WRONG_USER_TYPE",
+			})
+		}
+		return c.Next()
+	}
+}
+
+// AuthCustomer is sugar for RequireUserType("customer"). Chain
+// after AuthMiddleware on any route the customer app calls and the
+// pro app must not.
+func AuthCustomer() fiber.Handler { return RequireUserType("customer") }
+
+// AuthPro is sugar for RequireUserType("pro"). Chain after
+// AuthMiddleware on any pro-only route.
+func AuthPro() fiber.Handler { return RequireUserType("pro") }
 
 // RequireRole returns a Fiber handler that rejects the request unless the
 // JWT-derived role (stored in Fiber locals by AuthMiddleware) matches one of

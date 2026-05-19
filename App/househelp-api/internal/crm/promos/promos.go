@@ -150,6 +150,17 @@ func (r *Repository) Get(ctx context.Context, id string) (*Promo, error) {
 
 // Create inserts a new promo. The caller validates inputs; we just enforce
 // uniqueness on code (DB constraint) and basic non-negativity.
+// nonNilSlice returns a non-nil slice so pgx encodes a SQL array literal
+// ('{}'), not NULL. promotions.audience_user_ids and .categories are
+// NOT NULL (migration 041); CRM clients omit these fields for untargeted
+// promos, which decodes to a nil slice and would 23502 on insert/update.
+func nonNilSlice(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy string) (*Promo, error) {
 	if req.Code == "" || req.DiscountValue <= 0 {
 		return nil, fmt.Errorf("code and discount value required")
@@ -160,6 +171,8 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 	if req.Audience == "" {
 		req.Audience = "all"
 	}
+	req.AudienceUserIDs = nonNilSlice(req.AudienceUserIDs)
+	req.Categories = nonNilSlice(req.Categories)
 	id := ""
 	err := r.write.QueryRow(ctx, `
 		INSERT INTO promotions (
@@ -182,6 +195,8 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 
 // Update overwrites a promo's editable fields.
 func (r *Repository) Update(ctx context.Context, id string, req CreateRequest) error {
+	req.AudienceUserIDs = nonNilSlice(req.AudienceUserIDs)
+	req.Categories = nonNilSlice(req.Categories)
 	res, err := r.write.Exec(ctx, `
 		UPDATE promotions
 		SET code = $2, name = NULLIF($3, ''), description = NULLIF($4, ''),

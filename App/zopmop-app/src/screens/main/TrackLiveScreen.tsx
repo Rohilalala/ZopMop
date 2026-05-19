@@ -1,20 +1,18 @@
-// TrackLiveScreen — design-system port of `preview/tracking-screen.html`
-// (dark · "On the way" variant only). Implements:
-//   • Real Google Maps with custom dark / amber theme matching the design
-//   • Pulsing pro avatar marker + home destination pin via custom Marker views
-//   • Floating top bar (back / locate / help)
-//   • ETA banner with blinking live dot
-//   • Bottom sheet that overlays the map (~58% height), with internal scroll:
-//     pro row, OTP card (start-job code), timeline steps, booking ID
+// TrackLiveScreen — customer-side state machine for the full booking lifecycle.
+// Sub-states are derived from booking lifecycle timestamps fetched via
+// GET /bookings/:id (BookingDetail) and refreshed on every booking_status_change
+// FCM event:
 //
-// OTP "start-the-job" flow:
-//   The customer sees a 4-digit OTP here. When the pro arrives, the customer
-//   shares it; the pro enters it in their app, which flips the booking to
-//   `started`. Until backend issues the OTP, we accept it via route param or
-//   fall back to a deterministic stub derived from bookingId.
+//   dispatching → assigned → en_route → arrived → in_progress → completed
+//   (cancelled is a terminal alt-state reachable from any pre-completed state)
+//
+// All copy is English — customer app is English-only. The pro-side i18n
+// (zopmop-app/src/i18n/hi.ts + en.ts) is scoped to src/screens/pro/* and
+// is not used here.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
   Linking,
   Platform,
@@ -23,11 +21,12 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
   type TextStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import Animated, {
@@ -45,8 +44,49 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
 import { useAuth } from '../../context/AuthContext';
-import { getBookingTrackingWsUrl, type TrackingResponse } from '../../api/matching';
+import {
+  getBookingTrackingWsUrl,
+  getBookingDetail,
+  submitBookingReview,
+  type BookingDetail,
+  type TrackingResponse,
+} from '../../api/matching';
+import { cancelBooking, keepLookingBooking } from '../../api/bookings';
+import { onShiftEvent } from '../../utils/shiftEvents';
+import { showSuccess, showError } from '../../utils/toast';
 import polyline from '@mapbox/polyline';
+
+// ── Sub-state derivation ─────────────────────────────────────────────────────
+
+type SubState =
+  | 'dispatching'
+  | 'assigned'
+  | 'en_route'
+  | 'arrived'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'no_pro_available'
+  | 'no_show'
+  | 'pending_action';
+
+function deriveSubState(d: BookingDetail | null): SubState {
+  if (!d) return 'dispatching';
+  if (d.status === 'cancelled') return 'cancelled';
+  // Failed-match terminal/decision states. Backend (migration 101) emits
+  // these when dispatch exhausts the pool, a pro no-shows, or the stealth
+  // search window expires. Must come before the timestamp checks below so a
+  // partially-stamped booking that later fails still surfaces the right UI.
+  if (d.status === 'no_pro_available') return 'no_pro_available';
+  if (d.status === 'no_show') return 'no_show';
+  if (d.status === 'pending_customer_action') return 'pending_action';
+  if (d.completed_at) return 'completed';
+  if (d.started_at) return 'in_progress';
+  if (d.arrived_at) return 'arrived';
+  if (d.en_route_at) return 'en_route';
+  if (d.helper_id) return 'assigned';
+  return 'dispatching';
+}
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -99,36 +139,136 @@ export default function TrackLiveScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'TrackLive'>>();
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
 
   const params = route.params || ({} as MainStackParamList['TrackLive']);
   const {
     bookingId,
     serviceName,
-    helperName,
-    helperPhone,
-    helperRating,
-    helperJobs,
+    helperName: paramHelperName,
+    helperPhone: paramHelperPhone,
+    helperRating: paramHelperRating,
+    helperJobs: paramHelperJobs,
     distanceKm: paramDistanceKm,
     otp,
     createdAt,
-    acceptedAt,
+    acceptedAt: paramAcceptedAt,
   } = params;
-  // Display fallback only — never sent to backend, never used in greetings.
+
+  // Booking detail drives the entire screen. Fetched on mount + on focus +
+  // whenever a booking_status_change push arrives for this booking. We keep
+  // route params as a first-paint fallback so the user never sees a blank
+  // screen during the initial fetch.
+  const [detail, setDetail] = useState<BookingDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchDetail = useCallback(async () => {
+    if (!bookingId || !token || token === '__guest__') return;
+    try {
+      const d = await getBookingDetail(token, bookingId);
+      setDetail(d);
+    } catch {
+      // Keep prior detail rather than blanking. Network blips are recoverable
+      // on the next focus / event tick.
+    } finally {
+      setLoading(false);
+    }
+  }, [bookingId, token]);
+
+  // Initial fetch + refetch on focus (handles return from background).
+  useFocusEffect(
+    useCallback(() => {
+      fetchDetail();
+    }, [fetchDetail]),
+  );
+
+  // Subscribe to FCM-driven status changes. pushRouter emits
+  // booking_status_change for pro_en_route / pro_arrived / job_started /
+  // job_completed (and any future variants). We refetch detail rather than
+  // trust the payload — the wire is best-effort, the DB is the source of
+  // truth.
+  useEffect(() => {
+    const unsub = onShiftEvent((ev) => {
+      if (ev.type !== 'booking_status_change') return;
+      if (ev.booking_id !== bookingId) return;
+      fetchDetail();
+    });
+    return unsub;
+  }, [bookingId, fetchDetail]);
+
+  const subState = useMemo<SubState>(() => deriveSubState(detail), [detail]);
+
+  // Resolve display fields preferring the freshest source: live detail >
+  // route params > generic fallback.
+  const helperName = detail?.helper?.name ?? paramHelperName;
+  const helperPhone = detail?.helper?.phone ?? paramHelperPhone;
+  const helperRating = detail?.helper?.rating ?? paramHelperRating;
+  const helperJobs = detail?.helper?.total_jobs ?? paramHelperJobs;
+  const acceptedAt = detail?.accepted_at ?? paramAcceptedAt;
   const displayHelperName = helperName ?? 'Your pro';
 
+  // Call is enabled only once the pro is en_route or later. The backend
+  // returns a middle-masked phone pre-accept; tel: would dial garbage.
+  const callEnabled =
+    !!helperPhone &&
+    (subState === 'en_route' ||
+      subState === 'arrived' ||
+      subState === 'in_progress');
+
   const onCallPro = () => {
-    if (!helperPhone) return;
+    if (!callEnabled || !helperPhone) {
+      showError('You can call when your pro is on the way');
+      return;
+    }
     Linking.openURL(`tel:${helperPhone.replace(/\s+/g, '')}`).catch(() => {});
   };
   const onMessagePro = () => {
     if (!bookingId) return;
-    navigation.navigate('Chat', { bookingId, helperName: helperName });
+    navigation.navigate('Chat', { bookingId, helperName });
+  };
+
+  // ── Failed-match recovery actions ─────────────────────────────────────────
+  // Guards against double-tap while a request is in flight. `actionBusy`
+  // disables every CTA on the failed-match panels.
+  const [actionBusy, setActionBusy] = useState(false);
+
+  const goHome = () => navigation.navigate('Tabs', { screen: 'Home' });
+
+  // Keep Looking — only valid in pending_customer_action (stealth window
+  // expired). Extends the search 15 min, then we refetch so the panel flips
+  // back to the dispatching spinner.
+  const onKeepLooking = async () => {
+    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await keepLookingBooking(token, bookingId);
+      showSuccess("We're looking again — hang tight");
+      await fetchDetail();
+    } catch (e) {
+      showError((e as Error)?.message ?? 'Could not extend the search');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  // Cancel — used by the pending_action panel's secondary CTA. no_pro_available
+  // / no_show are already terminal server-side, so those panels just route
+  // home rather than issue a redundant cancel.
+  const onCancelBooking = async () => {
+    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
+    setActionBusy(true);
+    try {
+      await cancelBooking(token, bookingId);
+      goHome();
+    } catch (e) {
+      showError((e as Error)?.message ?? 'Could not cancel the booking');
+      setActionBusy(false);
+    }
   };
 
   // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
   // ~5s on this socket — replaces the previous setInterval poll. Saves mobile
   // battery + signaling overhead (single persistent TCP vs new HTTP every 5s).
-  const { token } = useAuth();
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
 
   useEffect(() => {
@@ -210,6 +350,10 @@ export default function TrackLiveScreen() {
     [customerLat, customerLng],
   );
 
+  // ETA placeholder until live GPS sharing ships. Refine in Phase X.
+  // tracking.eta_minutes is backend-computed when the WS lands; otherwise
+  // we fall back to the route param (set by BookingConfirmed) and finally
+  // a 6-minute stub so the UI never shows a missing value.
   const etaMinutes = Math.max(0, Math.round(tracking?.eta_minutes ?? params.etaMinutes ?? 6));
   // distanceKm is only known once the WS lands or the route param explicitly
   // supplies one. We avoid the previous "1.2" default so the pin pill never
@@ -394,19 +538,38 @@ export default function TrackLiveScreen() {
         </Pressable>
       </View>
 
-      {/* ETA banner */}
-      <View style={[styles.etaWrap, { top: insets.top + 60 }]}>
-        <View style={styles.eta}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <BlinkDot />
-            <Text style={[fontExtra, styles.etaLive]}>LIVE</Text>
+      {/* Top status pill — copy varies by sub-state. Hidden for terminal /
+          pre-assignment states where there's nothing live to show. */}
+      {(subState === 'assigned' ||
+        subState === 'en_route' ||
+        subState === 'arrived' ||
+        subState === 'in_progress') && (
+        <View style={[styles.etaWrap, { top: insets.top + 60 }]}>
+          <View style={styles.eta}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <BlinkDot />
+              <Text style={[fontExtra, styles.etaLive]}>LIVE</Text>
+            </View>
+            {subState === 'en_route' && (
+              <>
+                <Text style={[fontBold, { color: '#FFFFFF', fontSize: 12.5 }]}>Arriving in </Text>
+                <Text style={[fontExtra, { color: AMBER, fontSize: 13 }]}>~{etaMinutes} min</Text>
+              </>
+            )}
+            {subState === 'arrived' && (
+              <Text style={[fontBold, { color: '#FFFFFF', fontSize: 12.5 }]}>Pro has arrived</Text>
+            )}
+            {subState === 'assigned' && (
+              <Text style={[fontBold, { color: '#FFFFFF', fontSize: 12.5 }]}>Pro assigned</Text>
+            )}
+            {subState === 'in_progress' && (
+              <Text style={[fontBold, { color: '#FFFFFF', fontSize: 12.5 }]}>Service in progress</Text>
+            )}
           </View>
-          <Text style={[fontBold, { color: '#FFFFFF', fontSize: 12.5 }]}>Arriving in </Text>
-          <Text style={[fontExtra, { color: AMBER, fontSize: 13 }]}>~{etaMinutes} min</Text>
         </View>
-      </View>
+      )}
 
-      {/* Bottom sheet — overlays the map */}
+      {/* Bottom sheet — overlays the map. Content varies by sub-state. */}
       <View style={[styles.sheet, { height: SHEET_HEIGHT, paddingBottom: 24 + insets.bottom }]}>
         <View style={styles.grab} />
         <ScrollView
@@ -414,120 +577,414 @@ export default function TrackLiveScreen() {
           contentContainerStyle={{ paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
         >
-          {/* Pro row */}
-          <View style={styles.proRow}>
-            <View style={styles.proAvatar}>
-              <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 18 }]}>{initial}</Text>
-              <View style={styles.verify}>
-                <Feather name="check" size={10} color="#FFFFFF" />
-              </View>
+          {/* Dispatching: no pro yet. Spinner + reassuring copy. */}
+          {subState === 'dispatching' && (
+            <View style={styles.statePanel}>
+              <ActivityIndicator size="large" color={AMBER} />
+              <Text style={[fontBold, styles.stateHeadline]}>ZopMop is finding a pro for you...</Text>
+              <Text style={[fontMed, styles.stateSub]}>Most bookings confirm in under 30 seconds</Text>
             </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={[fontBold, styles.pname]} numberOfLines={1}>
-                  {displayHelperName}
-                </Text>
-                {/* TOP PRO badge hidden until backend exposes a helper.is_top_pro
-                    flag (P9). The badge previously rendered for every pro. */}
+          )}
+
+          {/* Cancelled: terminal alt-state. Surfaces a Book again CTA. */}
+          {subState === 'cancelled' && (
+            <View style={styles.statePanel}>
+              <View style={styles.cancelIcon}>
+                <Feather name="x" size={28} color="#FFFFFF" />
               </View>
-              <View style={styles.metaRow}>
-                {(helperRating !== undefined || helperJobs !== undefined) && (
-                  <>
-                    <Feather name="star" size={11} color={AMBER} />
-                    <Text style={[fontSemi, styles.metaText]}>
-                      {[
-                        helperRating !== undefined ? helperRating.toFixed(1) : null,
-                        helperJobs !== undefined ? `${helperJobs} jobs` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
-                    <View style={styles.metaDot} />
-                  </>
-                )}
-                <Text style={[fontSemi, styles.metaText]}>{serviceName ?? 'Cleaning'}</Text>
-              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>Booking cancelled</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                You can request a new pro any time
+              </Text>
+              <PressFx
+                onPress={() => navigation.navigate('Tabs', { screen: 'Home' })}
+                style={styles.primaryCta}
+              >
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Book again</Text>
+              </PressFx>
             </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <PressFx onPress={onMessagePro} style={[styles.proAction, styles.proActionGhost]}>
-                <Feather name="message-circle" size={16} color="#FFFFFF" />
+          )}
+
+          {/* No pros available: dispatch exhausted the pool. Terminal. */}
+          {subState === 'no_pro_available' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="alert-triangle" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>No pros available right now</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                We couldn't find a pro nearby for your booking. This can happen
+                during peak hours or in newer service areas.
+              </Text>
+              <PressFx onPress={goHome} style={styles.primaryCta}>
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Try again</Text>
+              </PressFx>
+              <PressFx onPress={goHome} style={styles.secondaryCta}>
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Back to home</Text>
+              </PressFx>
+            </View>
+          )}
+
+          {/* No-show: assigned pro never arrived. Terminal, no charge. */}
+          {subState === 'no_show' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="user-x" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>Pro didn't show up</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                Your assigned pro didn't arrive. You haven't been charged.
+              </Text>
+              <PressFx onPress={goHome} style={styles.primaryCta}>
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Find another pro</Text>
               </PressFx>
               <PressFx
-                onPress={onCallPro}
-                style={[styles.proAction, styles.proActionPrimary, !helperPhone && { opacity: 0.5 }]}
+                onPress={() => navigation.navigate('HelpSupport')}
+                style={styles.secondaryCta}
               >
-                <Feather name="phone" size={16} color="#0D0D0F" />
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Contact support</Text>
               </PressFx>
             </View>
-          </View>
+          )}
 
-          {/* OTP card */}
-          <View style={styles.otp}>
-            <View style={{ flex: 1 }}>
-              <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
-              <Text style={[fontMed, styles.otpHelp]}>
-                {helperName
-                  ? `Share with ${helperName.split(' ')[0]} when they arrive`
-                  : 'Share this code with your pro when they arrive'}
+          {/* Pending customer action: stealth search window expired. The
+              customer decides — keep looking (extends 15 min) or cancel. */}
+          {subState === 'pending_action' && (
+            <View style={styles.statePanel}>
+              <View style={styles.warnIcon}>
+                <Feather name="clock" size={26} color="#FFFFFF" />
+              </View>
+              <Text style={[fontBold, styles.stateHeadline]}>Still looking for a pro</Text>
+              <Text style={[fontMed, styles.stateSub]}>
+                We haven't matched you with a pro yet. Want us to keep looking
+                for a little longer?
               </Text>
+              <PressFx
+                onPress={onKeepLooking}
+                style={[styles.primaryCta, actionBusy && { opacity: 0.5 }]}
+              >
+                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Keep looking</Text>
+              </PressFx>
+              <PressFx
+                onPress={onCancelBooking}
+                style={[styles.secondaryCta, actionBusy && { opacity: 0.5 }]}
+              >
+                <Text style={[fontSemi, styles.secondaryCtaText]}>Cancel booking</Text>
+              </PressFx>
             </View>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {displayOtp.split('').map((d, i) => (
-                <View key={i} style={styles.otpDigit}>
-                  <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
+          )}
+
+          {/* Pro row — visible from `assigned` onwards (skip on dispatching /
+              cancelled where there's no helper context). */}
+          {(subState === 'assigned' ||
+            subState === 'en_route' ||
+            subState === 'arrived' ||
+            subState === 'in_progress' ||
+            subState === 'completed') && (
+            <View style={styles.proRow}>
+              <View style={styles.proAvatar}>
+                <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 18 }]}>{initial}</Text>
+                <View style={styles.verify}>
+                  <Feather name="check" size={10} color="#FFFFFF" />
+                </View>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[fontBold, styles.pname]} numberOfLines={1}>
+                    {displayHelperName}
+                  </Text>
+                </View>
+                <View style={styles.metaRow}>
+                  {(helperRating !== undefined || helperJobs !== undefined) && (
+                    <>
+                      <Feather name="star" size={11} color={AMBER} />
+                      <Text style={[fontSemi, styles.metaText]}>
+                        {[
+                          helperRating !== undefined ? helperRating.toFixed(1) : null,
+                          helperJobs !== undefined ? `${helperJobs} jobs` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                      <View style={styles.metaDot} />
+                    </>
+                  )}
+                  <Text style={[fontSemi, styles.metaText]}>{serviceName ?? 'Cleaning'}</Text>
+                </View>
+              </View>
+              {/* Hide chat + call once the job is complete — no longer
+                  actionable. Disabled call shows toast hint pre-en_route. */}
+              {subState !== 'completed' && (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <PressFx onPress={onMessagePro} style={[styles.proAction, styles.proActionGhost]}>
+                    <Feather name="message-circle" size={16} color="#FFFFFF" />
+                  </PressFx>
+                  <PressFx
+                    onPress={onCallPro}
+                    style={[styles.proAction, styles.proActionPrimary, !callEnabled && { opacity: 0.5 }]}
+                  >
+                    <Feather name="phone" size={16} color="#0D0D0F" />
+                  </PressFx>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Assigned-state hint: pro can't call yet. */}
+          {subState === 'assigned' && (
+            <Text style={[fontMed, styles.assignedHint]}>
+              Your pro will start heading to you shortly
+            </Text>
+          )}
+
+          {/* OTP card — only meaningful pre-start. Once started_at is stamped
+              the OTP is consumed and we hide it. */}
+          {(subState === 'en_route' || subState === 'arrived') && (
+            <View style={styles.otp}>
+              <View style={{ flex: 1 }}>
+                <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
+                <Text style={[fontMed, styles.otpHelp]}>
+                  {helperName
+                    ? `Share with ${helperName.split(' ')[0]} when they arrive`
+                    : 'Share this code with your pro when they arrive'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {displayOtp.split('').map((d, i) => (
+                  <View key={i} style={styles.otpDigit}>
+                    <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Task checklist — in-progress only. Lists every booking_service
+              row with its per-service status. */}
+          {subState === 'in_progress' && detail && detail.services.length > 0 && (
+            <View style={styles.taskList}>
+              <Text style={[fontBold, styles.sectionHeader]}>Tasks</Text>
+              {detail.services.map((s) => (
+                <View key={s.service_id} style={styles.taskRow}>
+                  <View
+                    style={[
+                      styles.taskBullet,
+                      s.status === 'completed' && { backgroundColor: GREEN },
+                      s.status === 'in_progress' && { backgroundColor: AMBER },
+                      s.status === 'skipped' && { backgroundColor: 'rgba(255,255,255,0.15)' },
+                    ]}
+                  >
+                    {s.status === 'completed' && <Feather name="check" size={11} color="#FFFFFF" />}
+                    {s.status === 'in_progress' && <Feather name="clock" size={11} color="#0D0D0F" />}
+                    {s.status === 'skipped' && <Feather name="minus" size={11} color="rgba(255,255,255,0.6)" />}
+                  </View>
+                  <Text
+                    style={[
+                      fontMed,
+                      styles.taskName,
+                      s.status === 'skipped' && { textDecorationLine: 'line-through', opacity: 0.5 },
+                    ]}
+                  >
+                    {s.service_name}
+                  </Text>
+                  <Text style={[fontMono, styles.taskDuration]}>{s.duration_minutes} min</Text>
                 </View>
               ))}
             </View>
-          </View>
+          )}
 
-          {/* Steps */}
-          <View style={{ marginTop: 18, paddingHorizontal: 20 }}>
-            <Step
-              state="done"
-              icon="check"
-              title="Booking confirmed"
-              sub={buildAcceptedSub(helperName, createdAt, acceptedAt)}
-              time={acceptedAt ? formatTime(acceptedAt) : '—'}
-              connectorBelow="solid-green"
+          {/* Completed: hide steps, surface inline rating + tip placeholder. */}
+          {subState === 'completed' && (
+            <RatingPanel
+              helperName={helperName}
+              priceText={detail ? `₹${(detail.price_paise / 100).toFixed(0)}` : undefined}
+              onSubmit={async (stars, text) => {
+                if (!bookingId || !token || token === '__guest__') return;
+                try {
+                  await submitBookingReview(token, bookingId, stars, text);
+                  showSuccess('Thanks for your feedback!');
+                  navigation.navigate('Tabs', { screen: 'Bookings' });
+                } catch (e) {
+                  showError((e as Error)?.message ?? 'Could not submit rating');
+                }
+              }}
+              onSkip={() => navigation.navigate('Tabs', { screen: 'Bookings' })}
             />
-            <Step
-              state="active"
-              icon="clock"
-              title="On the way"
-              sub={
-                distanceKm !== undefined
-                  ? `${distanceKm.toFixed(1)} km · ${etaMinutes} min remaining`
-                  : `${etaMinutes} min remaining`
-              }
-              time={formatNow()}
-              timeAccent
-              connectorBelow="amber-fade"
-            />
-            <Step
-              state="pending"
-              icon="home"
-              title="Arrived & started"
-              sub="Share OTP to begin"
-              time={`~${addMinutes(etaMinutes)}`}
-              connectorBelow="muted"
-            />
-            <Step
-              state="pending"
-              icon="check"
-              title="Job completed"
-              sub="Auto-rate & tip"
-              time={`~${addMinutes(etaMinutes + 30)}`}
-            />
-          </View>
+          )}
 
-          {/* Booking ID footer */}
+          {/* Lifecycle steps — visible for the active progression. Hidden
+              when the journey is over (completed / cancelled) or hasn't
+              started (dispatching). */}
+          {(subState === 'assigned' ||
+            subState === 'en_route' ||
+            subState === 'arrived' ||
+            subState === 'in_progress') && (
+            <View style={{ marginTop: 18, paddingHorizontal: 20 }}>
+              <Step
+                state="done"
+                icon="check"
+                title="Booking confirmed"
+                sub={buildAcceptedSub(helperName, createdAt, acceptedAt)}
+                time={acceptedAt ? formatTime(acceptedAt) : '—'}
+                connectorBelow="solid-green"
+              />
+              <Step
+                state={
+                  subState === 'en_route'
+                    ? 'active'
+                    : subState === 'arrived' || subState === 'in_progress'
+                    ? 'done'
+                    : 'pending'
+                }
+                icon="clock"
+                title={subState === 'en_route' ? 'On the way' : 'En route'}
+                sub={
+                  subState === 'en_route'
+                    ? distanceKm !== undefined
+                      ? `${distanceKm.toFixed(1)} km · ${etaMinutes} min remaining`
+                      : `${etaMinutes} min remaining`
+                    : subState === 'assigned'
+                    ? 'Your pro will start heading to you shortly'
+                    : 'Reached your location'
+                }
+                time={subState === 'en_route' ? formatNow() : detail?.en_route_at ? formatTime(detail.en_route_at) : '—'}
+                timeAccent={subState === 'en_route'}
+                connectorBelow={subState === 'en_route' ? 'amber-fade' : subState === 'assigned' ? 'muted' : 'solid-green'}
+              />
+              <Step
+                state={
+                  subState === 'arrived'
+                    ? 'active'
+                    : subState === 'in_progress'
+                    ? 'done'
+                    : 'pending'
+                }
+                icon="home"
+                title={subState === 'in_progress' ? 'Service in progress' : 'Arrived & started'}
+                sub={
+                  subState === 'arrived'
+                    ? 'Share OTP to begin'
+                    : subState === 'in_progress'
+                    ? 'Your pro is working on the task list'
+                    : `~${addMinutes(etaMinutes)}`
+                }
+                time={detail?.arrived_at ? formatTime(detail.arrived_at) : '—'}
+                timeAccent={subState === 'arrived'}
+                connectorBelow="muted"
+              />
+              <Step
+                state="pending"
+                icon="check"
+                title="Service completed"
+                sub="Rate your pro after the service"
+                time={'—'}
+              />
+            </View>
+          )}
+
+          {/* Tip placeholder — visible on completed but disabled. Real
+              tipping flow is post-MVP. */}
+          {subState === 'completed' && (
+            <View style={styles.tipPlaceholder}>
+              <Feather name="dollar-sign" size={14} color="rgba(255,255,255,0.4)" />
+              <Text style={[fontMed, { color: 'rgba(255,255,255,0.4)', fontSize: 12 }]}>
+                Tip (coming soon)
+              </Text>
+            </View>
+          )}
+
+          {/* Booking ID footer — always visible. */}
           <View style={{ alignItems: 'center', marginTop: 20 }}>
             <View style={styles.bkIdPill}>
               <Text style={[fontMono, styles.bkIdText]}>#{shortId}</Text>
             </View>
           </View>
+
+          {loading && !detail && (
+            <View style={{ alignItems: 'center', marginTop: 12 }}>
+              <ActivityIndicator size="small" color={AMBER} />
+            </View>
+          )}
         </ScrollView>
       </View>
+    </View>
+  );
+}
+
+// ── Rating panel (inline) ────────────────────────────────────────────────────
+// Inline (not modal) per UX choice: persistent, dismiss-resistant, fits the
+// completed-state sheet space, measurably higher submission rate.
+
+function RatingPanel({
+  helperName,
+  priceText,
+  onSubmit,
+  onSkip,
+}: {
+  helperName?: string;
+  priceText?: string;
+  onSubmit: (stars: number, comment: string) => Promise<void>;
+  onSkip: () => void;
+}) {
+  const [stars, setStars] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const canSubmit = stars > 0 && !submitting;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(stars, comment.trim());
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <View style={styles.ratingPanel}>
+      <Text style={[fontExtra, styles.ratingHeadline]}>Service completed</Text>
+      {priceText && (
+        <Text style={[fontMed, styles.ratingSub]}>Total {priceText}</Text>
+      )}
+      <Text style={[fontBold, styles.ratingPrompt]}>
+        Rate {helperName ? helperName.split(' ')[0] : 'your pro'}
+      </Text>
+      <View style={styles.starsRow}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <Pressable key={n} onPress={() => setStars(n)} hitSlop={6}>
+            <Feather
+              name="star"
+              size={32}
+              color={n <= stars ? AMBER : 'rgba(255,255,255,0.18)'}
+              // @ts-ignore — Feather supports filled via overlay; use color only
+            />
+          </Pressable>
+        ))}
+      </View>
+      <TextInput
+        style={styles.ratingInput}
+        placeholder="Add your feedback (optional)"
+        placeholderTextColor="rgba(255,255,255,0.35)"
+        value={comment}
+        onChangeText={setComment}
+        multiline
+        maxLength={500}
+      />
+      <PressFx
+        onPress={submit}
+        style={[styles.primaryCta, !canSubmit && { opacity: 0.4 }]}
+        disabled={!canSubmit}
+      >
+        <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>
+          {submitting ? 'Submitting…' : 'Submit rating'}
+        </Text>
+      </PressFx>
+      <Pressable onPress={onSkip} hitSlop={6} style={{ marginTop: 10, alignSelf: 'center' }}>
+        <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 13 }]}>
+          Skip rating
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -1113,5 +1570,168 @@ const styles = StyleSheet.create({
     color: AMBER,
     fontSize: 10,
     letterSpacing: -0.1,
+  },
+
+  // State panels (dispatching / cancelled)
+  statePanel: {
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 14,
+    gap: 10,
+  },
+  stateHeadline: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 8,
+    letterSpacing: -0.2,
+  },
+  stateSub: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12.5,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  cancelIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,90,90,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,90,90,0.4)',
+  },
+  warnIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(245,163,0,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.4)',
+  },
+  primaryCta: {
+    marginTop: 14,
+    backgroundColor: AMBER,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryCta: {
+    marginTop: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryCtaText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+  },
+
+  assignedHint: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12,
+    paddingHorizontal: 20,
+    marginTop: 8,
+  },
+
+  // Task checklist (in_progress)
+  taskList: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+  },
+  sectionHeader: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 11,
+    letterSpacing: 0.8,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  taskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 9,
+  },
+  taskBullet: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  taskName: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13.5,
+  },
+  taskDuration: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+  },
+
+  // Rating panel (completed)
+  ratingPanel: {
+    marginTop: 6,
+    marginHorizontal: 16,
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: 'rgba(245,163,0,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.20)',
+  },
+  ratingHeadline: {
+    color: AMBER,
+    fontSize: 18,
+    letterSpacing: -0.3,
+  },
+  ratingSub: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12.5,
+    marginTop: 2,
+  },
+  ratingPrompt: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginTop: 14,
+  },
+  starsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  ratingInput: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontFamily: 'PlusJakartaSans_500Medium',
+    minHeight: 60,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+
+  tipPlaceholder: {
+    marginTop: 14,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
 });

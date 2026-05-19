@@ -40,8 +40,10 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/trustsafety"
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
+	"github.com/adityarohilla/househelp-api/internal/crm/zoneapprovals"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
 	"github.com/adityarohilla/househelp-api/internal/notification"
+	"github.com/adityarohilla/househelp-api/internal/shift"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
 
@@ -292,6 +294,15 @@ func main() {
 
 	healthHandler := healthmetrics.NewHandler(metricsCollector, cfg.AppAPIURL)
 
+	// Zone approvals — reuses the shift package's service so the state
+	// machine + notifier-driven FCM stay identical to cmd/api. Audit
+	// writes flow through the crm_audit_log via auditRecorder so the
+	// SPA's audit page sees these actions.
+	shiftRepo := shift.NewRepository(dbPool)
+	shiftSvc := shift.NewService(shiftRepo)
+	shiftSvc.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notifSvc}))
+	zoneApprovalsHandler := zoneapprovals.NewHandler(shiftSvc, auditRecorder)
+
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
 
@@ -323,6 +334,27 @@ func main() {
 			})
 		},
 	}, "ip", "crm-login")
+	// Refresh band (per-IP, generous): 60 / minute. Active sessions hit
+	// /admin/auth/refresh silently on token expiry; it MUST NOT share the
+	// strict login bucket or normal navigation evicts the user (and the
+	// shared 429 then blocks re-login). Own bucket: ratelimit:crm-refresh:*.
+	crmRefreshLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
+		MaxRequests:     60,
+		Window:          time.Minute,
+		FailureMode:     "fail-closed",
+		SuppressHeaders: true,
+		OnReject: func(c *fiber.Ctx) {
+			auditRecorder.Log(c.UserContext(), audit.Entry{
+				Action:     "ratelimit.exceeded",
+				Module:     "crm-auth",
+				TargetType: "ip",
+				TargetID:   c.IP(),
+				IPAddress:  c.IP(),
+				UserAgent:  c.Get("User-Agent"),
+				RequestID:  c.Get("X-Request-ID"),
+			})
+		},
+	}, "ip", "crm-refresh")
 	crmAdminLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
 		MaxRequests: 60,
 		Window:      time.Minute,
@@ -348,8 +380,11 @@ func main() {
 	// NOT pass through the JWT middleware — login must work without one.
 	// Login limiter chained here so brute-force / credential-stuffing get
 	// 429'd before they reach the bcrypt verify.
-	authPublic := api.Group("/auth", crmLoginLimiter)
-	authHandler.RegisterPublicRoutes(authPublic)
+	// No group-level limiter: /refresh must bypass the strict login bucket
+	// entirely (Fiber runs group middleware on every child route), so each
+	// public auth route binds its own limiter inside RegisterPublicRoutes.
+	authPublic := api.Group("/auth")
+	authHandler.RegisterPublicRoutes(authPublic, crmLoginLimiter, crmRefreshLimiter)
 
 	// Authed group. Every write below must call the audit recorder; the
 	// handlers do this individually rather than via a global decorator so
@@ -384,6 +419,7 @@ func main() {
 	tsHandler.RegisterRoutes(authed)
 	platformHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
+	zoneApprovalsHandler.RegisterRoutes(authed)
 
 	// Module stub handler — gated behind ENABLE_STUB_ENUMERATOR=1
 	// (audit E2-4). The route exposed the CRM module taxonomy to anyone
@@ -453,3 +489,17 @@ func (a refundsWalletAdapter) Credit(
 // _ keeps the pgx import alive for tx-bound adapters that may land here in
 // future passes (the refunds dispatcher does not currently take a tx).
 var _ = pgx.ErrNoRows
+
+// shiftPushAdapter narrows notification.Service down to shift.PushClient.
+// Mirrors the adapter on cmd/api so zone-approval pushes fire identically
+// from either entry point.
+type shiftPushAdapter struct{ n *notification.Service }
+
+func (a *shiftPushAdapter) SendToAdmins(ctx context.Context, title, body string, data map[string]string) error {
+	_, err := a.n.SendToAdmins(ctx, title, body, data)
+	return err
+}
+
+func (a *shiftPushAdapter) SendToProByID(ctx context.Context, proID, title, body string, data map[string]string) error {
+	return a.n.SendToProByID(ctx, proID, title, body, data)
+}

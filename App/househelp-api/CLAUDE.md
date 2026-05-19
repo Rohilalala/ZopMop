@@ -5,17 +5,28 @@
 - push directly to `main`
 - merge to `main` without running `make preflight` first
 
-All work happens on `feature/<name>` branches cut from `main`, then PR'd back in.
+**Branch flow: `feature/*` → `develop` → `main`.**
 
-> Switched from `feature/sdui` → `main` on 2026-05-15. The old `feature/sdui`
-> branch may still exist on origin but is no longer auto-deployed.
+- Feature work always cuts from `develop` (never from `main`).
+- PRs go to `develop` for integration / end-to-end testing.
+- When `develop` is stable, merge `develop` → `main` — that's the prod deploy.
+- **Never cut feature branches from `main`. Always from `develop`.**
+- **Hotfix exception:** for a critical prod bug, cut from `main`, fix, then merge
+  to **both** `main` and `develop` to keep them in sync.
+
+`main` remains the production gate — Railway deploys it. `make preflight` still
+gates every merge that lands on `main`.
+
+> Switched from `feature/sdui` → `main` on 2026-05-15. Added `develop`
+> integration tier on 2026-05-18. The old `feature/sdui` branch may still
+> exist on origin but is no longer auto-deployed.
 
 ## Local testing
 
 Full workflow is in `BACKEND_TESTING.md`. TL;DR:
 
 ```bash
-make new-feature name=<thing>     # cut feature branch from main
+make new-feature name=<thing>     # cut feature branch from develop
 make up                           # build + start postgres+redis+backend, run migrations
 make logs                         # tail backend
 make preflight                    # vet + tests + compose + smoke (gate before PR)

@@ -1,30 +1,42 @@
-import { useEffect } from 'react';
+import { lazy, useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { bootstrapAuth } from '@/api/client';
 import { useAuth } from '@/store/auth';
 
+// Eager imports: anything in the initial paint path stays here.
+//   * LoginPage — unauth users land here on cold load
+//   * Shell + Sidebar/Topbar — always rendered around lazy routes
+//   * Skeleton / BootSkeleton — Suspense fallbacks can't themselves be lazy
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { Shell } from '@/components/shell/Shell';
-import { DashboardPage } from '@/pages/DashboardPage';
-import { FlagsPage } from '@/pages/FlagsPage';
-import { SessionsPage } from '@/pages/SessionsPage';
-import { UsersPage } from '@/pages/users/UsersPage';
-import { WorkersPage } from '@/pages/workers/WorkersPage';
-import { LeavesPage } from '@/pages/LeavesPage';
-import { LiveMapPage } from '@/pages/LiveMapPage';
-import { OrdersPage } from '@/pages/OrdersPage';
-import { RefundsPage } from '@/pages/RefundsPage';
-import { PromosPage } from '@/pages/PromosPage';
-import { BannersPage } from '@/pages/BannersPage';
-import { ExperimentsPage } from '@/pages/ExperimentsPage';
-import { AnalyticsPage } from '@/pages/AnalyticsPage';
-import { PushPage } from '@/pages/PushPage';
-import { PayoutsPage } from '@/pages/PayoutsPage';
-import { DisputesPage } from '@/pages/DisputesPage';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { LocalitiesPage } from '@/pages/LocalitiesPage';
 import { Skeleton } from '@/components/ui';
+
+// Lazy routes. The interop adapter (`then(m => ({ default: m.XxxPage }))`)
+// translates our named exports into React.lazy's expected default-export
+// shape. Each entry becomes its own chunk in the rollup output.
+const DashboardPage     = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const FlagsPage         = lazy(() => import('./pages/FlagsPage').then(m => ({ default: m.FlagsPage })));
+const SessionsPage      = lazy(() => import('./pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
+const UsersPage         = lazy(() => import('./pages/users/UsersPage').then(m => ({ default: m.UsersPage })));
+const WorkersPage       = lazy(() => import('./pages/workers/WorkersPage').then(m => ({ default: m.WorkersPage })));
+const WorkerNewPage     = lazy(() => import('./pages/workers/WorkerNewPage').then(m => ({ default: m.WorkerNewPage })));
+const ZoneApprovalsPage = lazy(() => import('./pages/zoneApprovals/ZoneApprovalsPage').then(m => ({ default: m.ZoneApprovalsPage })));
+const OrderDetailPage   = lazy(() => import('./pages/orders/OrderDetailPage').then(m => ({ default: m.OrderDetailPage })));
+const AuditPage         = lazy(() => import('./pages/audit/AuditPage').then(m => ({ default: m.AuditPage })));
+const LeavesPage        = lazy(() => import('./pages/LeavesPage').then(m => ({ default: m.LeavesPage })));
+const LiveMapPage       = lazy(() => import('./pages/LiveMapPage').then(m => ({ default: m.LiveMapPage })));
+const OrdersPage        = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
+const RefundsPage       = lazy(() => import('./pages/RefundsPage').then(m => ({ default: m.RefundsPage })));
+const PromosPage        = lazy(() => import('./pages/PromosPage').then(m => ({ default: m.PromosPage })));
+const BannersPage       = lazy(() => import('./pages/BannersPage').then(m => ({ default: m.BannersPage })));
+const ExperimentsPage   = lazy(() => import('./pages/ExperimentsPage').then(m => ({ default: m.ExperimentsPage })));
+const AnalyticsPage     = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const PushPage          = lazy(() => import('./pages/PushPage').then(m => ({ default: m.PushPage })));
+const PayoutsPage       = lazy(() => import('./pages/PayoutsPage').then(m => ({ default: m.PayoutsPage })));
+const DisputesPage      = lazy(() => import('./pages/DisputesPage').then(m => ({ default: m.DisputesPage })));
+const SettingsPage      = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const LocalitiesPage    = lazy(() => import('./pages/LocalitiesPage').then(m => ({ default: m.LocalitiesPage })));
 
 // Top-level router. The auth store hydrates once on boot via
 // bootstrapAuth() — until then we show a full-screen skeleton instead of
@@ -45,9 +57,12 @@ export function App() {
           <Route path="/flags"       element={<FlagsPage />} />
           <Route path="/sessions"    element={<SessionsPage />} />
           <Route path="/orders"      element={<OrdersPage />} />
+          <Route path="/orders/:id"  element={<OrderDetailPage />} />
           <Route path="/refunds"     element={<RefundsPage />} />
           <Route path="/users"       element={<UsersPage />} />
           <Route path="/workers"     element={<WorkersPage />} />
+          <Route path="/workers/new" element={<WorkerNewPage />} />
+          <Route path="/zone-approvals" element={<ZoneApprovalsPage />} />
           <Route path="/leaves"      element={<LeavesPage />} />
           <Route path="/map"         element={<LiveMapPage />} />
           <Route path="/promos"      element={<PromosPage />} />
@@ -57,6 +72,7 @@ export function App() {
           <Route path="/analytics"   element={<AnalyticsPage />} />
           <Route path="/payouts"     element={<PayoutsPage />} />
           <Route path="/disputes"    element={<DisputesPage />} />
+          <Route path="/audit"       element={<AuditPage />} />
           <Route path="/settings"    element={<SettingsPage />} />
           <Route path="/localities"  element={<LocalitiesPage />} />
           <Route path="*"            element={<Navigate to="/" replace />} />

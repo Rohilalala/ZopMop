@@ -170,6 +170,23 @@ func (r *Repository) GetUserByID(ctx context.Context, userID string) (*User, err
 	return user, nil
 }
 
+// MarkPhoneVerified stamps phone_verified_at = now() on the user
+// row. Idempotent — overwrites any prior timestamp so the column
+// always reflects the most recent successful MSG91 verify.
+func (r *Repository) MarkPhoneVerified(ctx context.Context, userID string) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	_, err := r.db.Exec(queryCtx,
+		`UPDATE users SET phone_verified_at = now(), updated_at = now() WHERE id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark phone verified: %w", err)
+	}
+	return nil
+}
+
 // UpdateProfile updates a user's name.
 func (r *Repository) UpdateProfile(ctx context.Context, userID string, req UpdateProfileRequest) (*User, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

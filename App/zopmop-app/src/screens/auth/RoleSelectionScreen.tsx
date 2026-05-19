@@ -17,7 +17,6 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { pendingAuthStore } from '../../utils/pendingAuthStore';
 
 type Props = {
   route: RouteProp<AuthStackParamList, 'RoleSelection'>;
@@ -28,7 +27,7 @@ type Role = 'user' | 'professional';
 export default function RoleSelectionScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
-  const { signIn } = useAuth();
+  const { user } = useAuth();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
   const [selected, setSelected] = useState<Role | null>(null);
@@ -56,39 +55,23 @@ export default function RoleSelectionScreen({ route }: Props) {
 
   async function handleContinue() {
     if (!selected) return;
-
-    // Read auth data from the in-memory store (never from nav params).
-    const pending = pendingAuthStore.get();
-
     if (selected === 'professional') {
       navigation.navigate('ProOnboarding', { phone });
       return;
     }
-
+    // Customer choice: user is already signed in from the verify-otp
+    // step, so we just confirm we have a session and the root
+    // navigator will swap to MainNavigator on the next render.
     setError('');
     setLoading(true);
-
-    if (!pending?.token) {
-      setError('Unable to complete sign-in. Please check your connection and try again.');
+    if (!user) {
+      setError('Unable to complete sign-in. Please go back and try again.');
       setLoading(false);
       return;
     }
-
-    try {
-      const userForAuth = pending.user ?? {
-        id: '',
-        phone,
-        role: 'user',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      signIn(pending.token, userForAuth);
-      pendingAuthStore.clear();
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    // No-op: just trip a re-render via local state so the navigator
+    // re-evaluates. AuthProvider already has the session persisted.
+    setLoading(false);
   }
 
   return (

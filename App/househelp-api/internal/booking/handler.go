@@ -165,7 +165,9 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(booking)
 }
 
-// GetBooking handles GET /bookings/:id.
+// GetBooking handles GET /bookings/:id. Returns the enriched BookingDetail
+// shape (booking + helper + services). TrackLiveScreen renders entirely
+// from this response.
 func (h *Handler) GetBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
 	if !validateBookingIDParam(bookingID) {
@@ -173,7 +175,7 @@ func (h *Handler) GetBooking(c *fiber.Ctx) error {
 	}
 	userID, _ := c.Locals("userID").(string)
 
-	booking, err := h.service.GetBooking(c.UserContext(), bookingID, userID)
+	detail, err := h.service.GetBookingDetail(c.UserContext(), bookingID, userID)
 	if err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to get booking")
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -181,7 +183,7 @@ func (h *Handler) GetBooking(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(booking)
+	return c.JSON(detail)
 }
 
 // GetBookings handles GET /bookings.

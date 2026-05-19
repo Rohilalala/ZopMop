@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, Search, Star } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 import { listUsers, type ListParams, type Status, type UserListItem } from '@/api/users';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { formatRupees } from '@/lib/formatters';
 import { UserDrawer } from './UserDrawer';
+
+// UUID guard for the ?id= deep-link param. Same shape used by WorkersPage.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // UsersPage: full database view. Server-side everything (search/filter/sort/
 // page) — no client-side filtering, so 100k users render fine.
@@ -30,7 +35,26 @@ export function UsersPage() {
     limit: PAGE_SIZE,
     offset: 0,
   });
+  // Drawer state lives in ?id= so AuditPage / OrderDetailPage links land on
+  // the right user. Browser back / forward close the drawer for free.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [drawerId, setDrawerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const raw = searchParams.get('id');
+    setDrawerId(raw && UUID_RE.test(raw) ? raw : null);
+  }, [searchParams]);
+
+  const openDrawer = (id: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('id', id);
+    setSearchParams(sp);
+  };
+  const closeDrawer = () => {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete('id');
+    setSearchParams(sp);
+  };
 
   const q = useQuery({
     queryKey: ['users', params],
@@ -128,7 +152,7 @@ export function UsersPage() {
                   key={u.id}
                   user={u}
                   alt={i % 2 === 1}
-                  onClick={() => setDrawerId(u.id)}
+                  onClick={() => openDrawer(u.id)}
                 />
               ))
             )}
@@ -161,7 +185,7 @@ export function UsersPage() {
         )}
       </Card>
 
-      <UserDrawer userId={drawerId} onClose={() => setDrawerId(null)} />
+      <UserDrawer userId={drawerId} onClose={closeDrawer} />
     </div>
   );
 }
@@ -218,7 +242,7 @@ function Row({ user, alt, onClick }: { user: UserListItem; alt: boolean; onClick
       <td className="px-4 py-3 capitalize">{user.role}</td>
       <td className="px-4 py-3">{new Date(user.joined_at).toLocaleDateString()}</td>
       <td className="px-4 py-3 text-right tabular-nums">{user.total_orders}</td>
-      <td className="px-4 py-3 text-right tabular-nums">₹{(user.ltv_cents / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
+      <td className="px-4 py-3 text-right tabular-nums">{formatRupees(user.ltv_paise)}</td>
       <td className="px-4 py-3">
         <StatusPill tone={
           user.status === 'active' ? 'success'

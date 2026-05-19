@@ -29,6 +29,25 @@ type Config struct {
 	JWTSecretID        string
 	JWTPreviousSecrets []JWTSecretEntry
 	JWTExpiryHours     int
+
+	// Post-Firebase MSG91 auth. Distinct from the legacy JWT_SECRET used
+	// by the Firebase exchange — JWTAccessSecret signs short-lived
+	// access tokens, JWTRefreshSecret is reserved for future symmetric
+	// tagging of refresh-token records. Refresh tokens themselves are
+	// random opaque strings; JWTRefreshSecret is kept distinct so a
+	// compromised access secret cannot forge refresh material.
+	JWTAccessSecret  string
+	JWTRefreshSecret string
+	JWTAccessTTLHours  int
+	JWTRefreshTTLDays  int
+
+	// MSG91 OTP gateway. AuthKey + TemplateID are required in
+	// production; DevMode bypasses all network calls and treats the
+	// hardcoded OTP "9999" as valid for every phone.
+	MSG91AuthKey    string
+	MSG91TemplateID string
+	MSG91SenderID   string
+	MSG91DevMode    bool
 	AllowedOrigins          []string
 	WebhookAllowedDomains   []string // ALLOWED_WEBHOOK_DOMAINS; empty = any non-private domain allowed
 
@@ -105,6 +124,22 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid JWT_EXPIRY_HOURS value %q: %w", expiryStr, err)
 	}
 	cfg.JWTExpiryHours = expiry
+
+	cfg.JWTAccessSecret = strings.TrimSpace(os.Getenv("JWT_ACCESS_SECRET"))
+	if cfg.JWTAccessSecret == "" {
+		// Fall back to the legacy JWT_SECRET so a single-secret deploy
+		// keeps working. The validator below treats this as the
+		// signing secret for the new MSG91 access tokens.
+		cfg.JWTAccessSecret = cfg.JWTSecret
+	}
+	cfg.JWTRefreshSecret = strings.TrimSpace(os.Getenv("JWT_REFRESH_SECRET"))
+	cfg.JWTAccessTTLHours = getEnvIntOrDefault("JWT_ACCESS_TTL_HOURS", 1)
+	cfg.JWTRefreshTTLDays = getEnvIntOrDefault("JWT_REFRESH_TTL_DAYS", 30)
+
+	cfg.MSG91AuthKey = strings.TrimSpace(os.Getenv("MSG91_AUTH_KEY"))
+	cfg.MSG91TemplateID = strings.TrimSpace(os.Getenv("MSG91_TEMPLATE_ID"))
+	cfg.MSG91SenderID = strings.TrimSpace(os.Getenv("MSG91_SENDER_ID"))
+	cfg.MSG91DevMode = strings.EqualFold(strings.TrimSpace(os.Getenv("MSG91_DEV_MODE")), "true")
 
 	cfg.CashfreePGAppID = strings.TrimSpace(os.Getenv("CASHFREE_PG_APP_ID"))
 	cfg.CashfreePGSecretKey = strings.TrimSpace(os.Getenv("CASHFREE_PG_SECRET_KEY"))
@@ -196,6 +231,23 @@ func (c *Config) validate() error {
 	}
 	if c.JWTExpiryHours <= 0 {
 		return fmt.Errorf("JWT_EXPIRY_HOURS must be positive")
+	}
+	if c.JWTAccessTTLHours <= 0 {
+		return fmt.Errorf("JWT_ACCESS_TTL_HOURS must be positive")
+	}
+	if c.JWTRefreshTTLDays <= 0 {
+		return fmt.Errorf("JWT_REFRESH_TTL_DAYS must be positive")
+	}
+	if !c.IsDevelopment() {
+		if c.MSG91AuthKey == "" && !c.MSG91DevMode {
+			return fmt.Errorf("MSG91_AUTH_KEY is required when MSG91_DEV_MODE is not true")
+		}
+		if c.MSG91TemplateID == "" && !c.MSG91DevMode {
+			return fmt.Errorf("MSG91_TEMPLATE_ID is required when MSG91_DEV_MODE is not true")
+		}
+		if c.JWTRefreshSecret == "" {
+			return fmt.Errorf("JWT_REFRESH_SECRET is required in production")
+		}
 	}
 	if c.DBPoolMinConns < 0 {
 		return fmt.Errorf("DB_POOL_MIN_CONNS must be non-negative")

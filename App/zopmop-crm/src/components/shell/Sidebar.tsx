@@ -1,13 +1,17 @@
 import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import {
-  LayoutDashboard, Briefcase, Users, UserCog, Megaphone,
-  CircleDollarSign, Settings as SettingsIcon, Sliders,
+  LayoutDashboard, ClipboardList, User, UserCog, Tag,
+  Banknote, Receipt, Settings as SettingsIcon, Flag,
   Map as MapIcon, FlaskConical, BarChart3, Image as ImageIcon,
-  Bell, ShieldAlert, ChevronsLeft, ChevronsRight, CalendarDays, MapPin,
+  Bell, ShieldAlert, ChevronsLeft, ChevronsRight, CalendarDays, MapPinned,
+  ShieldCheck, FileText, Clock, Sliders,
   type LucideIcon,
 } from 'lucide-react';
 import { useProMode } from '@/store/proMode';
+import { listPendingZoneApprovals, zoneApprovalKeys } from '@/api/zoneApprovals';
+import { usePermission } from '@/auth/usePermission';
 
 // Sidebar navigation. Sections come from the spec — Overview, Operations,
 // Workers, Growth, Finance, Platform, Settings. Pro Mode toggle lives in the
@@ -15,50 +19,54 @@ import { useProMode } from '@/store/proMode';
 
 type Item = { to: string; label: string; icon: LucideIcon };
 
+// Sidebar layout — locked in Phase H. Groupings reflect daily operator
+// workflow: anything action-driven goes under Operations, anything growth-
+// experiment-driven under Growth, etc. New top-level pages should be slotted
+// into an existing group rather than spawning a new one.
 const SECTIONS: { title: string; items: Item[] }[] = [
-  {
-    title: 'Overview',
-    items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }],
-  },
   {
     title: 'Operations',
     items: [
-      { to: '/orders',  label: 'Orders',   icon: Briefcase },
-      { to: '/refunds', label: 'Refunds',  icon: CircleDollarSign },
-      { to: '/users',   label: 'Users',    icon: Users },
-    ],
-  },
-  {
-    title: 'Workers',
-    items: [
-      { to: '/workers', label: 'Workers',  icon: UserCog },
-      { to: '/leaves',  label: 'Leaves',   icon: CalendarDays },
-      { to: '/map',     label: 'Live Map', icon: MapIcon },
+      { to: '/',                label: 'Dashboard',       icon: LayoutDashboard },
+      { to: '/map',             label: 'Live Map',        icon: MapIcon },
+      { to: '/zone-approvals',  label: 'Zone Approvals',  icon: ShieldCheck },
+      { to: '/workers',         label: 'Workers',         icon: UserCog },
+      { to: '/users',           label: 'Users',           icon: User },
+      { to: '/orders',          label: 'Orders',          icon: ClipboardList },
+      { to: '/refunds',         label: 'Refunds',         icon: Receipt },
+      { to: '/leaves',          label: 'Leaves',          icon: CalendarDays },
+      { to: '/payouts',         label: 'Payouts',         icon: Banknote },
     ],
   },
   {
     title: 'Growth',
     items: [
-      { to: '/promos',     label: 'Promos',     icon: Megaphone },
-      { to: '/banners',    label: 'Banners',    icon: ImageIcon },
-      { to: '/experiments', label: 'A/B Tests', icon: FlaskConical },
-      { to: '/push',        label: 'Push',      icon: Bell },
+      { to: '/promos',      label: 'Promos',      icon: Tag },
+      { to: '/banners',     label: 'Banners',     icon: ImageIcon },
+      { to: '/push',        label: 'Push',        icon: Bell },
+      { to: '/experiments', label: 'Experiments', icon: FlaskConical },
     ],
   },
   {
-    title: 'Finance',
+    title: 'Insights',
     items: [
       { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-      { to: '/payouts',   label: 'Payouts',   icon: CircleDollarSign },
+    ],
+  },
+  {
+    title: 'Trust & Safety',
+    items: [
+      { to: '/disputes', label: 'Disputes', icon: ShieldAlert },
     ],
   },
   {
     title: 'Platform',
     items: [
-      { to: '/flags',      label: 'Feature Flags', icon: Sliders },
-      { to: '/localities', label: 'Localities',    icon: MapPin },
-      { to: '/disputes',   label: 'Disputes',      icon: ShieldAlert },
-      { to: '/settings',   label: 'Settings',      icon: SettingsIcon },
+      { to: '/flags',      label: 'Flags',      icon: Flag },
+      { to: '/localities', label: 'Localities', icon: MapPinned },
+      { to: '/sessions',   label: 'Sessions',   icon: Clock },
+      { to: '/audit',      label: 'Audit',      icon: FileText },
+      { to: '/settings',   label: 'Settings',   icon: SettingsIcon },
     ],
   },
 ];
@@ -72,6 +80,22 @@ export function Sidebar({
 }) {
   const proMode = useProMode((s) => s.enabled);
   const setProMode = useProMode((s) => s.set);
+
+  // Live count of pending zone approvals — drives the badge next to the
+  // sidebar link. Same query key the page uses, so the data is shared.
+  const canSeeZoneApprovals = usePermission('zones.approval.read');
+  const zaQ = useQuery({
+    queryKey: zoneApprovalKeys.pending,
+    queryFn: listPendingZoneApprovals,
+    refetchInterval: 30_000,
+    enabled: canSeeZoneApprovals,
+    staleTime: 15_000,
+  });
+  const badgeFor = (to: string): number | null => {
+    if (to !== '/zone-approvals') return null;
+    const n = zaQ.data?.length ?? 0;
+    return n > 0 ? n : null;
+  };
 
   return (
     <motion.aside
@@ -107,24 +131,39 @@ export function Sidebar({
               </div>
             )}
             <div className="px-2 flex flex-col gap-0.5">
-              {section.items.map((it) => (
-                <NavLink
-                  key={it.to}
-                  to={it.to}
-                  end={it.to === '/'}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${
-                      isActive
-                        ? 'bg-primary/10 border border-primary/30 text-text-primary shadow-glow-primary/30'
-                        : 'border border-transparent text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
-                    }`
-                  }
-                  title={collapsed ? it.label : undefined}
-                >
-                  <it.icon className="w-4 h-4 shrink-0" />
-                  {!collapsed && <span className="truncate">{it.label}</span>}
-                </NavLink>
-              ))}
+              {section.items.map((it) => {
+                const badge = badgeFor(it.to);
+                return (
+                  <NavLink
+                    key={it.to}
+                    to={it.to}
+                    end={it.to === '/'}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition ${
+                        isActive
+                          ? 'bg-primary/10 border border-primary/30 text-text-primary shadow-glow-primary/30'
+                          : 'border border-transparent text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
+                      }`
+                    }
+                    title={collapsed ? it.label : undefined}
+                  >
+                    <it.icon className="w-4 h-4 shrink-0" />
+                    {!collapsed && <span className="truncate flex-1">{it.label}</span>}
+                    {badge != null && (
+                      collapsed ? (
+                        <span
+                          className="absolute -translate-y-3 translate-x-3 w-2 h-2 rounded-full bg-danger"
+                          aria-label={`${badge} pending`}
+                        />
+                      ) : (
+                        <span className="ml-auto inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-danger/90 text-white text-[10px] font-semibold tabular-nums">
+                          {badge}
+                        </span>
+                      )
+                    )}
+                  </NavLink>
+                );
+              })}
             </div>
           </div>
         ))}

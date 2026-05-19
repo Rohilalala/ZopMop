@@ -18,16 +18,13 @@ import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
-import { getIdToken } from '@react-native-firebase/auth';
-import { otpStore } from '../../utils/otpStore';
-import { pendingAuthStore } from '../../utils/pendingAuthStore';
 import { useAuth } from '../../context/AuthContext';
-import { BASE_URL } from '../../api/config';
 import { haptics } from '../../utils/haptics';
 import LottieView from 'lottie-react-native';
 import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { posthog } from '../../config/posthog';
+import { sendOTP, verifyOTP, AuthError } from '../../services/auth';
 
 // Public-facing policy URLs. Kept inline rather than from env because they're
 // the same across builds — the Privacy Policy link in the new-user consent
@@ -41,12 +38,13 @@ type Props = {
   route: RouteProp<AuthStackParamList, 'OTPVerification'>;
 };
 
+// MSG91 templates default to 6-digit OTPs; dev mode hardcodes
+// "999999" so testers can complete the flow without an SMS gateway.
 const OTP_LENGTH = 6;
-const RESEND_SECONDS = 60;
+const RESEND_SECONDS = 30;
 
 export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone, isNewUser = false } = route.params;
-  const confirmation = otpStore.get();
   const { signIn } = useAuth();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -94,78 +92,60 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
     setLoading(true);
 
     try {
-      if (!confirmation) throw new Error('Session expired. Please go back and try again.');
-      const userCredential = await confirmation.confirm(fullCode);
+      const data = await verifyOTP(phone, fullCode, isNewUser ? policyAccepted : false);
 
-      // Exchange Firebase ID token for backend JWT.
-      // Security: token is stored in pendingAuthStore (memory-only), NOT in nav params,
-      // to prevent serialization to disk via React Navigation state persistence.
-      let backendToken: string | undefined;
-      let backendUser: import('../../context/AuthContext').AuthUser | undefined;
-      try {
-        const idToken = userCredential?.user ? await getIdToken(userCredential.user) : undefined;
-        const res = await fetch(`${BASE_URL}/auth/firebase`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            firebase_token: idToken,
-            // Only send true when we actually captured consent on this screen
-            // (new user + checkbox ticked). Returning users send false and the
-            // backend leaves their existing acceptance flag untouched.
-            has_accepted_privacy_policy: isNewUser ? policyAccepted : false,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          backendToken = data.token as string;
-          backendUser = data.user;
-          // Mirror acceptance to AsyncStorage so the client can render
-          // privacy-aware UI (e.g. a "you accepted on…" line) without an
-          // extra /me round-trip.
-          if (isNewUser && policyAccepted) {
-            AsyncStorage.setItem(PRIVACY_ACCEPTED_KEY, 'true').catch(() => {});
-          }
-        }
-      } catch (backendErr: any) {
-        // Backend unavailable — token will be undefined.
-        console.warn('[Auth] Backend token exchange failed:', backendErr?.message ?? backendErr);
-      }
-
-      // Store auth data in memory store (not nav params).
-      if (backendToken) {
-        pendingAuthStore.set(backendToken, backendUser);
+      if (isNewUser && policyAccepted) {
+        AsyncStorage.setItem(PRIVACY_ACCEPTED_KEY, 'true').catch(() => {});
       }
 
       haptics.success();
       posthog.capture('otp_verified', {
-        is_new_user: isNewUser,
-        has_backend_token: !!backendToken,
-        role: backendUser?.role ?? null,
+        is_new_user: data.is_new_user,
+        user_type: data.user.type,
+        role: data.user.role,
       });
 
-      // Returning pro/helper — sign in directly, skip onboarding.
-      if (backendToken && (backendUser?.role === 'helper' || backendUser?.role === 'pro')) {
-        signIn(backendToken, backendUser);
-        pendingAuthStore.clear();
+      // Single-app: branch nav on user.type. Pros land on ProDashboard
+      // via MainNavigator's initialRouteName which already reads
+      // user.role. signIn populates that.
+      if (data.user.role === 'helper' || data.user.role === 'pro' || data.user.type === 'pro') {
+        signIn(data.access_token, data.refresh_token, data.user);
         return;
       }
 
-      // Skip name entry for returning users; still show welcome greeting.
-      const hasName = backendUser?.name && backendUser.name.trim().length > 0;
+      // Customer flow: returning users with a name skip NameEntry.
+      const hasName = data.user.name && data.user.name.trim().length > 0;
       if (hasName) {
-        navigation.replace('Welcome', { phone, name: backendUser?.name });
-      } else {
+        signIn(data.access_token, data.refresh_token, data.user);
+        navigation.replace('Welcome', { phone, name: data.user.name });
+      } else if (data.is_new_user) {
+        // Stash tokens via signIn THEN route to NameEntry so the
+        // user is authenticated for the profile-setup PUT /me call.
+        signIn(data.access_token, data.refresh_token, data.user);
         navigation.replace('NameEntry', { phone });
+      } else {
+        signIn(data.access_token, data.refresh_token, data.user);
       }
     } catch (err: any) {
-      const msg =
-        err?.code === 'auth/invalid-verification-code'
-          ? 'Incorrect code. Please try again.'
-          : err?.code === 'auth/code-expired'
-            ? 'Code expired. Please request a new one.'
-            : 'Verification failed. Please try again.';
-      setError(msg);
       haptics.error();
+      if (err instanceof AuthError) {
+        if (err.code === 'INVALID_OTP') {
+          setError('Incorrect code. Please try again.');
+        } else if (err.code === 'OTP_EXPIRED') {
+          setError('Code expired. Please request a new one.');
+        } else if (err.code === 'OTP_RATE_LIMITED') {
+          const mins = err.retryAfter ? Math.ceil(err.retryAfter / 60) : 0;
+          setError(mins > 0
+            ? `Too many attempts. Please try again in ${mins} minute${mins > 1 ? 's' : ''}.`
+            : 'Too many attempts. Please try again later.');
+        } else if (err.status === 403) {
+          setError(err.message || 'Account suspended. Contact support.');
+        } else {
+          setError(err.message || 'Verification failed. Please try again.');
+        }
+      } else {
+        setError('Network error. Please try again.');
+      }
       setOtp(Array(OTP_LENGTH).fill(''));
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } finally {
@@ -177,20 +157,19 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
     setResending(true);
     setError('');
     try {
-      const { getAuth, signInWithPhoneNumber } = await import('@react-native-firebase/auth');
-      const firebaseAuth = getAuth();
-      if (__DEV__) {
-        firebaseAuth.settings.appVerificationDisabledForTesting = true;
-      }
-      // @ts-ignore — react-native-firebase's modular signInWithPhoneNumber does not
-      // require an ApplicationVerifier on native; the web SDK type definition is wrong here.
-      const newConfirmation = await signInWithPhoneNumber(firebaseAuth, phone);
-      otpStore.set(newConfirmation);
+      await sendOTP(phone);
       setCountdown(RESEND_SECONDS);
       setOtp(Array(OTP_LENGTH).fill(''));
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
-    } catch {
-      setError('Failed to resend OTP. Please try again.');
+    } catch (err: any) {
+      if (err instanceof AuthError && err.code === 'OTP_RATE_LIMITED') {
+        const mins = err.retryAfter ? Math.ceil(err.retryAfter / 60) : 0;
+        setError(mins > 0
+          ? `Too many resends. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`
+          : 'Too many resends. Try again later.');
+      } else {
+        setError('Failed to resend OTP. Please try again.');
+      }
     } finally {
       setResending(false);
     }
@@ -214,7 +193,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   }
 
   function handleDigitChange(index: number, text: string) {
-    // Support pasting full 6-digit code
+    // Support pasting the full OTP in one shot.
     const pasted = text.replace(/\D/g, '');
     if (pasted.length === OTP_LENGTH) {
       const chars = pasted.split('');
@@ -260,7 +239,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
           <View style={styles.header}>
             <Text style={styles.title}>Verify your number</Text>
             <Text style={styles.subtitle}>
-              Enter the 6-digit code sent to{'\n'}
+              Enter the {OTP_LENGTH}-digit code sent to{'\n'}
               <Text style={styles.phoneHighlight}>{maskedPhone}</Text>
             </Text>
           </View>

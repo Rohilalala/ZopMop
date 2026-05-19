@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/auth"
 	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
@@ -151,7 +152,7 @@ func (r *Repository) Balances(ctx context.Context, proID string) ([]Balance, err
 		where = "WHERE h.id = $1"
 	}
 	q := fmt.Sprintf(`
-		SELECT h.id::text, COALESCE(u.name, ''), u.phone,
+		SELECT h.id::text, COALESCE(u.name, ''), COALESCE(u.phone, ''),
 		       h.leave_balance, h.monthly_leave_quota, h.leave_balance_reset_at,
 		       COALESCE((
 		         SELECT COUNT(*) FROM pro_leaves pl
@@ -187,11 +188,18 @@ func (r *Repository) Balances(ctx context.Context, proID string) ([]Balance, err
 // ErrProNotFound is returned by Allocate when the pro id does not match a helper row.
 var ErrProNotFound = errors.New("pro not found")
 
-// Allocate adds `days` to the pro's running leave_balance. Returns the new
-// balance. Also writes an audit row through the caller, not here.
+// Allocate adjusts the pro's running leave_balance by `days`. Positive
+// values add (admin handed out a bonus day); negative deducts (reverse a
+// fraudulent leave declaration). Zero is rejected — that's a no-op the
+// handler must not bother the DB with.
+//
+// Negative results are NOT clamped at zero: if a pro had balance 1 and the
+// admin deducts 2, the balance goes to -1 so the next monthly reset
+// behaviour is observable. Downstream consumers (shift cron, payouts)
+// already treat negative as "no days left."
 func (r *Repository) Allocate(ctx context.Context, proID string, days int) (int, error) {
-	if days <= 0 {
-		return 0, errors.New("days must be > 0")
+	if days == 0 {
+		return 0, errors.New("days must be non-zero")
 	}
 	var newBalance int
 	err := r.write.QueryRow(ctx, `
@@ -296,6 +304,9 @@ func (h *Handler) Balances(c *fiber.Ctx) error {
 }
 
 // Allocate handles POST /pro/:id/leave/allocate.
+// Positive days adds to the balance; negative days deducts (requires the
+// caller to hold the leaves.deduct permission on top of workers.update).
+// Zero is rejected — that would be a no-op write with audit noise.
 func (h *Handler) Allocate(c *fiber.Ctx) error {
 	proID := c.Params("id")
 	if proID == "" {
@@ -306,8 +317,21 @@ func (h *Handler) Allocate(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
-	if req.Days <= 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "days must be > 0"})
+	if req.Days == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "days must be non-zero"})
+	}
+
+	// Negative-days path is gated on a separate permission so a support
+	// agent who can add days can't sneak deductions through.
+	if req.Days < 0 {
+		role, _ := c.Locals("crmAdminRole").(string)
+		if !auth.HasPermission(role, "leaves.deduct") {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error":         "insufficient_permissions",
+				"required_role": auth.MinRoleFor("leaves.deduct"),
+				"your_role":     role,
+			})
+		}
 	}
 
 	newBalance, err := h.svc.Allocate(c.UserContext(), proID, req.Days)

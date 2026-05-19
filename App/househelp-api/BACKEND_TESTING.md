@@ -9,9 +9,15 @@ Railway auto-deploy. Read it once, then refer back when something bites.
   and auto-deploys on every push or merge.** Treat it as protected. Never
   commit directly. Never push directly. The `.githooks/pre-push` hook blocks
   this if you enable it (see below).
+- **`develop`** is the integration / pre-prod tier. Feature work merges here
+  first for end-to-end testing. When `develop` is stable, merge it → `main`.
 - **`feature/<thing>`** is where every change lives until it's verified.
+  Always cut it from `develop`, never from `main`.
 - **`chore/<thing>`** is for tooling / infra changes (this doc was created on
   one such branch).
+
+Flow: `feature/*` → `develop` → `main`. **Hotfix exception:** for a critical
+prod bug, cut from `main`, fix, merge to **both** `main` and `develop`.
 
 > **Heads-up.** This repo's deploy branch was renamed twice: original `sdui`
 > → `feature/sdui` (early 2026) → `main` (2026-05-15). Anywhere a tool,
@@ -21,7 +27,7 @@ Railway auto-deploy. Read it once, then refer back when something bites.
 
 ```
                   ┌───────────────────────────────┐
-                  │  main  (Railway prod) │
+                  │  develop  (integration tier)  │
                   └───────────────┬───────────────┘
                                   │  git pull
                                   ▼
@@ -45,12 +51,17 @@ Railway auto-deploy. Read it once, then refer back when something bites.
                                   │  passes
                                   ▼
                   ┌───────────────────────────────┐
-                  │  push, open PR → main │
+                  │  push, open PR → develop      │
+                  └───────────────┬───────────────┘
+                                  │  review + merge, e2e test
+                                  ▼
+                  ┌───────────────────────────────┐
+                  │  develop stable → merge → main│
                   └───────────────┬───────────────┘
                                   │  review + merge
                                   ▼
                   ┌───────────────────────────────┐
-                  │  Railway auto-deploys         │
+                  │  Railway auto-deploys (main)  │
                   └───────────────────────────────┘
 ```
 

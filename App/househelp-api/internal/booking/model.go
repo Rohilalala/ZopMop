@@ -37,6 +37,15 @@ type Booking struct {
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
 	CancellationFeeCents   int           `json:"cancellation_fee_paise"`
+	// Phase 10 lifecycle timestamps. NULL until the pro reaches that step.
+	AcceptedAt            *time.Time `json:"accepted_at,omitempty"`
+	EnRouteAt             *time.Time `json:"en_route_at,omitempty"`
+	ArrivedAt             *time.Time `json:"arrived_at,omitempty"`
+	StartedAt             *time.Time `json:"started_at,omitempty"`
+	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	ProEarningsPaise      int        `json:"pro_earnings_paise,omitempty"`
+	ActualDurationMinutes *int       `json:"actual_duration_minutes,omitempty"`
+	CustomerRatingPending bool       `json:"customer_rating_pending,omitempty"`
 	// CanCancelFree and FreeCancelUntil are computed at read time on the
 	// booking detail endpoint. nil for terminal-state bookings (no longer
 	// cancellable).
@@ -44,6 +53,65 @@ type Booking struct {
 	FreeCancelUntil *time.Time `json:"free_cancel_until,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// BookingDetail is the enriched response returned by GET /bookings/:id.
+// It embeds the base Booking plus the resolved helper (when assigned) and
+// the per-service line items with their lifecycle status. The customer app
+// renders TrackLiveScreen entirely from this shape — no follow-up calls.
+type BookingDetail struct {
+	Booking
+	Helper   *BookingDetailHelper  `json:"helper,omitempty"`
+	Services []BookingDetailService `json:"services"`
+}
+
+// BookingDetailHelper is the customer-facing slice of the assigned pro.
+// Phone is middle-masked (98XXXXX210) until the booking is accepted; the
+// full unmasked number is returned post-accept so the customer can call.
+type BookingDetailHelper struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Phone     string  `json:"phone"`
+	Rating    float64 `json:"rating"`
+	TotalJobs int     `json:"total_jobs"`
+	PhotoURL  string  `json:"photo_url,omitempty"`
+}
+
+// BookingDetailService is one service line within a booking with its
+// per-service status. display_order is the canonical sort key for the
+// task checklist UI.
+type BookingDetailService struct {
+	ServiceID       string     `json:"service_id"`
+	ServiceName     string     `json:"service_name"`
+	DurationMinutes int        `json:"duration_minutes"`
+	PricePaise      int        `json:"price_paise"`
+	Status          string     `json:"status"` // pending | in_progress | completed | skipped
+	DisplayOrder    int        `json:"display_order"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	SkipReason      *string    `json:"skip_reason,omitempty"`
+}
+
+// MaskPhone returns a middle-masked phone string for display before the
+// pro accepts. Strips leading +91 / 91 country code, keeps the first 2 and
+// last 3 of the 10-digit national number, and X-pads the middle.
+// Returns the input untouched when it doesn't look like a 10-digit number.
+func MaskPhone(raw string) string {
+	// Strip non-digits.
+	digits := make([]byte, 0, len(raw))
+	for i := 0; i < len(raw); i++ {
+		if raw[i] >= '0' && raw[i] <= '9' {
+			digits = append(digits, raw[i])
+		}
+	}
+	// Drop leading 91 country code if present and we have 12 digits.
+	if len(digits) == 12 && digits[0] == '9' && digits[1] == '1' {
+		digits = digits[2:]
+	}
+	if len(digits) != 10 {
+		return raw
+	}
+	return string(digits[:2]) + "XXXXX" + string(digits[7:])
 }
 
 // CancelBookingResponse is returned by DELETE /bookings/:id.
@@ -119,10 +187,14 @@ type CreateInstantBookingRequest struct {
 type MatchStatusResponse struct {
 	Status        string         `json:"status"` // "searching" | "matched" | "failed"
 	Helper        *MatchedHelper `json:"helper,omitempty"`
-	BookingStatus string         `json:"booking_status,omitempty"` // "pending" | "accepted" | "in_progress" | "completed" | "cancelled"
-	// Arrived is true once the assigned pro tapped "I've Arrived" at the
-	// customer's location. Drives the "Pro's at your door" state.
-	Arrived bool `json:"arrived,omitempty"`
+	BookingStatus string         `json:"booking_status,omitempty"` // pending|searching|dispatching|accepted|arrived|in_progress|completed|cancelled
+	// Phase 10 sub-state booleans derived from the lifecycle timestamp
+	// columns. The customer app uses these instead of the coarse status
+	// to drive the TrackLiveScreen state machine.
+	EnRoute    bool `json:"en_route,omitempty"`
+	Arrived    bool `json:"arrived,omitempty"`
+	InProgress bool `json:"in_progress,omitempty"`
+	Completed  bool `json:"completed,omitempty"`
 }
 
 // MatchedHelper contains the assigned helper's details once a booking is accepted.

@@ -1,10 +1,28 @@
 import { reportBackendDown } from '../hooks/useBackendHealth';
+import { refreshAccessToken } from '../services/auth';
 
-// Global signOut callback registered by AuthProvider on mount.
+// Global callbacks registered by AuthProvider on mount. apiFetch reads
+// the current access/refresh pair through these so it can attach the
+// Bearer header AND silently rotate on 401 without coupling the client
+// to the React context.
+
 let _signOut: (() => void) | null = null;
+let _getAccessToken: (() => string | null) | null = null;
+let _getRefreshToken: (() => string | null) | null = null;
+let _setTokens: ((access: string, refresh: string) => void) | null = null;
 
 export function registerSignOutCallback(fn: () => void) {
   _signOut = fn;
+}
+
+export function registerTokenAccessors(opts: {
+  getAccess: () => string | null;
+  getRefresh: () => string | null;
+  setTokens: (access: string, refresh: string) => void;
+}) {
+  _getAccessToken = opts.getAccess;
+  _getRefreshToken = opts.getRefresh;
+  _setTokens = opts.setTokens;
 }
 
 /** Call this to trigger a global sign-out (e.g. user deleted from DB). */
@@ -19,22 +37,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const RETRY_BACKOFF_MS = [1000, 2000, 4000];
 const MAX_RETRIES = RETRY_BACKOFF_MS.length;
 
-/**
- * Generate a short, unique-enough request ID for correlating client requests
- * with server logs. Not cryptographic — just collision-resistant per session.
- */
 function generateRequestId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/**
- * Generate an idempotency key sent as the Idempotency-Key header on every
- * apiFetch request (audit D4-N4). The server middleware
- * (internal/middleware/idempotency.go) namespaces by user_id and uses SETNX
- * to dedup — collision-resistance only needs to hold per-(user, 10-min
- * window), not cryptographically. Same homegrown shape as
- * generateRequestId, with extra entropy for the longer dedup window.
- */
 function generateIdempotencyKey(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -43,56 +49,100 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Refresh mutex: under burst load (e.g. dashboard mounts 5 requests
+// in parallel) only one /refresh call should fire. The others wait
+// on this promise then retry with the freshly-rotated access token.
+let _refreshInFlight: Promise<string | null> | null = null;
+
+async function attemptRefresh(): Promise<string | null> {
+  if (_refreshInFlight) return _refreshInFlight;
+  const refresh = _getRefreshToken?.() ?? null;
+  if (!refresh) return null;
+  _refreshInFlight = (async () => {
+    try {
+      const out = await refreshAccessToken(refresh);
+      _setTokens?.(out.access_token, out.refresh_token);
+      return out.access_token;
+    } catch {
+      return null;
+    } finally {
+      _refreshInFlight = null;
+    }
+  })();
+  return _refreshInFlight;
+}
+
+function withAuthHeader(
+  headers: Record<string, string>,
+  token: string | null,
+): Record<string, string> {
+  if (!token) return headers;
+  // Don't clobber a caller-supplied Authorization (e.g. one-shot
+  // bootstrap calls that pass a specific token).
+  const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization');
+  if (hasAuth) return headers;
+  return { ...headers, Authorization: `Bearer ${token}` };
+}
+
 /**
- * Drop-in replacement for fetch with three security/observability enhancements:
+ * Drop-in replacement for fetch:
  *
- * 1. Auto-signs-out on 401 (expired / invalid token).
- * 2. Enforces a 10-second timeout via AbortController to prevent:
- *    - Slow-loris style attacks that hang the UI indefinitely.
- *    - Resource exhaustion from piled-up unresolved promises.
- * 3. Attaches a per-request `X-Request-ID` header so the backend can correlate
- *    logs end-to-end with a specific client call.
- *
- * Use this for ALL API calls instead of raw fetch().
+ * 1. Attaches `Authorization: Bearer <accessToken>` automatically.
+ * 2. On 401, tries /auth/refresh once. If refresh succeeds the
+ *    original request is retried exactly once with the new access
+ *    token. If it fails (or the second 401 still 401s), signs the
+ *    user out globally.
+ * 3. 10-second timeout per attempt; exponential backoff on 5xx.
+ * 4. Attaches X-Request-ID + Idempotency-Key headers (audit D4-N4).
  */
 export async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
-  // Merge headers without dropping caller-supplied ones; add X-Request-ID
-  // and Idempotency-Key unless the caller already provided them. Computed
-  // once so all retries share the same values — the server-side dedup at
-  // internal/middleware/idempotency.go relies on retried POSTs reusing the
-  // same Idempotency-Key (audit D4-N4).
   const incoming = (options?.headers ?? {}) as Record<string, string>;
-  const hasRequestId = Object.keys(incoming).some(
-    (k) => k.toLowerCase() === 'x-request-id',
-  );
-  const hasIdempotencyKey = Object.keys(incoming).some(
-    (k) => k.toLowerCase() === 'idempotency-key',
-  );
-  const headers: Record<string, string> = {
+  const hasRequestId = Object.keys(incoming).some((k) => k.toLowerCase() === 'x-request-id');
+  const hasIdempotencyKey = Object.keys(incoming).some((k) => k.toLowerCase() === 'idempotency-key');
+  const baseHeaders: Record<string, string> = {
     ...incoming,
     ...(hasRequestId ? {} : { 'X-Request-ID': generateRequestId() }),
     ...(hasIdempotencyKey ? {} : { 'Idempotency-Key': generateIdempotencyKey() }),
   };
+
+  let refreshed = false;
+  let accessToken = _getAccessToken?.() ?? null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
+      const headers = withAuthHeader(baseHeaders, accessToken);
       const res = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
 
-      // Retry 5xx with exponential backoff; 4xx returns immediately.
       if (res.status >= 500 && res.status < 600 && attempt < MAX_RETRIES) {
         await sleep(RETRY_BACKOFF_MS[attempt]);
         continue;
       }
 
+      if (res.status === 401 && !refreshed) {
+        // Try silent refresh once. Mutex inside attemptRefresh
+        // collapses concurrent callers onto the same /refresh call.
+        const fresh = await attemptRefresh();
+        if (fresh) {
+          accessToken = fresh;
+          refreshed = true;
+          // Retry the original request immediately (does not count
+          // against the 5xx-retry budget).
+          continue;
+        }
+        // Refresh failed → sign out globally.
+        _signOut?.();
+        return res;
+      }
+
       if (res.status === 401) {
+        // Already retried with a fresh token; second 401 means the
+        // server still rejects us. Sign out.
         _signOut?.();
       }
-      // 5xx → backend reachable but unhealthy. Surface as "down" so user sees
-      // the dead-Zop screen instead of getting stuck on opaque request failures.
       if (res.status >= 500) {
         reportBackendDown();
       }
@@ -100,18 +150,10 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
     } catch (err: any) {
       clearTimeout(timeoutId);
       const isTimeout = err?.name === 'AbortError';
-
       if (isTimeout && attempt < MAX_RETRIES) {
         await sleep(RETRY_BACKOFF_MS[attempt]);
         continue;
       }
-
-      // Don't flip the global "backend down" flag from here. Pro-side
-      // endpoints can be slow (location PUTs, status toggles, instant-match
-      // polling) and a single timeout shouldn't blank the entire UI with the
-      // dead-Zop screen. The /health poller in useBackendHealth runs every
-      // 5s while down and will catch real outages on its own. Network-error
-      // surfacing remains the caller's responsibility via thrown errors.
       if (isTimeout) {
         throw new Error('Request timed out. Please check your connection and try again.');
       }
@@ -119,6 +161,5 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
     }
   }
 
-  // Unreachable: loop either returns a response or throws.
   throw new Error('apiFetch: retry loop exited without a result');
 }

@@ -11,3 +11,9 @@ package middleware
 // cross-user data leak. The constant exists so that drift cannot recur
 // silently: changing it changes both the writer and the readers.
 const LocalsKeyUserID = "userID"
+
+// LocalsKeyUserType is the canonical fiber.Ctx Locals key for the
+// authenticated user's type ("customer" | "pro"), derived from the
+// JWT typ claim (or mapped from the legacy role claim for pre-MSG91
+// tokens). Read this in RequireUserType / AuthCustomer / AuthPro.
+const LocalsKeyUserType = "userType"

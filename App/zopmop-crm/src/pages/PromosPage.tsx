@@ -87,7 +87,7 @@ export function PromosPage() {
 type Form = {
   code: string; name: string; description: string;
   discount_type: 'percent' | 'fixed';
-  discount_value: number; min_order_cents: number;
+  discount_value: number; min_order_paise: number;
   max_uses: number; max_per_user: number;
   is_active: boolean; stackable: boolean;
   audience: string;
@@ -101,7 +101,7 @@ function emptyForm(p?: Promo | null): Form {
     description: p?.description ?? '',
     discount_type: (p?.discount_type as Form['discount_type']) ?? 'percent',
     discount_value: p?.discount_value ?? 10,
-    min_order_cents: p?.min_order_cents ?? 0,
+    min_order_paise: p?.min_order_paise ?? 0,
     max_uses: p?.max_uses ?? 0,
     max_per_user: p?.max_per_user ?? 1,
     is_active: p?.is_active ?? true,
@@ -161,7 +161,7 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
             <option value="fixed">Fixed (₹ in rupees)</option>
           </select>
           <input className="input" type="number" placeholder="Value" value={f.discount_value || ''} onChange={(e) => setF({ ...f, discount_value: Number(e.target.value) })} />
-          <input className="input" type="number" placeholder="Min order (₹ × 100)" value={f.min_order_cents || ''} onChange={(e) => setF({ ...f, min_order_cents: Number(e.target.value) })} />
+          <input className="input" type="number" placeholder="Min order (₹ × 100)" value={f.min_order_paise || ''} onChange={(e) => setF({ ...f, min_order_paise: Number(e.target.value) })} />
           <input className="input" type="number" placeholder="Max total uses (0 = ∞)" value={f.max_uses || ''} onChange={(e) => setF({ ...f, max_uses: Number(e.target.value) })} />
           <input className="input" type="number" placeholder="Max per user" value={f.max_per_user || ''} onChange={(e) => setF({ ...f, max_per_user: Number(e.target.value) })} />
           <select className="input" value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value })}>

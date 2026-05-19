@@ -37,7 +37,7 @@ type ListItem struct {
 // Detail is the per-worker drawer payload.
 type Detail struct {
 	ListItem
-	Address          string  `json:"address"`
+	Address          string   `json:"address"`
 	CurrentLat       *float64 `json:"current_lat,omitempty"`
 	CurrentLng       *float64 `json:"current_lng,omitempty"`
 	SuspendReason    *string  `json:"suspend_reason,omitempty"`
@@ -46,6 +46,29 @@ type Detail struct {
 	Earnings30dCents int64    `json:"earnings_30d_cents"`
 	CancellationRate float64  `json:"cancellation_rate"`
 	Locality         *string  `json:"locality,omitempty"`
+
+	// KYC / personal — landed in migration 106 (Phase 11B Step 2).
+	DOB                    *string  `json:"dob,omitempty"` // YYYY-MM-DD
+	Gender                 *string  `json:"gender,omitempty"`
+	Languages              []string `json:"languages"`
+	AltPhone               *string  `json:"alt_phone,omitempty"`
+	EmergencyContactName   *string  `json:"emergency_contact_name,omitempty"`
+	EmergencyContactPhone  *string  `json:"emergency_contact_phone,omitempty"`
+	PhotoURL               *string  `json:"photo_url,omitempty"`
+
+	// TODO Phase 12: mask aadhaar_number in all GET responses except superadmin role.
+	// TODO Phase 12: encrypt aadhaar_number at rest with KMS-managed key.
+	// TODO Phase 12: aadhaar verification flow via Karza/Digio API.
+	AadhaarNumber   *string `json:"aadhaar_number,omitempty"`
+	AadhaarVerified bool    `json:"aadhaar_verified"`
+
+	// TODO Phase 12: mask bank_account_number in all GET responses except superadmin role.
+	// TODO Phase 12: encrypt bank_account_number at rest with KMS-managed key.
+	// TODO Phase 12: bank account verification flow via penny-drop API (Razorpay/Cashfree).
+	BankAccountNumber     *string `json:"bank_account_number,omitempty"`
+	BankAccountHolderName *string `json:"bank_account_holder_name,omitempty"`
+	BankIFSC              *string `json:"bank_ifsc,omitempty"`
+	BankVerified          bool    `json:"bank_verified"`
 }
 
 // JobRow is one row of a worker's job history.
@@ -104,4 +127,23 @@ type RejectRequest struct {
 // SetCategoriesRequest is the body of POST /workers/:id/categories.
 type SetCategoriesRequest struct {
 	Categories []string `json:"categories"`
+}
+
+// DeductionRequest is the input body for POST /workers/:id/deductions.
+type DeductionRequest struct {
+	AmountPaise    int64   `json:"amount_paise"`
+	Reason         string  `json:"reason"`
+	FortnightStart *string `json:"fortnight_start,omitempty"` // YYYY-MM-DD or nil
+}
+
+// DeductionRow is the persisted shape returned by AddDeduction and ListDeductions.
+type DeductionRow struct {
+	ID             string     `json:"id"`
+	ProID          string     `json:"pro_id"`
+	AdminID        string     `json:"admin_id"`
+	AmountPaise    int64      `json:"amount_paise"`
+	Reason         string     `json:"reason"`
+	FortnightStart *string    `json:"fortnight_start,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ReversedAt     *time.Time `json:"reversed_at,omitempty"`
 }

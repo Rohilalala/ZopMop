@@ -35,11 +35,12 @@ import Toast from 'react-native-toast-message';
 import { PostHogProvider } from 'posthog-react-native';
 import { posthog } from './src/config/posthog';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { bootstrapLocale } from './src/i18n';
 
 SplashScreenNative.preventAutoHideAsync();
 
 function Navigation() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const routeNameRef = React.useRef<string | undefined>(undefined);
 
   // Deep link handler: parse /r/<code> and route to ReferralInvite or stash for after login.
@@ -113,7 +114,14 @@ function Navigation() {
             maxElementsCaptured: 20,
           }}
         >
-          {isAuthenticated ? <MainNavigator /> : <AuthNavigator />}
+          {/* Key MainNavigator on user.role so a stale cached role
+              (e.g. 'customer' restored from SecureStore at launch)
+              doesn't lock initialRouteName='Tabs' when /me returns
+              'pro' a moment later — React remounts the stack and
+              the gate re-evaluates with the fresh role. */}
+          {isAuthenticated
+            ? <MainNavigator key={`main-${user?.role ?? 'unknown'}`} />
+            : <AuthNavigator />}
         </PostHogProvider>
       </NavigationContainer>
     </ErrorBoundary>
@@ -170,6 +178,7 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
 
 function App() {
   const [splashDone, setSplashDone] = useState(false);
+  const [localeReady, setLocaleReady] = useState(false);
 
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_400Regular,
@@ -180,13 +189,17 @@ function App() {
     Qurova_500Medium: require('./assets/qurovademomedium-dygo9.otf'),
   });
 
+  useEffect(() => {
+    bootstrapLocale().finally(() => setLocaleReady(true));
+  }, []);
+
   const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) {
+    if (fontsLoaded && localeReady) {
       await SplashScreenNative.hideAsync();
     }
-  }, [fontsLoaded]);
+  }, [fontsLoaded, localeReady]);
 
-  if (!fontsLoaded) return null;
+  if (!fontsLoaded || !localeReady) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

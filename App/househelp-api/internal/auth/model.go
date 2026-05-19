@@ -34,22 +34,84 @@ type OTPRequest struct {
 // existing acceptance flag on the user row is preserved).
 type OTPVerifyRequest struct {
 	Phone                    string `json:"phone" validate:"required,phone"`
-	Code                     string `json:"otp" validate:"required,len=6"`
+	Code                     string `json:"otp" validate:"required,min=4,max=8"`
 	HasAcceptedPrivacyPolicy bool   `json:"has_accepted_privacy_policy"`
 }
 
-// LoginResponse is returned after successful OTP verification.
+// LoginResponse is returned after successful OTP verification. The
+// MSG91 flow returns access_token + refresh_token + a UserView whose
+// `type` field is the JWT typ ("customer" | "pro"). The legacy
+// `token` field is retained for backwards-compatibility with older
+// clients during the cut-over — populated with the same value as
+// access_token. is_new_user signals whether the verify_otp call
+// produced a freshly-created customer row.
 type LoginResponse struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
+	AccessToken  string   `json:"access_token"`
+	RefreshToken string   `json:"refresh_token,omitempty"`
+	Token        string   `json:"token"` // legacy mirror of access_token
+	User         UserView `json:"user"`
+	IsNewUser    bool     `json:"is_new_user"`
 }
 
-// FirebaseAuthRequest is the input for Firebase token exchange.
-// HasAcceptedPrivacyPolicy is required for first-time sign-ups; returning
-// users may omit it.
-type FirebaseAuthRequest struct {
-	FirebaseToken            string `json:"firebase_token"`
-	HasAcceptedPrivacyPolicy bool   `json:"has_accepted_privacy_policy"`
+// UserView is the post-MSG91 user payload returned by /verify-otp,
+// /refresh and /me. `type` is the JWT typ claim — clients use it to
+// pick the customer vs pro nav stack. `role` mirrors users.role for
+// back-compat with the legacy app, which still gates nav on
+// user.role === 'pro' | 'helper'. Once all clients move to `type`
+// we can drop `role` from the public payload.
+type UserView struct {
+	ID                       string  `json:"id"`
+	Phone                    string  `json:"phone"`
+	Name                     *string `json:"name,omitempty"`
+	Type                     string  `json:"type"`
+	Role                     string  `json:"role"`
+	HasAcceptedPrivacyPolicy bool    `json:"has_accepted_privacy_policy"`
+}
+
+// ToView returns the public projection of a user row with `type`
+// derived from `role` per UserTypeFromRole. Phone is stripped down
+// to its 10-digit Indian-mobile form on the way out — the DB keeps
+// the canonical E.164 (+91XXXXXXXXXX) but the app surface only
+// renders the 10 digits a user typed in.
+func (u *User) ToView() UserView {
+	return UserView{
+		ID:                       u.ID,
+		Phone:                    phoneTo10Digits(u.Phone),
+		Name:                     u.Name,
+		Type:                     UserTypeFromRole(u.Role),
+		Role:                     u.Role,
+		HasAcceptedPrivacyPolicy: u.HasAcceptedPrivacyPolicy,
+	}
+}
+
+// phoneTo10Digits strips a stored E.164 phone down to the 10-digit
+// mobile form. Accepts "+91XXXXXXXXXX", "91XXXXXXXXXX", or already
+// 10-digit input and returns the trailing 10 digits. Returns the
+// input unchanged if it doesn't look like an Indian mobile.
+func phoneTo10Digits(stored string) string {
+	digits := make([]byte, 0, len(stored))
+	for i := 0; i < len(stored); i++ {
+		if stored[i] >= '0' && stored[i] <= '9' {
+			digits = append(digits, stored[i])
+		}
+	}
+	if len(digits) >= 10 {
+		return string(digits[len(digits)-10:])
+	}
+	return stored
+}
+
+// RefreshRequest is the body for POST /auth/refresh. The plaintext
+// refresh token is sent in the JSON body so it stays out of URL logs
+// and HTTP referer headers.
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+// LogoutRequest is the body for POST /auth/logout. Same rationale as
+// RefreshRequest — keep the token off the URL.
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
 }
 
 // OTPSendResponse is returned by POST /auth/send-otp. IsNewUser is the signal

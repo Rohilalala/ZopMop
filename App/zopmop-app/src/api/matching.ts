@@ -19,10 +19,82 @@ export interface MatchedHelper {
 export interface MatchStatusResponse {
   status: 'searching' | 'matched' | 'failed';
   helper?: MatchedHelper;
-  /** Underlying booking lifecycle status when known (pending/accepted/in_progress/completed/cancelled). */
-  booking_status?: 'pending' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
-  /** True once the assigned pro tapped "I've Arrived" at the customer's door. */
+  /** Underlying booking lifecycle status. The backend overrides 'cancelled'
+   *  with 'no_pro_available' when the invite chain exhausted (so the customer
+   *  app can branch on it specifically — distinct from user-initiated cancel). */
+  booking_status?:
+    | 'pending'
+    | 'searching'
+    | 'dispatching'
+    | 'accepted'
+    | 'arrived'
+    | 'in_progress'
+    | 'completed'
+    | 'cancelled'
+    | 'no_pro_available';
+  /** Derived sub-state flags off the lifecycle timestamps. */
+  en_route?: boolean;
   arrived?: boolean;
+  in_progress?: boolean;
+  completed?: boolean;
+}
+
+// ── Booking detail (TrackLiveScreen) ──────────────────────────────────────────
+
+export type BookingServiceStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
+
+export interface BookingDetailService {
+  service_id: string;
+  service_name: string;
+  duration_minutes: number;
+  price_paise: number;
+  status: BookingServiceStatus;
+  display_order: number;
+  started_at?: string;
+  completed_at?: string;
+  skip_reason?: string;
+}
+
+export interface BookingDetailHelper {
+  id: string;
+  name: string;
+  /** Middle-masked (98XXXXX210) until the pro accepts; full 10-digit after. */
+  phone: string;
+  rating: number;
+  total_jobs: number;
+  photo_url?: string;
+}
+
+export interface BookingDetail {
+  id: string;
+  customer_id: string;
+  helper_id?: string;
+  service_category_id: string;
+  status: string;
+  address: string;
+  lat: number;
+  lng: number;
+  price_paise: number;
+  promo_code?: string;
+  discount_paise: number;
+  scheduled_time?: string;
+  cancelled_at?: string;
+  cancellation_fee_applied: boolean;
+  cancellation_fee_paise: number;
+  accepted_at?: string;
+  en_route_at?: string;
+  arrived_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  pro_earnings_paise?: number;
+  actual_duration_minutes?: number;
+  customer_rating_pending?: boolean;
+  can_cancel_free?: boolean;
+  free_cancel_until?: string;
+  created_at: string;
+  updated_at: string;
+  helper?: BookingDetailHelper;
+  services: BookingDetailService[];
 }
 
 export interface InstantBookingPayload {
@@ -144,14 +216,40 @@ export async function getHelperInvitesWithDetails(token: string): Promise<Helper
 }
 
 /**
- * GET /bookings/:id — gets a specific booking's full details (including customer address).
+ * GET /bookings/:id — enriched booking detail used by TrackLiveScreen.
+ * Returns the booking + assigned helper (if any, with phone masked pre-accept)
+ * + every booking_services row with per-service lifecycle status.
  */
-export async function getBookingDetails(token: string, bookingId: string): Promise<HelperInviteDetail> {
+export async function getBookingDetail(token: string, bookingId: string): Promise<BookingDetail> {
   const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}`, {
     headers: authHeaders(token),
   });
-  if (!res.ok) throw new Error('Failed to get booking details');
-  return validateShape<HelperInviteDetail>(await res.json(), ['booking_id', 'address', 'lat', 'lng', 'price_paise']);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to get booking detail');
+  }
+  return validateShape<BookingDetail>(await res.json(), ['id', 'status', 'services']);
+}
+
+/**
+ * POST /bookings/:id/review — customer rating submission.
+ * rating must be 1–5; comment is optional.
+ */
+export async function submitBookingReview(
+  token: string,
+  bookingId: string,
+  rating: number,
+  comment?: string,
+): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/review`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ rating, comment: comment ?? '' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).error ?? 'Failed to submit review');
+  }
 }
 
 /**

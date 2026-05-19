@@ -99,6 +99,16 @@ func (s *Service) Create(ctx context.Context, bookingID, customerID string, req 
 		return nil, fmt.Errorf("insert review: %w", err)
 	}
 
+	// Clear the pending-rating flag so the customer-app banner stops surfacing
+	// on home for this booking. Best-effort: a failure here doesn't fail the
+	// review submission — the review row is already persisted.
+	if _, uerr := s.db.Exec(ctx,
+		`UPDATE bookings SET customer_rating_pending = false WHERE id = $1::uuid`,
+		bookingID,
+	); uerr != nil {
+		log.Warn().Err(uerr).Str("booking_id", bookingID).Msg("failed to clear customer_rating_pending")
+	}
+
 	if s.analytics != nil {
 		s.analytics.Track(ctx, analytics.EventRated, customerID, bookingID, map[string]string{
 			"rating":    fmt.Sprintf("%d", req.Rating),
