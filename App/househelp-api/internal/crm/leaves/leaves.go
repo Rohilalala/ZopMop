@@ -152,7 +152,7 @@ func (r *Repository) Balances(ctx context.Context, proID string) ([]Balance, err
 		where = "WHERE h.id = $1"
 	}
 	q := fmt.Sprintf(`
-		SELECT h.id::text, COALESCE(u.name, ''), u.phone,
+		SELECT h.id::text, COALESCE(u.name, ''), COALESCE(u.phone, ''),
 		       h.leave_balance, h.monthly_leave_quota, h.leave_balance_reset_at,
 		       COALESCE((
 		         SELECT COUNT(*) FROM pro_leaves pl
