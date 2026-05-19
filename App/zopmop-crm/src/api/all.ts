@@ -162,7 +162,7 @@ export const refundsApi = {
 // ── Promos ─────────────────────────────────────────────────────────────
 export type Promo = {
   id: string; code: string; name?: string | null; description?: string | null;
-  discount_type: string; discount_value: number; min_order_cents: number;
+  discount_type: string; discount_value: number; min_order_paise: number;
   max_uses: number; uses_count: number; max_per_user: number; is_active: boolean;
   starts_at?: string | null; expires_at?: string | null;
   audience: string; audience_user_ids: string[]; categories: string[]; stackable: boolean;
@@ -176,7 +176,7 @@ export const promosApi = {
   update: (id: string, body: Partial<Promo>) => api.put(`/admin/promos/${id}`, body),
   activate: (id: string) => api.post(`/admin/promos/${id}/activate`),
   deactivate: (id: string) => api.post(`/admin/promos/${id}/deactivate`),
-  stats: (id: string) => api.get<{ redemptions: number; unique_users: number; discount_cents: number; revenue_cents: number }>(`/admin/promos/${id}/stats`).then(r => r.data),
+  stats: (id: string) => api.get<{ redemptions: number; unique_users: number; discount_paise: number; revenue_paise: number }>(`/admin/promos/${id}/stats`).then(r => r.data),
 };
 
 // ── Banners ────────────────────────────────────────────────────────────
