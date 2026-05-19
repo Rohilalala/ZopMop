@@ -135,7 +135,61 @@ priority bucket. Priorities are P0 (regulatory / security blockers), P1
   a card disappears (likely a transient `listFlags` refetch error or a
   specific flag's value failing `JSON.unmarshal` server-side, not a filter).
   No code changed — fixing non-existent filter code was declined per
-  root-cause-before-fix discipline.
+  root-cause-before-fix discipline. **ROOT CAUSE LATER FOUND** (see Flags
+  UX overhaul below): `flags.Service.List` iterates a Go `map` (`flags.go:78`),
+  which Go randomizes — every `/admin/flags` refetch returns a different
+  order, so after toggle→invalidate→refetch a card "jumps"/appears to
+  vanish from its prior position. Fixed as part of the overhaul's
+  server-side stable sort, not a render filter.
+
+## Flags page UX overhaul
+
+- **P1 — Staged flag edits with bulk atomic apply.** Today every toggle
+  POSTs immediately (misclick = production change) and cards reorder on
+  every refetch (root cause: `flags.Service.List` iterates a Go map →
+  non-deterministic order; NOT active-first sorting).
+
+  **Target state**
+  - Toggle flips visual state only; does NOT POST.
+  - Sticky top panel: "N unsaved flag changes" with a per-flag diff
+    (old → new value).
+  - "Apply N changes" commits all atomically; "Discard changes" reverts
+    the UI to current backend state.
+  - Card order stable regardless of flag value.
+
+  **Backend changes**
+  - New `POST /admin/flags/bulk-update` accepting `[{key, value,
+    expected_current}]`. **Optimistic per-key concurrency**: apply
+    atomically only if every flag's current value still equals
+    `expected_current`; otherwise `409` listing the drifted keys (panel
+    highlights them, admin re-reviews). Prevents silently clobbering a
+    racing admin's change or a snapshot rollback.
+  - Atomic apply: validate ALL values first (reject whole batch with
+    per-key errors on any invalid value/unknown key); then a single
+    multi-field Redis `HSET` (atomic) so it's all-or-none.
+  - One snapshot + one audit entry covering the whole batch (reuse
+    `SaveSnapshot` with a combined diff map; one `flag.bulk_update`
+    audit Entry, not N).
+  - `flags.List` response sorted server-side by (category,
+    display_name). Frontend renders sections in category order, flags
+    within each section in alphabetical order. Sort is stable regardless
+    of flag value/last-modified time — toggling a flag never reorders
+    cards.
+  - Keep the existing per-key `PUT /admin/flags/:key` (rollback path /
+    backward compat); FlagsPage stops using it. No deprecation needed.
+
+  **Frontend changes**
+  - Local pending-changes state model in `FlagsPage` (Map<key,
+    {before, next}>), seeded/cleared from the query cache.
+  - Sticky pending-changes panel component with diff + Apply/Discard.
+  - Render order driven by the now-stable server response (no
+    client-side re-sort on toggle).
+  - On 409, mark drifted keys in the panel and refresh their baseline.
+
+  Design decisions resolved in brainstorming 2026-05-19 (concurrency:
+  optimistic per-key; sort: category then name A–Z). Remaining detail
+  (panel visual design, exact 409 payload shape) to be designed when
+  scheduled.
 
 ## CRM worker management
 
