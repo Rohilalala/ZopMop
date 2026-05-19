@@ -334,6 +334,27 @@ func main() {
 			})
 		},
 	}, "ip", "crm-login")
+	// Refresh band (per-IP, generous): 60 / minute. Active sessions hit
+	// /admin/auth/refresh silently on token expiry; it MUST NOT share the
+	// strict login bucket or normal navigation evicts the user (and the
+	// shared 429 then blocks re-login). Own bucket: ratelimit:crm-refresh:*.
+	crmRefreshLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
+		MaxRequests:     60,
+		Window:          time.Minute,
+		FailureMode:     "fail-closed",
+		SuppressHeaders: true,
+		OnReject: func(c *fiber.Ctx) {
+			auditRecorder.Log(c.UserContext(), audit.Entry{
+				Action:     "ratelimit.exceeded",
+				Module:     "crm-auth",
+				TargetType: "ip",
+				TargetID:   c.IP(),
+				IPAddress:  c.IP(),
+				UserAgent:  c.Get("User-Agent"),
+				RequestID:  c.Get("X-Request-ID"),
+			})
+		},
+	}, "ip", "crm-refresh")
 	crmAdminLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
 		MaxRequests: 60,
 		Window:      time.Minute,
@@ -359,8 +380,11 @@ func main() {
 	// NOT pass through the JWT middleware — login must work without one.
 	// Login limiter chained here so brute-force / credential-stuffing get
 	// 429'd before they reach the bcrypt verify.
-	authPublic := api.Group("/auth", crmLoginLimiter)
-	authHandler.RegisterPublicRoutes(authPublic)
+	// No group-level limiter: /refresh must bypass the strict login bucket
+	// entirely (Fiber runs group middleware on every child route), so each
+	// public auth route binds its own limiter inside RegisterPublicRoutes.
+	authPublic := api.Group("/auth")
+	authHandler.RegisterPublicRoutes(authPublic, crmLoginLimiter, crmRefreshLimiter)
 
 	// Authed group. Every write below must call the audit recorder; the
 	// handlers do this individually rather than via a global decorator so

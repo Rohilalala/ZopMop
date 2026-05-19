@@ -40,10 +40,16 @@ func NewHandler(svc *Service, recorder *audit.Recorder, cookie CookieOptions) *H
 
 // RegisterPublicRoutes mounts unauthenticated routes (login, totp/verify,
 // refresh, logout). These do NOT pass through the JWT middleware.
-func (h *Handler) RegisterPublicRoutes(r fiber.Router) {
-	r.Post("/login", h.Login)
-	r.Post("/totp/verify", h.VerifyTOTP)
-	r.Post("/refresh", h.Refresh)
+//
+// loginLimiter (strict, per-IP) guards the credential-bearing routes so
+// brute-force / credential-stuffing get 429'd before bcrypt. refreshLimiter
+// (generous, per-IP) guards /refresh ONLY — active sessions refresh silently
+// on token expiry and must not burn the login bucket (doing so evicts the
+// user mid-navigation and the shared 429 then blocks re-login).
+func (h *Handler) RegisterPublicRoutes(r fiber.Router, loginLimiter, refreshLimiter fiber.Handler) {
+	r.Post("/login", loginLimiter, h.Login)
+	r.Post("/totp/verify", loginLimiter, h.VerifyTOTP)
+	r.Post("/refresh", refreshLimiter, h.Refresh)
 	r.Post("/logout", h.Logout)
 }
 
