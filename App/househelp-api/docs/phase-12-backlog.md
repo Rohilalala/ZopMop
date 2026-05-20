@@ -16,3 +16,18 @@
    verify (no vid) and can't resend (cooldown). Unlikely under normal load,
    possible under Redis memory pressure / `maxmemory-policy allkeys-lru`.
    Investigate: pin vid keys, or clear the cooldown when the vid is missing.
+
+## OTP Verify Screen UI bugs (filed 2026-05-20)
+
+Three bugs surfaced during simulator validation on iPhone 15:
+
+1. OTP input cells overlap the "Verify & Continue" CTA button. Inputs render on top of button; tap target ambiguous when both occupy same Y range.
+
+2. Zop mascot bleeds into notch/Dynamic Island area at top of screen. Missing safe-area-insets-top respect.
+
+3. Zop mascot clips off-screen when keyboard opens. Layout doesn't reflow to keep header visible with KeyboardAvoidingView.
+
+Severity: Visual/UX. Functional flow works.
+Repro: iPhone 15 simulator, EXPO_PUBLIC_API_URL=production, navigate to phone entry → enter +91XXXXXXXXXX → tap send OTP → land on this screen.
+Fix scope: Single PR, ~30-60 min Claude Code time. Focused polish on OnboardingOTPVerify screen (or whatever the file is named).
+
