@@ -1,0 +1,126 @@
+package payroll
+
+import (
+	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Repository wraps the SQL surface used by the payroll engine.
+type Repository struct {
+	db *pgxpool.Pool
+}
+
+func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
+
+// EligibleHelpers returns helpers whose effective_start_date is on
+// or before cycle_end — i.e. they were live for at least one day of
+// the cycle. Pros joined strictly after the window are filtered out
+// so the cron does not write zero-pay rows for them.
+func (r *Repository) EligibleHelpers(ctx context.Context, cycleEnd time.Time) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	rows, err := r.db.Query(ctx, `
+		SELECT h.id::text
+		  FROM helpers h
+		  JOIN users   u ON u.id = h.id
+		                AND u.role = 'pro'
+		                AND u.deleted_at IS NULL
+		 WHERE h.effective_start_date <= $1::date
+		 ORDER BY h.id
+	`, cycleEnd.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// AggregateActivity sums closed-session online and working minutes
+// for the pro across the cycle. Sessions are attributed to the
+// shift_commitment's shift_date (a DATE column) so cycle membership
+// is unambiguous and timezone-stable.
+//
+// Open sessions (offline_at IS NULL at cycle close) are excluded —
+// their online_minutes is not yet computed. The pro will appear with
+// the full count next cycle once the session closes. The cron logs
+// a count of skipped open sessions so ops can audit.
+func (r *Repository) AggregateActivity(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (onlineMin, workingMin int, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	err = r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ss.online_minutes), 0)::int AS online_min,
+		       COALESCE(SUM(ss.job_minutes),    0)::int AS working_min
+		  FROM shift_sessions ss
+		  JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		 WHERE ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NOT NULL
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02")).Scan(&onlineMin, &workingMin)
+	if err != nil {
+		return 0, 0, err
+	}
+	return onlineMin, workingMin, nil
+}
+
+// UpsertPayout writes the payouts row for (pro, cycle_start) if no
+// row exists yet. ON CONFLICT DO NOTHING means a re-run of the cron
+// (or a manual replay) is safe and never overwrites a row an admin
+// has touched.
+//
+// Returns true if a row was inserted, false if one already existed.
+func (r *Repository) UpsertPayout(ctx context.Context, proID string, cycle CycleClose, p PayBreakdown) (inserted bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO payouts (
+			pro_id, cycle_start, cycle_end,
+			online_minutes, working_minutes,
+			base_pay_paise, work_bonus_paise, gross_pay_paise,
+			deductions_paise, net_pay_paise, status
+		) VALUES (
+			$1::uuid, $2::date, $3::date,
+			$4, $5,
+			$6, $7, $8,
+			0, $9, 'pending_manual_payout'
+		)
+		ON CONFLICT (pro_id, cycle_start) DO NOTHING
+	`,
+		proID, cycle.StartDate(), cycle.EndDate(),
+		p.OnlineMinutes, p.WorkingMinutes,
+		p.BasePayPaise, p.BonusPayPaise, p.GrossPayPaise,
+		p.NetPayPaise,
+	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// PayoutExists is a read used by manual-replay handlers to short-
+// circuit before doing any aggregation work.
+func (r *Repository) PayoutExists(ctx context.Context, proID string, cycle CycleClose) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var one int
+	err := r.db.QueryRow(ctx, `
+		SELECT 1 FROM payouts WHERE pro_id = $1::uuid AND cycle_start = $2::date
+	`, proID, cycle.StartDate()).Scan(&one)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
