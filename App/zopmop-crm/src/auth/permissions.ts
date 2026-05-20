@@ -85,6 +85,9 @@ export const PERMISSIONS = {
   'payouts.mark_failed': 'admin',
   'payouts.recompute': 'admin',
 
+  // performance flags
+  'flags.review': 'admin',
+
   // templates
   'templates.create': 'admin',
   'templates.update': 'admin',

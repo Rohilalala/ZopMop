@@ -101,6 +101,9 @@ var permissions = map[string]string{
 	"payouts.mark_failed": RoleAdmin,
 	"payouts.recompute":   RoleAdmin,
 
+	// performance flags (open → reviewed | dismissed | escalated)
+	"flags.review": RoleAdmin,
+
 	// templates
 	"templates.create": RoleAdmin,
 	"templates.update": RoleAdmin,

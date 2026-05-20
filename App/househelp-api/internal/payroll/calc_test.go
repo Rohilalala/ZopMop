@@ -173,6 +173,56 @@ func TestNextCloseAfter(t *testing.T) {
 	}
 }
 
+func TestComputeEffectiveStartDate(t *testing.T) {
+	cases := []struct {
+		now  time.Time
+		want string
+		desc string
+	}{
+		{time.Date(2026, time.May, 21, 2, 59, 0, 0, istLocation), "2026-05-21", "02:59 IST → today"},
+		{time.Date(2026, time.May, 21, 3, 0, 0, 0, istLocation), "2026-05-22", "03:00 IST → tomorrow"},
+		{time.Date(2026, time.May, 21, 3, 1, 0, 0, istLocation), "2026-05-22", "03:01 IST → tomorrow"},
+		{time.Date(2025, time.February, 28, 4, 0, 0, 0, istLocation), "2025-03-01", "Feb 28 (non-leap) 04:00 → Mar 1"},
+		{time.Date(2028, time.February, 28, 4, 0, 0, 0, istLocation), "2028-02-29", "Feb 28 (leap) 04:00 → Feb 29"},
+		{time.Date(2028, time.February, 29, 4, 0, 0, 0, istLocation), "2028-03-01", "Feb 29 (leap) 04:00 → Mar 1"},
+		{time.Date(2026, time.December, 31, 4, 0, 0, 0, istLocation), "2027-01-01", "Dec 31 04:00 → Jan 1 next year"},
+		{time.Date(2026, time.December, 31, 2, 0, 0, 0, istLocation), "2026-12-31", "Dec 31 02:00 → same day"},
+	}
+	for _, tc := range cases {
+		got := ComputeEffectiveStartDate(tc.now)
+		if got != tc.want {
+			t.Errorf("%s: want %s, got %s", tc.desc, tc.want, got)
+		}
+	}
+}
+
+func TestProratedTargetHours(t *testing.T) {
+	loc := istLocation
+	cycleStart := time.Date(2026, time.May, 16, 0, 0, 0, 0, loc)
+	cycleEnd := time.Date(2026, time.May, 31, 0, 0, 0, 0, loc)
+	cases := []struct {
+		effective   time.Time
+		deactivated time.Time
+		want        int
+		desc        string
+	}{
+		{time.Date(2026, time.May, 21, 0, 0, 0, 0, loc), time.Time{}, 63, "joined May 21 → 11 days → ceil(80/14*11)=63"},
+		{time.Date(2026, time.May, 30, 0, 0, 0, 0, loc), time.Time{}, 12, "joined May 30 → 2 days → ceil(80/14*2)=12"},
+		{time.Date(2026, time.June, 1, 0, 0, 0, 0, loc), time.Time{}, 0, "effective after cycle_end → 0"},
+		{time.Date(2026, time.May, 1, 0, 0, 0, 0, loc), time.Time{}, 92, "full 16-day cycle → ceil(80/14*16)=92"},
+		{time.Date(2026, time.May, 1, 0, 0, 0, 0, loc),
+			time.Date(2026, time.May, 20, 0, 0, 0, 0, loc), 29, "deactivated May 20 → days 16-20 = 5 → ceil(80/14*5)=29"},
+		{time.Date(2026, time.May, 18, 0, 0, 0, 0, loc),
+			time.Date(2026, time.May, 22, 0, 0, 0, 0, loc), 29, "joined+left mid-cycle (18-22) = 5 → 29"},
+	}
+	for _, tc := range cases {
+		got := ProratedTargetHours(tc.effective, tc.deactivated, cycleStart, cycleEnd)
+		if got != tc.want {
+			t.Errorf("%s: want %d, got %d", tc.desc, tc.want, got)
+		}
+	}
+}
+
 func TestLastDayOfMonth(t *testing.T) {
 	cases := []struct {
 		y    int

@@ -2,11 +2,80 @@ package payroll
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+// AcceptanceTargetRate is the per-cycle acceptance threshold below
+// which the cron writes an acceptance_below_threshold flag.
+const AcceptanceTargetRate = 0.85
+
+// evaluateFlags computes the prorated hours target and acceptance
+// rate for this cycle and writes flag rows for whichever thresholds
+// are missed. Idempotent: UpsertFlag uses ON CONFLICT DO NOTHING.
+func (s *Service) evaluateFlags(ctx context.Context, proID string, cycle CycleClose, pay PayBreakdown) error {
+	effectiveStart, deactivatedAt, err := s.repo.HelperDates(ctx, proID)
+	if err != nil {
+		return fmt.Errorf("helper dates: %w", err)
+	}
+	target := ProratedTargetHours(effectiveStart, deactivatedAt, cycle.Start, cycle.End)
+
+	// 1. Hours flag — actual online hours fell short of the prorated
+	//    target. target=0 (no days available) → free pass, no flag.
+	actualHours := float64(pay.OnlineMinutes) / 60.0
+	if target > 0 && actualHours < float64(target) {
+		days := daysAvailable(effectiveStart, deactivatedAt, cycle.Start, cycle.End)
+		details, _ := json.Marshal(map[string]any{
+			"online_minutes":  pay.OnlineMinutes,
+			"working_minutes": pay.WorkingMinutes,
+			"days_available":  days,
+		})
+		if _, err := s.repo.UpsertFlag(ctx, proID, cycle, "hours_target_missed",
+			actualHours, float64(target), details); err != nil {
+			return fmt.Errorf("upsert hours flag: %w", err)
+		}
+	}
+
+	// 2. Acceptance flag — accepted/dispatched fell below 85%.
+	//    Zero-dispatched → N/A, no flag (helper had no offers).
+	accepted, dispatched, err := s.repo.AcceptanceRate(ctx, proID, cycle.Start, cycle.End)
+	if err != nil {
+		return fmt.Errorf("acceptance rate: %w", err)
+	}
+	if dispatched > 0 {
+		rate := float64(accepted) / float64(dispatched)
+		if rate < AcceptanceTargetRate {
+			details, _ := json.Marshal(map[string]any{
+				"accepted":   accepted,
+				"dispatched": dispatched,
+			})
+			if _, err := s.repo.UpsertFlag(ctx, proID, cycle, "acceptance_below_threshold",
+				rate, AcceptanceTargetRate, details); err != nil {
+				return fmt.Errorf("upsert acceptance flag: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func daysAvailable(effectiveStart, deactivatedAt, cycleStart, cycleEnd time.Time) int {
+	start := effectiveStart
+	if cycleStart.After(start) {
+		start = cycleStart
+	}
+	end := cycleEnd
+	if !deactivatedAt.IsZero() && deactivatedAt.Before(end) {
+		end = deactivatedAt
+	}
+	if end.Before(start) {
+		return 0
+	}
+	return int(end.Sub(start).Hours()/24) + 1
+}
 
 // ErrNotCycleClose is returned by RunForToday when the wall-clock
 // IST date is not a cycle close date. The cron is defensive — it
@@ -116,6 +185,13 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			out.PayoutsInserted++
 		} else {
 			out.PayoutsSkipped++
+		}
+
+		// Performance flags. Failures are non-fatal — flag generation
+		// is observability, not core financial correctness, so we
+		// don't roll back the payout row if the flag insert errors.
+		if err := s.evaluateFlags(ctx, proID, cycle, pay); err != nil {
+			log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] flag evaluation failed")
 		}
 	}
 

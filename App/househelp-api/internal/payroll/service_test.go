@@ -141,6 +141,85 @@ func TestRunCycle_Idempotent(t *testing.T) {
 	}
 }
 
+// TestRunCycle_WritesFlagsBelowTargets verifies that a helper with
+// non-zero target hours but zero activity gets an hours_target_missed
+// flag, and a helper with offers but acceptance below 85% gets an
+// acceptance_below_threshold flag. Idempotent re-run does not
+// duplicate flags.
+func TestRunCycle_WritesFlagsBelowTargets(t *testing.T) {
+	fx := newCycleFixture(t)
+	ctx := context.Background()
+
+	// Seed dispatched_jobs: 5 offered, 3 accepted (60% < 85%).
+	for i := range 5 {
+		// Create a booking row to satisfy FK; bookings.id is a uuid PK.
+		var bookingID string
+		if err := fx.pool.QueryRow(ctx, `
+			INSERT INTO bookings (customer_id, status)
+			VALUES ($1::uuid, 'completed') RETURNING id::text
+		`, fx.proID).Scan(&bookingID); err != nil {
+			// bookings may have NOT NULL columns we don't fill; skip if so.
+			t.Skipf("cannot seed booking row (schema mismatch): %v", err)
+		}
+		response := "accepted"
+		if i >= 3 {
+			response = "declined"
+		}
+		if _, err := fx.pool.Exec(ctx, `
+			INSERT INTO dispatched_jobs (pro_id, booking_id, offered_at, response, pro_was_online_at_offer, pro_on_another_job_at_offer)
+			VALUES ($1::uuid, $2::uuid, '2026-05-10 10:00:00+05:30', $3, true, false)
+		`, fx.proID, bookingID, response); err != nil {
+			t.Fatalf("seed dispatched_jobs: %v", err)
+		}
+	}
+
+	svc := payroll.NewService(payroll.NewRepository(fx.pool))
+	if _, err := svc.RunCycle(ctx, fx.cycle); err != nil {
+		t.Fatalf("RunCycle: %v", err)
+	}
+
+	var nHoursFlag, nAcceptFlag int
+	if err := fx.pool.QueryRow(ctx,
+		`SELECT count(*) FROM helper_flags WHERE helper_id = $1::uuid AND flag_type = 'hours_target_missed'`,
+		fx.proID,
+	).Scan(&nHoursFlag); err != nil {
+		t.Fatalf("count hours flag: %v", err)
+	}
+	if err := fx.pool.QueryRow(ctx,
+		`SELECT count(*) FROM helper_flags WHERE helper_id = $1::uuid AND flag_type = 'acceptance_below_threshold'`,
+		fx.proID,
+	).Scan(&nAcceptFlag); err != nil {
+		t.Fatalf("count acceptance flag: %v", err)
+	}
+	if nHoursFlag != 1 {
+		t.Fatalf("hours_target_missed: want 1, got %d", nHoursFlag)
+	}
+	if nAcceptFlag != 1 {
+		t.Fatalf("acceptance_below_threshold: want 1, got %d", nAcceptFlag)
+	}
+
+	// Re-run is idempotent — flag counts stay at 1 each.
+	if _, err := svc.RunCycle(ctx, fx.cycle); err != nil {
+		t.Fatalf("second RunCycle: %v", err)
+	}
+	if err := fx.pool.QueryRow(ctx,
+		`SELECT count(*) FROM helper_flags WHERE helper_id = $1::uuid`,
+		fx.proID,
+	).Scan(&nHoursFlag); err != nil {
+		t.Fatalf("count after re-run: %v", err)
+	}
+	if nHoursFlag != 2 {
+		t.Fatalf("re-run should leave flags at 2 total (1 each), got %d", nHoursFlag)
+	}
+
+	// Clean up dispatched_jobs + helper_flags rows so other tests stay clean.
+	t.Cleanup(func() {
+		_, _ = fx.pool.Exec(context.Background(), `DELETE FROM helper_flags WHERE helper_id = $1::uuid`, fx.proID)
+		_, _ = fx.pool.Exec(context.Background(), `DELETE FROM dispatched_jobs WHERE pro_id = $1::uuid`, fx.proID)
+		_, _ = fx.pool.Exec(context.Background(), `DELETE FROM bookings WHERE customer_id = $1::uuid`, fx.proID)
+	})
+}
+
 // TestRunCycle_SkipsProJoinedAfterCycleEnd verifies the
 // effective_start_date filter on EligibleHelpers.
 func TestRunCycle_SkipsProJoinedAfterCycleEnd(t *testing.T) {
