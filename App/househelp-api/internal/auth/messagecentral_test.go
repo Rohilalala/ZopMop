@@ -10,40 +10,42 @@ import (
 	"testing"
 )
 
+// mcTestAuthToken is the canned dashboard token used by unit tests. The fix
+// ships this value VERBATIM as the authToken header — no /auth/v1/.../token
+// call happens, so we assert on it directly in handler-side checks.
+const mcTestAuthToken = "dashboard-jwt-xyz"
+
 func mcTestClient(t *testing.T, h http.Handler) *MessageCentralClient {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return NewMessageCentralClient(MessageCentralConfig{
-		CustomerID: "cust1", AuthToken: "c2VjcmV0", BaseURL: srv.URL,
+		CustomerID: "cust1", AuthToken: mcTestAuthToken, BaseURL: srv.URL,
 	})
 }
 
-func TestMC_TokenCachedAcrossSends(t *testing.T) {
-	var tokenHits, sendHits int32
+// TestMC_SendSkipsTokenExchange proves the client sends `authToken: <cfg>`
+// directly and NEVER calls /auth/v1/authentication/token, even across
+// multiple sends.
+func TestMC_SendSkipsTokenExchange(t *testing.T) {
+	var sendHits int32
 	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/auth/v1/authentication/token"),
-			r.URL.Path == "/auth/v1/authentication/token":
-			atomic.AddInt32(&tokenHits, 1)
-			w.Write([]byte(`{"token":"T1"}`))
-		case r.URL.Path == "/verification/v3/send":
-			atomic.AddInt32(&sendHits, 1)
-			if r.Header.Get("authToken") != "T1" {
-				t.Errorf("missing authToken header")
-			}
-			w.Write([]byte(`{"data":{"verificationId":"99"}}`))
-		default:
+		if strings.HasPrefix(r.URL.Path, "/auth/v1/authentication/token") {
+			t.Fatalf("client called token-exchange endpoint %s — must be skipped", r.URL.Path)
+		}
+		if r.URL.Path != "/verification/v3/send" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
+		atomic.AddInt32(&sendHits, 1)
+		if got := r.Header.Get("authToken"); got != mcTestAuthToken {
+			t.Errorf("authToken header = %q, want %q (config value sent verbatim)", got, mcTestAuthToken)
+		}
+		w.Write([]byte(`{"data":{"verificationId":"99"}}`))
 	}))
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if _, err := c.SendOTP(context.Background(), "+919876543210"); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
-	}
-	if tokenHits != 1 {
-		t.Fatalf("token fetched %d times, want 1 (cached)", tokenHits)
 	}
 	if sendHits != 2 {
 		t.Fatalf("send hits = %d, want 2", sendHits)
@@ -52,11 +54,10 @@ func TestMC_TokenCachedAcrossSends(t *testing.T) {
 
 func TestMC_SendReturnsVerificationID(t *testing.T) {
 	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/verification/v3/send" {
-			w.Write([]byte(`{"verificationId":"12345"}`))
-			return
+		if r.URL.Path != "/verification/v3/send" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"token":"T"}`))
+		w.Write([]byte(`{"verificationId":"12345"}`))
 	}))
 	vid, err := c.SendOTP(context.Background(), "+919876543210")
 	if err != nil || vid != "12345" {
@@ -66,15 +67,16 @@ func TestMC_SendReturnsVerificationID(t *testing.T) {
 
 func TestMC_VerifyHappyAndWrong(t *testing.T) {
 	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/verification/v3/validateOtp":
-			if r.URL.Query().Get("code") == "111111" {
-				w.Write([]byte(`{"data":{"verificationStatus":"VERIFICATION_COMPLETED"}}`))
-			} else {
-				w.Write([]byte(`{"data":{"verificationStatus":"VERIFICATION_FAILED"}}`))
-			}
-		default:
-			w.Write([]byte(`{"token":"T"}`))
+		if r.URL.Path != "/verification/v3/validateOtp" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("authToken"); got != mcTestAuthToken {
+			t.Errorf("authToken header = %q, want %q", got, mcTestAuthToken)
+		}
+		if r.URL.Query().Get("code") == "111111" {
+			w.Write([]byte(`{"data":{"verificationStatus":"VERIFICATION_COMPLETED"}}`))
+		} else {
+			w.Write([]byte(`{"data":{"verificationStatus":"VERIFICATION_FAILED"}}`))
 		}
 	}))
 	if err := c.VerifyOTP(context.Background(), "99", "111111"); err != nil {
@@ -99,39 +101,71 @@ func TestMC_DevModeBypass(t *testing.T) {
 	}
 }
 
-func TestMC_401RefetchesTokenOnceThenMisconfigured(t *testing.T) {
-	var tokenHits, sendAttempts int32
+// TestMC_SendUnauthorizedMapsToMisconfigured locks in the new behaviour: a
+// 401 from /verification/v3/send means the configured dashboard token is
+// wrong/expired — no retry, no token refetch, surfaced as ErrMCMisconfigured
+// so the handler can return 503 and the operator can rotate the env value.
+func TestMC_SendUnauthorizedMapsToMisconfigured(t *testing.T) {
+	var sendAttempts int32
 	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/verification/v3/send" {
-			atomic.AddInt32(&sendAttempts, 1)
-			w.WriteHeader(http.StatusUnauthorized) // always 401
-			return
+		if strings.HasPrefix(r.URL.Path, "/auth/v1/authentication/token") {
+			t.Fatalf("token-exchange must not be called; got %s", r.URL.Path)
 		}
-		atomic.AddInt32(&tokenHits, 1)
-		w.Write([]byte(`{"token":"T"}`))
+		if r.URL.Path != "/verification/v3/send" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		atomic.AddInt32(&sendAttempts, 1)
+		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	_, err := c.SendOTP(context.Background(), "+919876543210")
 	if !errors.Is(err, ErrMCMisconfigured) {
 		t.Fatalf("err=%v, want ErrMCMisconfigured", err)
 	}
-	if sendAttempts != 2 {
-		t.Fatalf("send attempts = %d, want exactly 2 (orig + 1 retry)", sendAttempts)
+	if sendAttempts != 1 {
+		t.Fatalf("send attempts = %d, want exactly 1 (no retry, nothing to refetch)", sendAttempts)
 	}
-	if tokenHits != 2 {
-		t.Fatalf("token fetched %d times, want 2 (initial + 1 refetch)", tokenHits)
+}
+
+// TestMC_VerifyUnauthorizedMapsToMisconfigured — same rule on the verify path.
+func TestMC_VerifyUnauthorizedMapsToMisconfigured(t *testing.T) {
+	var verifyAttempts int32
+	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/verification/v3/validateOtp" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		atomic.AddInt32(&verifyAttempts, 1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	err := c.VerifyOTP(context.Background(), "99", "111111")
+	if !errors.Is(err, ErrMCMisconfigured) {
+		t.Fatalf("err=%v, want ErrMCMisconfigured", err)
+	}
+	if verifyAttempts != 1 {
+		t.Fatalf("verify attempts = %d, want exactly 1", verifyAttempts)
 	}
 }
 
 func TestMC_UnparseableBodyIsRejected(t *testing.T) {
 	c := mcTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/verification/v3/send" {
-			w.Write([]byte(`<html>not json</html>`))
-			return
+		if r.URL.Path != "/verification/v3/send" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"token":"T"}`))
+		w.Write([]byte(`<html>not json</html>`))
 	}))
 	_, err := c.SendOTP(context.Background(), "+919876543210")
 	if !errors.Is(err, ErrMCRejected) {
 		t.Fatalf("err=%v, want ErrMCRejected (no silent default)", err)
+	}
+}
+
+// TestMC_MissingCredsMisconfigured guards the empty-config short-circuit on
+// both calls — no HTTP attempt when CustomerID or AuthToken is blank.
+func TestMC_MissingCredsMisconfigured(t *testing.T) {
+	c := NewMessageCentralClient(MessageCentralConfig{CustomerID: "", AuthToken: ""})
+	if _, err := c.SendOTP(context.Background(), "+919876543210"); !errors.Is(err, ErrMCMisconfigured) {
+		t.Fatalf("send err=%v, want ErrMCMisconfigured", err)
+	}
+	if err := c.VerifyOTP(context.Background(), "99", "111111"); !errors.Is(err, ErrMCMisconfigured) {
+		t.Fatalf("verify err=%v, want ErrMCMisconfigured", err)
 	}
 }
