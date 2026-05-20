@@ -135,6 +135,11 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
 }) {
   useColors();
   const { status, retry } = useBackendHealth();
+  // Hold the splash until auth knows the user's role (or has decided
+  // there's no session). Prevents a black-screen flash when the Lottie
+  // animation finishes before /me resolves, and prevents the wrong
+  // navigator from mounting from a missing/stale cache.
+  const { isLoading: authLoading } = useAuth();
 
   // null = not yet checked (fail-open: assume online until we know otherwise)
   const [isOnline, setIsOnline] = useState<boolean | null>(null);
@@ -163,7 +168,7 @@ function ThemedRoot({ splashDone, setSplashDone, onLayout }: {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }} onLayout={onLayout}>
-      {!splashDone ? (
+      {(!splashDone || authLoading) ? (
         <SplashScreen onReady={() => setSplashDone(true)} />
       ) : offline ? (
         <BackendDownScreen onRetry={retryOffline} />

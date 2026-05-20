@@ -29,6 +29,44 @@ const SIGNUP_COMPLETED_KEY = 'auth_signup_completed_v1';
 // Re-export so the rest of the app keeps importing AuthUser from here.
 export type AuthUser = ServiceAuthUser;
 
+// Decode the middle (claims) segment of a JWT without verifying the
+// signature. We only need `role`, `user_id`, and `phn` to bootstrap
+// navigation routing on launch — the server still verifies the token
+// on every request, so an attacker-forged JWT can't actually do
+// anything. Returns null on any parse failure.
+function decodeJWTClaims(token: string | null): Record<string, any> | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    // RN doesn't ship atob reliably across SDK versions — use a self-
+    // contained base64 decoder that doesn't depend on globalThis.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let bytes = '';
+    let buffer = 0;
+    let bits = 0;
+    for (let i = 0; i < b64.length; i++) {
+      const ch = b64.charAt(i);
+      if (ch === '=') break;
+      const idx = alphabet.indexOf(ch);
+      if (idx < 0) continue;
+      buffer = (buffer << 6) | idx;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes += String.fromCharCode((buffer >> bits) & 0xff);
+      }
+    }
+    // The claims segment is UTF-8 — decode with decodeURIComponent +
+    // escape so multi-byte sequences (e.g. names with accents) survive.
+    return JSON.parse(decodeURIComponent(escape(bytes)));
+  } catch {
+    return null;
+  }
+}
+
 type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -143,8 +181,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // cached user info if the network is slow.
         setToken(access);
         if (storedRefresh) setRefreshToken(storedRefresh);
+
+        // Prefer the JWT's role over the cached user object. The JWT
+        // is rewritten atomically on every login/refresh, so it can't
+        // drift from the latest server-confirmed role. The cached
+        // user JSON, by contrast, has historically gone stale (older
+        // signups that never re-touched updateUser kept a customer
+        // role even after a server-side promotion to pro), causing
+        // MainNavigator to mount the wrong tree on relaunch.
+        const jwtClaims = decodeJWTClaims(access);
+        const jwtRole = typeof jwtClaims?.role === 'string' ? jwtClaims.role : null;
+
         if (storedUser) {
-          try { setUser(JSON.parse(storedUser) as AuthUser); } catch { /* ignore corrupted */ }
+          try {
+            const parsed = JSON.parse(storedUser) as AuthUser;
+            // If the JWT carries a fresher role, override the cached
+            // copy so routing reflects current truth on first render.
+            if (jwtRole && parsed.role !== jwtRole) {
+              parsed.role = jwtRole;
+              parsed.type = jwtRole === 'pro' || jwtRole === 'helper' ? 'pro' : 'customer';
+              SecureStore.setItemAsync(USER_KEY, JSON.stringify(parsed)).catch(() => {});
+            }
+            setUser(parsed);
+          } catch { /* ignore corrupted */ }
+        } else if (jwtClaims) {
+          // No cached user but the JWT alone is enough to bootstrap
+          // routing — name etc. will arrive via the /me probe below.
+          const role = jwtRole ?? 'customer';
+          setUser({
+            id: typeof jwtClaims.user_id === 'string' ? jwtClaims.user_id : '',
+            phone: typeof jwtClaims.phn === 'string' ? jwtClaims.phn : '',
+            type: role === 'pro' || role === 'helper' ? 'pro' : 'customer',
+            role,
+            has_accepted_privacy_policy: false,
+          } as AuthUser);
         }
 
         // Validate against the server. If /me 401s and we have a
