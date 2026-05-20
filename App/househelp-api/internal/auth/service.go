@@ -54,6 +54,18 @@ type CodeGenerator interface {
 	GenerateAndSetCode(ctx context.Context, userID, name, phone string) (string, error)
 }
 
+// otpVendor is the OTP gateway contract the service depends on. Implemented
+// by *MessageCentralClient (cmd/api wires the concrete type). SendOTP/
+// VerifyOTP/DevMode are called by the service today; RetryOTP is part of the
+// vendor contract for a future resend route and is intentionally included.
+// Do not widen beyond these four.
+type otpVendor interface {
+	SendOTP(ctx context.Context, phone string) (verificationID string, err error)
+	VerifyOTP(ctx context.Context, verificationID, code string) error
+	RetryOTP(ctx context.Context, verificationID string) error
+	DevMode() bool
+}
+
 // Service handles auth business logic.
 type Service struct {
 	repo            *Repository
@@ -65,19 +77,19 @@ type Service struct {
 	postDeleteHooks []func(ctx context.Context, userID string)
 	codeGen         CodeGenerator
 
-	// Post-Firebase MSG91 wiring. All four MAY be nil during the
-	// migration cut-over; the new MSG91 send/verify paths return
-	// an error if any is missing, while the legacy Redis-OTP and
-	// Firebase paths keep working without them.
-	msg91   *MSG91Client
+	// Post-Firebase Message Central OTP wiring. All four MAY be nil
+	// during the migration cut-over; the new OTP send/verify paths
+	// return an error if any is missing, while the legacy Redis-OTP
+	// and Firebase paths keep working without them.
+	otp     otpVendor
 	tokens  *TokenIssuer
 	refresh *RefreshRepo
 	rate    *OTPRateLimiter
 }
 
-// SetMSG91 wires the MSG91 OTP client. Required for the new
-// SendOTPMSG91 / VerifyOTPMSG91 paths.
-func (s *Service) SetMSG91(c *MSG91Client) { s.msg91 = c }
+// SetOTPVendor wires the OTP gateway. Required for the SendLoginOTP /
+// VerifyLoginOTP paths.
+func (s *Service) SetOTPVendor(v otpVendor) { s.otp = v }
 
 // SetTokenIssuer wires the access + refresh token issuer.
 func (s *Service) SetTokenIssuer(t *TokenIssuer) { s.tokens = t }
@@ -353,7 +365,7 @@ func (s *Service) RegisterPostDeleteHook(hook func(ctx context.Context, userID s
 }
 
 // ----------------------------------------------------------------------------
-// MSG91 + access/refresh JWT flow (replaces Firebase Phone Auth).
+// Message Central + access/refresh JWT flow (replaces Firebase Phone Auth).
 // ----------------------------------------------------------------------------
 
 // ErrPhoneNotRegistered is returned when the caller hits the
@@ -361,30 +373,27 @@ func (s *Service) RegisterPostDeleteHook(hook func(ctx context.Context, userID s
 // pro. Customers auto-register on first verify; pros do not.
 var ErrPhoneNotRegistered = errors.New("phone not registered as pro")
 
-// SendOTPMSG91 triggers an OTP via MSG91 for the given phone.
-// Returns (devOTP, isNewUser, error). devOTP is the hardcoded "9999"
-// sentinel in dev mode (so a tester can complete the flow without
-// SMS) and empty in production. isNewUser tells the client whether
-// to render the privacy-policy checkbox.
+// SendLoginOTP triggers an OTP via the OTP vendor for the given phone.
+// Returns (devOTP, isNewUser, error). devOTP is the hardcoded
+// "999999" sentinel in dev mode (so a tester can complete the flow
+// without SMS) and empty in production. isNewUser tells the client
+// whether to render the privacy-policy checkbox.
 //
 // Behaviour:
 //   - Rate-limited: 3 sends per 15min per phone, 5 per 15min per IP.
-//     Limits trip BEFORE the MSG91 call so we don't spend SMS credit.
+//     Limits trip BEFORE the vendor call so we don't spend SMS credit.
 //   - Looks up users by phone. If found AND role='pro' AND
 //     is_suspended → return ErrAccountSuspended (caller maps 403).
-//   - Otherwise hand off to MSG91 (or dev-mode short-circuit).
-func (s *Service) SendOTPMSG91(ctx context.Context, phone, ip string) (devOTP string, isNewUser bool, err error) {
-	if s.msg91 == nil || s.rate == nil {
-		return "", false, errors.New("msg91 path not wired")
+//   - Otherwise hand off to the OTP vendor (or dev-mode short-circuit).
+func (s *Service) SendLoginOTP(ctx context.Context, phone, ip string) (devOTP string, isNewUser bool, err error) {
+	if s.otp == nil || s.rate == nil {
+		return "", false, errors.New("otp path not wired")
 	}
 
 	if rlErr := s.rate.CheckSend(ctx, phone, ip); rlErr != nil {
 		return "", false, rlErr
 	}
 
-	// Look up the phone in users. The is_new_user signal feeds the
-	// privacy-policy checkbox; the suspended check fails-loud on
-	// blocked accounts (audit C-8 / A5-06).
 	existing, lookupErr := s.repo.GetUserByPhone(ctx, phone)
 	if lookupErr != nil {
 		log.Warn().Err(lookupErr).Str("phone_mask", logger.MaskPhone(phone)).Msg("send-otp user lookup failed")
@@ -394,38 +403,66 @@ func (s *Service) SendOTPMSG91(ctx context.Context, phone, ip string) (devOTP st
 		return "", false, &ErrAccountSuspended{}
 	}
 
-	if sendErr := s.msg91.SendOTP(ctx, phone); sendErr != nil {
-		log.Error().Err(sendErr).Str("phone_mask", logger.MaskPhone(phone)).Msg("MSG91 send-otp failed")
+	vid, sendErr := s.otp.SendOTP(ctx, phone)
+	if sendErr != nil {
+		log.Error().Err(sendErr).Str("phone_mask", logger.MaskPhone(phone)).Msg("OTP send failed")
 		return "", false, sendErr
 	}
 
-	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Bool("is_new_user", isNewUser).Msg("MSG91 OTP dispatched")
+	// Message Central is stateful: VerifyOTP needs this verificationId.
+	// A fresh send intentionally overwrites any prior id — only the most
+	// recent OTP is verifiable (mirrors MSG91; documented in the spec).
+	vidKey := fmt.Sprintf("otp:vid:%s", phone)
+	if err := s.rdb.Set(ctx, vidKey, vid, otpExpiry).Err(); err != nil {
+		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(phone)).
+			Msg("OTP dispatched but failed to store verification id — user cannot verify")
+		return "", false, fmt.Errorf("store verification id: %w", err)
+	}
 
-	if s.msg91.DevMode() {
+	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Bool("is_new_user", isNewUser).Msg("OTP dispatched")
+
+	if s.otp.DevMode() {
 		return devModeOTPVal, isNewUser, nil
 	}
 	return "", isNewUser, nil
 }
 
-// VerifyOTPMSG91 verifies the user-supplied OTP with MSG91, upserts
-// a customer row when no users row exists, mints access + refresh
-// tokens, and persists the refresh-token hash. Returns the full
-// LoginResponse with both tokens + the UserView.
-func (s *Service) VerifyOTPMSG91(ctx context.Context, phone, code string, hasAcceptedPrivacyPolicy bool) (*LoginResponse, error) {
-	if s.msg91 == nil || s.tokens == nil || s.refresh == nil {
-		return nil, errors.New("msg91 path not wired")
+// VerifyLoginOTP verifies the user-supplied OTP with the OTP vendor,
+// upserts a customer row when no users row exists, mints access +
+// refresh tokens, and persists the refresh-token hash. Returns the
+// full LoginResponse with both tokens + the UserView.
+func (s *Service) VerifyLoginOTP(ctx context.Context, phone, code string, hasAcceptedPrivacyPolicy bool) (*LoginResponse, error) {
+	if s.otp == nil || s.tokens == nil || s.refresh == nil || s.rate == nil {
+		return nil, errors.New("otp path not wired")
 	}
 
 	if rlErr := s.rate.CheckVerify(ctx, phone); rlErr != nil {
 		return nil, rlErr
 	}
 
-	if verr := s.msg91.VerifyOTP(ctx, phone, code); verr != nil {
+	vidKey := fmt.Sprintf("otp:vid:%s", phone)
+	vid, gerr := s.rdb.Get(ctx, vidKey).Result()
+	if gerr == redis.Nil {
+		// Preserve the current mobile contract: an expired/missing OTP
+		// today returns 401 INVALID_OTP (the MSG91 path never surfaced
+		// OTP_EXPIRED). OTP_EXPIRED improvement is in the phase-12 backlog.
+		return nil, ErrInvalidOTP
+	}
+	if gerr != nil {
+		return nil, fmt.Errorf("load verification id: %w", gerr)
+	}
+
+	if verr := s.otp.VerifyOTP(ctx, vid, code); verr != nil {
 		if errors.Is(verr, ErrOTPInvalid) {
 			return nil, ErrInvalidOTP
 		}
-		log.Error().Err(verr).Str("phone_mask", logger.MaskPhone(phone)).Msg("MSG91 verify-otp failed")
+		log.Error().Err(verr).Str("phone_mask", logger.MaskPhone(phone)).Msg("OTP verify failed")
 		return nil, verr
+	}
+
+	// One-time use: drop the id on success so a replayed code can't re-verify.
+	if delErr := s.rdb.Del(ctx, vidKey).Err(); delErr != nil {
+		log.Warn().Err(delErr).Str("phone_mask", logger.MaskPhone(phone)).Msg("failed to delete used verification id")
 	}
 
 	user, err := s.repo.GetUserByPhone(ctx, phone)

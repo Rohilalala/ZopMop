@@ -15,20 +15,17 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// MSG91 OTP gateway client. Wraps control.msg91.com/api/v5/otp,
-// /otp/verify, /otp/retry. Phone numbers are normalized to MSG91's
-// expected "91XXXXXXXXXX" shape at the client boundary; the rest of
-// the app stays on E.164 (+91XXXXXXXXXX).
+// DEPRECATED — retained for possible MSG91 transactional-SMS reuse; NOT wired
+// into the auth flow. The live OTP vendor is Message Central (messagecentral.go).
+// `ErrOTPInvalid` and `devModeOTPVal` were relocated to messagecentral.go
+// (same package). See docs/phase-12-backlog.md for removal tracking.
 //
-// Dev mode (MSG91_DEV_MODE=true) short-circuits all network calls.
-// VerifyOTP accepts the hard-coded code "9999" for every phone.
-// SendOTP / RetryOTP return success without contacting MSG91. OTPs
-// are NEVER logged in any path — even masked.
+// Phone numbers are normalized to MSG91's "91XXXXXXXXXX" shape at the client
+// boundary. Dev mode short-circuits all network calls. OTPs are NEVER logged.
 
 const (
-	msg91BaseURL  = "https://control.msg91.com/api/v5"
-	msg91Timeout  = 6 * time.Second
-	devModeOTPVal = "999999"
+	msg91BaseURL = "https://control.msg91.com/api/v5"
+	msg91Timeout = 6 * time.Second
 )
 
 // MSG91Config holds the gateway credentials + dev-mode toggle.
@@ -42,8 +39,8 @@ type MSG91Config struct {
 // MSG91Client talks to the MSG91 OTP API. Use NewMSG91Client to
 // construct one. Concurrent-safe — uses a stdlib http.Client.
 type MSG91Client struct {
-	cfg    MSG91Config
-	http   *http.Client
+	cfg     MSG91Config
+	http    *http.Client
 	baseURL string
 }
 
@@ -52,7 +49,6 @@ var (
 	ErrMSG91Misconfigured = errors.New("msg91 not configured")
 	ErrMSG91Network       = errors.New("msg91 network error")
 	ErrMSG91Rejected      = errors.New("msg91 rejected OTP request")
-	ErrOTPInvalid         = errors.New("otp invalid")
 )
 
 // NewMSG91Client constructs a client. In dev mode AuthKey/TemplateID

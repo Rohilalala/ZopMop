@@ -30,26 +30,27 @@ type Config struct {
 	JWTPreviousSecrets []JWTSecretEntry
 	JWTExpiryHours     int
 
-	// Post-Firebase MSG91 auth. Distinct from the legacy JWT_SECRET used
+	// Post-Firebase OTP auth. Distinct from the legacy JWT_SECRET used
 	// by the Firebase exchange — JWTAccessSecret signs short-lived
 	// access tokens, JWTRefreshSecret is reserved for future symmetric
 	// tagging of refresh-token records. Refresh tokens themselves are
 	// random opaque strings; JWTRefreshSecret is kept distinct so a
 	// compromised access secret cannot forge refresh material.
-	JWTAccessSecret  string
-	JWTRefreshSecret string
-	JWTAccessTTLHours  int
-	JWTRefreshTTLDays  int
+	JWTAccessSecret   string
+	JWTRefreshSecret  string
+	JWTAccessTTLHours int
+	JWTRefreshTTLDays int
 
-	// MSG91 OTP gateway. AuthKey + TemplateID are required in
-	// production; DevMode bypasses all network calls and treats the
-	// hardcoded OTP "9999" as valid for every phone.
-	MSG91AuthKey    string
-	MSG91TemplateID string
-	MSG91SenderID   string
-	MSG91DevMode    bool
-	AllowedOrigins          []string
-	WebhookAllowedDomains   []string // ALLOWED_WEBHOOK_DOMAINS; empty = any non-private domain allowed
+	// Message Central VerifyNow OTP gateway. CustomerID + AuthToken
+	// are required in production; OTPDevMode bypasses all network
+	// calls and treats the hardcoded OTP "999999" as valid for every
+	// phone.
+	MessageCentralCustomerID string
+	MessageCentralAuthToken  string
+	MessageCentralBaseURL    string
+	OTPDevMode               bool
+	AllowedOrigins           []string
+	WebhookAllowedDomains    []string // ALLOWED_WEBHOOK_DOMAINS; empty = any non-private domain allowed
 
 	// Cashfree Payment Gateway (collection). Distinct from Cashfree Payouts
 	// (CASHFREE_CLIENT_ID/SECRET) used for VPA validation in internal/payments.
@@ -129,17 +130,20 @@ func Load() (*Config, error) {
 	if cfg.JWTAccessSecret == "" {
 		// Fall back to the legacy JWT_SECRET so a single-secret deploy
 		// keeps working. The validator below treats this as the
-		// signing secret for the new MSG91 access tokens.
+		// signing secret for the new OTP access tokens.
 		cfg.JWTAccessSecret = cfg.JWTSecret
 	}
 	cfg.JWTRefreshSecret = strings.TrimSpace(os.Getenv("JWT_REFRESH_SECRET"))
 	cfg.JWTAccessTTLHours = getEnvIntOrDefault("JWT_ACCESS_TTL_HOURS", 1)
 	cfg.JWTRefreshTTLDays = getEnvIntOrDefault("JWT_REFRESH_TTL_DAYS", 30)
 
-	cfg.MSG91AuthKey = strings.TrimSpace(os.Getenv("MSG91_AUTH_KEY"))
-	cfg.MSG91TemplateID = strings.TrimSpace(os.Getenv("MSG91_TEMPLATE_ID"))
-	cfg.MSG91SenderID = strings.TrimSpace(os.Getenv("MSG91_SENDER_ID"))
-	cfg.MSG91DevMode = strings.EqualFold(strings.TrimSpace(os.Getenv("MSG91_DEV_MODE")), "true")
+	cfg.MessageCentralCustomerID = strings.TrimSpace(os.Getenv("MESSAGECENTRAL_CUSTOMER_ID"))
+	cfg.MessageCentralAuthToken = strings.TrimSpace(os.Getenv("MESSAGECENTRAL_AUTH_TOKEN"))
+	cfg.MessageCentralBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("MESSAGECENTRAL_BASE_URL")), "/")
+	if cfg.MessageCentralBaseURL == "" {
+		cfg.MessageCentralBaseURL = "https://cpaas.messagecentral.com"
+	}
+	cfg.OTPDevMode = strings.EqualFold(strings.TrimSpace(os.Getenv("OTP_DEV_MODE")), "true")
 
 	cfg.CashfreePGAppID = strings.TrimSpace(os.Getenv("CASHFREE_PG_APP_ID"))
 	cfg.CashfreePGSecretKey = strings.TrimSpace(os.Getenv("CASHFREE_PG_SECRET_KEY"))
@@ -239,11 +243,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("JWT_REFRESH_TTL_DAYS must be positive")
 	}
 	if !c.IsDevelopment() {
-		if c.MSG91AuthKey == "" && !c.MSG91DevMode {
-			return fmt.Errorf("MSG91_AUTH_KEY is required when MSG91_DEV_MODE is not true")
+		if c.MessageCentralCustomerID == "" && !c.OTPDevMode {
+			return fmt.Errorf("MESSAGECENTRAL_CUSTOMER_ID is required when OTP_DEV_MODE is not true")
 		}
-		if c.MSG91TemplateID == "" && !c.MSG91DevMode {
-			return fmt.Errorf("MSG91_TEMPLATE_ID is required when MSG91_DEV_MODE is not true")
+		if c.MessageCentralAuthToken == "" && !c.OTPDevMode {
+			return fmt.Errorf("MESSAGECENTRAL_AUTH_TOKEN is required when OTP_DEV_MODE is not true")
 		}
 		if c.JWTRefreshSecret == "" {
 			return fmt.Errorf("JWT_REFRESH_SECRET is required in production")
@@ -329,7 +333,9 @@ var jwtSecretIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 // blockedJWTSecretSubstrings is matched as a substring (case-insensitive)
 // against the candidate secret. Substring (not exact) matching is required so
 // that placeholder values like the .env example
-//   "change-this-to-a-random-64-char-string-in-production-XXXXXXXXXXXX"
+//
+//	"change-this-to-a-random-64-char-string-in-production-XXXXXXXXXXXX"
+//
 // are rejected even when a developer pads them to clear the 64-char floor.
 var blockedJWTSecretSubstrings = []string{
 	"change-this-to-a-random-64-char-string-in-production",
