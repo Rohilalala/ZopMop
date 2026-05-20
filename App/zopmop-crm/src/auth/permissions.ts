@@ -79,9 +79,11 @@ export const PERMISSIONS = {
   'blacklist.remove': 'admin',
 
   // payouts
+  'payouts.read': 'viewer',
   'payouts.create': 'admin',
   'payouts.mark_paid': 'admin',
   'payouts.mark_failed': 'admin',
+  'payouts.recompute': 'admin',
 
   // templates
   'templates.create': 'admin',
