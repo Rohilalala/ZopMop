@@ -25,12 +25,13 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	cartmod "github.com/adityarohilla/househelp-api/internal/cart"
 	"github.com/adityarohilla/househelp-api/internal/compliance"
-	"github.com/adityarohilla/househelp-api/internal/crm/audit"
-	"github.com/adityarohilla/househelp-api/internal/crm/localities"
-	"github.com/adityarohilla/househelp-api/internal/experts"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/content"
+	"github.com/adityarohilla/househelp-api/internal/crm/audit"
+	"github.com/adityarohilla/househelp-api/internal/crm/localities"
 	"github.com/adityarohilla/househelp-api/internal/crm/notifications"
+	"github.com/adityarohilla/househelp-api/internal/disputes"
+	"github.com/adityarohilla/househelp-api/internal/experts"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	helpermod "github.com/adityarohilla/househelp-api/internal/helper"
 	"github.com/adityarohilla/househelp-api/internal/insights"
@@ -40,11 +41,9 @@ import (
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/observability"
-	"github.com/adityarohilla/househelp-api/internal/disputes"
 	"github.com/adityarohilla/househelp-api/internal/offers"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
-	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/internal/places"
 	"github.com/adityarohilla/househelp-api/internal/reengagement"
 	"github.com/adityarohilla/househelp-api/internal/referral"
@@ -55,12 +54,13 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
-	"github.com/adityarohilla/househelp-api/internal/zop"
+	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	zonesmod "github.com/adityarohilla/househelp-api/internal/zones"
+	"github.com/adityarohilla/househelp-api/internal/zop"
 	"github.com/adityarohilla/househelp-api/pkg/config"
 	"github.com/adityarohilla/househelp-api/pkg/database"
-	"github.com/jackc/pgx/v5"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/gofiber/fiber/v2"
 	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
@@ -278,15 +278,15 @@ func main() {
 	authRepo := auth.NewRepository(dbPool)
 	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment())
 
-	// Post-Firebase MSG91 wiring. Each piece is independent so the
-	// boot keeps working when MSG91 is dev-mode and refresh-token
-	// migrations are pending. The handlers fail-loud at request time
-	// if any of them is missing.
-	msg91Client := auth.NewMSG91Client(auth.MSG91Config{
-		AuthKey:    cfg.MSG91AuthKey,
-		TemplateID: cfg.MSG91TemplateID,
-		SenderID:   cfg.MSG91SenderID,
-		DevMode:    cfg.MSG91DevMode,
+	// Post-Firebase Message Central wiring. Each piece is independent
+	// so the boot keeps working when Message Central is dev-mode and
+	// refresh-token migrations are pending. The handlers fail-loud at
+	// request time if any of them is missing.
+	mcClient := auth.NewMessageCentralClient(auth.MessageCentralConfig{
+		CustomerID: cfg.MessageCentralCustomerID,
+		AuthToken:  cfg.MessageCentralAuthToken,
+		BaseURL:    cfg.MessageCentralBaseURL,
+		DevMode:    cfg.OTPDevMode,
 	})
 	tokenIssuer := auth.NewTokenIssuer(auth.TokenIssuerConfig{
 		AccessSecret:   cfg.JWTAccessSecret,
@@ -296,7 +296,7 @@ func main() {
 	})
 	refreshRepo := auth.NewRefreshRepo(dbPool)
 	otpLimiter := auth.NewOTPRateLimiter(rdb)
-	authService.SetMSG91(msg91Client)
+	authService.SetOTPVendor(mcClient)
 	authService.SetTokenIssuer(tokenIssuer)
 	authService.SetRefreshRepo(refreshRepo)
 	authService.SetOTPRateLimiter(otpLimiter)
@@ -323,9 +323,9 @@ func main() {
 			Secret: key.Secret,
 		})
 	}
-	// MSG91 access tokens may be signed with a distinct
+	// OTP-flow access tokens may be signed with a distinct
 	// JWT_ACCESS_SECRET. Add it to the verification set so middleware
-	// accepts both legacy Firebase-era tokens and new MSG91 tokens
+	// accepts both legacy Firebase-era tokens and new OTP-flow tokens
 	// during the cut-over. Falls back to JWT_SECRET when unset (see
 	// pkg/config.Load).
 	if cfg.JWTAccessSecret != "" && cfg.JWTAccessSecret != cfg.JWTSecret {

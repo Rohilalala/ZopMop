@@ -291,11 +291,11 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 
 // SendOTP handles POST /auth/send-otp.
 //
-// Post-Firebase MSG91 flow. Per-phone (3/15m) + per-IP (5/15m)
+// Post-Firebase OTP flow (Message Central VerifyNow). Per-phone (3/15m) + per-IP (5/15m)
 // limits are enforced inside the service via the OTPRateLimiter —
 // duplicating them here would burn the counter twice per call.
-// MSG91_DEV_MODE=true short-circuits the SMS call and seeds the
-// hardcoded OTP "9999" so testers can complete the flow.
+// OTP_DEV_MODE=true short-circuits the SMS call and seeds the
+// hardcoded OTP "999999" so testers can complete the flow.
 func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	var req OTPRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -313,7 +313,7 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "auth service not ready"})
 	}
 
-	otp, isNewUser, err := h.service.SendOTPMSG91(c.UserContext(), req.Phone, c.IP())
+	otp, isNewUser, err := h.service.SendLoginOTP(c.UserContext(), req.Phone, c.IP())
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("failed to send OTP")
 		return mapSendOTPError(c, err)
@@ -330,7 +330,7 @@ func (h *Handler) SendOTP(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(response)
 }
 
-// VerifyOTP handles POST /auth/verify-otp. Hits MSG91, upserts the
+// VerifyOTP handles POST /auth/verify-otp. Hits the OTP vendor, upserts the
 // user, and issues both access + refresh tokens. The access JWT is
 // also mirrored into the HttpOnly auth_token cookie so cookie-based
 // browser clients (admin dashboard) keep working without code
@@ -352,7 +352,7 @@ func (h *Handler) VerifyOTP(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "auth service not ready"})
 	}
 
-	loginResp, err := h.service.VerifyOTPMSG91(c.UserContext(), req.Phone, req.Code, req.HasAcceptedPrivacyPolicy)
+	loginResp, err := h.service.VerifyLoginOTP(c.UserContext(), req.Phone, req.Code, req.HasAcceptedPrivacyPolicy)
 	if err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(req.Phone)).Msg("OTP verification failed")
 		return mapVerifyOTPError(c, err)
@@ -559,7 +559,7 @@ func mapSendOTPError(c *fiber.Ctx, err error) error {
 	if errors.As(err, &accountSuspended) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": accountSuspended.Error()})
 	}
-	if errors.Is(err, ErrMSG91Misconfigured) {
+	if errors.Is(err, ErrMCMisconfigured) {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OTP gateway unavailable"})
 	}
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to send OTP"})
@@ -585,6 +585,10 @@ func mapVerifyOTPError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": accountSuspended.Error()})
 	}
 
+	if errors.Is(err, ErrMCMisconfigured) {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OTP gateway unavailable"})
+	}
+
 	switch {
 	case errors.Is(err, ErrInvalidOTP):
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid OTP", "code": "INVALID_OTP"})
@@ -597,4 +601,3 @@ func mapVerifyOTPError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to verify OTP", "code": "INTERNAL_ERROR"})
 	}
 }
-
