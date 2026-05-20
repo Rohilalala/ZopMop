@@ -44,6 +44,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/offers"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/payroll"
 	"github.com/adityarohilla/househelp-api/internal/places"
 	"github.com/adityarohilla/househelp-api/internal/reengagement"
 	"github.com/adityarohilla/househelp-api/internal/referral"
@@ -503,6 +504,16 @@ func main() {
 	shiftCron.Start(context.Background())
 	defer shiftCron.Stop()
 
+	// Payroll engine — computes per-pro pay at 01:00 IST on the 15th
+	// and last day of each month. Manual replay handler mounted on
+	// adminGroup further down.
+	payrollRepo := payroll.NewRepository(dbPool)
+	payrollService := payroll.NewService(payrollRepo)
+	payrollHandler := payroll.NewHandler(payrollService)
+	payrollCron := payroll.NewCron(payrollService)
+	payrollCron.Start(context.Background())
+	defer payrollCron.Stop()
+
 	// Authenticated routes with rate limiting by user ID.
 	authMiddleware := mw.AuthMiddleware(jwtVerificationKeys, authRepo)
 	authLimiter := mw.RateLimiter(rdb, mw.AuthRateLimit, "user")
@@ -687,6 +698,7 @@ func main() {
 	adminGroup := api.Group("/admin", authMiddleware, adminMiddleware, adminLimiter, dbBoundLimiter)
 	adminHandler.RegisterRoutes(adminGroup)
 	shiftHandler.RegisterAdminRoutes(adminGroup)
+	payrollHandler.RegisterAdminRoutes(adminGroup)
 
 	// Pro-only shift routes. AuthMiddleware sets userType in locals;
 	// RequireRole("pro") rejects customers + admins. proApprovedMW
