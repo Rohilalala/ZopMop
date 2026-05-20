@@ -6,6 +6,10 @@ package auth
 // Each run costs approximately ₹0.30 in OTP charges. It is intended for
 // manual local verification ONLY and never runs in CI.
 //
+// MC_AUTH_TOKEN is the "Auth Token" value from the Message Central console.
+// It is the long-lived bearer used VERBATIM as the `authToken` header on
+// /verification/v3/send and /validateOtp — there is no token-exchange step.
+//
 // Run it explicitly with real creds:
 //   MC_INTEGRATION_TEST=1 \
 //   MC_CUSTOMER_ID=... MC_AUTH_TOKEN=... MC_TEST_PHONE=+91XXXXXXXXXX \

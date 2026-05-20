@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/pkg/logger"
@@ -23,10 +21,13 @@ import (
 // SendOTP returns a verificationId that must be presented at VerifyOTP. The
 // service layer persists that id per-phone in Redis (see service.go).
 //
-// Auth: a bearer token from POST /auth/v1/authentication/token is sent in the
-// `authToken` header on every other call. The token is cached reactively (no
-// TTL): on a 401 we invalidate, refetch ONCE, retry the original call ONCE; a
-// second 401 is treated as misconfiguration.
+// Auth: the value configured as MESSAGECENTRAL_AUTH_TOKEN (the "Auth Token"
+// shown in the Message Central console) is a pre-issued long-lived session
+// JWT. It is sent VERBATIM in the `authToken` header on every API call —
+// there is no token-exchange step. The /auth/v1/authentication/token endpoint
+// is NOT used (it 401s for these credentials; the dashboard token is the only
+// usable bearer). If MC returns 401 on send/verify the configured token is
+// wrong or expired and the operator must rotate MESSAGECENTRAL_AUTH_TOKEN.
 //
 // Dev mode (OTP_DEV_MODE=true) short-circuits all network calls: SendOTP
 // returns "dev-<national>", VerifyOTP accepts devModeOTPVal for any "dev-" id.
@@ -56,19 +57,17 @@ var (
 // MessageCentralConfig holds credentials + dev toggle.
 type MessageCentralConfig struct {
 	CustomerID string
-	AuthToken  string // base64 key/password from console.messagecentral.com
+	AuthToken  string // long-lived bearer copied from console.messagecentral.com → sent verbatim as `authToken` header
 	BaseURL    string // defaults to mcDefaultBaseURL when empty
 	DevMode    bool
 }
 
-// MessageCentralClient talks to the VerifyNow API. Concurrent-safe.
+// MessageCentralClient talks to the VerifyNow API. Concurrent-safe (config is
+// read-only after construction; *http.Client is itself concurrent-safe).
 type MessageCentralClient struct {
 	cfg     MessageCentralConfig
 	http    *http.Client
 	baseURL string
-
-	mu          sync.Mutex // guards cachedToken
-	cachedToken string
 }
 
 // NewMessageCentralClient constructs a client. In dev mode the credentials
@@ -110,137 +109,38 @@ func normalizeToNational10(phone string) string {
 	return ""
 }
 
-// token returns the cached auth token, fetching one if absent. Mutex-guarded
-// so a refetch under load happens once.
-func (c *MessageCentralClient) token(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cachedToken != "" {
-		return c.cachedToken, nil
-	}
-	tok, err := c.fetchToken(ctx)
-	if err != nil {
-		return "", err
-	}
-	c.cachedToken = tok
-	return tok, nil
-}
-
-// invalidateToken clears the cache so the next token() refetches.
-func (c *MessageCentralClient) invalidateToken() {
-	c.mu.Lock()
-	c.cachedToken = ""
-	c.mu.Unlock()
-}
-
-// fetchToken performs the token HTTP call and returns the token string. It is
-// stateless (no cachedToken write — token() does that under c.mu) and reads
-// only cfg, which is set once at construction.
-func (c *MessageCentralClient) fetchToken(ctx context.Context) (string, error) {
+// token returns the configured Auth Token verbatim. No HTTP call, no caching —
+// the dashboard value is the bearer.
+func (c *MessageCentralClient) token() (string, error) {
 	if c.cfg.CustomerID == "" || c.cfg.AuthToken == "" {
 		return "", ErrMCMisconfigured
 	}
-	// `key` is the base64-encoded auth secret. If the configured AuthToken is
-	// already base64 Message Central accepts it as-is; we encode defensively
-	// only when it is not valid base64.
-	key := c.cfg.AuthToken
-	if _, derr := base64.StdEncoding.DecodeString(key); derr != nil {
-		key = base64.StdEncoding.EncodeToString([]byte(c.cfg.AuthToken))
-	}
-	q := url.Values{}
-	q.Set("customerId", c.cfg.CustomerID)
-	q.Set("key", key)
-	q.Set("scope", "NEW")
-	q.Set("country", "91")
+	return c.cfg.AuthToken, nil
+}
 
-	reqURL := c.baseURL + "/auth/v1/authentication/token?" + q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("%w: build token request: %v", ErrMCNetwork, err)
+// doAuthed performs an authed request. A 401 from Message Central is treated
+// as misconfiguration (the dashboard token is wrong or expired); there is no
+// retry because there is nothing to refetch.
+func (c *MessageCentralClient) doAuthed(ctx context.Context, method, reqURL string) ([]byte, error) {
+	tok, terr := c.token()
+	if terr != nil {
+		return nil, terr
 	}
+	req, rerr := http.NewRequestWithContext(ctx, method, reqURL, nil)
+	if rerr != nil {
+		return nil, fmt.Errorf("%w: build request: %v", ErrMCNetwork, rerr)
+	}
+	req.Header.Set("authToken", tok)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrMCNetwork, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return "", ErrMCMisconfigured
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("%w: token HTTP %d", ErrMCRejected, resp.StatusCode)
-	}
-
-	// Accept flat or data-wrapped.
-	var env struct {
-		Token string `json:"token"`
-		Data  struct {
-			Token string `json:"token"`
-		} `json:"data"`
-	}
-	if jerr := json.Unmarshal(body, &env); jerr != nil {
-		log.Warn().Int("status", resp.StatusCode).
-			Str("body", truncateBody(string(body))).
-			Msg("[mc] token response unparseable")
-		return "", ErrMCRejected
-	}
-	tok := env.Token
-	if tok == "" {
-		tok = env.Data.Token
-	}
-	if tok == "" {
-		log.Warn().Int("status", resp.StatusCode).
-			Str("body", truncateBody(string(body))).
-			Msg("[mc] token response missing token field")
-		return "", ErrMCRejected
-	}
-	return tok, nil
-}
-
-// doAuthed performs an authed request with the reactive 401 retry policy:
-// on 401 → invalidate, refetch once, retry once; second 401 → ErrMCMisconfigured.
-func (c *MessageCentralClient) doAuthed(ctx context.Context, method, reqURL string) ([]byte, error) {
-	send := func() (*http.Response, error) {
-		tok, terr := c.token(ctx)
-		if terr != nil {
-			return nil, terr
-		}
-		req, rerr := http.NewRequestWithContext(ctx, method, reqURL, nil)
-		if rerr != nil {
-			return nil, fmt.Errorf("%w: build request: %v", ErrMCNetwork, rerr)
-		}
-		req.Header.Set("authToken", tok)
-		req.Header.Set("Accept", "application/json")
-		return c.http.Do(req)
-	}
-
-	resp, err := send()
-	if err != nil {
-		// token() may return ErrMCMisconfigured; surface it unwrapped.
-		if errors.Is(err, ErrMCMisconfigured) {
-			return nil, err
-		}
 		return nil, fmt.Errorf("%w: %v", ErrMCNetwork, err)
 	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
-		c.invalidateToken()
-		resp, err = send()
-		if err != nil {
-			if errors.Is(err, ErrMCMisconfigured) {
-				return nil, err
-			}
-			return nil, fmt.Errorf("%w: %v", ErrMCNetwork, err)
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			resp.Body.Close()
-			return nil, ErrMCMisconfigured
-		}
-	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrMCMisconfigured
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%w: HTTP %d", ErrMCRejected, resp.StatusCode)
