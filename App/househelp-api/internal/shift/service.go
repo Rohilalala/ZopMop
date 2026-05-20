@@ -405,8 +405,13 @@ func (s *Service) FortnightProgress(ctx context.Context, proID string) (*Fortnig
 	if err != nil {
 		return nil, err
 	}
-	fortnightStart := snap.FortnightStart
-	if fortnightStart.IsZero() {
+	// NULL fortnight_start_date (pro never committed a shift) → derive
+	// the current Monday from the wall clock so /pro/fortnight/progress
+	// still returns a usable zero-state instead of 500-ing.
+	var fortnightStart time.Time
+	if snap.FortnightStart != nil && !snap.FortnightStart.IsZero() {
+		fortnightStart = *snap.FortnightStart
+	} else {
 		fortnightStart = currentFortnightStart(IST())
 	}
 	fortnightEnd := fortnightStart.AddDate(0, 0, 13)

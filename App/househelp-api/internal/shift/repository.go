@@ -620,8 +620,14 @@ func (r *Repository) InsertAbsence(ctx context.Context, proID, reason, fortnight
 }
 
 // HelperFortnightSnapshot — feeds /pro/fortnight/progress.
+//
+// FortnightStart is a pointer because `helpers.fortnight_start_date`
+// is NULL for any pro who hasn't committed a shift yet. Scanning NULL
+// into a non-pointer `time.Time` raises a pgx error and 500s the
+// endpoint; callers must handle nil as "no fortnight started yet" and
+// fall back to the calendar-derived current Monday.
 type HelperFortnightSnapshot struct {
-	FortnightStart       time.Time
+	FortnightStart       *time.Time
 	OnlineMinutes        int
 	CancellationCount30d int
 	LeaveBalance         int
