@@ -60,14 +60,10 @@ function hoursBetween(start: string, end: string): number {
 }
 
 function isEditableForDate(dateYMD: string): boolean {
-  // Same lock approximation as the dashboard: shift_date == today is locked
-  // (already passed 3 AM); shift_date == tomorrow + now > 3 AM is also locked.
-  const today = ymd(new Date());
-  const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return ymd(d); })();
-  if (dateYMD < today) return false;
-  if (dateYMD === today) return false;
-  if (dateYMD === tomorrow && new Date().getHours() >= 3) return false;
-  return true;
+  // Day D is editable until 03:00 (local IST) on day D itself.
+  const [y, m, d] = dateYMD.split('-').map((n) => parseInt(n, 10));
+  const lock = new Date(y, m - 1, d, 3, 0, 0, 0);
+  return new Date() < lock;
 }
 
 export default function CommitShiftScreen() {
