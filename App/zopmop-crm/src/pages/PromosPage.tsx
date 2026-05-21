@@ -160,7 +160,15 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
             <option value="percent">Percent (%)</option>
             <option value="fixed">Fixed (₹ in rupees)</option>
           </select>
-          <input className="input" type="number" placeholder="Value" value={f.discount_value || ''} onChange={(e) => setF({ ...f, discount_value: Number(e.target.value) })} />
+          <input
+            className="input"
+            type="number"
+            placeholder={f.discount_type === 'percent' ? 'Value (1–100)' : 'Value (paise, max 1,000,000)'}
+            min={1}
+            max={f.discount_type === 'percent' ? 100 : 1000000}
+            value={f.discount_value || ''}
+            onChange={(e) => setF({ ...f, discount_value: Number(e.target.value) })}
+          />
           <input className="input" type="number" placeholder="Min order (₹ × 100)" value={f.min_order_paise || ''} onChange={(e) => setF({ ...f, min_order_paise: Number(e.target.value) })} />
           <input className="input" type="number" placeholder="Max total uses (0 = ∞)" value={f.max_uses || ''} onChange={(e) => setF({ ...f, max_uses: Number(e.target.value) })} />
           <input className="input" type="number" placeholder="Max per user" value={f.max_per_user || ''} onChange={(e) => setF({ ...f, max_per_user: Number(e.target.value) })} />
