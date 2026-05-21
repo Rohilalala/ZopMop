@@ -74,6 +74,7 @@ type Service struct {
 	jwtSecretID     string
 	jwtExpiry       time.Duration
 	devOTPEnabled   bool
+	isProduction    bool
 	postDeleteHooks []func(ctx context.Context, userID string)
 	codeGen         CodeGenerator
 
@@ -108,7 +109,10 @@ func (s *Service) SetCodeGenerator(cg CodeGenerator) { s.codeGen = cg }
 // devOTPEnabled controls whether SendOTP returns the plaintext OTP alongside the
 // success response. This MUST be false in production — it exists only so local
 // dev/integration tests can complete the phone flow without a real SMS gateway.
-func NewService(repo *Repository, rdb *redis.Client, jwtSecret, jwtSecretID string, jwtExpiryHours int, devOTPEnabled bool) *Service {
+// isProduction is the boot-time APP_ENV check; defense-in-depth so the OTP
+// dev-mode bypass cannot leak the plaintext OTP even if OTP_DEV_MODE is
+// accidentally set to true on a production deploy.
+func NewService(repo *Repository, rdb *redis.Client, jwtSecret, jwtSecretID string, jwtExpiryHours int, devOTPEnabled, isProduction bool) *Service {
 	return &Service{
 		repo:          repo,
 		rdb:           rdb,
@@ -116,6 +120,7 @@ func NewService(repo *Repository, rdb *redis.Client, jwtSecret, jwtSecretID stri
 		jwtSecretID:   jwtSecretID,
 		jwtExpiry:     time.Duration(jwtExpiryHours) * time.Hour,
 		devOTPEnabled: devOTPEnabled,
+		isProduction:  isProduction,
 	}
 }
 
@@ -421,10 +426,19 @@ func (s *Service) SendLoginOTP(ctx context.Context, phone, ip string) (devOTP st
 
 	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Bool("is_new_user", isNewUser).Msg("OTP dispatched")
 
-	if s.otp.DevMode() {
+	if s.shouldEchoDevOTP() {
 		return devModeOTPVal, isNewUser, nil
 	}
 	return "", isNewUser, nil
+}
+
+// shouldEchoDevOTP reports whether the SendLoginOTP path may return the
+// plaintext OTP "999999" to the caller. True only when the OTP vendor is in
+// dev mode AND the process is not running in production. The IsProduction
+// half is defense-in-depth: it blocks an accidental OTP_DEV_MODE=true on a
+// production deploy from leaking OTPs to API callers. Audit finding LB-1.
+func (s *Service) shouldEchoDevOTP() bool {
+	return s.otp != nil && s.otp.DevMode() && !s.isProduction
 }
 
 // VerifyLoginOTP verifies the user-supplied OTP with the OTP vendor,
