@@ -277,7 +277,7 @@ func main() {
 
 	// Auth.
 	authRepo := auth.NewRepository(dbPool)
-	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment())
+	authService := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.JWTSecretID, cfg.JWTExpiryHours, cfg.IsDevelopment(), cfg.IsProduction())
 
 	// Post-Firebase Message Central wiring. Each piece is independent
 	// so the boot keeps working when Message Central is dev-mode and
