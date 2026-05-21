@@ -426,13 +426,19 @@ func (s *Service) SendLoginOTP(ctx context.Context, phone, ip string) (devOTP st
 
 	log.Info().Str("phone_mask", logger.MaskPhone(phone)).Bool("is_new_user", isNewUser).Msg("OTP dispatched")
 
-	// Defense-in-depth: even if OTP_DEV_MODE=true leaks into a production
-	// deploy (e.g. accidental .env.example copy), APP_ENV=production blocks
-	// the plaintext-OTP echo. Audit finding LB-1, 2026-05-21.
-	if s.otp.DevMode() && !s.isProduction {
+	if s.shouldEchoDevOTP() {
 		return devModeOTPVal, isNewUser, nil
 	}
 	return "", isNewUser, nil
+}
+
+// shouldEchoDevOTP reports whether the SendLoginOTP path may return the
+// plaintext OTP "999999" to the caller. True only when the OTP vendor is in
+// dev mode AND the process is not running in production. The IsProduction
+// half is defense-in-depth: it blocks an accidental OTP_DEV_MODE=true on a
+// production deploy from leaking OTPs to API callers. Audit finding LB-1.
+func (s *Service) shouldEchoDevOTP() bool {
+	return s.otp != nil && s.otp.DevMode() && !s.isProduction
 }
 
 // VerifyLoginOTP verifies the user-supplied OTP with the OTP vendor,
