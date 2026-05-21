@@ -292,3 +292,85 @@ func TestRecompute_PaidRowIs403(t *testing.T) {
 		t.Fatalf("expected 403 on recompute-paid, got %d body=%s", resp.StatusCode, string(body))
 	}
 }
+
+// TestRecompute_FailedFlipsToPending asserts the May-21 fix: recompute on a
+// row in status='failed' resets status back to 'pending_manual_payout' and
+// clears failure_reason, so the admin can immediately re-attempt mark-paid.
+// Recompute on an already-pending row leaves status untouched (covered by
+// TestRecompute_FromPendingUpdatesValues).
+func TestRecompute_FailedFlipsToPending(t *testing.T) {
+	fx := newFixture(t)
+	ctx := context.Background()
+
+	// Drop the seeded row into status='failed' with a non-NULL reason so we
+	// can verify the recompute clears it. Direct SQL is simpler than walking
+	// mark-paid → mark-failed and gives us a deterministic failure_reason.
+	if _, err := fx.pool.Exec(ctx, `
+		UPDATE payouts
+		   SET status = 'failed', failure_reason = 'imps_bounce'
+		 WHERE id = $1::uuid
+	`, fx.payoutID); err != nil {
+		t.Fatalf("seed failed row: %v", err)
+	}
+
+	// Seed a closed shift session inside the cycle so recompute writes
+	// non-zero numbers (proves the numeric SET legs still fire).
+	commitID := uuid.NewString()
+	if _, err := fx.pool.Exec(ctx, `
+		INSERT INTO shift_commitments (id, pro_id, shift_date, start_time, end_time, status, locked_at)
+		VALUES ($1::uuid, $2::uuid, '2026-05-10', '09:00', '17:00', 'completed', now())
+	`, commitID, fx.proID); err != nil {
+		t.Fatalf("seed commit: %v", err)
+	}
+	if _, err := fx.pool.Exec(ctx, `
+		INSERT INTO shift_sessions (commitment_id, pro_id, online_at, offline_at, online_minutes, job_minutes)
+		VALUES ($1::uuid, $2::uuid, '2026-05-10 09:00:00+05:30', '2026-05-10 11:00:00+05:30', 120, 60)
+	`, commitID, fx.proID); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	resp, body := doJSON(t, fx.app, "POST", "/payroll/payouts/"+fx.payoutID+"/recompute", ``)
+	if resp.StatusCode != 200 {
+		t.Fatalf("recompute status: %d body=%s", resp.StatusCode, string(body))
+	}
+	var got crmpayroll.Payout
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if got.Status != "pending_manual_payout" {
+		t.Fatalf("status: want pending_manual_payout, got %q", got.Status)
+	}
+	if got.FailureReason != nil {
+		t.Fatalf("failure_reason: want NULL, got %q", *got.FailureReason)
+	}
+	if got.OnlineMinutes != 120 || got.WorkingMinutes != 60 {
+		t.Fatalf("numbers not recomputed: want 120/60, got %d/%d",
+			got.OnlineMinutes, got.WorkingMinutes)
+	}
+
+	// Audit row covers the status transition via the before/after JSONB
+	// snapshots (no schema change for an explicit status_changed field).
+	if auditCount(t, fx) != 1 {
+		t.Fatalf("audit row: want 1, got %d", auditCount(t, fx))
+	}
+	var beforeStatus, afterStatus string
+	var beforeReason *string
+	if err := fx.pool.QueryRow(ctx, `
+		SELECT before_state->>'status', after_state->>'status',
+		       before_state->>'failure_reason'
+		  FROM payout_audit_log
+		 WHERE payout_id = $1::uuid
+		 ORDER BY created_at DESC
+		 LIMIT 1
+	`, fx.payoutID).Scan(&beforeStatus, &afterStatus, &beforeReason); err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if beforeStatus != "failed" || afterStatus != "pending_manual_payout" {
+		t.Fatalf("audit status transition: want failed→pending_manual_payout, got %s→%s",
+			beforeStatus, afterStatus)
+	}
+	if beforeReason == nil || *beforeReason != "imps_bounce" {
+		t.Fatalf("audit before_state.failure_reason: want imps_bounce, got %v", beforeReason)
+	}
+}
