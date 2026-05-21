@@ -1659,7 +1659,7 @@ function PayoutsTab({
           }
         }}
         title="Recompute payout"
-        impact="Re-runs the calculation against current shift data and overwrites the hours and pay fields. Audit log preserves the old values. Allowed only on pending or failed rows."
+        impact="Re-runs the calculation against current shift data and overwrites the hours and pay fields. If the row is currently failed, status moves back to pending and the failure reason is cleared so you can retry mark-paid. Audit log preserves the old values. Allowed only on pending or failed rows."
         confirmLabel="Recompute"
       />
     </Can>
