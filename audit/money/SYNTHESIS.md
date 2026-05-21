@@ -49,7 +49,7 @@ Three connected gaps; together they make any successful chargeback an unbounded 
 
 ### LB-7 — Cycle-close cron at 01:00 IST drops late-night sessions from both cycles
 - `App/househelp-api/internal/payroll/calc.go:111-127` fires `NextCloseAfter` at 01:00 IST on day 15 / EOM. Aggregation filters `offline_at IS NOT NULL` AND `sc.shift_date BETWEEN cycle_start AND cycle_end` (`findings-math.md` H-5).
-- Worked case: pro online 22:00 on 2026-05-15 to 02:00 on 2026-05-16. `shift_date = 2026-05-15`. Cron fires 01:00 on 2026-05-15 → session not closed → excluded. Next cycle starts 16th → shift_date 2026-05-15 outside window. Minutes silently lost.
+- Worked case (amended per REVIEW.md): pro online 22:00 on 2026-05-14 to 02:00 on 2026-05-15. `shift_date = 2026-05-14` (belongs to cycle 1..15). Cron fires 01:00 on 2026-05-15 while the session is still open → excluded by `offline_at IS NOT NULL`. Session closes at 02:00 → no re-run; `UpsertPayout` is `ON CONFLICT DO NOTHING` so the cycle row isn't amended. Minutes lost forever.
 - **Fix:** fire cron at 01:00 IST on day **after** close (day 16 and day-1-of-next-month), OR run after the 03:00 IST shift-cutoff sweeper that auto-closes dangling sessions.
 
 ### LB-8 — CRM Payouts page renders ₹NaN; admin approves bank wires from memory
@@ -86,8 +86,8 @@ Three connected gaps; together they make any successful chargeback an unbounded 
 - If any admin has created stack rules expecting them to apply, customers were overcharged. **Verify production `stack_rules` table is empty before pilot.**
 
 ### H-F. Cancellation fee stamped on COD/unpaid bookings — display fiction
-- `App/househelp-api/internal/booking/repository.go:262-285` always stamps `cancellation_fee_paise` regardless of `payment_status`. COD booking → fee shown but no money flows (`findings-math.md` C-3).
-- Pro side: `App/zopmop-app/src/utils/proBookingCancel.ts:17` (hardcoded `BASE_RATE_PER_HOUR=80`, drift risk) suggests pro will be paid the fee — they will not.
+- Unconditional stamp site is `App/househelp-api/internal/booking/repository.go:246` (`cancellation_fee_cents = $5`); refund-insert gate at `:262-285` is correctly `payment_status`-aware. The stamp itself runs regardless of payment state, so COD bookings carry a fee row but never trigger a refund (`findings-math.md` C-3, amended by REVIEW.md).
+- Pro side: `App/zopmop-app/src/utils/proBookingCancel.ts:17,21` (hardcoded `BASE_RATE_PER_HOUR=80`, drift risk). The penalty estimator shows what is **deducted from** pro pay (not paid to them) — the M-δ drift risk remains, but the "pro paid the fee" framing was incorrect and is removed here.
 - **Fix:** gate the UPDATE on `payment_status='paid'`.
 
 ### H-G. Cart-screen total is client-computed; server can re-price (surge) before booking creation
@@ -130,6 +130,22 @@ Three connected gaps; together they make any successful chargeback an unbounded 
 ### M-θ. `processed_webhook_events` has no TTL
 - `App/househelp-api/migrations/057_processed_webhook_events.up.sql`. ~30 MB/yr. Not a money risk; ops housekeeping.
 
+### M-N1. `openCashfreeOrder` leaves orphan `payments` rows on gateway failure (REVIEW.md N-1)
+- `App/househelp-api/internal/payments/handler.go:566` writes `payments` BEFORE the gateway call at `:578`. If `CreateOrder` returns network/5xx, the payments row stays `gateway_status='pending'`, `gateway_ref=NULL`. The reuse path (`:496-505`) requires `cashfree_orders.expires_at > NOW()` from a row that was never written → orphan never re-used. Each retry creates yet another orphan.
+- Not money-loss, but inflates `unreconciled_count` noise and complicates LB-2 reconciliation.
+
+### H-N2. `findReusableCashfreeOrder` ignores `payments.amount_paise` drift (REVIEW.md N-2 — HIGH)
+- `App/househelp-api/internal/payments/handler.go:496-505` reuses a pending Cashfree order based on `cashfree_orders.expires_at`. It returns the stale `p.amount_paise` from when the pending order was first created. If `bookings.amount_paise` changes between attempts (promo applied/removed, admin edit), the reuse path silently charges the old amount.
+- Compounds with LB-5 (unbounded promo discount can change net mid-flight) and LB-6 (race).
+- **Fix:** during reuse, compare `cashfree_orders.amount_paise` against current `bookings.amount_paise - discount_paise`. If different, void the pending Cashfree order and open a fresh one.
+
+### M-N3. Wallet topup PAYMENT_SUCCESS with nil wallet service silently no-credits (REVIEW.md N-3)
+- `App/househelp-api/internal/payments/handler.go:947-951` calls `h.wallet.CreditTx(...)` for topups; `:952` fallback when `h.wallet == nil` logs a warning and continues. Customer paid Cashfree, ledger says success, balance unchanged.
+- Risk surface depends on whether `h.wallet` is ever nil in production wiring. Pre-pilot: confirm wallet service is non-nil in the prod boot sequence; if so, demote to documentation-only.
+
+### L-N4. `payroll/repository.go:65` join silently drops legacy NULL-commitment sessions (REVIEW.md N-4)
+- `JOIN shift_commitments sc ON sc.id = ss.commitment_id` excludes any `shift_sessions` with `commitment_id IS NULL`. Migration 098 makes it `NOT NULL` going forward, but pre-098 rows (if any) silently vanish from payroll. Verify with `SELECT COUNT(*) FROM shift_sessions WHERE commitment_id IS NULL` against prod.
+
 ### M-ι. First four pro-side mid-service cancels per 30 days incur no penalty
 - `App/househelp-api/internal/shift/service.go:378-381` `StrikeThreshold = 5`. Pro can cancel four customers mid-service for free; customer loss from LB-1 stays uncompensated.
 
@@ -162,7 +178,7 @@ For each, the rationale matters more than the deferral.
 - **A.3 — Stack rules (H-E)**. Verify `SELECT count(*) FROM stack_rules` = 0 before pilot. If admin never creates a row, no overcharge possible.
 - **A.4 — Cashfree env (M-ε)**. Add pre-flight Railway env-var check to release runbook; defer the panic-on-mismatch code change.
 - **A.5 — Constants drift (M-δ)**. Don't change `pricing_config.BaseFeeCents` or `BaseRatePaisePerHour` during pilot. Lock both via release runbook.
-- **A.6 — Payments-intent race (LB-6)**. Pilot users are 5 friends; instruct them not to double-tap Pay. Real fix is one unique index — promote to LB if any double-charge observed.
+- ~~**A.6 — Payments-intent race (LB-6)**. Pilot users are 5 friends; instruct them not to double-tap Pay.~~ **PROMOTED to launch-blocker per REVIEW.md §4 quibble.** RN's Cashfree Drop SDK can produce double order-creates without user error (network retry on the order-create POST, app foreground/background race). The partial unique index is a one-line forward-only migration — there is no rationale to defer it.
 - **A.7 — Clawback (sub-point of LB-2)**. Pilot card-payment value ≤ ₹5 000/booking × 50 bookings = ₹2.5L total exposure. Worst-case chargeback in pilot: founder eats it.
 - **A.8 — RN money-display centralization (M-γ)**. Will fix in v2; not money-loss, only customer perception.
 
@@ -182,6 +198,7 @@ For each, the rationale matters more than the deferral.
 | 8 | LB-6 | HIGH | Double-tap Pay on flaky network creates two Cashfree orders → two `payments` rows → double-charge. UNIQUE on `gateway_ref` is too late. | Partial UNIQUE INDEX on `payments(booking_id) WHERE gateway_status='pending'`. |
 | 9 | LB-8 | HIGH | CRM Payouts page renders ₹NaN. Admin approves manual bank wires without seeing the amount in the UI. | Rename TS fields `amount_cents` → `amount_paise` (`api/all.ts:298,303`; `api/dashboard.ts:6,21`). |
 | 10 | H-G | HIGH | Cart shows local-computed total. Server applies surge / different fee; user already tapped "Pay" on the lower number. | Always round-trip a `quote` call before opening Cashfree sheet; render server number on cart "Total" too. |
+| 11 | H-N2 | HIGH (new, REVIEW) | Reused pending Cashfree order locks in the **old** `amount_paise`. If booking amount changes (promo applied/removed, admin edit) between attempts, customer is charged the stale number. | On reuse, compare cashfree_orders.amount_paise to current `bookings.amount_paise - discount_paise`; void + re-open if different. |
 
 ---
 
@@ -199,13 +216,28 @@ For each, the rationale matters more than the deferral.
 ## Acceptance criteria for "money flow audit passed"
 
 Pilot can launch when:
-- LB-1, LB-3, LB-4, LB-5 fixed in code on `develop`.
+- LB-1, LB-3, LB-4, LB-5, **LB-6** fixed in code on `develop` (LB-6 promoted from defer per REVIEW.md).
 - LB-2 partial: chargeback webhook handler + manual-only reconciliation runbook (full automation deferred to scale).
 - LB-7 worked around: cron schedule moved or session-sweep guaranteed before cron fire.
 - LB-8 fixed: CRM payouts UI renders rupees correctly.
 - LB-9 fixed OR runbook + alerting that catches stuck `pending` payment rows within 1 h.
-- LB-6 either fixed (UNIQUE index) or accepted under A.6 with double-charge monitor.
+- H-N2 (new): pending-order reuse must re-check `amount_paise` against current booking.
 
 Everything in **High** can stay in v1.5 backlog. Everything in **Medium** documented for v2.
+
+---
+
+## Review pass — what the independent money-reviewer found
+
+A second-stage reviewer (fresh context) re-ran each of the three traces from scratch and re-verified every Top-10 file:line citation. Outcome (full text in `REVIEW.md`):
+
+- **Confirmed:** all 10 launch blockers + every HIGH spot-checked, plus M-α and M-ε.
+- **Refuted:** none.
+- **Amended (incorporated above):**
+  - LB-7 worked example date arithmetic corrected (pro online 22:00 day 14 → offline 02:00 day 15, cron fires 01:00 day 15).
+  - H-F citation block moved from `:262-285` (refund gate) to `:246` (unconditional stamp). Pro-side framing inverted; corrected.
+  - LB-9 — the misleading comment lives in code at `handler.go:866-868`, not in the audit framing.
+- **New findings (added above):** M-N1 (orphan payments rows), H-N2 (stale amount on Cashfree-order reuse — added to Top 10 as row 11), M-N3 (nil-wallet topup no-credit), L-N4 (legacy NULL-commitment shift sessions dropped from payroll).
+- **Quibble that became material:** A.6 (deferring LB-6) is unsafe; LB-6 promoted to launch-blocker. A.3 (stack rules check) needs explicit `WHERE is_active = TRUE` clause in the runbook.
 
 End of SYNTHESIS.
