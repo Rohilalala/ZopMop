@@ -4,6 +4,16 @@ Branch: `feature/security-audit-2026-05-21` (off `develop`, HEAD `3399626 → a5
 Phase 1 corpus: `findings-secrets.md`, `findings-authnz.md`, `findings-input-validation.md`, `findings-dos.md`, `findings-disclosure.md`, with cross-refs into `audit/findings/*.md` (prior work).
 Context: pre-pilot, ~5 customers + ~5 pros. Indian on-demand household help.
 
+**Reviewed**: see `REVIEW.md` for confirm/refute on every top-10. This document updated post-review.
+**Net changes from review**:
+- 7 confirmed, 1 substantially refuted (D-005/B-012 — WS booking-track *does* validate JWT before sending data; downgrade to MEDIUM), 2 amended.
+- 7 new findings (N-001 HIGH, N-002/N-003 MEDIUM, N-004..N-007 LOW). N-001 (CRM `/admin/auth/refresh` CSRF-reachable) replaces D-005 in the top 10.
+- C-006/D-004 downgraded to LOW — `dispatchCashfreeEventTx` does dedupe via `ConsumeOnceTx` at `internal/payments/handler.go:854`.
+- S-004 partially refuted for `internal/credentials/firebase.go` — no raw value logged there. Re-scope or drop.
+- QW-6 mostly redundant — `pkg/config/config.go:361` already enforces secret length ≥ 64; only the access≠refresh equality check is missing.
+- B-005 fix is a 10-line SQL change (add `role` to the session-active SELECT in `internal/crm/middleware/jwt.go:91-97`), not Redis caching.
+- B-009 / N-004 — also rename `"adminID"`, `"permissions"` literals to constants in `internal/middleware/admin.go:51-52,99-100`.
+
 ---
 
 ## 🚨 Launch blockers (do not ship as-is)
@@ -31,7 +41,8 @@ Context: pre-pilot, ~5 customers + ~5 pros. Indian on-demand household help.
 | 7 | B-003 | HIGH | `internal/middleware/jwt.go:25-72` | No `iss/aud` claim check → CRM token replayable as customer token if secrets ever align | Mint with `iss/aud`; validate; reject mismatch |
 | 8 | B-005 | HIGH | `internal/crm/middleware/jwt.go:68-74,124-136` | CRM admin's role downgrade not enforced until session expiry | Re-read role from DB (Redis-cached 60s) in middleware; don't trust claim |
 | 9 | B-007 / D-002 | HIGH | `internal/auth/ratelimit.go:105-130` | Redis hiccup → OTP send unlimited (fail OPEN) — compounds D-001 | Fail CLOSED on send-OTP; log+alert each Redis error |
-| 10 | D-005 / B-012 | HIGH | `cmd/api/main.go:533` | WS booking-track on public bucket no auth → location stream leak + conn-exhaustion | Validate JWT on upgrade; per-user concurrent-WS cap; idle timeout |
+| 10 | N-001 | HIGH | `App/zopmop-crm/src/api/client.ts:54-58`, `cmd/crm-api/main.go:140-147` | CRM `/admin/auth/refresh` cookie-authed, no CSRF, no Origin check → cross-site token rotation / session pinning, ATO chain if any future CRM XSS | Add CSRF to refresh endpoint OR Origin allowlist in `corsMiddleware` |
+| —  | D-005 / B-012 | MEDIUM (was HIGH; refuted by review) | `internal/booking/tracking_ws.go:92-138` | WS validates JWT before sending data; only real gap is no per-user concurrent-WS cap | Add per-user concurrent-WS cap |
 
 ---
 
