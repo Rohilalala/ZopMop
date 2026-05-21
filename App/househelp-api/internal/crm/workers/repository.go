@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/adityarohilla/househelp-api/internal/payroll"
 )
 
 // ErrNotFound is returned when a worker lookup yields no result.
@@ -73,11 +75,11 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 	}
 
 	sortColMap := map[string]string{
-		"":          "u.created_at",
-		"joined_at": "u.created_at",
+		"":           "u.created_at",
+		"joined_at":  "u.created_at",
 		"total_jobs": "h.total_jobs",
-		"rating":    "h.rating",
-		"name":      "u.name",
+		"rating":     "h.rating",
+		"name":       "u.name",
 	}
 	sortCol, ok := sortColMap[f.SortBy]
 	if !ok {
@@ -318,9 +320,9 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 	out := []LivePin{}
 	for rows.Next() {
 		var (
-			p             LivePin
-			activeID      *string
-			activeStatus  *string
+			p            LivePin
+			activeID     *string
+			activeStatus *string
 		)
 		if err := rows.Scan(&p.ID, &p.Name, &p.Phone, &p.Lat, &p.Lng, &p.Rating, &activeID, &activeStatus); err != nil {
 			return nil, err
@@ -381,9 +383,9 @@ type CreateRequest struct {
 	StartActive       bool     `json:"start_active,omitempty"`        // false = approval_status='pending' (in_training)
 
 	// Personal — migration 106.
-	DOB                   string   `json:"dob,omitempty"`                     // YYYY-MM-DD
-	Gender                string   `json:"gender,omitempty"`                  // 'male' | 'female' | 'other'
-	Languages             []string `json:"languages,omitempty"`               // ISO codes or free text
+	DOB                   string   `json:"dob,omitempty"`       // YYYY-MM-DD
+	Gender                string   `json:"gender,omitempty"`    // 'male' | 'female' | 'other'
+	Languages             []string `json:"languages,omitempty"` // ISO codes or free text
 	AltPhone              string   `json:"alt_phone,omitempty"`
 	EmergencyContactName  string   `json:"emergency_contact_name,omitempty"`
 	EmergencyContactPhone string   `json:"emergency_contact_phone,omitempty"`
@@ -461,17 +463,17 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest) (*CreateResu
 	// so the column lands NULL (vs. empty string), keeping later "did the
 	// admin supply this?" checks unambiguous.
 	var (
-		dobArg                   any
-		genderArg                any
-		languagesArg             []string
-		altPhoneArg              any
-		emergencyNameArg         any
-		emergencyPhoneArg        any
-		photoURLArg              any
-		aadhaarArg               any
-		bankAcctArg              any
-		bankHolderArg            any
-		bankIFSCArg              any
+		dobArg            any
+		genderArg         any
+		languagesArg      []string
+		altPhoneArg       any
+		emergencyNameArg  any
+		emergencyPhoneArg any
+		photoURLArg       any
+		aadhaarArg        any
+		bankAcctArg       any
+		bankHolderArg     any
+		bankIFSCArg       any
 	)
 	if s := strings.TrimSpace(req.DOB); s != "" {
 		// Parse here so a bad date fails fast instead of relying on the
@@ -516,24 +518,28 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest) (*CreateResu
 		bankIFSCArg = s
 	}
 
+	effectiveStart := payroll.ComputeEffectiveStartDate(time.Now())
 	_, err = tx.Exec(ctx, `
 		INSERT INTO helpers (
 			id, address, approval_status, services, locality, weekly_hours_target,
 			dob, gender, languages, alt_phone,
 			emergency_contact_name, emergency_contact_phone, photo_url,
-			aadhaar_number, bank_account_number, bank_account_holder_name, bank_ifsc
+			aadhaar_number, bank_account_number, bank_account_holder_name, bank_ifsc,
+			effective_start_date
 		)
 		VALUES (
 			$1::uuid, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10,
 			$11, $12, $13,
-			$14, $15, $16, $17
+			$14, $15, $16, $17,
+			$18::date
 		)
 	`,
 		userID, strings.TrimSpace(req.Address), approval, categories, localityArg, weekly,
 		dobArg, genderArg, languagesArg, altPhoneArg,
 		emergencyNameArg, emergencyPhoneArg, photoURLArg,
 		aadhaarArg, bankAcctArg, bankHolderArg, bankIFSCArg,
+		effectiveStart,
 	)
 	if err != nil {
 		// Surface the CHECK constraint as a 400-worthy validation error.

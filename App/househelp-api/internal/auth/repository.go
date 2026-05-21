@@ -13,6 +13,7 @@ import (
 
 	"github.com/adityarohilla/househelp-api/internal/booking"
 	"github.com/adityarohilla/househelp-api/internal/compliance"
+	"github.com/adityarohilla/househelp-api/internal/payroll"
 	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
@@ -239,9 +240,13 @@ func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardP
 
 	// Insert into helpers table ensuring idempotency. Always reset approval to
 	// 'pending' on re-submission so admins re-review any updated profile.
+	// effective_start_date follows the 03:00 IST cutoff rule: before 03:00 the
+	// helper starts today, otherwise tomorrow. We keep the existing value on
+	// re-submission so a profile edit can't shift the start date forward.
+	effectiveStart := payroll.ComputeEffectiveStartDate(time.Now())
 	_, err = tx.Exec(ctx,
-		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available, services, availability, address, approval_status)
-		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false, $6, $7, $8, 'pending')
+		`INSERT INTO helpers (id, current_lat, current_lng, location, is_available, services, availability, address, approval_status, effective_start_date)
+		 VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, false, $6, $7, $8, 'pending', $9::date)
 		 ON CONFLICT (id) DO UPDATE SET
 		   current_lat     = EXCLUDED.current_lat,
 		   current_lng     = EXCLUDED.current_lng,
@@ -250,7 +255,7 @@ func (r *Repository) OnboardPro(ctx context.Context, userID string, req OnboardP
 		   availability    = EXCLUDED.availability,
 		   address         = EXCLUDED.address,
 		   approval_status = 'pending'`,
-		userID, req.Lat, req.Lng, req.Lng, req.Lat, req.Services, req.Availability, req.Address,
+		userID, req.Lat, req.Lng, req.Lng, req.Lat, req.Services, req.Availability, req.Address, effectiveStart,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert helper record: %w", err)

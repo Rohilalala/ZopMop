@@ -42,10 +42,15 @@ import {
 import { allocateLeave, getBalances } from '@/api/leaves';
 import {
   getWorkerPayouts,
+  getWorkerPerformance,
   markPayoutFailed,
   markPayoutPaid,
   payrollKeys,
+  performanceKeys,
   recomputePayout,
+  reviewFlag,
+  type FlagReviewAction,
+  type HelperFlag,
   type Payout,
   type PayoutStatus,
 } from '@/api/payroll';
@@ -68,11 +73,12 @@ import { formatRupees, formatRupeesExact } from '@/lib/formatters';
 // faked: Fiber's struct unmarshal silently drops unknown keys, so a fabricated
 // field would make the UI lie about what is actually persisted.
 
-type TabId = 'profile' | 'performance' | 'actions' | 'deductions' | 'payouts';
+type TabId = 'profile' | 'performance' | 'actions' | 'deductions' | 'payouts' | 'targets';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'performance', label: 'Performance' },
+  { id: 'targets', label: 'Targets & flags' },
   { id: 'actions', label: 'Actions' },
   { id: 'deductions', label: 'Deductions' },
   { id: 'payouts', label: 'Payouts' },
@@ -210,6 +216,9 @@ export function WorkerDrawer({
               )}
               {tab === 'payouts' && (
                 <PayoutsTab workerId={worker.id} workerName={worker.name ?? null} />
+              )}
+              {tab === 'targets' && (
+                <TargetsTab workerId={worker.id} />
               )}
             </div>
           </>
@@ -1653,6 +1662,235 @@ function PayoutsTab({
         impact="Re-runs the calculation against current shift data and overwrites the hours and pay fields. Audit log preserves the old values. Allowed only on pending or failed rows."
         confirmLabel="Recompute"
       />
+    </Can>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 6 — Targets & flags (proration + acceptance + open performance flags)
+// ──────────────────────────────────────────────────────────────────────────
+
+const FLAG_TYPE_LABEL: Record<HelperFlag['flag_type'], string> = {
+  hours_target_missed: 'Hours target missed',
+  acceptance_below_threshold: 'Acceptance below 85%',
+};
+
+function formatHours(h: number): string {
+  return `${h.toFixed(1)}h`;
+}
+
+function formatPct(rate: number): string {
+  return `${(rate * 100).toFixed(0)}%`;
+}
+
+type FlagAction =
+  | { kind: 'none' }
+  | { kind: 'reviewed'; flag: HelperFlag }
+  | { kind: 'dismissed'; flag: HelperFlag }
+  | { kind: 'escalated'; flag: HelperFlag };
+
+function TargetsTab({ workerId }: { workerId: string }) {
+  const qc = useQueryClient();
+  const [action, setAction] = useState<FlagAction>({ kind: 'none' });
+  const [notes, setNotes] = useState('');
+
+  const q = useQuery({
+    queryKey: performanceKeys.worker(workerId),
+    queryFn: () => getWorkerPerformance(workerId),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: performanceKeys.worker(workerId) });
+
+  const reviewMut = useMutation({
+    mutationFn: ({ flag, kind }: { flag: HelperFlag; kind: FlagReviewAction }) =>
+      reviewFlag(flag.id, kind, notes.trim() || undefined),
+    onSuccess: () => {
+      showToast({ kind: 'success', message: 'Flag updated.' });
+      setAction({ kind: 'none' });
+      setNotes('');
+      invalidate();
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Flag update failed';
+      showToast({ kind: 'error', message: msg });
+    },
+  });
+
+  return (
+    <Can
+      perm="payouts.read"
+      fallback={
+        <EmptyState
+          icon={<BadgeCheck className="w-8 h-8" />}
+          title="Not permitted"
+          body="You need the payouts.read permission to view performance."
+        />
+      }
+    >
+      {q.isLoading && <Skeleton className="h-40 w-full" />}
+
+      {q.data && (
+        <>
+          <Card>
+            <SectionTitle>This cycle</SectionTitle>
+            <p className="text-xs text-text-muted mb-3">
+              {q.data.cycle_start} → {q.data.cycle_end} ({q.data.days_available} days available)
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="card p-3">
+                <p className="text-xs text-text-muted">Hours target (prorated)</p>
+                <p className="text-2xl font-semibold mt-1">
+                  {q.data.hours_status === 'na' ? '—' : `${q.data.target_hours}h`}
+                </p>
+                <p className="text-xs text-text-muted mt-1">
+                  Logged {formatHours(q.data.online_hours)} ({formatHours(q.data.working_hours)} working)
+                </p>
+                <div className="mt-2">
+                  {q.data.hours_status === 'on_track' && (
+                    <StatusPill tone="success">On track</StatusPill>
+                  )}
+                  {q.data.hours_status === 'behind' && (
+                    <StatusPill tone="warning">Behind target</StatusPill>
+                  )}
+                  {q.data.hours_status === 'na' && (
+                    <StatusPill tone="neutral">N/A (not eligible)</StatusPill>
+                  )}
+                </div>
+              </div>
+
+              <div className="card p-3">
+                <p className="text-xs text-text-muted">Acceptance rate</p>
+                <p className="text-2xl font-semibold mt-1">
+                  {q.data.acceptance_rate == null ? '—' : formatPct(q.data.acceptance_rate)}
+                </p>
+                <p className="text-xs text-text-muted mt-1">
+                  {q.data.acceptance_accepted} accepted / {q.data.acceptance_dispatched} dispatched
+                </p>
+                <div className="mt-2">
+                  {q.data.acceptance_status === 'ok' && (
+                    <StatusPill tone="success">≥ 85%</StatusPill>
+                  )}
+                  {q.data.acceptance_status === 'below_threshold' && (
+                    <StatusPill tone="warning">Below 85%</StatusPill>
+                  )}
+                  {q.data.acceptance_status === 'na' && (
+                    <StatusPill tone="neutral">N/A (no offers)</StatusPill>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <SectionTitle>Open flags for this cycle</SectionTitle>
+            {q.data.open_flags.length === 0 ? (
+              <EmptyState
+                icon={<CheckCircle2 className="w-8 h-8" />}
+                title="No open flags"
+                body="Flags are written by the payroll cron at cycle close. Nothing to action right now."
+              />
+            ) : (
+              <div className="space-y-2">
+                {q.data.open_flags.map((f) => (
+                  <div key={f.id} className="border border-border rounded-md p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-sm">{FLAG_TYPE_LABEL[f.flag_type]}</p>
+                        <p className="text-xs text-text-muted mt-1">
+                          {f.cycle_start} → {f.cycle_end} · raised {fmtRel(f.created_at)}
+                        </p>
+                        <p className="text-xs text-text-secondary mt-2">
+                          {f.flag_type === 'hours_target_missed'
+                            ? `Actual ${f.actual_value.toFixed(1)}h vs target ${Math.round(f.expected_value)}h`
+                            : `Actual ${formatPct(f.actual_value)} vs required ${formatPct(f.expected_value)}`}
+                        </p>
+                      </div>
+                      <StatusPill tone="warning">Open</StatusPill>
+                    </div>
+                    <Can perm="flags.review">
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          className="btn-ghost text-xs px-2 py-1"
+                          onClick={() => setAction({ kind: 'reviewed', flag: f })}
+                        >
+                          Mark reviewed
+                        </button>
+                        <button
+                          className="btn-ghost text-xs px-2 py-1"
+                          onClick={() => setAction({ kind: 'dismissed', flag: f })}
+                        >
+                          Dismiss
+                        </button>
+                        <button
+                          className="btn-danger text-xs px-2 py-1"
+                          onClick={() => setAction({ kind: 'escalated', flag: f })}
+                        >
+                          Escalate
+                        </button>
+                      </div>
+                    </Can>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-text-muted mt-3">
+              Flags are admin-review only. They never auto-deactivate a pro.
+            </p>
+          </Card>
+        </>
+      )}
+
+      <Modal
+        open={action.kind !== 'none'}
+        onClose={() => {
+          setAction({ kind: 'none' });
+          setNotes('');
+        }}
+        title={
+          action.kind === 'escalated'
+            ? 'Escalate flag'
+            : action.kind === 'dismissed'
+              ? 'Dismiss flag'
+              : 'Mark flag reviewed'
+        }
+      >
+        {action.kind !== 'none' && (
+          <>
+            <p className="text-sm text-text-secondary mb-3">
+              {FLAG_TYPE_LABEL[action.flag.flag_type]} —{' '}
+              {action.flag.cycle_start} → {action.flag.cycle_end}
+            </p>
+            <textarea
+              className="input min-h-[80px] w-full"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Notes (optional, max 500 chars)"
+              maxLength={500}
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setAction({ kind: 'none' });
+                  setNotes('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className={action.kind === 'escalated' ? 'btn-danger' : 'btn-primary'}
+                disabled={reviewMut.isPending}
+                onClick={() =>
+                  reviewMut.mutate({ flag: action.flag, kind: action.kind })
+                }
+              >
+                {reviewMut.isPending ? 'Working…' : 'Confirm'}
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
     </Can>
   );
 }

@@ -107,6 +107,77 @@ func (r *Repository) UpsertPayout(ctx context.Context, proID string, cycle Cycle
 	return tag.RowsAffected() == 1, nil
 }
 
+// HelperDates returns the IST-date bounds the proration formula
+// needs: effective_start_date and deactivated_at (or zero if the
+// helper is still active).
+func (r *Repository) HelperDates(ctx context.Context, proID string) (effectiveStart, deactivatedAt time.Time, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var dAt *time.Time
+	err = r.db.QueryRow(ctx, `
+		SELECT effective_start_date, deactivated_at
+		  FROM helpers WHERE id = $1::uuid
+	`, proID).Scan(&effectiveStart, &dAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if dAt != nil {
+		deactivatedAt = *dAt
+	}
+	return effectiveStart, deactivatedAt, nil
+}
+
+// AcceptanceRate counts offers dispatched to a pro in the cycle and
+// the subset that were accepted. Denominator filters to offers where
+// the pro was online AND not already on another job at offer time
+// (those flags are captured by the dispatcher when the row is
+// inserted, so the query doesn't have to re-derive state).
+//
+//	accepted   = COUNT(*) WHERE response='accepted' AND eligible
+//	dispatched = COUNT(*) WHERE eligible
+//	eligible   = pro_was_online_at_offer AND NOT pro_on_another_job_at_offer
+func (r *Repository) AcceptanceRate(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (accepted, dispatched int, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err = r.db.QueryRow(ctx, `
+		SELECT
+		  COUNT(*) FILTER (
+		    WHERE response = 'accepted'
+		      AND pro_was_online_at_offer
+		      AND NOT pro_on_another_job_at_offer
+		  )::int AS accepted,
+		  COUNT(*) FILTER (
+		    WHERE pro_was_online_at_offer
+		      AND NOT pro_on_another_job_at_offer
+		  )::int AS dispatched
+		  FROM dispatched_jobs
+		 WHERE pro_id = $1::uuid
+		   AND offered_at::date BETWEEN $2::date AND $3::date
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02")).Scan(&accepted, &dispatched)
+	return accepted, dispatched, err
+}
+
+// UpsertFlag writes a helper_flags row if one does not already
+// exist for (helper, cycle_start, flag_type). Returns true if a
+// row was inserted, false if one already existed (idempotent re-run).
+func (r *Repository) UpsertFlag(ctx context.Context, proID string, cycle CycleClose, flagType string, actual, expected float64, details []byte) (inserted bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO helper_flags (
+		  helper_id, cycle_start, cycle_end, flag_type,
+		  actual_value, expected_value, details
+		) VALUES (
+		  $1::uuid, $2::date, $3::date, $4, $5, $6, $7::jsonb
+		)
+		ON CONFLICT (helper_id, cycle_start, flag_type) DO NOTHING
+	`, proID, cycle.StartDate(), cycle.EndDate(), flagType, actual, expected, details)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // PayoutExists is a read used by manual-replay handlers to short-
 // circuit before doing any aggregation work.
 func (r *Repository) PayoutExists(ctx context.Context, proID string, cycle CycleClose) (bool, error) {

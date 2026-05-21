@@ -105,6 +105,67 @@ func lastDayOfMonth(y int, m time.Month) int {
 	return time.Date(y, m+1, 0, 0, 0, 0, 0, istLocation).Day()
 }
 
+// ComputeEffectiveStartDate applies the onboarding rule: a helper
+// who signs up before today's 03:00 IST cutoff can still commit
+// for today; after 03:00, today's shift bus has left and they
+// start tomorrow.
+//
+//	now  < 03:00 IST → today (IST date)
+//	now >= 03:00 IST → tomorrow (IST date)
+//
+// Returned as a YYYY-MM-DD string in IST so callers feed the
+// helpers.effective_start_date DATE column without timezone
+// ambiguity. The function is pure — pass a frozen `now` to test.
+func ComputeEffectiveStartDate(now time.Time) string {
+	ist := now.In(istLocation)
+	threeAM := time.Date(ist.Year(), ist.Month(), ist.Day(), 3, 0, 0, 0, istLocation)
+	d := ist
+	if !ist.Before(threeAM) {
+		d = ist.AddDate(0, 0, 1)
+	}
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, istLocation).Format("2006-01-02")
+}
+
+// ProratedTargetHours computes the fortnight hours target for a
+// helper who may have joined or left mid-cycle. Returns 0 when
+// the helper had no overlap with the cycle (free pass).
+//
+//	days_available = days in (max(effective_start, cycle_start) ..
+//	                          min(deactivated_or_cycle_end, cycle_end))
+//	target_hours   = ceil(80/14 * days_available)
+//
+// All inputs are IST calendar dates at 00:00. `deactivatedAt` is
+// optional — pass the zero time.Time when the helper is still
+// active.
+func ProratedTargetHours(effectiveStart, deactivatedAt, cycleStart, cycleEnd time.Time) int {
+	start := maxDate(effectiveStart, cycleStart)
+	end := cycleEnd
+	if !deactivatedAt.IsZero() && deactivatedAt.Before(end) {
+		end = deactivatedAt
+	}
+	if end.Before(start) {
+		return 0
+	}
+	days := int(end.Sub(start).Hours()/24) + 1
+	if days <= 0 {
+		return 0
+	}
+	// ceil(80/14 * days) using integer math.
+	num := 80 * days
+	target := num / 14
+	if num%14 != 0 {
+		target++
+	}
+	return target
+}
+
+func maxDate(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
 // NextCloseAfter returns the next cycle-close instant strictly after
 // `t`, anchored at 01:00 IST of the close date. Used by the cron
 // scheduler to compute the next wake-up.

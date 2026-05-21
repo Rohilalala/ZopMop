@@ -68,6 +68,39 @@ type WorkerPayoutSummary struct {
 	RecentPayouts       []Payout `json:"recent_payouts"`
 }
 
+// HelperFlag is the JSON shape of a helper_flags row.
+type HelperFlag struct {
+	ID                string          `json:"id"`
+	HelperID          string          `json:"helper_id"`
+	CycleStart        string          `json:"cycle_start"`
+	CycleEnd          string          `json:"cycle_end"`
+	FlagType          string          `json:"flag_type"`
+	ActualValue       float64         `json:"actual_value"`
+	ExpectedValue     float64         `json:"expected_value"`
+	Details           json.RawMessage `json:"details,omitempty"`
+	Status            string          `json:"status"`
+	ReviewedByAdminID *string         `json:"reviewed_by_admin_id,omitempty"`
+	ReviewedAt        *time.Time      `json:"reviewed_at,omitempty"`
+	ReviewNotes       *string         `json:"review_notes,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+}
+
+// WorkerPerformance is the GET /workers/:id/performance shape.
+type WorkerPerformance struct {
+	CycleStart           string       `json:"cycle_start"`
+	CycleEnd             string       `json:"cycle_end"`
+	DaysAvailable        int          `json:"days_available"`
+	TargetHours          int          `json:"target_hours"` // prorated
+	OnlineHours          float64      `json:"online_hours"` // logged so far
+	WorkingHours         float64      `json:"working_hours"`
+	HoursStatus          string       `json:"hours_status"`              // on_track | behind | na
+	AcceptanceRate       *float64     `json:"acceptance_rate,omitempty"` // nil = N/A
+	AcceptanceAccepted   int          `json:"acceptance_accepted"`
+	AcceptanceDispatched int          `json:"acceptance_dispatched"`
+	AcceptanceStatus     string       `json:"acceptance_status"` // ok | below_threshold | na
+	OpenFlags            []HelperFlag `json:"open_flags"`
+}
+
 // ─── Repository ────────────────────────────────────────────────────
 
 type Repository struct {
@@ -444,6 +477,227 @@ func insertAudit(ctx context.Context, tx pgx.Tx, payoutID, adminID, action strin
 	return err
 }
 
+// WorkerPerformance reads the current-cycle metrics for a helper:
+// prorated hours target, actual online/working hours so far, the
+// acceptance-rate split, and any open flags for the current cycle.
+//
+// "Current cycle" is whatever window contains `today`. If today
+// falls between cycles (impossible — cycles are contiguous within
+// each month) the call returns the next upcoming cycle's bounds
+// with zero-valued metrics.
+func (r *Repository) WorkerPerformance(ctx context.Context, proID string, today time.Time) (*WorkerPerformance, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cycle := currentCycle(today)
+
+	// Helper bounds for proration.
+	var effectiveStart time.Time
+	var deactivatedAt *time.Time
+	if err := r.read.QueryRow(ctx, `
+		SELECT effective_start_date, deactivated_at
+		  FROM helpers WHERE id = $1::uuid
+	`, proID).Scan(&effectiveStart, &deactivatedAt); err != nil {
+		return nil, fmt.Errorf("helper dates: %w", err)
+	}
+	var deact time.Time
+	if deactivatedAt != nil {
+		deact = *deactivatedAt
+	}
+	target := payengine.ProratedTargetHours(effectiveStart, deact, cycle.Start, cycle.End)
+	days := payengineDaysAvailable(effectiveStart, deact, cycle.Start, cycle.End)
+
+	// Hours so far from shift_sessions joined on commitments by shift_date.
+	var onlineMin, workingMin int
+	if err := r.read.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ss.online_minutes), 0)::int,
+		       COALESCE(SUM(ss.job_minutes),    0)::int
+		  FROM shift_sessions ss
+		  JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		 WHERE ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NOT NULL
+	`, proID, cycle.StartDate(), cycle.EndDate()).Scan(&onlineMin, &workingMin); err != nil {
+		return nil, fmt.Errorf("hours so far: %w", err)
+	}
+
+	// Acceptance rate split.
+	var accepted, dispatched int
+	if err := r.read.QueryRow(ctx, `
+		SELECT
+		  COUNT(*) FILTER (
+		    WHERE response = 'accepted'
+		      AND pro_was_online_at_offer
+		      AND NOT pro_on_another_job_at_offer
+		  )::int,
+		  COUNT(*) FILTER (
+		    WHERE pro_was_online_at_offer
+		      AND NOT pro_on_another_job_at_offer
+		  )::int
+		  FROM dispatched_jobs
+		 WHERE pro_id = $1::uuid
+		   AND offered_at::date BETWEEN $2::date AND $3::date
+	`, proID, cycle.StartDate(), cycle.EndDate()).Scan(&accepted, &dispatched); err != nil {
+		return nil, fmt.Errorf("acceptance: %w", err)
+	}
+
+	// Open flags for the current cycle.
+	flagRows, err := r.read.Query(ctx, `
+		SELECT id::text, helper_id::text,
+		       to_char(cycle_start, 'YYYY-MM-DD'), to_char(cycle_end, 'YYYY-MM-DD'),
+		       flag_type, actual_value, expected_value, details,
+		       status, reviewed_by_admin_id::text, reviewed_at, review_notes, created_at
+		  FROM helper_flags
+		 WHERE helper_id = $1::uuid
+		   AND cycle_start = $2::date
+		   AND status = 'open'
+		 ORDER BY created_at DESC
+	`, proID, cycle.StartDate())
+	if err != nil {
+		return nil, fmt.Errorf("flags query: %w", err)
+	}
+	defer flagRows.Close()
+	flags := []HelperFlag{}
+	for flagRows.Next() {
+		var f HelperFlag
+		var details []byte
+		if err := flagRows.Scan(
+			&f.ID, &f.HelperID, &f.CycleStart, &f.CycleEnd,
+			&f.FlagType, &f.ActualValue, &f.ExpectedValue, &details,
+			&f.Status, &f.ReviewedByAdminID, &f.ReviewedAt, &f.ReviewNotes, &f.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if len(details) > 0 {
+			f.Details = json.RawMessage(details)
+		}
+		flags = append(flags, f)
+	}
+
+	onlineH := float64(onlineMin) / 60.0
+	workingH := float64(workingMin) / 60.0
+
+	hoursStatus := "on_track"
+	if target == 0 {
+		hoursStatus = "na"
+	} else if onlineH < float64(target) {
+		hoursStatus = "behind"
+	}
+
+	out := &WorkerPerformance{
+		CycleStart:           cycle.StartDate(),
+		CycleEnd:             cycle.EndDate(),
+		DaysAvailable:        days,
+		TargetHours:          target,
+		OnlineHours:          onlineH,
+		WorkingHours:         workingH,
+		HoursStatus:          hoursStatus,
+		AcceptanceAccepted:   accepted,
+		AcceptanceDispatched: dispatched,
+		OpenFlags:            flags,
+	}
+	if dispatched == 0 {
+		out.AcceptanceStatus = "na"
+	} else {
+		rate := float64(accepted) / float64(dispatched)
+		out.AcceptanceRate = &rate
+		if rate >= 0.85 {
+			out.AcceptanceStatus = "ok"
+		} else {
+			out.AcceptanceStatus = "below_threshold"
+		}
+	}
+	return out, nil
+}
+
+// ReviewFlag transitions a helper_flags row through its lifecycle:
+// open → reviewed | dismissed | escalated. All transitions are
+// admin-only and write reviewed_by + reviewed_at.
+func (r *Repository) ReviewFlag(ctx context.Context, flagID, adminID, action, notes string) (*HelperFlag, error) {
+	if adminID == "" {
+		return nil, fmt.Errorf("%w: admin_id (JWT locals not set?)", ErrMissingRequired)
+	}
+	switch action {
+	case "reviewed", "dismissed", "escalated":
+	default:
+		return nil, fmt.Errorf("%w: action must be reviewed|dismissed|escalated", ErrMissingRequired)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	row := r.write.QueryRow(ctx, `
+		UPDATE helper_flags
+		   SET status = $2,
+		       reviewed_by_admin_id = $3::uuid,
+		       reviewed_at = now(),
+		       review_notes = NULLIF($4, '')
+		 WHERE id = $1::uuid
+		   AND status = 'open'
+		RETURNING id::text, helper_id::text,
+		          to_char(cycle_start, 'YYYY-MM-DD'),
+		          to_char(cycle_end,   'YYYY-MM-DD'),
+		          flag_type, actual_value, expected_value, details,
+		          status, reviewed_by_admin_id::text, reviewed_at,
+		          review_notes, created_at
+	`, flagID, action, adminID, notes)
+
+	var f HelperFlag
+	var details []byte
+	if err := row.Scan(
+		&f.ID, &f.HelperID, &f.CycleStart, &f.CycleEnd,
+		&f.FlagType, &f.ActualValue, &f.ExpectedValue, &details,
+		&f.Status, &f.ReviewedByAdminID, &f.ReviewedAt, &f.ReviewNotes, &f.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInvalidTransition
+		}
+		return nil, err
+	}
+	if len(details) > 0 {
+		f.Details = json.RawMessage(details)
+	}
+	return &f, nil
+}
+
+// currentCycle returns the cycle window containing today (or the
+// next upcoming window if today is somehow not in any window —
+// shouldn't happen since cycles cover every calendar day).
+func currentCycle(now time.Time) payengine.CycleClose {
+	t := now.In(payengine.Location())
+	y, m, d := t.Year(), t.Month(), t.Day()
+	loc := payengine.Location()
+	if d <= 15 {
+		return payengine.CycleClose{
+			Start: time.Date(y, m, 1, 0, 0, 0, 0, loc),
+			End:   time.Date(y, m, 15, 0, 0, 0, 0, loc),
+		}
+	}
+	// 16th .. last-of-month.
+	lastDay := time.Date(y, m+1, 0, 0, 0, 0, 0, loc).Day()
+	return payengine.CycleClose{
+		Start: time.Date(y, m, 16, 0, 0, 0, 0, loc),
+		End:   time.Date(y, m, lastDay, 0, 0, 0, 0, loc),
+	}
+}
+
+// payengineDaysAvailable mirrors the same calculation done inside
+// the engine's evaluateFlags so the CRM card and the cron agree.
+// Re-implemented here to avoid exporting an internal helper.
+func payengineDaysAvailable(effectiveStart, deactivatedAt, cycleStart, cycleEnd time.Time) int {
+	start := effectiveStart
+	if cycleStart.After(start) {
+		start = cycleStart
+	}
+	end := cycleEnd
+	if !deactivatedAt.IsZero() && deactivatedAt.Before(end) {
+		end = deactivatedAt
+	}
+	if end.Before(start) {
+		return 0
+	}
+	return int(end.Sub(start).Hours()/24) + 1
+}
+
 // CycleBounds reads the cycle window stored on a payout row. The
 // CRM recompute handler uses this to feed payengine.ComputeForHelper
 // without trusting the request body.
@@ -491,6 +745,8 @@ func NewHandler(repo *Repository, engine *payengine.Service, recorder *audit.Rec
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	r.Get("/workers/:id/payroll-payouts",
 		crmmw.RequirePermission("payouts.read"), h.WorkerSummary)
+	r.Get("/workers/:id/performance",
+		crmmw.RequirePermission("payouts.read"), h.WorkerPerformance)
 
 	g := r.Group("/payroll")
 	g.Post("/payouts/:id/mark-paid",
@@ -499,6 +755,8 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 		crmmw.RequirePermission("payouts.mark_failed"), h.MarkFailed)
 	g.Post("/payouts/:id/recompute",
 		crmmw.RequirePermission("payouts.recompute"), h.Recompute)
+	g.Post("/flags/:id/review",
+		crmmw.RequirePermission("flags.review"), h.ReviewFlag)
 }
 
 // WorkerSummary — GET /workers/:id/payroll-payouts.
@@ -513,6 +771,47 @@ func (h *Handler) WorkerSummary(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	return c.JSON(res)
+}
+
+// WorkerPerformance — GET /workers/:id/performance.
+func (h *Handler) WorkerPerformance(c *fiber.Ctx) error {
+	workerID := c.Params("id")
+	if workerID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing worker id"})
+	}
+	res, err := h.repo.WorkerPerformance(c.UserContext(), workerID, payengine.IST())
+	if err != nil {
+		log.Error().Err(err).Str("worker_id", workerID).Msg("[crm.payroll] performance failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+	return c.JSON(res)
+}
+
+type reviewFlagReq struct {
+	Action string `json:"action"`
+	Notes  string `json:"notes"`
+}
+
+// ReviewFlag — POST /payroll/flags/:id/review.
+func (h *Handler) ReviewFlag(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var body reviewFlagReq
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	body.Action = strings.TrimSpace(body.Action)
+	body.Notes = strings.TrimSpace(body.Notes)
+	if len(body.Notes) > 500 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "notes: max 500 chars"})
+	}
+	adminID, _ := c.Locals("crmAdminID").(string)
+
+	f, err := h.repo.ReviewFlag(c.UserContext(), id, adminID, body.Action, body.Notes)
+	if err != nil {
+		return mapErr(c, err, "review-flag")
+	}
+	h.recordAudit(c, "payroll_flag."+body.Action, id, nil, f)
+	return c.JSON(f)
 }
 
 type markPaidReq struct {

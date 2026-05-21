@@ -71,3 +71,59 @@ export async function recomputePayout(id: string): Promise<Payout> {
   const { data } = await api.post<Payout>(`/payroll/payouts/${id}/recompute`);
   return data;
 }
+
+// ─── Performance + flags ───────────────────────────────────────────
+
+export type FlagType = 'hours_target_missed' | 'acceptance_below_threshold';
+export type FlagStatus = 'open' | 'reviewed' | 'dismissed' | 'escalated';
+
+export interface HelperFlag {
+  id: string;
+  helper_id: string;
+  cycle_start: string;
+  cycle_end: string;
+  flag_type: FlagType;
+  actual_value: number;
+  expected_value: number;
+  details?: Record<string, unknown> | null;
+  status: FlagStatus;
+  reviewed_by_admin_id?: string | null;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+  created_at: string;
+}
+
+export interface WorkerPerformance {
+  cycle_start: string;
+  cycle_end: string;
+  days_available: number;
+  target_hours: number;
+  online_hours: number;
+  working_hours: number;
+  hours_status: 'on_track' | 'behind' | 'na';
+  acceptance_rate?: number | null;
+  acceptance_accepted: number;
+  acceptance_dispatched: number;
+  acceptance_status: 'ok' | 'below_threshold' | 'na';
+  open_flags: HelperFlag[];
+}
+
+export const performanceKeys = {
+  worker: (id: string) => ['performance', 'worker', id] as const,
+};
+
+export async function getWorkerPerformance(workerId: string): Promise<WorkerPerformance> {
+  const { data } = await api.get<WorkerPerformance>(`/workers/${workerId}/performance`);
+  return { ...data, open_flags: data.open_flags ?? [] };
+}
+
+export type FlagReviewAction = 'reviewed' | 'dismissed' | 'escalated';
+
+export async function reviewFlag(
+  id: string,
+  action: FlagReviewAction,
+  notes?: string,
+): Promise<HelperFlag> {
+  const { data } = await api.post<HelperFlag>(`/payroll/flags/${id}/review`, { action, notes });
+  return data;
+}
