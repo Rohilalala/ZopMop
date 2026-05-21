@@ -45,6 +45,22 @@ func (s *Service) RunForToday(ctx context.Context) (*RunResult, error) {
 	return s.RunCycle(ctx, cycle)
 }
 
+// ComputeForHelper aggregates activity for a single pro across a
+// cycle and returns the pay breakdown. It does NOT write — the
+// caller decides whether to upsert (RunCycle) or update-in-place
+// (CRM recompute). Used by the CRM admin recompute path so the
+// computation rule stays in one place.
+func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle CycleClose) (PayBreakdown, error) {
+	onlineMin, workingMin, err := s.repo.AggregateActivity(ctx, proID, cycle.Start, cycle.End)
+	if err != nil {
+		return PayBreakdown{}, fmt.Errorf("aggregate activity: %w", err)
+	}
+	if workingMin > onlineMin {
+		return PayBreakdown{}, ErrInvalidActivity
+	}
+	return ComputePay(onlineMin, workingMin)
+}
+
 // RunCycle is the manual-trigger entry point. It writes one payout
 // row per eligible pro for the given cycle. Idempotent — already-
 // written rows are left untouched.

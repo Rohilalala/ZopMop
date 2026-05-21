@@ -18,22 +18,22 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/alerts"
+	"github.com/adityarohilla/househelp-api/internal/crm/analytics"
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/auth"
-	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
-	"github.com/adityarohilla/househelp-api/internal/crm/flags"
-	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
-	mw "github.com/adityarohilla/househelp-api/internal/middleware"
-	"github.com/adityarohilla/househelp-api/internal/crm/analytics"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
+	"github.com/adityarohilla/househelp-api/internal/crm/flags"
 	"github.com/adityarohilla/househelp-api/internal/crm/growth"
 	"github.com/adityarohilla/househelp-api/internal/crm/healthmetrics"
 	"github.com/adityarohilla/househelp-api/internal/crm/leaves"
 	"github.com/adityarohilla/househelp-api/internal/crm/localities"
+	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/adityarohilla/househelp-api/internal/crm/notifications"
 	"github.com/adityarohilla/househelp-api/internal/crm/orders"
 	"github.com/adityarohilla/househelp-api/internal/crm/payouts"
+	crmpayroll "github.com/adityarohilla/househelp-api/internal/crm/payroll"
 	"github.com/adityarohilla/househelp-api/internal/crm/platform"
 	"github.com/adityarohilla/househelp-api/internal/crm/promos"
 	"github.com/adityarohilla/househelp-api/internal/crm/refunds"
@@ -42,16 +42,18 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/internal/crm/zoneapprovals"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
+	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/notification"
-	"github.com/adityarohilla/househelp-api/internal/shift"
 	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/payroll"
+	"github.com/adityarohilla/househelp-api/internal/shift"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/adityarohilla/househelp-api/pkg/crmconfig"
 	"github.com/adityarohilla/househelp-api/pkg/database"
 	"github.com/adityarohilla/househelp-api/pkg/logger"
+	"github.com/jackc/pgx/v5"
 )
 
 func main() {
@@ -301,6 +303,14 @@ func main() {
 	shiftRepo := shift.NewRepository(dbPool)
 	shiftSvc := shift.NewService(shiftRepo)
 	shiftSvc.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notifSvc}))
+
+	// Payroll admin surface — per-worker payouts list, mark-paid /
+	// mark-failed reversal, single-row recompute. Engine is shared
+	// with cmd/api so the calculation rule lives in exactly one place.
+	payrollRepo := payroll.NewRepository(dbPool)
+	payrollSvc := payroll.NewService(payrollRepo)
+	crmPayrollRepo := crmpayroll.NewRepository(readPool, dbPool)
+	crmPayrollHandler := crmpayroll.NewHandler(crmPayrollRepo, payrollSvc, auditRecorder)
 	zoneApprovalsHandler := zoneapprovals.NewHandler(shiftSvc, auditRecorder)
 
 	// ── Routes ─────────────────────────────────────────────────────
@@ -416,6 +426,7 @@ func main() {
 	zonesHandler.RegisterRoutes(authed)
 	localitiesHandler.RegisterRoutes(authed)
 	payoutsHandler.RegisterRoutes(authed)
+	crmPayrollHandler.RegisterRoutes(authed)
 	tsHandler.RegisterRoutes(authed)
 	platformHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
