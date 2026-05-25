@@ -161,9 +161,39 @@ func nonNilSlice(s []string) []string {
 	return s
 }
 
+// Money audit LB-5: bound discount_value so an admin typo
+// (e.g. percent 10000 meant as 10) cannot mint mass-free bookings.
+// Mirrored by DB CHECK constraint promotions_discount_value_bounds
+// (migration 109).
+const (
+	maxPercentDiscountValue = 100     // 100% off
+	maxFixedDiscountPaise   = 1000000 // ₹10,000 in paise
+)
+
+// validateCreateRequest enforces required fields and bounds on a CRM-supplied
+// promo definition. Returned errors are surfaced as HTTP 400 by the handler.
+func validateCreateRequest(req CreateRequest) error {
+	if req.Code == "" {
+		return fmt.Errorf("code required")
+	}
+	switch req.DiscountType {
+	case "percent":
+		if req.DiscountValue <= 0 || req.DiscountValue > maxPercentDiscountValue {
+			return fmt.Errorf("percent discount_value must be 1..%d", maxPercentDiscountValue)
+		}
+	case "fixed":
+		if req.DiscountValue <= 0 || req.DiscountValue > maxFixedDiscountPaise {
+			return fmt.Errorf("fixed discount_value must be 1..%d paise (₹10,000 max)", maxFixedDiscountPaise)
+		}
+	default:
+		return fmt.Errorf("discount_type must be 'percent' or 'fixed'")
+	}
+	return nil
+}
+
 func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy string) (*Promo, error) {
-	if req.Code == "" || req.DiscountValue <= 0 {
-		return nil, fmt.Errorf("code and discount value required")
+	if err := validateCreateRequest(req); err != nil {
+		return nil, err
 	}
 	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("expires_at must be in the future")
@@ -195,6 +225,9 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 
 // Update overwrites a promo's editable fields.
 func (r *Repository) Update(ctx context.Context, id string, req CreateRequest) error {
+	if err := validateCreateRequest(req); err != nil {
+		return err
+	}
 	req.AudienceUserIDs = nonNilSlice(req.AudienceUserIDs)
 	req.Categories = nonNilSlice(req.Categories)
 	res, err := r.write.Exec(ctx, `
