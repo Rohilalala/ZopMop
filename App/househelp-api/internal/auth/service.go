@@ -17,7 +17,7 @@ import (
 
 const (
 	otpExpiry         = 10 * time.Minute
-	otpLockDuration   = 15 * time.Minute
+	otpLockDuration   = 2 * time.Minute
 	otpSendCooldown   = 60 * time.Second
 	maxFailedAttempts = 5
 )
@@ -385,7 +385,7 @@ var ErrPhoneNotRegistered = errors.New("phone not registered as pro")
 // whether to render the privacy-policy checkbox.
 //
 // Behaviour:
-//   - Rate-limited: 3 sends per 15min per phone, 5 per 15min per IP.
+//   - Rate-limited: 3 sends per 2min per phone, 5 per 2min per IP.
 //     Limits trip BEFORE the vendor call so we don't spend SMS credit.
 //   - Looks up users by phone. If found AND role='pro' AND
 //     is_suspended → return ErrAccountSuspended (caller maps 403).

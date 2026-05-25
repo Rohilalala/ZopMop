@@ -13,9 +13,9 @@ import (
 //
 // Three independent limits per the spec:
 //
-//   - send/phone: 3 send-otp calls per 15 min for the same phone
+//   - send/phone: 3 send-otp calls per 2 min for the same phone
 //     (prevents draining a single victim's SMS quota).
-//   - send/ip:    5 send-otp calls per 15 min from the same IP
+//   - send/ip:    5 send-otp calls per 2 min from the same IP
 //     (prevents one attacker fanning out across phones).
 //   - verify/phone: 5 verify-otp attempts per 10 min for the same
 //     phone (brute-force throttle since MSG91 enforces nothing
@@ -31,10 +31,10 @@ import (
 
 const (
 	otpSendPhoneMax    = 3
-	otpSendPhoneWindow = 15 * time.Minute
+	otpSendPhoneWindow = 2 * time.Minute
 
 	otpSendIPMax    = 5
-	otpSendIPWindow = 15 * time.Minute
+	otpSendIPWindow = 2 * time.Minute
 
 	otpVerifyPhoneMax    = 5
 	otpVerifyPhoneWindow = 10 * time.Minute
