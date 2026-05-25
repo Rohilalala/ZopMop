@@ -330,6 +330,11 @@ func (r *Repository) RecomputeApply(ctx context.Context, id, adminID string, p p
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Recompute on a 'failed' row also flips status back to
+	// pending_manual_payout and clears failure_reason so the admin can
+	// re-attempt mark-paid. Status on already-pending rows is
+	// untouched. The CASE legs read the pre-UPDATE value, matching the
+	// WHERE-clause gate.
 	before, after, err := r.transitionInTx(ctx, tx, id, "recomputed", "pending_manual_payout|failed", `
 		UPDATE payouts
 		   SET online_minutes   = $2,
@@ -338,6 +343,14 @@ func (r *Repository) RecomputeApply(ctx context.Context, id, adminID string, p p
 		       work_bonus_paise = $5,
 		       gross_pay_paise  = $6,
 		       net_pay_paise    = $7,
+		       status = CASE
+		                  WHEN status = 'failed' THEN 'pending_manual_payout'
+		                  ELSE status
+		                END,
+		       failure_reason = CASE
+		                          WHEN status = 'failed' THEN NULL
+		                          ELSE failure_reason
+		                        END,
 		       updated_at       = now()
 		 WHERE id = $1::uuid
 		   AND status IN ('pending_manual_payout', 'failed')
