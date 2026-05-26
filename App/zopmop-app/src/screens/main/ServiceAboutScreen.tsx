@@ -30,6 +30,7 @@ import {
   type ServiceAddon,
 } from '../../api/services';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
 import { usePostHog } from 'posthog-react-native';
 
 import { Bloom } from '../../components/home/Bloom';
@@ -76,6 +77,7 @@ type DetailsCacheEntry = { details: ServiceDetails | null; addons: ServiceAddon[
 const detailsCache: Map<string, DetailsCacheEntry> = new Map();
 
 export default function ServiceAboutScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { params } = useRoute<Route>();
@@ -158,7 +160,7 @@ export default function ServiceAboutScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

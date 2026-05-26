@@ -20,6 +20,7 @@ import type {
 } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -31,6 +32,7 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 type Props = NativeStackScreenProps<MainStackParamList, 'RoomiesWelcome'>;
 
 export default function RoomiesWelcomeScreen({ route }: Props) {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { groupName, addressLabel, addressAdded } = route.params;
 
@@ -46,7 +48,7 @@ export default function RoomiesWelcomeScreen({ route }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>

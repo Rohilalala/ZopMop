@@ -26,6 +26,7 @@ import { listExperts, removeExpert, type Expert } from '../../api/experts';
 import { haptics } from '../../utils/haptics';
 import { showError, showSuccess } from '../../utils/toast';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
 
@@ -43,6 +44,7 @@ type Nav = NativeStackNavigationProp<MainStackParamList>;
 const expertsMemCache: { list: Expert[] | null } = { list: null };
 
 export default function YourExpertsScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -105,7 +107,7 @@ export default function YourExpertsScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

@@ -23,6 +23,7 @@ import type {
 } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import DebtCapWarningBanner from '../../components/DebtCapWarningBanner';
 import SettlementModal from '../../components/SettlementModal';
@@ -42,6 +43,7 @@ const H_PAD = 20;
 type Props = NativeStackScreenProps<MainStackParamList, 'ManageHousehold'>;
 
 export default function ManageHouseholdScreen({ route }: Props) {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { groupId } = route.params;
@@ -117,7 +119,7 @@ export default function ManageHouseholdScreen({ route }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

@@ -22,6 +22,7 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { showSuccess } from '../../utils/toast';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -38,6 +39,7 @@ const TRACK_WIDTH = SCREEN_W - TRACK_PAD * 2;
 const THUMB_SIZE = 32;
 
 export default function TipScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'Tip'>>();
   const insets = useSafeAreaInsets();
@@ -87,7 +89,7 @@ export default function TipScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>

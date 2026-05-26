@@ -44,6 +44,7 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import {
   getBookingTrackingWsUrl,
   getBookingDetail,
@@ -136,6 +137,7 @@ const DARK_MAP_STYLE = [
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function TrackLiveScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'TrackLive'>>();
   const insets = useSafeAreaInsets();
@@ -436,7 +438,7 @@ export default function TrackLiveScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* MAP — fills full screen, sheet overlays it. */}
       <MapView

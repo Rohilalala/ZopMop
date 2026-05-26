@@ -135,7 +135,7 @@ export function SavedAddressRow({
         style={[
           s.row,
           {
-            backgroundColor: t.surface,
+            backgroundColor: t.sheetBg,
             borderColor: t.glassBorderHi,
             transform: [{ translateX }],
           },

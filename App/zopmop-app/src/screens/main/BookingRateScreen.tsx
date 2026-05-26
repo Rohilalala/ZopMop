@@ -38,6 +38,7 @@ import { showError, showSuccess } from '../../utils/toast';
 import { markBookingRated } from '../../utils/ratedBookingsStore';
 import { usePostHog } from 'posthog-react-native';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -53,6 +54,7 @@ type Props = { route: RouteProp<MainStackParamList, 'BookingRate'> };
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 export default function BookingRateScreen({ route }: Props) {
+  const { isDark } = useTheme();
   const { bookingId, helperId, helperName } = route.params;
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
@@ -137,7 +139,7 @@ export default function BookingRateScreen({ route }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

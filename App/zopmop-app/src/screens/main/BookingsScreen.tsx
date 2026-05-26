@@ -41,6 +41,7 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { getBookings, cancelBooking, type ApiBooking } from '../../api/bookings';
 
 import { Bloom } from '../../components/home/Bloom';
@@ -120,6 +121,7 @@ const bookingsMemCache: { upcoming: ApiBooking[] | null; past: ApiBooking[] | nu
 };
 
 export default function BookingsScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -252,7 +254,7 @@ export default function BookingsScreen() {
 
   return (
     <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView

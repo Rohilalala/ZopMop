@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Motion } from '../../constants/tokens';
+import { useColors } from '../../context/ThemeContext';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
@@ -24,6 +25,7 @@ type Props = {
  * GSAP-equivalent: timeline opens → fade backdrop + spring sheet up; pan drives close.
  */
 export function BottomSheet({ visible, onClose, height, children }: Props) {
+  const c = useColors();
   const sheetH = height ?? Math.round(SCREEN_H * 0.6);
   const translateY = useSharedValue(sheetH);
   const backdrop = useSharedValue(0);
@@ -82,7 +84,7 @@ export function BottomSheet({ visible, onClose, height, children }: Props) {
                 right: 0,
                 bottom: 0,
                 height: sheetH,
-                backgroundColor: '#fff',
+                backgroundColor: c.surface,
                 borderTopLeftRadius: 24,
                 borderTopRightRadius: 24,
                 paddingTop: 8,
@@ -99,7 +101,7 @@ export function BottomSheet({ visible, onClose, height, children }: Props) {
                   width: 40,
                   height: 4,
                   borderRadius: 2,
-                  backgroundColor: '#D1D5DB',
+                  backgroundColor: c.border,
                 }}
               />
             </View>

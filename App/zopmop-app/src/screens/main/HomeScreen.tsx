@@ -7,7 +7,7 @@
 // What stays here (app-shell, not section data):
 //   - Location resolution (expo-location, address picker, serviceability).
 //   - HomeHeader (the location chip + cart button).
-//   - LocationSelector (overlay).
+//   - LocationSelectorModal (overlay).
 //   - HomeCartBar (sticky bottom bar).
 //   - UpcomingBookingIndicator (status pill).
 //   - NotServiceableScreen (when geocoded coords are out of zone).
@@ -55,6 +55,8 @@ import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
 import { Bloom } from '../../components/home/Bloom';
+import { useTheme } from '../../context/ThemeContext';
+import { useC } from '../../theme/screen';
 import NotServiceableScreen from './NotServiceableScreen';
 import { HomeScreenSkeleton } from '../../components/skeletons/HomeScreenSkeleton';
 
@@ -90,6 +92,8 @@ const DEFAULT_LON = 77.0763;
 const { width: SCREEN_W } = Dimensions.get('window');
 
 export default function HomeScreen() {
+  const { isDark, colors: themeColors } = useTheme();
+  const sc = useC();
   const { token, user } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -481,13 +485,13 @@ export default function HomeScreen() {
       onClose={() => setLocationModalVisible(false)}
       onLocationSelect={handleLocationSelect}
       mode={{ kind: 'change-location' }}
-      theme="dark"
+      theme={isDark ? 'dark' : 'light'}
     />
   );
 
   if (bootstrapping || (loading && !page)) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
         <Bloom />
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -528,7 +532,7 @@ export default function HomeScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
       <Bloom />
 
       <HomeHeader
@@ -554,6 +558,7 @@ export default function HomeScreen() {
             tintColor="transparent"
             colors={['transparent']}
             progressBackgroundColor="transparent"
+            style={{ opacity: 0 }}
           />
         }
       />
@@ -566,6 +571,5 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: '#0A0A0A' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

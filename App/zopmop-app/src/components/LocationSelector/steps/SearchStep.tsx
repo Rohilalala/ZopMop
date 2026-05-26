@@ -72,7 +72,7 @@ export function SearchStep({
 }: Props) {
   const inputRef = useRef<TextInput>(null);
   const showIdleContent = !query.trim();
-  const showActions = mode.kind === 'manage';
+  const showActions = true;
   const hideGps = mode.kind === 'select';
 
   return (

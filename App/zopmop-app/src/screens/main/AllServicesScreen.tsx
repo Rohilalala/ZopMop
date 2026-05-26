@@ -47,6 +47,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { listServices, type ApiService } from '../../api/services';
 import { getNearbyStats } from '../../api/insights';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
 
 import { Bloom } from '../../components/home/Bloom';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
@@ -126,6 +127,7 @@ const servicesMemCache: {
 } = { list: [], nearbyCount: null };
 
 export default function AllServicesScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const insets = useSafeAreaInsets();
@@ -229,7 +231,7 @@ export default function AllServicesScreen() {
 
   return (
     <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView

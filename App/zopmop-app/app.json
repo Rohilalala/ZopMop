@@ -97,10 +97,6 @@
       "@react-native-firebase/messaging",
       "expo-secure-store",
       [
-        "react-native-maps",
-        {}
-      ],
-      [
         "expo-build-properties",
         {
           "ios": {

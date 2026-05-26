@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -352,30 +352,22 @@ function FloatingField({
   keyboardType?: 'default' | 'number-pad' | 'phone-pad';
   autoCapitalize?: 'none' | 'sentences' | 'words';
 }) {
+  const inputRef = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
-  const hasValue = value.length > 0;
-  const lifted = hasValue || focused;
+  const placeholderText = `${label}${required ? '*' : ''}${optional ? ' (optional)' : ''}`;
 
   return (
-    <View
+    <TouchableOpacity
+      activeOpacity={1}
+      onPress={() => inputRef.current?.focus()}
       style={[
         s.ff,
         { backgroundColor: t.glass, borderColor: focused ? '#F5A300' : t.border },
-        focused && { shadowColor: '#F5A300', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 3 },
+        focused && s.ffFocused,
       ]}
     >
-      <Text
-        style={[
-          s.ffLabel,
-          { color: hasValue ? t.amber : t.textMuted },
-          lifted && s.ffLabelLifted,
-          lifted && hasValue && { color: isDark ? t.amber : '#B37100' },
-        ]}
-      >
-        {label}
-        {required && <Text style={{ color: '#F5A300' }}>*</Text>}
-      </Text>
       <TextInput
+        ref={inputRef}
         style={[s.ffInput, { color: t.text }]}
         value={value}
         onChangeText={onChangeText}
@@ -384,11 +376,10 @@ function FloatingField({
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
         keyboardAppearance={isDark ? 'dark' : 'light'}
+        placeholder={placeholderText}
+        placeholderTextColor={focused ? t.amber : t.textMuted}
       />
-      {optional && !hasValue && (
-        <Text style={[s.optTag, { color: t.textMuted }]}>Optional</Text>
-      )}
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -520,32 +511,24 @@ const s = StyleSheet.create({
 
   ff: {
     flex: 1,
-    height: 58,
+    height: 52,
     borderRadius: 13,
     paddingHorizontal: 14,
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
     borderWidth: 1,
   },
-  ffLabel: {
-    position: 'absolute',
-    left: 14,
-    top: 20,
-    fontFamily: FontFamily.medium,
-    fontSize: 13.5,
-  },
-  ffLabelLifted: {
-    top: 8,
-    fontSize: 10.5,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
+  ffFocused: {
+    shadowColor: '#F5A300',
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
   },
   ffInput: {
     fontFamily: FontFamily.medium,
     fontSize: 14,
-    height: 32,
+    height: 44,
     paddingVertical: 0,
-    paddingBottom: 4,
   },
   optTag: {
     position: 'absolute',

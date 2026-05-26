@@ -17,6 +17,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 import ZopDead from '../../assets/zop/zop-dead.svg';
 import ZopPeekLeft from '../../assets/zop/zop-dead-peek-left.svg';
 import ZopPeekRight from '../../assets/zop/zop-dead-peek-right.svg';
@@ -165,6 +166,7 @@ function PeekZop() {
 type Props = { onRetry: () => void };
 
 export default function BackendDownScreen({ onRetry }: Props) {
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   // useWindowDimensions reacts to layout/rotation changes and returns accurate
   // values on first paint — Dimensions.get('window') at module init can return
@@ -187,7 +189,7 @@ export default function BackendDownScreen({ onRetry }: Props) {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Background scatter — dimmed Zops with mixed expressions. */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">

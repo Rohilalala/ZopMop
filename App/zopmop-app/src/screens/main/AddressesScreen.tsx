@@ -21,6 +21,7 @@ import { Feather } from '@expo/vector-icons';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { listAddresses, deleteAddress, type ApiAddress } from '../../api/addresses';
 import { LocationSelector } from '../../components/LocationSelector';
 
@@ -48,6 +49,7 @@ const TAG_ICONS: Record<ApiAddress['tag'], keyof typeof Feather.glyphMap> = {
 const addressesMemCache: { list: ApiAddress[] | null } = { list: null };
 
 export default function AddressesScreen({ navigation }: Props) {
+  const { isDark } = useTheme();
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
   const [addresses, setAddresses] = useState<ApiAddress[]>(addressesMemCache.list ?? []);
@@ -77,7 +79,7 @@ export default function AddressesScreen({ navigation }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

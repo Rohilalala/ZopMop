@@ -58,6 +58,7 @@ import { serviceIcon } from '../../components/home/serviceIcon';
 import { PressFx } from '../../components/ui/PressFx';
 import ZopLookingUp from '../../../assets/zop/zop-looking-up.svg';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 import { getMatchStatus } from '../../api/matching';
 import { haptics } from '../../utils/haptics';
 
@@ -74,6 +75,7 @@ const H_PAD = 20;
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function BookingConfirmedScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'BookingConfirmed'>>();
   const insets = useSafeAreaInsets();
@@ -208,7 +210,7 @@ export default function BookingConfirmedScreen() {
 
   return (
     <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <SuccessBackdrop />
 
       <ScrollView

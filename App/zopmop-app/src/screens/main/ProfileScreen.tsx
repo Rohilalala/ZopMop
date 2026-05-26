@@ -40,6 +40,7 @@ import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
+import { useTheme } from '../../context/ThemeContext';
 
 // Brand legal URLs — matched with auth/OTPVerificationScreen.tsx.
 const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
@@ -100,7 +101,8 @@ export default function ProfileScreen() {
   const { myGroup } = useRoomies();
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
-  const [darkOn, setDarkOn] = useState(true);
+  const { isDark, toggleTheme } = useTheme();
+  const darkOn = isDark;
   const [remindersOn, setRemindersOn] = useState(true);
 
   // Real meta wired to the existing per-user endpoints. We only render meta
@@ -261,14 +263,14 @@ export default function ProfileScreen() {
               icon={<Feather name="moon" size={17} color={C.amber} />}
               label="Appearance"
               meta={darkOn ? 'Dark mode' : 'Light mode'}
-              right={<Toggle on={darkOn} onChange={setDarkOn} />}
+              right={<Toggle on={darkOn} onChange={toggleTheme} />}
             />
             {/* Reminder timing is locally toggled today; meta hidden until
                 backend exposes a reminder-prefs endpoint (S8). */}
             <Row
               icon={<Feather name="bell" size={17} color={C.amber} />}
               label="Reminders"
-              right={<Toggle on={remindersOn} onChange={setRemindersOn} />}
+              right={<Toggle on={remindersOn} onChange={() => setRemindersOn(v => !v)} />}
               last
             />
           </Card>
@@ -575,8 +577,10 @@ function Row({
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ on, onChange }: { on: boolean; onChange: (origin?: { x: number; y: number }) => void }) {
   const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
+  const trackRef = useRef<View>(null);
+
   useEffect(() => {
     Animated.timing(anim, {
       toValue: on ? 1 : 0,
@@ -588,9 +592,15 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
   const left = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 20] });
 
+  const handlePress = () => {
+    trackRef.current?.measureInWindow((px, py, w, h) => {
+      onChange({ x: px + w / 2, y: py + h / 2 });
+    });
+  };
+
   return (
-    <TouchableOpacity activeOpacity={0.85} onPress={() => onChange(!on)} style={s.toggleHit}>
-      <View style={[s.toggleTrack, on ? s.toggleOn : s.toggleOff]}>
+    <TouchableOpacity activeOpacity={0.85} onPress={handlePress} style={s.toggleHit}>
+      <View ref={trackRef} style={[s.toggleTrack, on ? s.toggleOn : s.toggleOff]}>
         {on && (
           <View style={StyleSheet.absoluteFill}>
             <Svg width="46" height="28">

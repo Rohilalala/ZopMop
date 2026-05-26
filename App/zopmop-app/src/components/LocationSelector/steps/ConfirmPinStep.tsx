@@ -73,7 +73,7 @@ export function ConfirmPinStep({
   useEffect(() => {
     setDisplayName(place.name);
     mapRef.current?.animateCamera(
-      { center: { latitude: place.lat, longitude: place.lon }, zoom: 16 },
+      { center: { latitude: place.lat, longitude: place.lon }, zoom: 18 },
       { duration: 600 },
     );
   }, [place.lat, place.lon, place.name]);
@@ -114,7 +114,7 @@ export function ConfirmPinStep({
           customMapStyle={isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
           initialCamera={{
             center: { latitude: place.lat, longitude: place.lon },
-            zoom: 16,
+            zoom: 18,
             heading: 0,
             pitch: 0,
           }}

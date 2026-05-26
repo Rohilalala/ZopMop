@@ -29,6 +29,7 @@ import type { ApiAddress } from '../../api/addresses';
 import { createGroup } from '../../api/roomies';
 import { showError } from '../../utils/toast';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -41,6 +42,7 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 const H_PAD = 20;
 
 export default function RoomiesSetupScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
@@ -134,7 +136,7 @@ export default function RoomiesSetupScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>

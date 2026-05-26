@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -68,13 +69,14 @@ const CONTACT_OPTIONS: ContactOption[] = [
 ];
 
 export default function HelpSupportScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState<number | null>(null);
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView

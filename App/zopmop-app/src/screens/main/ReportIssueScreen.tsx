@@ -21,6 +21,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { fileDispute, DISPUTE_REASON_LABELS, type DisputeReason } from '../../api/disputes';
 import { PressFx } from '../../components/ui/PressFx';
+import { useTheme } from '../../context/ThemeContext';
 import { showError, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 
@@ -34,6 +35,7 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'ReportIssue'>;
 type Route = RouteProp<MainStackParamList, 'ReportIssue'>;
 
 export default function ReportIssueScreen() {
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const route = useRoute<Route>();
@@ -65,7 +67,7 @@ export default function ReportIssueScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>

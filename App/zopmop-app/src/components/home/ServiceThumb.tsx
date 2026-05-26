@@ -23,6 +23,7 @@ import Svg, {
   Filter,
   FeGaussianBlur,
 } from 'react-native-svg';
+import { useTheme } from '../../context/ThemeContext';
 
 type Props = {
   height: number;
@@ -31,10 +32,34 @@ type Props = {
 };
 
 export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
-  const baseTop      = featured ? '#1C1A14' : '#1A1A1C';
-  const baseBottom   = featured ? '#100E0B' : '#0F0F11';
-  const amberOpacity = featured ? 0.30 : 0.20;
-  const topHiOpacity = featured ? 0.13 : 0.11;
+  const { isDark } = useTheme();
+
+  /* ── Dark mode values (unchanged) ─────────────────────────── */
+  const darkBaseTop      = featured ? '#1C1A14' : '#1A1A1C';
+  const darkBaseBottom   = featured ? '#100E0B' : '#0F0F11';
+  const darkAmberOpacity = featured ? 0.30 : 0.20;
+  const darkTopHiOpacity = featured ? 0.13 : 0.11;
+
+  /* ── Light mode values ────────────────────────────────────── */
+  const lightBaseTop    = featured ? '#FFF6E5' : '#FAF7F2';
+  const lightBaseBottom = featured ? '#FBE7C0' : '#F1ECE2';
+  // Amber underglow: #FFD89A for featured, #FFE9C7 for standard — full
+  // opacity in the SVG stop, faded via the radial spread.
+  const lightAmberColor = featured ? '#FFD89A' : '#FFE9C7';
+  // Wider / more intense spread on featured
+  const lightAmberRy    = featured ? 80 : 70;
+  const lightAmberCy    = featured ? 118 : 112;
+  const lightAmberRx    = featured ? 110 : 110;
+
+  /* ── Resolved per-theme tokens ────────────────────────────── */
+  const baseTop      = isDark ? darkBaseTop      : lightBaseTop;
+  const baseBottom   = isDark ? darkBaseBottom    : lightBaseBottom;
+  const amberColor   = isDark ? '#F5A300'         : lightAmberColor;
+  const amberOpacity = isDark ? (featured ? 0.30 : 0.20) : 0.85;
+  const topHiOpacity = isDark ? darkTopHiOpacity  : 0.90;
+  const amberCy      = isDark ? (featured ? 118 : 112) : lightAmberCy;
+  const amberRx      = isDark ? 110               : lightAmberRx;
+  const amberRy      = isDark ? (featured ? 80 : 70) : lightAmberRy;
 
   return (
     <View
@@ -73,12 +98,12 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
 
           <RadialGradient
             id="thumbAmber"
-            cx="50" cy={featured ? 118 : 112} rx="110" ry={featured ? 80 : 70}
+            cx="50" cy={amberCy} rx={amberRx} ry={amberRy}
             gradientUnits="userSpaceOnUse"
           >
-            <Stop offset="0%"  stopColor="#F5A300" stopOpacity={amberOpacity} />
-            <Stop offset="35%" stopColor="#F5A300" stopOpacity={amberOpacity * 0.55} />
-            <Stop offset="80%" stopColor="#F5A300" stopOpacity="0" />
+            <Stop offset="0%"  stopColor={amberColor} stopOpacity={amberOpacity} />
+            <Stop offset="35%" stopColor={amberColor} stopOpacity={amberOpacity * 0.55} />
+            <Stop offset="80%" stopColor={amberColor} stopOpacity="0" />
           </RadialGradient>
 
           <RadialGradient
@@ -86,7 +111,7 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
             cx="50" cy="68" rx="34" ry="7"
             gradientUnits="userSpaceOnUse"
           >
-            <Stop offset="0%"  stopColor="#0D0D0F" stopOpacity="0.32" />
+            <Stop offset="0%"  stopColor="#0D0D0F" stopOpacity={isDark ? '0.32' : '0.06'} />
             <Stop offset="70%" stopColor="#0D0D0F" stopOpacity="0" />
           </RadialGradient>
 
@@ -111,7 +136,9 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
           position: 'absolute',
           top: 0, left: 0, right: 0,
           height: 1,
-          backgroundColor: 'rgba(255,255,255,0.08)',
+          backgroundColor: isDark
+            ? 'rgba(255,255,255,0.08)'
+            : 'rgba(255,255,255,0.9)',
         }}
       />
       {/* hairline inner border */}
@@ -122,7 +149,9 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
           top: 0, left: 0, right: 0, bottom: 0,
           borderRadius: radius,
           borderWidth: 0.5,
-          borderColor: 'rgba(255,255,255,0.06)',
+          borderColor: isDark
+            ? 'rgba(255,255,255,0.06)'
+            : 'rgba(13,13,15,0.05)',
         }}
       />
     </View>

@@ -6,6 +6,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Motion } from '../../constants/tokens';
+import { useColors } from '../../context/ThemeContext';
 
 type Props = TextInputProps & {
   label?: string;
@@ -28,23 +29,24 @@ export function Input({
   style,
   ...rest
 }: Props) {
+  const c = useColors();
   const [focused, setFocused] = useState(false);
   const focus = useSharedValue(0);
 
   const ringStyle = useAnimatedStyle(() => ({
     borderColor: focus.value
       ? error
-        ? '#DC2626'
-        : '#4F46E5'
+        ? c.danger
+        : c.primary
       : error
-      ? '#DC2626'
-      : '#E5E7EB',
+      ? c.danger
+      : c.border,
   }));
 
   const inputStyle: TextStyle = {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 16,
-    color: '#111827',
+    color: c.text,
     flex: 1,
     paddingVertical: 0,
   };
@@ -67,7 +69,7 @@ export function Input({
         <TextInput
           {...rest}
           style={[inputStyle, style as any]}
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={c.textMuted}
           onFocus={(e) => {
             setFocused(true);
             focus.value = withTiming(1, { duration: Motion.duration.quick });

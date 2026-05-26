@@ -33,6 +33,7 @@ import { useAuth } from '../../context/AuthContext';
 import { listOffers, type Offer } from '../../api/promotions';
 import { logEvent } from '../../analytics/impressionTracker';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
 
@@ -67,6 +68,7 @@ function offerTerms(offer: Offer): string[] {
 }
 
 export default function OffersScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -111,7 +113,7 @@ export default function OffersScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView

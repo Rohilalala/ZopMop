@@ -25,6 +25,7 @@ import { useRoomies } from '../../context/RoomiesContext';
 import { joinGroup } from '../../api/roomies';
 import { showError } from '../../utils/toast';
 
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
 
@@ -35,6 +36,7 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 const H_PAD = 20;
 
 export default function RoomiesJoinScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -76,7 +78,7 @@ export default function RoomiesJoinScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <KeyboardAvoidingView

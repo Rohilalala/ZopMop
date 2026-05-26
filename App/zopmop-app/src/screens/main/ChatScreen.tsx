@@ -28,6 +28,7 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { listMessages, sendMessage, type BookingMessage } from '../../api/messages';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -36,6 +37,7 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 const AMBER = '#F5A300';
 
 export default function ChatScreen() {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'Chat'>>();
   const insets = useSafeAreaInsets();
@@ -119,7 +121,7 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>

@@ -9,6 +9,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../ui/PressFx';
+import { useTheme } from '../../context/ThemeContext';
 import { GlassCard } from './GlassCard';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -35,6 +36,7 @@ export function HomeFooter() {
 
 function ScheduleCard() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+  const { isDark } = useTheme();
 
   return (
     <PressFx
@@ -55,7 +57,7 @@ function ScheduleCard() {
             width: 40,
             height: 40,
             borderRadius: 12,
-            backgroundColor: 'rgba(245,163,0,0.12)',
+            backgroundColor: isDark ? 'rgba(245,163,0,0.12)' : '#FFF2D8',
             alignItems: 'center',
             justifyContent: 'center',
           }}
@@ -63,17 +65,17 @@ function ScheduleCard() {
           <Feather name="calendar" size={18} color="#F5A300" />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[fontBold, { fontSize: 14, color: '#FFFFFF' }]}>Book for later</Text>
+          <Text style={[fontBold, { fontSize: 14, color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>Book for later</Text>
           <Text
             style={[
               fontReg,
-              { fontSize: 11.5, color: 'rgba(255,255,255,0.5)', marginTop: 2 },
+              { fontSize: 11.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.50)', marginTop: 2 },
             ]}
           >
             Pick your own time — up to 7 days ahead
           </Text>
         </View>
-        <Text style={{ fontSize: 22, color: 'rgba(255,255,255,0.4)', fontWeight: '500' }}>
+        <Text style={{ fontSize: 22, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.35)', fontWeight: '500' }}>
           ›
         </Text>
       </GlassCard>
@@ -86,6 +88,7 @@ function ScheduleCard() {
 // 1px border, no gradient), 3 columns separated by hairline dividers.
 
 function TrustStrip() {
+  const { isDark } = useTheme();
   return (
     <View
       style={{
@@ -94,33 +97,33 @@ function TrustStrip() {
         paddingHorizontal: 16,
         paddingVertical: 14,
         borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.03)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(13,13,15,0.04)',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.06)',
+        borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.06)',
         flexDirection: 'row',
         alignItems: 'center',
         gap: 16,
       }}
     >
-      <TrustCol top="8,400+" label="verified pros" />
-      <Divider />
-      <TrustCol top="100%" label={'satisfaction\nor re-clean free'} />
-      <Divider />
-      <TrustCol top="60 sec" label="avg. booking" />
+      <TrustCol top="8,400+" label="verified pros" isDark={isDark} />
+      <Divider isDark={isDark} />
+      <TrustCol top="100%" label={'satisfaction\nor re-clean free'} isDark={isDark} />
+      <Divider isDark={isDark} />
+      <TrustCol top="60 sec" label="avg. booking" isDark={isDark} />
     </View>
   );
 }
 
-function TrustCol({ top, label }: { top: string; label: string }) {
+function TrustCol({ top, label, isDark }: { top: string; label: string; isDark: boolean }) {
   return (
     <View style={{ flex: 1 }}>
-      <Text style={[fontBold, { fontSize: 13, color: '#FFFFFF', letterSpacing: -0.13 }]}>
+      <Text style={[fontBold, { fontSize: 13, color: isDark ? '#FFFFFF' : '#0D0D0F', letterSpacing: -0.13 }]}>
         {top}
       </Text>
       <Text
         style={[
           fontReg,
-          { fontSize: 11.5, color: 'rgba(255,255,255,0.7)', marginTop: 2, lineHeight: 15 },
+          { fontSize: 11.5, color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.65)', marginTop: 2, lineHeight: 15 },
         ]}
       >
         {label}
@@ -129,13 +132,13 @@ function TrustCol({ top, label }: { top: string; label: string }) {
   );
 }
 
-function Divider() {
+function Divider({ isDark }: { isDark: boolean }) {
   return (
     <View
       style={{
         width: 1,
         alignSelf: 'stretch',
-        backgroundColor: 'rgba(255,255,255,0.15)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(13,13,15,0.10)',
       }}
     />
   );
@@ -146,6 +149,7 @@ function Divider() {
 // usual "you do X / we do Y" pattern.
 
 function Signoff() {
+  const { isDark } = useTheme();
   return (
     <View style={{ marginTop: 48, paddingHorizontal: 20 }}>
       <Text
@@ -154,7 +158,7 @@ function Signoff() {
           {
             fontSize: Math.min(58, SCREEN_W * 0.14),
             lineHeight: Math.min(60, SCREEN_W * 0.15),
-            color: '#FFFFFF',
+            color: isDark ? '#FFFFFF' : '#0D0D0F',
             letterSpacing: -2,
           },
         ]}
@@ -177,7 +181,7 @@ function Signoff() {
             <Text
               style={[
                 fontMed,
-                { fontSize: 12, color: 'rgba(255,255,255,0.55)', letterSpacing: 0.2 },
+                { fontSize: 12, color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.65)', letterSpacing: 0.2 },
               ]}
             >
               {label}
@@ -186,7 +190,7 @@ function Signoff() {
               <Text
                 style={[
                   fontMed,
-                  { fontSize: 12, color: 'rgba(255,255,255,0.25)', marginHorizontal: 8 },
+                  { fontSize: 12, color: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.25)', marginHorizontal: 8 },
                 ]}
               >
                 ·
@@ -201,7 +205,7 @@ function Signoff() {
           fontMed,
           {
             fontSize: 11,
-            color: 'rgba(255,255,255,0.45)',
+            color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.45)',
             letterSpacing: 1.2,
             marginTop: 32,
             textTransform: 'uppercase',

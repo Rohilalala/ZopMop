@@ -5,9 +5,7 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
-  runOnJS,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Motion } from '../../constants/tokens';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -101,28 +99,6 @@ export function LocationSelector({
     opacity: backdrop.value,
   }));
 
-  // ── Swipe dismiss ──────────────────────────────────────────────────────────
-
-  const canSwipeDismiss = step === 'search';
-
-  const pan = Gesture.Pan()
-    .onUpdate((e) => {
-      if (!canSwipeDismiss) return;
-      if (e.translationY > 0) translateY.value = e.translationY;
-    })
-    .onEnd((e) => {
-      if (!canSwipeDismiss) return;
-      if (e.translationY > SHEET_H * 0.3 || e.velocityY > 800) {
-        translateY.value = withTiming(SHEET_H, {
-          duration: Motion.duration.quick,
-          easing: Motion.easing.exit,
-        });
-        runOnJS(handleDismiss)();
-      } else {
-        translateY.value = withSpring(0, Motion.spring.snappy);
-      }
-    });
-
   // ── Android back button ────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -205,13 +181,6 @@ export function LocationSelector({
       if (!loc) return;
       const place: SelectedPlace = { name: loc.name, lat: loc.lat, lon: loc.lon };
       setSelectedPlace(place);
-
-      if (mode.kind === 'change-location') {
-        onLocationSelect(loc.name, loc.lat, loc.lon);
-        handleDismiss();
-        return;
-      }
-
       setStep('confirm-pin');
     });
   }
@@ -341,7 +310,6 @@ export function LocationSelector({
         <Animated.View style={[styles.backdrop, backdropStyle, { backgroundColor: t.scrim }]}>
           <Pressable style={{ flex: 1 }} onPress={handleBackdropPress} />
         </Animated.View>
-        <GestureDetector gesture={pan}>
           <Animated.View
             style={[
               styles.sheet,
@@ -422,7 +390,6 @@ export function LocationSelector({
               />
             )}
           </Animated.View>
-        </GestureDetector>
       </View>
     </Modal>
   );
