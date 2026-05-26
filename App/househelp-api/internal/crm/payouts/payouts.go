@@ -118,7 +118,7 @@ func (r *Repository) MarkPaid(ctx context.Context, id, externalRef string) error
 func (r *Repository) MarkFailed(ctx context.Context, id, notes string) error {
 	res, err := r.write.Exec(ctx, `
 		UPDATE crm_payouts SET status='failed', notes=NULLIF($2, ''), updated_at=now()
-		WHERE id = $1::uuid
+		WHERE id = $1::uuid AND status IN ('pending','processing')
 	`, id, notes)
 	if err != nil || res.RowsAffected() == 0 {
 		return fmt.Errorf("mark failed: %w", err)

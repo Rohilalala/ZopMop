@@ -99,6 +99,10 @@ var permissions = map[string]string{
 	"payouts.create":      RoleAdmin,
 	"payouts.mark_paid":   RoleAdmin,
 	"payouts.mark_failed": RoleAdmin,
+	"payouts.recompute":   RoleAdmin,
+
+	// performance flags (open → reviewed | dismissed | escalated)
+	"flags.review": RoleAdmin,
 
 	// templates
 	"templates.create": RoleAdmin,
@@ -139,14 +143,14 @@ var permissions = map[string]string{
 	"alerts.read":        RoleViewer,
 	"analytics.read":     RoleViewer,
 	"app_version.read":   RoleViewer,
-	"audit.read":         RoleAdmin,   // forensic logs + indirect PII via JSONB
+	"audit.read":         RoleAdmin, // forensic logs + indirect PII via JSONB
 	"banners.read":       RoleViewer,
 	"blacklist.read":     RoleViewer,
 	"changelog.read":     RoleViewer,
 	"dashboard.read":     RoleViewer,
 	"disputes.read":      RoleViewer,
 	"experiments.read":   RoleViewer,
-	"flags.read":         RoleAdmin,   // rollout strategies, surge multipliers, AI prompts
+	"flags.read":         RoleAdmin, // rollout strategies, surge multipliers, AI prompts
 	"fraud.read":         RoleViewer,
 	"growth.read":        RoleViewer,
 	"healthmetrics.read": RoleViewer,

@@ -606,17 +606,21 @@ func (r *Repository) AbsenceExistsInFortnight(ctx context.Context, proID string,
 	return exists, err
 }
 
-// InsertAbsence persists one absence row.
-func (r *Repository) InsertAbsence(ctx context.Context, proID, reason, fortnightStart string, firstInFortnight, leaveDeducted bool, cashPaise int) error {
+// InsertAbsence persists one absence row. Returns true if a new row
+// was inserted, false if the row already existed (ON CONFLICT).
+func (r *Repository) InsertAbsence(ctx context.Context, proID, reason, fortnightStart string, firstInFortnight, leaveDeducted bool, cashPaise int) (inserted bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err := r.db.Exec(ctx, `
+	res, err := r.db.Exec(ctx, `
 		INSERT INTO absence_records
 		    (pro_id, absence_date, reason, is_first_in_fortnight, leave_deducted, cash_deducted_paise, fortnight_start)
 		VALUES ($1, current_date, $2, $3, $4, $5, $6::date)
 		ON CONFLICT (pro_id, absence_date, reason) DO NOTHING
 	`, proID, reason, firstInFortnight, leaveDeducted, cashPaise, fortnightStart)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return res.RowsAffected() > 0, nil
 }
 
 // HelperFortnightSnapshot — feeds /pro/fortnight/progress.

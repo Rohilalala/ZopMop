@@ -151,11 +151,12 @@ func (s *Service) LockShiftsAt3AM(ctx context.Context) error {
 			cashPaise = AbsenceCashPenaltyPaise
 		}
 
-		if err := s.repo.InsertAbsence(ctx, proID, "no_commit_by_3am", fortnightStart, firstInFortnight, leaveDeducted, cashPaise); err != nil {
+		inserted, err := s.repo.InsertAbsence(ctx, proID, "no_commit_by_3am", fortnightStart, firstInFortnight, leaveDeducted, cashPaise)
+		if err != nil {
 			log.Warn().Err(err).Str("pro_id", proID).Msg("[shift] insert absence failed")
 			continue
 		}
-		if leaveDeducted {
+		if inserted && leaveDeducted {
 			_ = s.decrementLeaveBalance(ctx, proID)
 		}
 	}
