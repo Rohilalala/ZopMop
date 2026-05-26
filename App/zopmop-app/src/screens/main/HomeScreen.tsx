@@ -7,7 +7,7 @@
 // What stays here (app-shell, not section data):
 //   - Location resolution (expo-location, address picker, serviceability).
 //   - HomeHeader (the location chip + cart button).
-//   - LocationSelectorModal (overlay).
+//   - LocationSelector (overlay).
 //   - HomeCartBar (sticky bottom bar).
 //   - UpcomingBookingIndicator (status pill).
 //   - NotServiceableScreen (when geocoded coords are out of zone).
@@ -49,7 +49,7 @@ import { checkServiceability } from '../../api/zones';
 import { listAddresses } from '../../api/addresses';
 import { apiFetch } from '../../api/client';
 
-import LocationSelectorModal from '../../components/LocationSelectorModal';
+import { LocationSelector } from '../../components/LocationSelector';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
@@ -476,10 +476,12 @@ export default function HomeScreen() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   const locationModal = (
-    <LocationSelectorModal
+    <LocationSelector
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
       onLocationSelect={handleLocationSelect}
+      mode={{ kind: 'change-location' }}
+      theme="dark"
     />
   );
 

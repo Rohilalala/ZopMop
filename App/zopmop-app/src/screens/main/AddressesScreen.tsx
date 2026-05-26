@@ -22,7 +22,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { listAddresses, deleteAddress, type ApiAddress } from '../../api/addresses';
-import EditAddressModal from '../../components/EditAddressModal';
+import { LocationSelector } from '../../components/LocationSelector';
 
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
@@ -129,12 +129,24 @@ export default function AddressesScreen({ navigation }: Props) {
         </ScrollView>
       )}
 
-      <EditAddressModal
-        address={editTarget}
-        token={token}
+      <LocationSelector
+        visible={editTarget !== null}
         onClose={() => setEditTarget(null)}
-        onSaved={handleEdited}
-        onDeleted={handleDeleted}
+        mode={{ kind: 'manage', editAddress: editTarget ?? undefined }}
+        theme="dark"
+        onLocationSelect={() => {
+          setEditTarget(null);
+          if (!token || token === '__guest__') return;
+          listAddresses(token)
+            .then((list) => { setAddresses(list); addressesMemCache.list = list; })
+            .catch(() => {});
+        }}
+        onAddressesChanged={() => {
+          if (!token || token === '__guest__') return;
+          listAddresses(token)
+            .then((list) => { setAddresses(list); addressesMemCache.list = list; })
+            .catch(() => {});
+        }}
       />
     </View>
   );

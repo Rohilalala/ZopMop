@@ -37,7 +37,7 @@ import { createScheduledBooking, getBookings } from '../../api/bookings';
 import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal from '../../components/SchedulingModal';
-import AddressPickerModal from '../../components/AddressPickerModal';
+import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
@@ -651,34 +651,28 @@ export default function CartScreen() {
         }}
       />
 
-      <AddressPickerModal
+      <LocationSelector
         visible={addressPickerVisible}
-        token={token}
-        addresses={addresses}
-        selectedId={selectedAddress?.id ?? null}
-        onSelect={(addr) => setSelectedAddress(addr)}
         onClose={() => setAddressPickerVisible(false)}
-        onAddressEdited={(updated) => setAddresses((prev) => prev.map((a) => a.id === updated.id ? updated : a))}
-        onAddressDeleted={(id) => {
-          setAddresses((prev) => {
-            const next = prev.filter((a) => a.id !== id);
-            if (selectedAddress?.id === id) setSelectedAddress(next[0] ?? null);
-            return next;
-          });
+        mode={{ kind: 'select', initialAddressId: selectedAddress?.id }}
+        theme="light"
+        onLocationSelect={(_name, _lat, _lon, _addrId, address) => {
+          if (address) {
+            setSelectedAddress(address);
+            setAddresses((prev) => {
+              const exists = prev.find((a) => a.id === address.id);
+              if (exists) return prev.map((a) => a.id === address.id ? address : a);
+              return [address, ...prev];
+            });
+          }
         }}
-        onRefreshAddresses={async (newLat?: number, newLon?: number) => {
+        onAddressesChanged={async () => {
           if (!token) return;
           try {
             const list = await listAddresses(token);
             setAddresses(list);
-            if (newLat !== undefined && newLon !== undefined && list.length > 0) {
-              let best = list[0];
-              let minD = Infinity;
-              for (const a of list) {
-                const d = Math.hypot(a.lat - newLat, a.lon - newLon);
-                if (d < minD) { minD = d; best = a; }
-              }
-              setSelectedAddress(best);
+            if (selectedAddress && !list.find((a) => a.id === selectedAddress.id)) {
+              setSelectedAddress(list[0] ?? null);
             }
           } catch {}
         }}
