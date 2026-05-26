@@ -1,11 +1,12 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { SkeletonBox } from '../SkeletonBox';
-import { C } from '../../theme/screen';
+import { useC } from '../../theme/screen';
 
 export function BookingsScreenSkeleton() {
+  const c = useC();
   return (
-    <View style={s.root}>
+    <View style={[s.root, { backgroundColor: c.bg }]}>
       <View style={s.tabRow}>
         <SkeletonBox width={86 as any} height={32} borderRadius={16} />
         <SkeletonBox width={86 as any} height={32} borderRadius={16} />
@@ -34,7 +35,7 @@ export function BookingsScreenSkeleton() {
 }
 
 const s = StyleSheet.create({
-  root: { paddingTop: 8, backgroundColor: C.bg, flex: 1 },
+  root: { paddingTop: 8, flex: 1 },
   tabRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,

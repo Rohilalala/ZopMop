@@ -8,7 +8,7 @@ import {
   ViewStyle,
 } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import { C } from '../theme/screen';
+import { useC } from '../theme/screen';
 import { useTheme } from '../context/ThemeContext';
 
 // Shimmer placeholder. Base block is `C.glassHi`; a translucent linear-gradient
@@ -30,6 +30,7 @@ export function SkeletonBox({
   borderRadius = 8,
   style,
 }: Props) {
+  const c = useC();
   const { isDark } = useTheme();
   const progress = useRef(new Animated.Value(0)).current;
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -89,9 +90,9 @@ export function SkeletonBox({
           <Svg width={bandW} height={size.h}>
             <Defs>
               <LinearGradient id="shimmer" x1="0" y1="0" x2="1" y2="0">
-                <Stop offset="0" stopColor={isDark ? '#FFFFFF' : '#FFFFFF'} stopOpacity="0" />
-                <Stop offset="0.5" stopColor={isDark ? '#FFFFFF' : '#FFFFFF'} stopOpacity={isDark ? '0.07' : '0.6'} />
-                <Stop offset="1" stopColor={isDark ? '#FFFFFF' : '#FFFFFF'} stopOpacity="0" />
+                <Stop offset="0" stopColor={c.white} stopOpacity="0" />
+                <Stop offset="0.5" stopColor={c.white} stopOpacity={isDark ? '0.07' : '0.6'} />
+                <Stop offset="1" stopColor={c.white} stopOpacity="0" />
               </LinearGradient>
             </Defs>
             <Rect x={0} y={0} width={bandW} height={size.h} fill="url(#shimmer)" />
