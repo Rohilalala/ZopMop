@@ -120,6 +120,11 @@ func (s *Service) RunForToday(ctx context.Context) (*RunResult, error) {
 // (CRM recompute). Used by the CRM admin recompute path so the
 // computation rule stays in one place.
 func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle CycleClose) (PayBreakdown, error) {
+	if closed, err := s.repo.CloseStaleSessionsForCycle(ctx, proID, cycle.Start, cycle.End); err != nil {
+		log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] close stale sessions failed")
+	} else if closed > 0 {
+		log.Info().Str("pro_id", proID).Int64("closed", closed).Msg("[payroll] auto-closed stale sessions")
+	}
 	onlineMin, workingMin, err := s.repo.AggregateActivity(ctx, proID, cycle.Start, cycle.End)
 	if err != nil {
 		return PayBreakdown{}, fmt.Errorf("aggregate activity: %w", err)
@@ -148,6 +153,11 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 	for _, proID := range ids {
 		if err := ctx.Err(); err != nil {
 			return out, err
+		}
+		if closed, cErr := s.repo.CloseStaleSessionsForCycle(ctx, proID, cycle.Start, cycle.End); cErr != nil {
+			log.Warn().Err(cErr).Str("pro_id", proID).Msg("[payroll] close stale sessions failed")
+		} else if closed > 0 {
+			log.Info().Str("pro_id", proID).Int64("closed", closed).Msg("[payroll] auto-closed stale sessions")
 		}
 		onlineMin, workingMin, err := s.repo.AggregateActivity(ctx, proID, cycle.Start, cycle.End)
 		if err != nil {

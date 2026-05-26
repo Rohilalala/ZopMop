@@ -46,15 +46,38 @@ func (r *Repository) EligibleHelpers(ctx context.Context, cycleEnd time.Time) ([
 	return ids, rows.Err()
 }
 
+// CloseStaleSessionsForCycle auto-closes sessions that are still
+// open (offline_at IS NULL) whose shift_date falls within the cycle.
+// These are app-crash orphans — the pro went offline without the
+// session being stamped. We cap them at their shift's scheduled end
+// time so the hours are counted in the correct cycle rather than
+// being lost forever.
+func (r *Repository) CloseStaleSessionsForCycle(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (closed int64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := r.db.Exec(ctx, `
+		UPDATE shift_sessions ss
+		   SET offline_at     = sc.shift_date + sc.end_time,
+		       online_minutes = GREATEST(0, EXTRACT(EPOCH FROM ((sc.shift_date + sc.end_time) - ss.online_at))::int / 60)
+		  FROM shift_commitments sc
+		 WHERE sc.id = ss.commitment_id
+		   AND ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NULL
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02"))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
+
 // AggregateActivity sums closed-session online and working minutes
 // for the pro across the cycle. Sessions are attributed to the
 // shift_commitment's shift_date (a DATE column) so cycle membership
 // is unambiguous and timezone-stable.
 //
-// Open sessions (offline_at IS NULL at cycle close) are excluded —
-// their online_minutes is not yet computed. The pro will appear with
-// the full count next cycle once the session closes. The cron logs
-// a count of skipped open sessions so ops can audit.
+// Callers should run CloseStaleSessionsForCycle first so orphaned
+// sessions are included.
 func (r *Repository) AggregateActivity(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (onlineMin, workingMin int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
