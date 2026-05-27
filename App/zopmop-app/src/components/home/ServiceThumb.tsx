@@ -41,8 +41,8 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
   const darkTopHiOpacity = featured ? 0.13 : 0.11;
 
   /* ── Light mode values ────────────────────────────────────── */
-  const lightBaseTop    = featured ? '#FFF6E5' : '#FAF7F2';
-  const lightBaseBottom = featured ? '#FBE7C0' : '#F1ECE2';
+  const lightBaseTop    = featured ? '#FFFCF5' : '#FFFFFF';
+  const lightBaseBottom = featured ? '#FFF6E5' : '#FAF7F2';
   // Amber underglow: #FFD89A for featured, #FFE9C7 for standard — full
   // opacity in the SVG stop, faded via the radial spread.
   const lightAmberColor = featured ? '#FFD89A' : '#FFE9C7';
@@ -55,8 +55,8 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
   const baseTop      = isDark ? darkBaseTop      : lightBaseTop;
   const baseBottom   = isDark ? darkBaseBottom    : lightBaseBottom;
   const amberColor   = isDark ? '#F5A300'         : lightAmberColor;
-  const amberOpacity = isDark ? (featured ? 0.30 : 0.20) : 0.85;
-  const topHiOpacity = isDark ? darkTopHiOpacity  : 0.90;
+  const amberOpacity = isDark ? (featured ? 0.30 : 0.20) : 0.45;
+  const topHiOpacity = isDark ? darkTopHiOpacity  : 0.50;
   const amberCy      = isDark ? (featured ? 118 : 112) : lightAmberCy;
   const amberRx      = isDark ? 110               : lightAmberRx;
   const amberRy      = isDark ? (featured ? 80 : 70) : lightAmberRy;
@@ -111,7 +111,7 @@ export function ServiceThumb({ height, radius = 12, featured = false }: Props) {
             cx="50" cy="68" rx="34" ry="7"
             gradientUnits="userSpaceOnUse"
           >
-            <Stop offset="0%"  stopColor="#0D0D0F" stopOpacity={isDark ? '0.32' : '0.06'} />
+            <Stop offset="0%"  stopColor="#0D0D0F" stopOpacity={isDark ? '0.32' : '0'} />
             <Stop offset="70%" stopColor="#0D0D0F" stopOpacity="0" />
           </RadialGradient>
 
