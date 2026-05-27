@@ -26,6 +26,13 @@ export default function HiZopScreen({ navigation }: Props) {
   const [done, setDone] = useState(false);
   const btnOpacity = useRef(new Animated.Value(0)).current;
 
+  // Fallback: if onAnimationFinish never fires (known lottie-react-native
+  // issue with .lottie files on Android), show the button after 4 seconds.
+  useEffect(() => {
+    const tid = setTimeout(() => setDone(true), 4000);
+    return () => clearTimeout(tid);
+  }, []);
+
   useEffect(() => {
     if (!done) return;
     Animated.timing(btnOpacity, {
@@ -42,7 +49,7 @@ export default function HiZopScreen({ navigation }: Props) {
       <View style={[styles.root, { backgroundColor: c.background }]}>
         <LottieView
           ref={ref}
-          source={require('../../../assets/animation/hi-zop.lottie')}
+          source={require('../../../assets/animation/hi-zop.json')}
           autoPlay
           loop={false}
           resizeMode="cover"

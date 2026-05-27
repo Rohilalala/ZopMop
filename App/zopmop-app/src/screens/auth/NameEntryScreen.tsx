@@ -116,7 +116,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
       <View style={styles.lottieWrap} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/enter-name.lottie')}
+          source={require('../../../assets/animation/enter-name.json')}
           autoPlay
           loop={false}
           resizeMode="cover"

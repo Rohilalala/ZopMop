@@ -226,7 +226,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         <View style={stylesLottie.wrap} pointerEvents="none">
           <LottieView
             ref={lookAwayRef}
-            source={require('../../../assets/animation/lookaway.lottie')}
+            source={require('../../../assets/animation/lookaway.json')}
             autoPlay={false}
             loop={false}
             resizeMode="cover"

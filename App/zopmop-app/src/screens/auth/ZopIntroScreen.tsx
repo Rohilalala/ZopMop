@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { StyleSheet, StatusBar } from 'react-native';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -13,17 +13,31 @@ export default function ZopIntroScreen({ navigation }: Props) {
   const c = useColors();
   const { isDark } = useTheme();
   const ref = useRef<LottieView>(null);
+  const fired = useRef(false);
+
+  const finish = useCallback(() => {
+    if (fired.current) return;
+    fired.current = true;
+    navigation.replace('HiZop');
+  }, [navigation]);
+
+  // Fallback: if onAnimationFinish never fires (known lottie-react-native
+  // issue with .lottie files on Android), navigate after 4 seconds.
+  useEffect(() => {
+    const tid = setTimeout(finish, 4000);
+    return () => clearTimeout(tid);
+  }, [finish]);
 
   return (
     <>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={c.background} />
       <LottieView
         ref={ref}
-        source={require('../../../assets/animation/intro.lottie')}
+        source={require('../../../assets/animation/intro.json')}
         autoPlay
         loop={false}
         resizeMode="cover"
-        onAnimationFinish={() => navigation.replace('HiZop')}
+        onAnimationFinish={finish}
         style={[styles.lottie, { backgroundColor: c.background }]}
       />
     </>

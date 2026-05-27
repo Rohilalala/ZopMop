@@ -69,7 +69,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       <View style={styles.lottieWrap} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/hi-name.lottie')}
+          source={require('../../../assets/animation/hi-name.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
