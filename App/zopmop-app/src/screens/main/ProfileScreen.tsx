@@ -14,6 +14,7 @@ import {
 
   Animated,
   Easing,
+  StatusBar,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { LoadingBars } from '../../components/ui/LoadingBars';
@@ -41,6 +42,7 @@ import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
 import { useTheme } from '../../context/ThemeContext';
+import { useC, C } from '../../theme/screen';
 
 // Brand legal URLs — matched with auth/OTPVerificationScreen.tsx.
 const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
@@ -52,25 +54,6 @@ type Nav = NativeStackNavigationProp<MainStackParamList>;
 const APP_VERSION =
   (Constants?.expoConfig?.version as string | undefined) ?? '1.0.0';
 const H_PAD = 20;
-
-const C = {
-  bg: '#0A0A0A',
-  amber: '#F5A300',
-  amberHi: '#FFC042',
-  amberLo: '#E88F00',
-  ink: '#0D0D0F',
-  white: '#FFFFFF',
-  text: '#FFFFFF',
-  muted: 'rgba(255,255,255,0.45)',
-  meta: 'rgba(255,255,255,0.45)',
-  rowLabel: '#FFFFFF',
-  glassFill: 'rgba(255,255,255,0.06)',
-  glassFill2: 'rgba(255,255,255,0.025)',
-  glassBorder: 'rgba(255,255,255,0.07)',
-  divider: 'rgba(255,255,255,0.04)',
-  active: '#22C55E',
-  danger: '#EF4444',
-};
 
 function getInitials(name?: string | null): string {
   if (!name) return 'ZM';
@@ -102,6 +85,7 @@ export default function ProfileScreen() {
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
   const { isDark, toggleTheme } = useTheme();
+  const c = useC();
   const darkOn = isDark;
   const [remindersOn, setRemindersOn] = useState(true);
 
@@ -212,21 +196,22 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={s.root}>
+    <View style={[s.root, { backgroundColor: c.bg }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topbar}>
-          <TouchableOpacity style={s.iconBtn} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
-            <Feather name="chevron-left" size={18} color={C.white} />
+          <TouchableOpacity style={[s.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)' }]} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
+            <Feather name="chevron-left" size={18} color={c.text} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={s.iconBtn}
+            style={[s.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)' }]}
             onPress={() => navigation.navigate('HelpSupport')}
             activeOpacity={0.75}
             hitSlop={10}
           >
-            <Feather name="help-circle" size={16} color={C.white} />
+            <Feather name="help-circle" size={16} color={c.text} />
           </TouchableOpacity>
         </View>
 
@@ -245,17 +230,7 @@ export default function ProfileScreen() {
 
           <ActionRail navigation={navigation} />
 
-          <SectionHeader>Referral</SectionHeader>
-          <Card>
-            <Row
-              icon={<Feather name="gift" size={17} color={C.amber} />}
-              label="Refer & Earn"
-              meta="Get Rs 200 per referral"
-              chev
-              onPress={() => navigation.navigate('ReferralEarn')}
-              last
-            />
-          </Card>
+          <ReferralTicket onPress={() => navigation.navigate('ReferralEarn')} />
 
           <SectionHeader>Preferences</SectionHeader>
           <Card>
@@ -263,7 +238,7 @@ export default function ProfileScreen() {
               icon={<Feather name="moon" size={17} color={C.amber} />}
               label="Appearance"
               meta={darkOn ? 'Dark mode' : 'Light mode'}
-              right={<Toggle on={darkOn} onChange={toggleTheme} />}
+              right={<Toggle on={darkOn} onChange={() => toggleTheme()} />}
             />
             {/* Reminder timing is locally toggled today; meta hidden until
                 backend exposes a reminder-prefs endpoint (S8). */}
@@ -312,21 +287,21 @@ export default function ProfileScreen() {
           <Card>
             <Row
               muted
-              icon={<Feather name="info" size={17} color="rgba(255,255,255,0.6)" />}
+              icon={<Feather name="info" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="About ZopMop"
               chev
               onPress={() => showInfo(`ZopMop · v${APP_VERSION}\nHome, handled.`, { title: 'About ZopMop' })}
             />
             <Row
               muted
-              icon={<Feather name="file-text" size={17} color="rgba(255,255,255,0.6)" />}
+              icon={<Feather name="file-text" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Terms of Service"
               chev
               onPress={() => Linking.openURL(TERMS_URL).catch(() => showError('Could not open Terms of Service.', { title: 'Terms' }))}
             />
             <Row
               muted
-              icon={<Feather name="shield" size={17} color="rgba(255,255,255,0.6)" />}
+              icon={<Feather name="shield" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Privacy Policy"
               chev
               onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => showError('Could not open Privacy Policy.', { title: 'Privacy' }))}
@@ -345,8 +320,8 @@ export default function ProfileScreen() {
           </View>
 
           <View style={s.footer}>
-            <Text style={s.footerVersion}>ZopMop · v{APP_VERSION}</Text>
-            <Text style={s.footerTagline}>Home, handled.</Text>
+            <Text style={[s.footerVersion, { color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(13,13,15,0.35)' }]}>ZopMop · v{APP_VERSION}</Text>
+            <Text style={[s.footerTagline, { color: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.3)' }]}>Home, handled.</Text>
             <View style={s.footerZop}>
               <ZopFace width={32} height={32} opacity={0.4} />
             </View>
@@ -451,10 +426,8 @@ function HeroCard({
 }
 
 function ActionRail({ navigation }: { navigation: Nav }) {
-  // Pip badges (Bookings/Offers) are hidden until the backend provides counts:
-  //   • Bookings — needs an upcoming-count on /bookings or a /me summary (S9).
-  //   • Offers — needs GET /offers (S10/S23).
-  // Showing fabricated 2/3 values misled fresh accounts.
+  const c = useC();
+  const { isDark } = useTheme();
   const items: Array<{
     id: string;
     label: string;
@@ -492,15 +465,15 @@ function ActionRail({ navigation }: { navigation: Nav }) {
     <View style={s.rail}>
       {items.map((it) => (
         <TouchableOpacity key={it.id} onPress={it.go} activeOpacity={0.75} style={s.railItem}>
-          <View style={s.railBubble}>
+          <View style={[s.railBubble, isDark ? {} : { backgroundColor: '#fff', borderColor: 'rgba(13,13,15,0.04)', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 }]}>
             {it.icon}
             {it.pip != null && (
-              <View style={s.pip}>
+              <View style={[s.pip, { borderColor: c.bg }]}>
                 <Text style={s.pipText}>{it.pip}</Text>
               </View>
             )}
           </View>
-          <Text style={s.railLabel} numberOfLines={1}>{it.label}</Text>
+          <Text style={[s.railLabel, { color: isDark ? 'rgba(255,255,255,0.85)' : c.text }]} numberOfLines={1}>{it.label}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -525,13 +498,14 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
 
       <View style={s.ticketLeft}>
         <Text style={s.ticketEyebrow}>INVITE A FRIEND</Text>
-        <Text style={s.ticketTitle}>Earn ₹100</Text>
+        <Text style={s.ticketTitle}>Earn ₹150</Text>
         <Text style={s.ticketSub}>per friend who joins ZopMop</Text>
       </View>
 
+      <View style={s.ticketDash} />
       <View style={s.ticketRight}>
         <View style={s.ticketCta}>
-          <Feather name="share-2" size={20} color={C.amberHi} />
+          <Feather name="gift" size={20} color={C.amberHi} />
         </View>
         <Text style={s.ticketCtaLabel}>SHARE</Text>
       </View>
@@ -540,12 +514,24 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
-  return <Text style={s.sectionHeader}>{children}</Text>;
+  const c = useC();
+  return <Text style={[s.sectionHeader, { color: c.textMuted }]}>{children}</Text>;
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <View style={s.card}>{children}</View>;
+  const { isDark } = useTheme();
+  return (
+    <View style={[
+      s.card,
+      isDark
+        ? { backgroundColor: c_glass_dark, borderColor: 'rgba(255,255,255,0.07)' }
+        : { backgroundColor: '#fff', borderColor: 'rgba(13,13,15,0.06)', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
+    ]}>
+      {children}
+    </View>
+  );
 }
+const c_glass_dark = 'rgba(255,255,255,0.045)';
 
 function Row({
   icon, label, meta, right, chev, onPress, muted, last,
@@ -559,25 +545,28 @@ function Row({
   muted?: boolean;
   last?: boolean;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
   const Comp: any = onPress ? TouchableOpacity : View;
   return (
     <Comp
-      style={[s.row, !last && s.rowDivider]}
+      style={[s.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(13,13,15,0.05)' }]}
       activeOpacity={0.7}
       onPress={onPress}
     >
-      <View style={[s.rowIcon, muted && s.rowIconMuted]}>{icon}</View>
+      <View style={[s.rowIcon, muted && { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)' }]}>{icon}</View>
       <View style={s.rowText}>
-        <Text style={[s.rowLabel, muted && s.rowLabelMuted]} numberOfLines={1}>{label}</Text>
-        {!!meta && <Text style={s.rowMeta} numberOfLines={1}>{meta}</Text>}
+        <Text style={[s.rowLabel, { color: muted ? c.textSecondary : c.text }]} numberOfLines={1}>{label}</Text>
+        {!!meta && <Text style={[s.rowMeta, { color: c.textMuted }]} numberOfLines={1}>{meta}</Text>}
       </View>
       {right}
-      {chev && <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.4)" />}
+      {chev && <Feather name="chevron-right" size={14} color={c.textMuted} />}
     </Comp>
   );
 }
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (origin?: { x: number; y: number }) => void }) {
+  const { isDark } = useTheme();
   const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
   const trackRef = useRef<View>(null);
 
@@ -600,7 +589,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (origin?: { x: number
 
   return (
     <TouchableOpacity activeOpacity={0.85} onPress={handlePress} style={s.toggleHit}>
-      <View ref={trackRef} style={[s.toggleTrack, on ? s.toggleOn : s.toggleOff]}>
+      <View ref={trackRef} style={[s.toggleTrack, on ? s.toggleOn : { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
         {on && (
           <View style={StyleSheet.absoluteFill}>
             <Svg width="46" height="28">
@@ -827,8 +816,8 @@ const s = StyleSheet.create({
   },
   chipDot: {
     width: 5, height: 5, borderRadius: 3,
-    backgroundColor: C.active,
-    shadowColor: C.active, shadowOpacity: 0.8, shadowRadius: 4,
+    backgroundColor: C.green,
+    shadowColor: C.green, shadowOpacity: 0.8, shadowRadius: 4,
   },
   chipText: {
     fontFamily: FontFamily.semibold,
@@ -915,6 +904,11 @@ const s = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(13,13,15,0.7)',
     marginTop: 4,
+  },
+  ticketDash: {
+    position: 'absolute', left: '62%', top: '20%', bottom: '20%',
+    width: 1,
+    borderLeftWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(13,13,15,0.18)',
   },
   ticketRight: { alignItems: 'center', gap: 6 },
   ticketCta: {

@@ -542,26 +542,28 @@ export default function HomeScreen() {
         addressTag={addressTag}
       />
 
-      <FlashList
-        data={sections}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        estimatedItemSize={200}
-        ListHeaderComponent={Header}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
-        showsVerticalScrollIndicator={false}
-        extraData={page?.config_hash}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="transparent"
-            colors={['transparent']}
-            progressBackgroundColor="transparent"
-            style={{ opacity: 0 }}
-          />
-        }
-      />
+      <View key={isDark ? 'dark' : 'light'} style={{ flex: 1 }}>
+        <FlashList
+          data={sections}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          estimatedItemSize={200}
+          ListHeaderComponent={Header}
+          contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
+          showsVerticalScrollIndicator={false}
+          extraData={page?.config_hash}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="transparent"
+              colors={['transparent']}
+              progressBackgroundColor="transparent"
+              style={{ opacity: 0 }}
+            />
+          }
+        />
+      </View>
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
