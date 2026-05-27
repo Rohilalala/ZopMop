@@ -47,7 +47,7 @@ export type MainStackParamList = {
   Wallet: undefined;
   // Cashfree Drop Checkout entry point. Pushed from CartScreen when the
   // customer chooses Pay-now (direct) at confirm-booking time.
-  Payment: { booking_id: string; amount_paise: number };
+  Payment: { booking_id: string; amount_paise: number; bookingType: 'instant' | 'scheduled' };
   Offers: undefined;
   HelpSupport: undefined;
   YourExperts: undefined;
@@ -127,8 +127,7 @@ export type MainStackParamList = {
     paymentLabel?: string;     // e.g. "Paid · GPay" or "Paid · HDFC •••• 4521"
     discountCents?: number;
     promoCode?: string;
-    /** If true, render the instant-booking variant; else scheduled. */
-    instant?: boolean;
+    bookingType: 'instant' | 'scheduled';
     /** Initial ETA (minutes) for the "When" tile on instant bookings. */
     etaMinutes?: number;
   };

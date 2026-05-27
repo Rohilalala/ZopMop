@@ -425,12 +425,12 @@ function ActiveCard({ booking }: { booking: ApiBooking }) {
             navigation.navigate('BookingConfirmed', {
               bookingId: booking.id,
               totalCents: booking.price_paise,
+              bookingType: booking.scheduled_time ? 'scheduled' : 'instant',
               serviceId: svc?.service_id,
               serviceName: svc?.service_name,
               durationMinutes: booking.total_duration_minutes,
               helperName: booking.helper_name ?? 'Your Pro',
               helperRating: booking.helper_rating,
-              instant: !booking.scheduled_time,
             })
           }
           style={[styles.act, styles.actSecondary, { flex: 1 }]}

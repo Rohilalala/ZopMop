@@ -33,6 +33,8 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -541,6 +543,34 @@ export default function HomeScreen() {
         selectedAddressId={selectedAddressId}
         addressTag={addressTag}
       />
+
+      {/* DEV SHORTCUT — remove before shipping */}
+      {__DEV__ && (
+        <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingBottom: 4 }}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('BookingConfirmed', {
+              bookingId: 'dev-instant-001', totalCents: 49900, bookingType: 'instant',
+              serviceName: 'Deep Clean', durationMinutes: 120,
+              helperName: 'Ravi K.', helperRating: 4.8, etaMinutes: 6,
+              addressLine: '314c, Gf, Orchid Island, Sec 51',
+            })}
+            style={{ backgroundColor: 'rgba(34,197,94,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#22C55E', fontSize: 10, fontWeight: '700' }}>DEV: Instant</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('BookingConfirmed', {
+              bookingId: 'dev-scheduled-001', totalCents: 49900, bookingType: 'scheduled',
+              serviceName: 'Deep Clean', durationMinutes: 120,
+              slot: 'Sat, 31 May · 10:00 AM',
+              addressLine: '314c, Gf, Orchid Island, Sec 51',
+            })}
+            style={{ backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#60A5FA', fontSize: 10, fontWeight: '700' }}>DEV: Scheduled</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View key={isDark ? 'dark' : 'light'} style={{ flex: 1 }}>
         <FlashList

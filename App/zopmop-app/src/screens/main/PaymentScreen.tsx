@@ -101,6 +101,7 @@ export default function PaymentScreen() {
 
   const bookingID = params?.booking_id ?? '';
   const amountPaise = params?.amount_paise ?? 0;
+  const bookingType = params?.bookingType ?? 'scheduled';
   const rupees = Math.floor(amountPaise / 100);
   const decimals = (amountPaise % 100).toString().padStart(2, '0');
 
@@ -153,6 +154,7 @@ export default function PaymentScreen() {
             navigation.replace('BookingConfirmed', {
               bookingId: bookingID,
               totalCents: amountPaise,
+              bookingType,
             });
             return;
           }
@@ -178,6 +180,7 @@ export default function PaymentScreen() {
             navigation.replace('BookingConfirmed', {
               bookingId: bookingID,
               totalCents: amountPaise,
+              bookingType,
             });
             return;
           }

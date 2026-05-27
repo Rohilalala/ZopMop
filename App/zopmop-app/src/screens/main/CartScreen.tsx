@@ -294,6 +294,7 @@ export default function CartScreen() {
           // JSON field is back-compat; value is paise (see backend
           // migration 065). No * 100 conversion needed.
           amount_paise: created.price_paise,
+          bookingType: 'scheduled',
         });
         return;
       }
@@ -304,6 +305,7 @@ export default function CartScreen() {
       navigation.replace('BookingConfirmed', {
         bookingId: created.id,
         totalCents,
+        bookingType: 'scheduled',
         slot: selectedSlotLabel ?? undefined,
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
       });

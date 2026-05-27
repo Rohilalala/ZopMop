@@ -268,7 +268,7 @@ export default function InstantMatchingScreen({ route }: Props) {
                 helperName: status.helper.name || 'Your Pro',
                 helperPhone: status.helper.phone,
                 helperRating: status.helper.rating,
-                instant: true,
+                bookingType: 'instant',
               });
             }
           } else if (status.status === 'failed' || (status.status === 'matched' && !status.helper)) {
@@ -327,7 +327,7 @@ export default function InstantMatchingScreen({ route }: Props) {
                 helperName: helper.name,
                 helperPhone: helper.phone,
                 helperRating: helper.rating,
-                instant: true,
+                bookingType: 'instant',
               });
             },
           },
