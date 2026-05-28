@@ -171,3 +171,133 @@ export async function keepLookingBooking(
     throw new Error((err as any).error ?? 'failed to extend search');
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 1 Step 5d.2 — end-of-service payment client + error taxonomy.
+//
+// The error codes here are the wire-level strings the backend's typed
+// errors get mapped to (see internal/booking/handler.go mapOTPGateError
+// + internal/payments/handler.go createCashfreeOrderForBooking). The UI
+// in EndOfServicePaymentScreen branches on these to drive the lock-rule
+// + State-5 retry behaviour. Stable strings — do not rename without a
+// backend change.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Error codes the backend's ResolveCash handler can return.
+ *
+ * - BOOKING_NOT_FOUND          404 — booking missing or wrong customer
+ * - NO_HELPER_ASSIGNED         409 — no pro on the booking yet
+ * - JOB_NOT_IN_STATE           409 — booking not status='in_progress'
+ * - ALREADY_PAID_ONLINE        409 — payment_status already 'paid'
+ *                                   (Cashfree webhook or wallet path
+ *                                   has already settled)
+ * - ONLINE_PAYMENT_PENDING     409 — recent Cashfree order still
+ *                                   'pending' within 2-min freshness
+ *                                   guard. State-5 fallback path will
+ *                                   retry on this code (5d.2.d).
+ * - OTP_SERVICE_UNAVAILABLE    503 — backend misconfig
+ */
+export type ResolveCashErrorCode =
+  | 'BOOKING_NOT_FOUND'
+  | 'NO_HELPER_ASSIGNED'
+  | 'JOB_NOT_IN_STATE'
+  | 'ALREADY_PAID_ONLINE'
+  | 'ONLINE_PAYMENT_PENDING'
+  | 'OTP_SERVICE_UNAVAILABLE';
+
+/**
+ * Error codes the backend's CreateCashfreeOrder handler can return that
+ * matter to the end-of-service payment UI. The Phase 1 guard
+ * (chargeability.go) adds the first three; the rest pre-date Phase 1.
+ *
+ * - already_paid_online        409 — chargeability guard
+ * - already_paid_cash          409 — chargeability guard
+ * - booking_refunded           409 — chargeability guard; admin re-collect
+ * - already_paid               409 — legacy ledger-side success guard
+ * - already_completed          409
+ * - booking_cancelled          410
+ * - bad_status                 409
+ * - booking_not_found          404
+ * - not_owner                  403
+ * - zero_amount                409
+ * - missing_booking_id         400
+ * - bad_payment_source         400
+ * - gateway_unconfigured       503
+ * - unauthenticated            401
+ * - internal                   500
+ */
+export type CreateCashfreeOrderErrorCode =
+  | 'already_paid_online'
+  | 'already_paid_cash'
+  | 'booking_refunded'
+  | 'already_paid'
+  | 'already_completed'
+  | 'booking_cancelled'
+  | 'bad_status'
+  | 'booking_not_found'
+  | 'not_owner'
+  | 'zero_amount'
+  | 'missing_booking_id'
+  | 'bad_payment_source'
+  | 'gateway_unconfigured'
+  | 'unauthenticated'
+  | 'internal';
+
+/**
+ * Error thrown by resolveCash() — carries the backend's error code so
+ * EndOfServicePaymentScreen can branch on ResolveCashErrorCode without
+ * parsing prose. Mirrors the cancelBooking / jobStart error pattern.
+ */
+export class ResolveCashError extends Error {
+  readonly code: ResolveCashErrorCode | undefined;
+  readonly status: number;
+  constructor(message: string, status: number, code?: ResolveCashErrorCode) {
+    super(message);
+    this.name = 'ResolveCashError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export interface ResolveCashResponse {
+  message: string;
+}
+
+/**
+ * POST /bookings/:id/resolve-cash
+ *
+ * Phase 1 Step 3 cash entry point. Backend stamps
+ * cash_collected_by_pro = helper_id at the moment of resolve,
+ * cash_collected_at = NOW(), then issues the End OTP via the same path
+ * the Cashfree webhook uses.
+ *
+ * Idempotent on repeat tap: a second call against a booking that
+ * already carries cash_collected_at returns 200 success and re-issues
+ * the End OTP only if the customer's outstanding code expired (the
+ * Peek-then-Issue contract from docs/phase-1-payment-gated-flow.md).
+ *
+ * Throws ResolveCashError with .code set to one of ResolveCashErrorCode
+ * on any 4xx/5xx; throws plain Error on network failure.
+ */
+export async function resolveCash(
+  token: string,
+  bookingId: string,
+): Promise<ResolveCashResponse> {
+  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/resolve-cash`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+    };
+    throw new ResolveCashError(
+      body.error ?? 'cash resolve failed',
+      res.status,
+      body.code as ResolveCashErrorCode | undefined,
+    );
+  }
+  return (await res.json()) as ResolveCashResponse;
+}
