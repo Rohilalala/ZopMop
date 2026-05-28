@@ -174,6 +174,33 @@ const en: Dict = {
     // by the C1/C2/D payment-banner UI in Step 4c.
     awaitingPaymentTitle: 'Service in progress',
     awaitingPaymentSub: 'Customer will pay at the end of service.',
+    // Phase 1 Step 4c — payment banners + End OTP entry.
+    c1PendingTitle: 'Customer is paying online…',
+    c1PendingSub: "Don't ask for cash — they're handling it in-app.",
+    c1LockedTitle: 'End code locked',
+    c1LockedSub: 'Unlocks once payment is confirmed',
+    c2CashTitle: 'Collect cash · ₹{amount}',
+    c2CashSub: 'Take the amount from the customer in person.',
+    c2CashNote: "You don't need to tap anything to record the payment. Once you've received the cash, ask the customer for their end code.",
+    payChipPaidOnline: 'Paid online · ₹{amount}',
+    payChipCash: 'Cash · ₹{amount}',
+    endOtpLabel: 'Enter the end code from the customer',
+    endOtpHelper: 'Ask the customer to read their 6-digit end code.',
+    endOtpHelperError: 'Incorrect code. Ask the customer to read it again.',
+    completeJob: 'Complete job',
+    endOtpTryAgain: 'Try again',
+    endOtpServiceUnavailable: 'Service temporarily unavailable, try again',
+    // PAYMENT_NOT_RESOLVED — End OTP submit raced a not-yet-paid state.
+    // NOT a red error — payment just hasn't landed.
+    paymentNotResolvedTitle: 'Waiting for payment to clear',
+    paymentNotResolvedSub: 'The customer is paying online. Try again in a moment.',
+    // OTP_TOO_MANY_ATTEMPTS — time-honest copy. Do NOT mention reloading
+    // TrackLive (Peek returns the same code). The unblocks are TIME and
+    // SUPPORT. See docs/phase-1-payment-gated-flow.md.
+    otpLockoutTitle: 'Too many wrong attempts',
+    otpLockoutSub: 'Wait a moment, then try again. Or contact support if you need help.',
+    contactSupport: 'Contact support',
+    contactSupportPrompt: 'Trouble finishing? Contact support',
     finishJob: 'Finish job',
     finishConfirmTitle: 'Finish job?',
     finishConfirmBody: 'Are you sure you want to finish?',

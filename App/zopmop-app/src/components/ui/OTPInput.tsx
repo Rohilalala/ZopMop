@@ -26,7 +26,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { useC } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 
 export interface OTPInputProps {
   /** Total digit count. Backend issues 6-digit codes; default 6. */
@@ -60,7 +60,7 @@ export function OTPInput({
   autoFocus = true,
   style,
 }: OTPInputProps) {
-  const c = useC();
+  const { isDark } = useTheme();
   const inputRef = useRef<TextInput | null>(null);
 
   // Activate the next-empty box on every value change so the caret-style
@@ -93,13 +93,12 @@ export function OTPInput({
   // Box backgrounds + borders branch on (filled, active, error) state. We
   // build them inline rather than via StyleSheet so the colour decisions
   // are obvious to a reviewer comparing against the mockup.
-  const boxDark = c.bg === '#0D0D0F' || c.bg === '#0A0A0A' || c.bg === '#050505' || /(^#0[A-F0-9]|^#1)/i.test(c.bg);
-
-  const idleBg = boxDark ? 'rgba(255,255,255,0.045)' : '#FFFFFF';
-  const idleBorder = boxDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.10)';
-  const filledBg = boxDark ? 'rgba(245,163,0,0.06)' : '#FFF8EA';
+  const idleBg = isDark ? 'rgba(255,255,255,0.045)' : '#FFFFFF';
+  const idleBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.10)';
+  const filledBg = isDark ? 'rgba(245,163,0,0.06)' : '#FFF8EA';
   const amber = '#F5A300';
   const errorBorder = '#F87171';
+  const digitColor = isDark ? '#FFFFFF' : '#0D0D0F';
 
   return (
     <TouchableWithoutFeedback onPress={focus}>
@@ -129,7 +128,7 @@ export function OTPInput({
                 shadow as ViewStyle,
               ]}
             >
-              <Text style={[styles.digit, { color: boxDark ? '#FFFFFF' : '#0D0D0F', fontFamily: MONO_FONT }]}>
+              <Text style={[styles.digit, { color: digitColor, fontFamily: MONO_FONT }]}>
                 {digit}
               </Text>
             </View>
