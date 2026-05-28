@@ -23,6 +23,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Local dev image carries the seed-state harness
+        # (internal/booking/dev_seed.go). Stripped on prod build by
+        # the `//go:build dev` tag — see the Dockerfile ARG note.
+        BUILD_TAGS: dev
     image: househelp-api:local
     container_name: househelp-backend
     restart: unless-stopped

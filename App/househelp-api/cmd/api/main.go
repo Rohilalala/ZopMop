@@ -540,6 +540,15 @@ func main() {
 	bookingTrackWS := booking.NewTrackingWSHandler(bookingService, jwtVerificationKeys, authRepo)
 	bookingTrackWS.RegisterTrackingWS(api.Group("/bookings", publicLimiter))
 
+	// Dev seed harness. In prod builds (Dockerfile without -tags dev)
+	// the booking package compiles in dev_seed_stub.go which makes
+	// RegisterDevSeedRoutes a no-op — the prod binary contains zero
+	// seed-endpoint code. In dev builds the real handler at
+	// internal/booking/dev_seed.go mounts /api/v1/dev/* behind the
+	// triple gate (build tag + APP_ENV=development + X-Dev-Seed-Key
+	// shared-secret header). Safe to call unconditionally.
+	booking.RegisterDevSeedRoutes(api, dbPool, otpSvc, notificationService)
+
 	// Location routes (requires JWT).
 	locationGroup := api.Group("/location", authMiddleware, authLimiter, dbBoundLimiter)
 	locationHandler.RegisterRoutes(locationGroup)
