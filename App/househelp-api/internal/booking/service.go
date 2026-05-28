@@ -1863,7 +1863,15 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 	// guards short-circuit the common path so a code that exists
 	// triggers ZERO writes per push tick (WS pushes every 5s, every
 	// in-flight booking — turning this into a write storm would matter).
-	if s.otpSvc != nil {
+	//
+	// SECURITY: OTP codes are customer-only. The IDOR check in
+	// GetBookingByID admits the assigned helper as well; surfacing the
+	// codes to the pro would bypass the two-OTP gate entirely (the gate
+	// exists precisely because the customer reads the code OUT to the
+	// pro). Gate every OTP read/write below on requestingUserID ==
+	// booking.CustomerID. Self-heal Issue is also customer-gated so a
+	// helper-side WS push cannot drive Redis writes either.
+	if s.otpSvc != nil && requestingUserID == booking.CustomerID {
 		var startCode, endCode string
 		if code, oerr := s.otpSvc.Peek(ctx, otp.ScopeStart, bookingID); oerr == nil {
 			startCode = code
