@@ -46,6 +46,16 @@ type Booking struct {
 	ProEarningsPaise      int        `json:"pro_earnings_paise,omitempty"`
 	ActualDurationMinutes *int       `json:"actual_duration_minutes,omitempty"`
 	CustomerRatingPending bool       `json:"customer_rating_pending,omitempty"`
+	// Two-OTP payment-gated service flow (Phase 1 Step 1, migration 112).
+	// StartOTPVerifiedAt is stamped when the pro submits the correct start OTP
+	// at the accepted->in_progress transition. EndOTPVerifiedAt is stamped at
+	// the in_progress->completed transition. CashCollectedByPro + CashCollectedAt
+	// record a "paid by cash" event by the pro (orthogonal to Cashfree); the
+	// pro owes that amount to the company until settled by an admin in CRM.
+	StartOTPVerifiedAt  *time.Time `json:"start_otp_verified_at,omitempty"`
+	EndOTPVerifiedAt    *time.Time `json:"end_otp_verified_at,omitempty"`
+	CashCollectedByPro  *string    `json:"cash_collected_by_pro,omitempty"`
+	CashCollectedAt     *time.Time `json:"cash_collected_at,omitempty"`
 	// CanCancelFree and FreeCancelUntil are computed at read time on the
 	// booking detail endpoint. nil for terminal-state bookings (no longer
 	// cancellable).

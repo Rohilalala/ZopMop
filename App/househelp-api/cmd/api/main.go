@@ -42,6 +42,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/observability"
 	"github.com/adityarohilla/househelp-api/internal/offers"
+	"github.com/adityarohilla/househelp-api/internal/otp"
 	"github.com/adityarohilla/househelp-api/internal/outbox"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/payroll"
@@ -410,9 +411,16 @@ func main() {
 	outboxWorker.Start()
 	defer outboxWorker.Stop()
 
+	// Two-OTP service (Phase 1 Step 1). Issues + verifies booking-scoped
+	// start/end OTPs under the otp:start:* / otp:end:* Redis namespaces.
+	// Intentionally separate from auth's login OTP (otp:login:*); see
+	// internal/otp/otp.go for the isolation contract.
+	otpSvc := otp.New(rdb, 0)
+
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchBatcher)
+	bookingService.SetOTPService(otpSvc)
 
 	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
 	// account deletion when the customer has completed-but-unpaid Cashfree
@@ -591,6 +599,12 @@ func main() {
 	paymentsHandler := payments.NewHandler()
 	paymentsHandler.SetCollectionDeps(dbPool, paymentsLedger, cashfreeGW, cfg.PublicBaseURL)
 	paymentsHandler.SetWallet(paymentsWalletAdapter{svc: walletSvc})
+	// Wire the End-OTP issuer hook on the Cashfree webhook handler. Once
+	// PAYMENT_SUCCESS lands and the booking flips to payment_status='paid',
+	// the payments handler issues the End OTP for the booking (Phase 1
+	// Step 1) so the customer's TrackLive screen can display it and the
+	// pro can finish the booking by entering it.
+	paymentsHandler.SetEndOTPIssuer(bookingService)
 
 	paymentsGroup := api.Group("/payments", authMiddleware, authLimiter)
 	paymentsHandler.RegisterRoutes(paymentsGroup)

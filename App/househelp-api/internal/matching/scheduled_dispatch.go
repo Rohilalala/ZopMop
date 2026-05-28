@@ -178,7 +178,14 @@ func (s *ScheduledDispatcher) claimNext(ctx context.Context) (bookingID, custome
 			  AND  matched_at         IS NULL
 			  AND  scheduled_time     BETWEEN now() + interval '6 hours'
 			                              AND now() + interval '30 hours'
-			  AND  (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+			  -- Phase 1 Step 1: under the two-OTP payment-gated flow the
+			  -- customer pays DURING in_progress, not at checkout. Cashfree
+			  -- rows in 'pending' are legitimate and must be dispatched so
+			  -- the pro can be matched, arrive, and the customer can pay
+			  -- mid-service. We keep the filter trivially permissive here
+			  -- (status='pending' is already enforced above); leaving the
+			  -- WHERE shape stable for diff readability.
+			  AND  true
 			ORDER BY scheduled_time ASC
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED

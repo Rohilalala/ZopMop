@@ -16,6 +16,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
+	"github.com/adityarohilla/househelp-api/internal/otp"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/users"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
@@ -186,6 +187,7 @@ type Service struct {
 	wallet        WalletDebiter        // nil-safe; payment_source="wallet" flow
 	referrals     ReferralCompleter    // nil-safe; referral reward on completion
 	notifications Notifier             // nil-safe; FCM data push to customer
+	otpSvc        *otp.Service         // nil-safe; two-OTP gate (Phase 1 Step 1)
 }
 
 // SetNotifier wires the FCM data-push surface. nil-safe — leaving it
@@ -205,6 +207,72 @@ func (s *Service) SetWallet(w WalletDebiter) { s.wallet = w }
 // can credit the referee and referrer rewards. nil-safe — leaving it unset
 // disables referral crediting.
 func (s *Service) SetReferralCompleter(rc ReferralCompleter) { s.referrals = rc }
+
+// SetOTPService wires the booking-scoped OTP issuer used by the two-OTP
+// payment-gated service flow. Required before StartBooking / CompleteBooking
+// can be called in the new model — those handlers return ErrOTPServiceNotWired
+// if it's nil at call time (defense-in-depth for misconfigured deploys).
+func (s *Service) SetOTPService(o *otp.Service) { s.otpSvc = o }
+
+// Phase 1 Step 1: gate errors for the two-OTP payment-gated service flow.
+// The handler translates these to specific HTTP responses so the pro app can
+// distinguish "wrong code" from "payment not done yet" from "service
+// misconfigured", without leaking server-internal failure modes.
+var (
+	// ErrOTPServiceNotWired is returned when StartBooking / CompleteBooking
+	// is invoked but s.otpSvc is nil. A misconfigured deploy, not a user
+	// error — should never happen in prod. Maps to 503.
+	ErrOTPServiceNotWired = errors.New("booking: OTP service not wired")
+	// ErrStartOTPRequired is returned when StartBooking is called without
+	// a code. Pro app bug or malformed request. Maps to 400.
+	ErrStartOTPRequired = errors.New("booking: start OTP required")
+	// ErrInvalidStartOTP is returned when the supplied start OTP does not
+	// match the issued code for the booking (or none is outstanding).
+	// Maps to 401 — the gate failed.
+	ErrInvalidStartOTP = errors.New("booking: invalid start OTP")
+	// ErrEndOTPRequired is returned when CompleteBooking is called without
+	// a code. Maps to 400.
+	ErrEndOTPRequired = errors.New("booking: end OTP required")
+	// ErrInvalidEndOTP is returned when the supplied end OTP does not match
+	// the issued code (or none is outstanding because payment hasn't
+	// resolved yet). Maps to 401.
+	ErrInvalidEndOTP = errors.New("booking: invalid end OTP")
+	// ErrPaymentNotResolved is returned when CompleteBooking is attempted
+	// but payment_status is not 'paid' AND cash_collected_at is null. The
+	// End OTP cannot have been issued in this state, but we double-check
+	// here as defense-in-depth. Maps to 409.
+	ErrPaymentNotResolved = errors.New("booking: payment not resolved")
+)
+
+// IssueStartOTP generates a fresh start OTP for the booking and stores it
+// under the booking-scoped namespace in Redis. Idempotent re-issue rotates
+// the outstanding code (overwrites). The caller (Step 2's "On my way"
+// handler) returns the plaintext to the customer's TrackLive screen.
+//
+// Booking-scoped ownership: a booking can only ever have one outstanding
+// start OTP at a time. A re-Issue invalidates the prior code.
+func (s *Service) IssueStartOTP(ctx context.Context, bookingID string) (string, error) {
+	if s.otpSvc == nil {
+		return "", ErrOTPServiceNotWired
+	}
+	return s.otpSvc.Issue(ctx, otp.ScopeStart, bookingID)
+}
+
+// IssueEndOTP generates a fresh end OTP for the booking. Called from two
+// places after payment resolves:
+//
+//   - The Cashfree webhook handler when it flips payment_status='paid'
+//     (Step 1.B — webhook hook).
+//   - The pro-side "paid by cash" handler (Step 3).
+//
+// Idempotent re-issue rotates the outstanding code (overwrites). The
+// caller publishes the code to the customer's TrackLive screen.
+func (s *Service) IssueEndOTP(ctx context.Context, bookingID string) (string, error) {
+	if s.otpSvc == nil {
+		return "", ErrOTPServiceNotWired
+	}
+	return s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID)
+}
 
 // payBookingFromWallet runs the wallet debit + payments row insert + booking
 // status flip + booking.paid outbox event for a freshly created booking.
@@ -1592,9 +1660,36 @@ func (s *Service) MarkArrived(ctx context.Context, bookingID, helperID string) e
 	return nil
 }
 
-func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
+// StartBooking transitions an accepted booking to in_progress, gated on
+// the pro submitting the correct start OTP that the customer reads off
+// their TrackLive screen.
+//
+// Phase 1 Step 1: this is one of two security-critical gates in the
+// two-OTP payment-gated service flow. The OTP code itself lives in Redis
+// under otp:start:<bookingID> (see internal/otp); on a successful verify
+// we stamp start_otp_verified_at on the bookings row so the lifecycle is
+// queryable from the DB without consulting Redis.
+//
+// The verify is one-time-use (internal/otp consumes the code on success),
+// so a single accepted code cannot be replayed.
+func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, startOTPCode string) error {
+	if s.otpSvc == nil {
+		return ErrOTPServiceNotWired
+	}
+	if startOTPCode == "" {
+		return ErrStartOTPRequired
+	}
+	// Gate before mutating: an invalid code must not leave any trace on
+	// the booking row. Verify is one-time-use on success.
+	if err := s.otpSvc.Verify(ctx, otp.ScopeStart, bookingID, startOTPCode); err != nil {
+		if errors.Is(err, otp.ErrNotFound) || errors.Is(err, otp.ErrMismatch) {
+			return ErrInvalidStartOTP
+		}
+		return fmt.Errorf("start OTP verify: %w", err)
+	}
 	res, err := s.db.Exec(ctx,
-		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW()
+		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW(),
+		                    start_otp_verified_at = NOW()
 		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'`,
 		bookingID, helperID,
 	)
@@ -1789,9 +1884,37 @@ func (s *Service) RescheduleBooking(
 }
 
 // CompleteBooking transitions a booking from in_progress → completed and
-// increments the helper's total_jobs counter.
-// Only the assigned helper may call this.
-func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
+// increments the helper's total_jobs counter. Only the assigned helper may
+// call this.
+//
+// Phase 1 Step 1: gated on TWO conditions, both required:
+//
+//  1. The pro submits the correct end OTP that the customer reads off their
+//     TrackLive screen. The end OTP is only issued AFTER payment resolves
+//     (Cashfree webhook 'paid' OR pro-marked cash) — see IssueEndOTP. The
+//     OTP code lives in Redis under otp:end:<bookingID>.
+//
+//  2. Defense-in-depth: payment_status='paid' (Cashfree settled) OR
+//     cash_collected_at IS NOT NULL (cash path taken). The End OTP cannot
+//     be issued without this state, but we re-check at completion time so
+//     a misconfigured deploy or a stale Redis entry cannot land a booking
+//     in completed-and-unpaid through this path. The admin force-complete
+//     route (CRM) is the only sanctioned escape that bypasses this gate.
+func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID, endOTPCode string) error {
+	if s.otpSvc == nil {
+		return ErrOTPServiceNotWired
+	}
+	if endOTPCode == "" {
+		return ErrEndOTPRequired
+	}
+	// Verify before mutating; one-time consume on success.
+	if err := s.otpSvc.Verify(ctx, otp.ScopeEnd, bookingID, endOTPCode); err != nil {
+		if errors.Is(err, otp.ErrNotFound) || errors.Is(err, otp.ErrMismatch) {
+			return ErrInvalidEndOTP
+		}
+		return fmt.Errorf("end OTP verify: %w", err)
+	}
+
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 
@@ -1806,14 +1929,38 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		startedAt   *time.Time
 		completedAt time.Time
 	)
+	// Single UPDATE both transitions status and stamps end_otp_verified_at,
+	// gated on payment_status='paid' OR a recorded cash collection. The
+	// in_progress-only WHERE clause + the payment gate together mean this
+	// query updates 0 rows if either condition fails — we then have to
+	// distinguish which one to give the pro a useful error.
 	if err := tx.QueryRow(txCtx,
 		`UPDATE bookings SET status = 'completed', updated_at = NOW(), completed_at = NOW(),
-		                    customer_rating_pending = true
+		                    customer_rating_pending = true,
+		                    end_otp_verified_at = NOW()
 		 WHERE id = $1 AND helper_id = $2 AND status = 'in_progress'
+		   AND (payment_status = 'paid' OR cash_collected_at IS NOT NULL)
 		 RETURNING customer_id::text, started_at, completed_at`,
 		bookingID, helperID,
 	).Scan(&customerID, &startedAt, &completedAt); err != nil {
 		if err == pgx.ErrNoRows {
+			// Disambiguate: was it the state predicate (booking missing /
+			// wrong helper / not in_progress), or the payment predicate
+			// (still unpaid)? A separate SELECT tells the pro app whether
+			// to surface "complete this booking first elsewhere" vs
+			// "customer hasn't paid yet".
+			var status string
+			var paymentStatus *string
+			var cashAt *time.Time
+			selErr := s.db.QueryRow(ctx,
+				`SELECT status, payment_status, cash_collected_at
+				 FROM bookings WHERE id = $1 AND helper_id = $2`,
+				bookingID, helperID,
+			).Scan(&status, &paymentStatus, &cashAt)
+			if selErr == nil && status == "in_progress" &&
+				(paymentStatus == nil || *paymentStatus != "paid") && cashAt == nil {
+				return ErrPaymentNotResolved
+			}
 			return fmt.Errorf("booking not found or cannot be completed")
 		}
 		return fmt.Errorf("failed to complete booking: %w", err)

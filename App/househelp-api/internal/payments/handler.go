@@ -55,6 +55,10 @@ type Handler struct {
 	gateway       *CashfreeGateway
 	publicBaseURL string
 	wallet        WalletCrediter
+	// endOTPIssuer is fired AFTER the webhook tx commits (Redis is
+	// independent of the SQL tx, and we don't want to issue an OTP that
+	// then rolls back). Set via SetEndOTPIssuer. nil-tolerant.
+	endOTPIssuer EndOTPIssuer
 }
 
 // NewHandler returns a payments handler. If CASHFREE_* env keys are unset
@@ -109,6 +113,24 @@ type WalletCrediter interface {
 // handler still updates the ledger and emits the wallet.topped_up outbox
 // event but skips the inline credit.
 func (h *Handler) SetWallet(w WalletCrediter) { h.wallet = w }
+
+// EndOTPIssuer is the slice of the booking service the webhook needs to
+// generate the end OTP for a booking the moment payment_status flips to
+// 'paid'. Defined as an interface to avoid importing internal/booking and
+// creating a cycle — booking imports payments, never the reverse.
+//
+// Implemented by *booking.Service (Phase 1 Step 1).
+type EndOTPIssuer interface {
+	IssueEndOTP(ctx context.Context, bookingID string) (string, error)
+}
+
+// SetEndOTPIssuer wires the booking-side End OTP issuer. Optional — when
+// nil, PAYMENT_SUCCESS_WEBHOOK still commits payment_status='paid' but
+// the End OTP gate cannot fire (CompleteBooking will return
+// ErrInvalidEndOTP because nothing was issued). This must be wired in
+// prod; nil-tolerant only so unit tests that don't care about the OTP
+// flow can construct the Handler.
+func (h *Handler) SetEndOTPIssuer(i EndOTPIssuer) { h.endOTPIssuer = i }
 
 // HandleWalletTopup is the contract /wallet/topup uses to delegate to the
 // payments package. Lets the wallet handler call us without importing
@@ -851,8 +873,16 @@ func (h *Handler) CashfreeWebhook(c *fiber.Ctx) error {
 	processCtx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
 	defer cancel()
 
+	// dispatchCashfreeEventTx records the booking ID on PAYMENT_SUCCESS so
+	// we can issue the End OTP after the tx commits (see Phase 1 Step 1).
+	// Captured by closure since ConsumeOnceTx only surfaces an error.
+	var bookingPaidID string
 	err := ConsumeOnceTx(processCtx, h.db, eventID, func(ctx context.Context, tx pgx.Tx) error {
-		return h.dispatchCashfreeEventTx(ctx, tx, env.Type, orderID, cfOrderID, cfPaymentID, receivedAt, rawBody)
+		bid, derr := h.dispatchCashfreeEventTx(ctx, tx, env.Type, orderID, cfOrderID, cfPaymentID, receivedAt, rawBody)
+		if derr == nil {
+			bookingPaidID = bid
+		}
+		return derr
 	})
 	if err != nil {
 		log.Error().
@@ -869,6 +899,18 @@ func (h *Handler) CashfreeWebhook(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
+	// Post-commit: issue the End OTP if PAYMENT_SUCCESS just landed on a
+	// real booking (not a wallet topup). Redis-only side effect; safe to
+	// run after the SQL commit. Failure is logged but does not unwind the
+	// payment — the customer's money is already settled, the worst case
+	// is the pro can't complete the booking until support re-issues the
+	// OTP. See Phase 1 Step 1.
+	if bookingPaidID != "" && h.endOTPIssuer != nil {
+		if _, ierr := h.endOTPIssuer.IssueEndOTP(processCtx, bookingPaidID); ierr != nil {
+			log.Warn().Err(ierr).Str("booking_id", bookingPaidID).Msg("[cashfree] post-commit: end-OTP issuance failed")
+		}
+	}
+
 	return c.SendStatus(fiber.StatusOK)
 }
 
@@ -883,13 +925,18 @@ func (h *Handler) CashfreeWebhook(c *fiber.Ctx) error {
 // retry); without the row lock we could double-update or interleave with
 // a refund event. The migration 070 unique index on event_outbox is the
 // final backstop.
-func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventType, orderID, cfOrderID, cfPaymentID string, receivedAt time.Time, rawBody []byte) error {
+// dispatchCashfreeEventTx returns the booking ID that just flipped to
+// payment_status='paid' (empty when the event was a wallet topup, a
+// failure, or a refund). Used by the caller to fire post-commit
+// side-effects like the End OTP issuance — see Phase 1 Step 1.
+func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventType, orderID, cfOrderID, cfPaymentID string, receivedAt time.Time, rawBody []byte) (string, error) {
 	var (
-		paymentID      string
-		paymentUserID  string
-		paymentBooking *string
-		amountPaise    int64
-		paymentRef     string
+		paymentID       string
+		paymentUserID   string
+		paymentBooking  *string
+		amountPaise     int64
+		paymentRef      string
+		bookingPaidID   string // set only on PAYMENT_SUCCESS_WEBHOOK + non-wallet
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT p.id::text, p.user_id::text, p.booking_id::text, p.amount_paise,
@@ -900,7 +947,7 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 		FOR UPDATE OF p
 	`, orderID).Scan(&paymentID, &paymentUserID, &paymentBooking, &amountPaise, &paymentRef)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lookup payment by order_id: %w", err)
+		return "", fmt.Errorf("lookup payment by order_id: %w", err)
 	}
 	noPaymentRow := errors.Is(err, pgx.ErrNoRows)
 
@@ -915,10 +962,10 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 	case "PAYMENT_SUCCESS_WEBHOOK":
 		if noPaymentRow {
 			logger.Warn().Msg("[cashfree] success webhook for unknown order")
-			return nil
+			return "", nil
 		}
 		if err := h.ledger.UpdateStatusByGatewayRefTx(ctx, tx, paymentRef, "success", receivedAt); err != nil {
-			return fmt.Errorf("update success status: %w", err)
+			return "", fmt.Errorf("update success status: %w", err)
 		}
 		if paymentBooking != nil && *paymentBooking != "" {
 			// Mirror the wallet path: flip bookings.payment_status='paid'
@@ -933,11 +980,12 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 				 WHERE id = $1::uuid AND payment_method = 'cashfree'`,
 				*paymentBooking,
 			); err != nil {
-				return fmt.Errorf("stamp booking payment_status=paid: %w", err)
+				return "", fmt.Errorf("stamp booking payment_status=paid: %w", err)
 			}
 			if err := emitBookingPaidEventTx(ctx, tx, *paymentBooking, paymentUserID, paymentID, amountPaise, paymentRef, receivedAt); err != nil {
-				return fmt.Errorf("emit booking.paid: %w", err)
+				return "", fmt.Errorf("emit booking.paid: %w", err)
 			}
+			bookingPaidID = *paymentBooking
 		} else {
 			// Wallet topup. Credit the wallet inside the same tx — the
 			// wallet service emits its own wallet.credited event_outbox row,
@@ -947,23 +995,23 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 			if h.wallet != nil {
 				pid := paymentID
 				if err := h.wallet.CreditTx(ctx, tx, paymentUserID, amountPaise, "topup", &pid, nil, "Cashfree topup"); err != nil {
-					return fmt.Errorf("wallet credit topup: %w", err)
+					return "", fmt.Errorf("wallet credit topup: %w", err)
 				}
 			} else {
 				logger.Warn().Msg("[cashfree] wallet service not wired; topup ledger updated but balance not credited")
 			}
 			if err := emitWalletTopupEventTx(ctx, tx, paymentUserID, paymentID, amountPaise, paymentRef, receivedAt); err != nil {
-				return fmt.Errorf("emit wallet.topped_up: %w", err)
+				return "", fmt.Errorf("emit wallet.topped_up: %w", err)
 			}
 		}
 
 	case "PAYMENT_FAILED_WEBHOOK", "PAYMENT_USER_DROPPED_WEBHOOK":
 		if noPaymentRow {
 			logger.Warn().Msg("[cashfree] failed/dropped webhook for unknown order")
-			return nil
+			return "", nil
 		}
 		if err := h.ledger.UpdateStatusByGatewayRefTx(ctx, tx, paymentRef, "failed", receivedAt); err != nil {
-			return fmt.Errorf("update failed status: %w", err)
+			return "", fmt.Errorf("update failed status: %w", err)
 		}
 
 	case "REFUND_STATUS_WEBHOOK":
@@ -971,20 +1019,20 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 		_ = json.Unmarshal(rawBody, &env)
 		if !strings.EqualFold(env.Data.Refund.RefundStatus, "SUCCESS") {
 			logger.Info().Str("refund_status", env.Data.Refund.RefundStatus).Msg("[cashfree] non-success refund event ignored")
-			return nil
+			return "", nil
 		}
 		if noPaymentRow {
 			logger.Warn().Msg("[cashfree] refund webhook for unknown order")
-			return nil
+			return "", nil
 		}
 		if err := h.ledger.UpdateStatusByGatewayRefTx(ctx, tx, paymentRef, "refunded", receivedAt); err != nil {
-			return fmt.Errorf("update refunded status: %w", err)
+			return "", fmt.Errorf("update refunded status: %w", err)
 		}
 
 	default:
 		logger.Info().Msg("[cashfree] unhandled event type")
 	}
-	return nil
+	return bookingPaidID, nil
 }
 
 // emitBookingPaidEventTx writes a booking.paid row to event_outbox via the

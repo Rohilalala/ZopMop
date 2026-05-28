@@ -618,14 +618,21 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 
 	offset := (page - 1) * limit
 
-	// Same Cashfree-pending-unpaid filter as GetCustomerBookingsByStatus.
-	// Direct-pay rows show up only after the webhook stamps payment_status.
+	// Phase 1 Step 1 (two-OTP payment-gated flow): under the new model
+	// payment happens DURING service (on TrackLive, mid-in_progress), so a
+	// Cashfree booking with payment_status = NULL is a legitimate
+	// in-lifecycle row that must surface to the customer. The completed +
+	// unpaid case (admin force-close escape hatch) remains hidden — that
+	// state is what GetUnpaidBookingsForCustomer keys on for the booking
+	// block, and the customer sees it via the block toast, not the list.
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
 		 FROM bookings
 		 WHERE customer_id = $1
-		   AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+		   AND (payment_method IS DISTINCT FROM 'cashfree'
+		        OR payment_status = 'paid'
+		        OR status IN ('pending', 'searching', 'accepted', 'in_progress'))
 		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		customerID, limit, offset,
 	)
@@ -777,20 +784,24 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 
 	// Filter out Cashfree-pending unpaid bookings from the customer-facing
 	// list. A direct-pay booking is created in 'pending' status with
-	// payment_method='cashfree' BEFORE the SDK sheet opens; if the user
-	// abandons the payment, the row stays pending forever. Hide it until
-	// the PAYMENT_SUCCESS webhook flips payment_status='paid'. Wallet-pay
-	// (payment_method='wallet', stamped paid inline) and legacy COD/null
-	// bookings continue to surface as before.
+	// Phase 1 Step 1 (two-OTP payment-gated flow): the customer pays
+	// DURING in_progress (on TrackLive), not at checkout. Cashfree rows
+	// with payment_status = NULL are legitimate in-lifecycle bookings the
+	// customer must see — that's where the pay button lives. The
+	// completed-and-unpaid state (admin force-close escape hatch) is still
+	// hidden from the "upcoming" tab because of the upcoming status filter
+	// below; it surfaces only via the unpaid-bookings block toast.
 	const hidePendingUnpaidCashfree = `
-		(payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+		(b.payment_method IS DISTINCT FROM 'cashfree'
+		 OR b.payment_status = 'paid'
+		 OR b.status IN ('pending', 'searching', 'accepted', 'in_progress'))
 	`
 	var statusFilter string
 	switch status {
 	case "upcoming":
-		statusFilter = `status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
+		statusFilter = `b.status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
 	case "past":
-		statusFilter = `status IN ('completed', 'cancelled')`
+		statusFilter = `b.status IN ('completed', 'cancelled')`
 	default:
 		statusFilter = `true`
 	}

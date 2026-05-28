@@ -385,10 +385,13 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 		log.Warn().Err(expErr).Msg("[engine] failed to auto-cancel expired pending bookings")
 	}
 
-	// Same payment-state gate as the customer-facing list + scheduled
-	// dispatcher. Cashfree-pending bookings only enter the candidate set
-	// after the webhook flips payment_status='paid'. Wallet-pay (stamped
-	// paid inline) and legacy/COD (NULL payment_method) continue to surface.
+	// Phase 1 Step 1: dropped the pre-payment Cashfree gate. Under the
+	// new two-OTP payment-gated flow the customer pays DURING in_progress
+	// (mid-service via the pay button on TrackLive), not at checkout —
+	// so Cashfree-pending bookings in status='pending' must enter the
+	// candidate set for matching so a pro is dispatched, arrives, and the
+	// customer pays mid-service. Wallet-pay still settles at booking
+	// creation; legacy/COD (NULL payment_method) is unaffected.
 	rows, err := e.db.Query(ctx, `
 		SELECT id, customer_id, lat::float8, lng::float8, COALESCE(hex_cell_id, '')
 		FROM bookings
@@ -396,7 +399,6 @@ func (e *Engine) FetchPendingUnmatched(ctx context.Context) ([]BatchEntry, error
 		  AND (matched_at IS NULL OR matched_at < NOW() - INTERVAL '30 seconds')
 		  AND match_attempts < 5
 		  AND created_at > NOW() - INTERVAL '10 minutes'
-		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
 		ORDER BY created_at ASC
 		LIMIT 50
 	`)

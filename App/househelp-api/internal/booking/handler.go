@@ -610,22 +610,33 @@ func (h *Handler) MarkArrived(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "arrival recorded"})
 }
 
+// startBookingRequest is the POST /bookings/:id/start body. The OTP is the
+// 6-digit code the customer reads off TrackLive and the pro types into the
+// pro app — see two-OTP payment-gated flow (Phase 1 Step 1).
+type startBookingRequest struct {
+	OTP string `json:"otp"`
+}
+
+// completeBookingRequest is the POST /bookings/:id/complete body. The OTP
+// is the end-OTP issued after payment resolves.
+type completeBookingRequest struct {
+	OTP string `json:"otp"`
+}
+
 func (h *Handler) StartBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
 	if !validateBookingIDParam(bookingID) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
+	var req startBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
 
-	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to start booking")
-		status := fiber.StatusInternalServerError
-		message := "failed to start booking"
-		if err.Error() == "booking not found or cannot be started" {
-			status = fiber.StatusBadRequest
-			message = "booking not found or cannot be started"
-		}
-		return c.Status(status).JSON(fiber.Map{"error": message})
+		return mapOTPGateError(c, err, "start")
 	}
 
 	return c.JSON(fiber.Map{"message": "booking started"})
@@ -639,17 +650,47 @@ func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
+	var req completeBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
 
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to complete booking")
-		status := fiber.StatusInternalServerError
-		message := "failed to complete booking"
-		if err.Error() == "booking not found or cannot be completed" {
-			status = fiber.StatusBadRequest
-			message = "booking not found or cannot be completed"
-		}
-		return c.Status(status).JSON(fiber.Map{"error": message})
+		return mapOTPGateError(c, err, "complete")
 	}
 
 	return c.JSON(fiber.Map{"message": "booking completed"})
+}
+
+// mapOTPGateError translates the typed errors returned by StartBooking /
+// CompleteBooking into the HTTP shapes the pro app branches on. Codes are
+// stable strings so the client can distinguish "wrong code" from "payment
+// pending" from "service misconfigured" without parsing prose.
+func mapOTPGateError(c *fiber.Ctx, err error, gate string) error {
+	switch {
+	case errors.Is(err, ErrOTPServiceNotWired):
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "OTP service not available", "code": "OTP_SERVICE_UNAVAILABLE",
+		})
+	case errors.Is(err, ErrStartOTPRequired), errors.Is(err, ErrEndOTPRequired):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "OTP required", "code": "OTP_REQUIRED",
+		})
+	case errors.Is(err, ErrInvalidStartOTP), errors.Is(err, ErrInvalidEndOTP):
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "invalid OTP", "code": "OTP_INVALID",
+		})
+	case errors.Is(err, ErrPaymentNotResolved):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "payment not resolved", "code": "PAYMENT_NOT_RESOLVED",
+		})
+	}
+	// Falls through to the legacy "booking not found or cannot be {started,completed}"
+	// case, preserved verbatim for existing client error handling.
+	wantMsg := "booking not found or cannot be " + gate + "ed"
+	if err.Error() == wantMsg {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": wantMsg})
+	}
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to " + gate + " booking"})
 }

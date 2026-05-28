@@ -189,8 +189,12 @@ func (h *JobsHandler) Start(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	var req startBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		return mapOTPGateError(c, err, "start")
 	}
 	return c.JSON(fiber.Map{"message": "in_progress"})
 }
@@ -201,8 +205,12 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	var req completeBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		return mapOTPGateError(c, err, "complete")
 	}
 	// Read back the earnings snapshot for the response.
 	var earnings int64
