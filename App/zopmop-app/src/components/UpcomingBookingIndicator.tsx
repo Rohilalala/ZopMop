@@ -11,6 +11,7 @@ import type { MainStackParamList } from '../types/navigation';
 import { Colors, FontFamily, FontSize, Radius, Shadow } from '../theme';
 import { getBookings, type ApiBooking } from '../api/bookings';
 import { useAuth } from '../context/AuthContext';
+import { onShiftEvent } from '../utils/shiftEvents';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
@@ -51,6 +52,19 @@ export default function UpcomingBookingIndicator() {
   useEffect(() => {
     const interval = setInterval(fetchUpcoming, 30_000);
     return () => clearInterval(interval);
+  }, [fetchUpcoming]);
+
+  // Phase 1 Step 5b.1 — react to FCM booking_status_change like
+  // ActiveBookingPill does, so the handoff between the two pills at
+  // en_route_at != null happens in the same JS tick. Without this,
+  // the 30s polls drift independently and the customer can see a
+  // brief two-pill / zero-pill flash.
+  useEffect(() => {
+    return onShiftEvent((ev) => {
+      if (ev.type === 'booking_status_change') {
+        fetchUpcoming();
+      }
+    });
   }, [fetchUpcoming]);
 
   if (!booking) return null;

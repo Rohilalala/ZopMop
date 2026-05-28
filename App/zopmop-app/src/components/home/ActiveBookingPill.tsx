@@ -45,6 +45,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useColors } from '../../context/ThemeContext';
 import { getBookings, type ApiBooking } from '../../api/bookings';
+import { onShiftEvent } from '../../utils/shiftEvents';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
@@ -117,16 +118,35 @@ export default function ActiveBookingPill() {
     }
   }, [token, opacity]);
 
-  // Refetch on every focus (e.g. after TrackLive back-nav, after a
-  // booking transitions to completed/cancelled).
+  // Refetch on every focus (e.g. after TrackLive back-nav).
   useFocusEffect(useCallback(() => { fetchLive(); }, [fetchLive]));
 
-  // 30s tick mirrors UpcomingBookingIndicator's cadence. The real-time
-  // signal would be FCM booking_status_change, but the existing pill
-  // surfaces don't subscribe and polling is the safe baseline.
+  // 30s tick as the safety net.
   useEffect(() => {
     const id = setInterval(fetchLive, 30_000);
     return () => clearInterval(id);
+  }, [fetchLive]);
+
+  // Phase 1 Step 5b.1 — react to the same FCM booking_status_change
+  // event TrackLiveScreen subscribes to. Solves two issues:
+  //
+  //   (a) Handoff flicker. UpcomingBookingIndicator + ActiveBookingPill
+  //       poll independently every 30s; without a shared trigger, the
+  //       moment a booking goes en-route can leave both pills visible
+  //       (or neither) for up to 30s depending on whose poll lands
+  //       first. The status-change push fires both pills' refetches
+  //       within the same JS tick.
+  //
+  //   (b) Completion drop latency. Without this, a completed booking's
+  //       "Service in progress" pill lingers up to 30s. The push event
+  //       fires when status flips to completed/cancelled too, so the
+  //       pill drops near-immediately.
+  useEffect(() => {
+    return onShiftEvent((ev) => {
+      if (ev.type === 'booking_status_change') {
+        fetchLive();
+      }
+    });
   }, [fetchLive]);
 
   const styles = useMemo(() => createStyles(c), [c]);
