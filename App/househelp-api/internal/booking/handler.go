@@ -734,6 +734,15 @@ func mapOTPGateError(c *fiber.Ctx, err error, gate string) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "invalid OTP", "code": "OTP_INVALID",
 		})
+	case errors.Is(err, ErrOTPTooManyAttempts):
+		// 429 Too Many Requests. Message intentionally time-honest:
+		// reloading TrackLive does NOT re-issue the OTP (Peek returns
+		// the same code), so the pro-app must NOT suggest a reload.
+		// The unblock paths are TIME (the 5-min window) or SUPPORT.
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "too many wrong attempts; wait a moment, then try again",
+			"code":  "OTP_TOO_MANY_ATTEMPTS",
+		})
 	case errors.Is(err, ErrPaymentNotResolved):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 			"error": "payment not resolved", "code": "PAYMENT_NOT_RESOLVED",

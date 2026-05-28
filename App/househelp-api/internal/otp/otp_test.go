@@ -277,3 +277,186 @@ func TestPeek_NotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestVerify_RateLimit_LocksOutAfterMaxWrongAttempts is the headline
+// security guarantee. The first maxVerifyAttempts wrong submissions
+// must surface ErrMismatch (so the pro sees "wrong code, try again");
+// the (maxVerifyAttempts + 1)th must surface ErrTooManyAttempts. The
+// stored code is NOT consumed on any of the wrong attempts (otp.Verify
+// only Del's on success), so a legitimate retry remains possible after
+// the window expires.
+func TestVerify_RateLimit_LocksOutAfterMaxWrongAttempts(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Issue(ctx, ScopeStart, "booking-1"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	// First maxVerifyAttempts wrong submissions surface ErrMismatch.
+	for i := 0; i < maxVerifyAttempts; i++ {
+		if err := svc.Verify(ctx, ScopeStart, "booking-1", "000000"); !errors.Is(err, ErrMismatch) {
+			t.Fatalf("attempt %d: err = %v, want ErrMismatch", i+1, err)
+		}
+	}
+	// The next attempt is locked out.
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", "000000"); !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("attempt %d (over cap): err = %v, want ErrTooManyAttempts", maxVerifyAttempts+1, err)
+	}
+	// And once locked, even a CORRECT code is refused — the rate limit
+	// is the higher-priority gate. (The pro must wait or escalate.)
+	// Peek the stored code to drive this assertion deterministically.
+	stored, perr := svc.Peek(ctx, ScopeStart, "booking-1")
+	if perr != nil {
+		t.Fatalf("Peek: %v", perr)
+	}
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", stored); !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("correct code under lockout: err = %v, want ErrTooManyAttempts", err)
+	}
+}
+
+// TestVerify_RateLimit_PerBookingIsolation asserts that wrong-guess
+// credit on booking-1 does NOT pre-lock booking-2's gate. A pro
+// juggling two jobs must have independent budgets.
+func TestVerify_RateLimit_PerBookingIsolation(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Issue(ctx, ScopeStart, "booking-1"); err != nil {
+		t.Fatalf("Issue booking-1: %v", err)
+	}
+	if _, err := svc.Issue(ctx, ScopeStart, "booking-2"); err != nil {
+		t.Fatalf("Issue booking-2: %v", err)
+	}
+
+	// Burn booking-1's budget completely (lock it out).
+	for i := 0; i < maxVerifyAttempts+1; i++ {
+		_ = svc.Verify(ctx, ScopeStart, "booking-1", "000000")
+	}
+	// booking-2 still gets its own budget. Burn one less than the cap
+	// so the final correct verify still fits inside the window.
+	for i := 0; i < maxVerifyAttempts-1; i++ {
+		if err := svc.Verify(ctx, ScopeStart, "booking-2", "000000"); !errors.Is(err, ErrMismatch) {
+			t.Fatalf("booking-2 attempt %d: err = %v, want ErrMismatch (isolation broken)", i+1, err)
+		}
+	}
+	// And a correct code for booking-2 still verifies — counter is at
+	// (maxVerifyAttempts - 1), this is the maxVerifyAttempts-th call,
+	// which is the LAST allowed slot.
+	stored, _ := svc.Peek(ctx, ScopeStart, "booking-2")
+	if err := svc.Verify(ctx, ScopeStart, "booking-2", stored); err != nil {
+		t.Fatalf("booking-2 correct on last-allowed slot: err = %v, want nil", err)
+	}
+}
+
+// TestVerify_RateLimit_ScopeIsolation asserts wrong-guess credit on the
+// Start gate does NOT pre-lock the End gate (same booking). The two
+// gates fire at different lifecycle moments and must have independent
+// budgets.
+func TestVerify_RateLimit_ScopeIsolation(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Issue(ctx, ScopeStart, "booking-1"); err != nil {
+		t.Fatalf("Issue start: %v", err)
+	}
+	if _, err := svc.Issue(ctx, ScopeEnd, "booking-1"); err != nil {
+		t.Fatalf("Issue end: %v", err)
+	}
+	// Lock out the Start gate.
+	for i := 0; i < maxVerifyAttempts+1; i++ {
+		_ = svc.Verify(ctx, ScopeStart, "booking-1", "000000")
+	}
+	// End gate must still accept wrong attempts as ErrMismatch.
+	if err := svc.Verify(ctx, ScopeEnd, "booking-1", "000000"); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("End gate after Start lockout: err = %v, want ErrMismatch (scope isolation broken)", err)
+	}
+}
+
+// TestVerify_RateLimit_ResetOnSuccess asserts the fail counter clears
+// when the pro eventually gets the code right. Without this, residual
+// in-window fail credit would mis-lock the next legitimate verify
+// (e.g. the End OTP after a Start OTP succeeded with some fumbling).
+func TestVerify_RateLimit_ResetOnSuccess(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	code, err := svc.Issue(ctx, ScopeStart, "booking-1")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	// Five wrong attempts (under the cap).
+	for i := 0; i < 5; i++ {
+		if err := svc.Verify(ctx, ScopeStart, "booking-1", "000000"); !errors.Is(err, ErrMismatch) {
+			t.Fatalf("attempt %d: err = %v, want ErrMismatch", i+1, err)
+		}
+	}
+	// Correct code — should succeed.
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", code); err != nil {
+		t.Fatalf("correct code: err = %v, want nil", err)
+	}
+	// New OTP issued for the same booking; the counter must be clean,
+	// so the FULL budget of new wrong attempts is available before lockout.
+	newCode, err := svc.Issue(ctx, ScopeStart, "booking-1")
+	if err != nil {
+		t.Fatalf("re-Issue: %v", err)
+	}
+	for i := 0; i < maxVerifyAttempts; i++ {
+		if err := svc.Verify(ctx, ScopeStart, "booking-1", "000000"); !errors.Is(err, ErrMismatch) {
+			t.Fatalf("post-reset attempt %d: err = %v, want ErrMismatch", i+1, err)
+		}
+	}
+	// Correct code still works as long as we're inside the budget.
+	// Issue rotates the code, so use newCode.
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", newCode); err != nil {
+		// Should fail because we just burned maxVerifyAttempts wrong
+		// attempts; the next call is the (max+1)th. Assert lockout.
+		if !errors.Is(err, ErrTooManyAttempts) {
+			t.Fatalf("post-budget verify: err = %v, want ErrTooManyAttempts", err)
+		}
+	}
+}
+
+// TestVerify_RateLimit_ExpiresAfterWindow asserts the lockout self-heals
+// once the verifyAttemptsWindow has passed. Uses miniredis FastForward
+// to skip wall time deterministically.
+func TestVerify_RateLimit_ExpiresAfterWindow(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	svc := New(rdb, 6*time.Hour) // long OTP TTL so the code itself doesn't expire
+
+	ctx := context.Background()
+	code, err := svc.Issue(ctx, ScopeStart, "booking-1")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	// Lock out.
+	for i := 0; i < maxVerifyAttempts+1; i++ {
+		_ = svc.Verify(ctx, ScopeStart, "booking-1", "000000")
+	}
+	// Fast-forward past the window.
+	mr.FastForward(verifyAttemptsWindow + time.Second)
+	// Now the correct code should verify successfully — the counter
+	// has expired in Redis, so INCR starts a fresh window at 1.
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", code); err != nil {
+		t.Fatalf("post-window correct: err = %v, want nil (lockout should have expired)", err)
+	}
+}
+
+// TestAttemptsKeyShape pins the Redis key for the rate-limit counter so
+// an accidental rename doesn't silently collide with another namespace.
+func TestAttemptsKeyShape(t *testing.T) {
+	t.Parallel()
+	if got := attemptsKeyFor(ScopeStart, "abc"); got != "otp:verify-attempts:start:abc" {
+		t.Fatalf("attemptsKeyFor(start, abc) = %q, want otp:verify-attempts:start:abc", got)
+	}
+	if got := attemptsKeyFor(ScopeEnd, "abc"); got != "otp:verify-attempts:end:abc" {
+		t.Fatalf("attemptsKeyFor(end, abc) = %q, want otp:verify-attempts:end:abc", got)
+	}
+}

@@ -242,6 +242,12 @@ var (
 	// End OTP cannot have been issued in this state, but we double-check
 	// here as defense-in-depth. Maps to 409.
 	ErrPaymentNotResolved = errors.New("booking: payment not resolved")
+	// ErrOTPTooManyAttempts is returned when the per-booking, per-scope
+	// service-OTP verify rate limit has been crossed (otp.ErrTooManyAttempts
+	// wrapped at the booking layer). Maps to 429. The pro-app message must
+	// be time-honest ("wait a moment, then try again") AND surface the
+	// support contact — reloading TrackLive does NOT re-issue the OTP.
+	ErrOTPTooManyAttempts = errors.New("booking: too many wrong OTP attempts")
 	// ErrBookingNotFound is returned when ResolveCash targets a booking
 	// that does not exist or the customer does not own. Maps to 404 (we
 	// intentionally do not distinguish "missing" from "not yours" so
@@ -1889,6 +1895,9 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, startOT
 	// Gate before mutating: an invalid code must not leave any trace on
 	// the booking row. Verify is one-time-use on success.
 	if err := s.otpSvc.Verify(ctx, otp.ScopeStart, bookingID, startOTPCode); err != nil {
+		if errors.Is(err, otp.ErrTooManyAttempts) {
+			return ErrOTPTooManyAttempts
+		}
 		if errors.Is(err, otp.ErrNotFound) || errors.Is(err, otp.ErrMismatch) {
 			return ErrInvalidStartOTP
 		}
@@ -2116,6 +2125,9 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID, endO
 	}
 	// Verify before mutating; one-time consume on success.
 	if err := s.otpSvc.Verify(ctx, otp.ScopeEnd, bookingID, endOTPCode); err != nil {
+		if errors.Is(err, otp.ErrTooManyAttempts) {
+			return ErrOTPTooManyAttempts
+		}
 		if errors.Is(err, otp.ErrNotFound) || errors.Is(err, otp.ErrMismatch) {
 			return ErrInvalidEndOTP
 		}

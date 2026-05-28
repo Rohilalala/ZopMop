@@ -192,6 +192,40 @@ TrackLive (Cashfree) or pay the pro in cash.
 state — frontend just needs to render it correctly. No backend change
 needed.
 
+### Service OTP rate limit — per booking, per scope
+
+`otp.Verify` enforces **10 wrong attempts per 5 minutes** for each
+`(scope, ownerID)` pair, keyed in Redis under
+`otp:verify-attempts:{scope}:{bookingID}`. The 11th attempt returns
+`ErrTooManyAttempts` (mapped to `429 OTP_TOO_MANY_ATTEMPTS` by the
+booking handler) WITHOUT consulting the stored code or the
+constant-time compare path.
+
+The counter is keyed by `(scope, ownerID)` so:
+
+- A pro juggling **two bookings** has independent budgets — a fail-run
+  on booking-1 cannot pre-lock booking-2's gate.
+- The **Start** and **End** OTPs of the same booking have independent
+  budgets — fumbling Start digits doesn't pre-lock End.
+- A successful match **clears the counter** so legitimate fumbling on
+  Start doesn't carry stale fail credit into End.
+
+The lockout self-heals after the 5-minute window expires (counter TTL
+runs down → next INCR starts at 1).
+
+**Pro-app message contract.** The 429 message is intentionally
+time-honest:
+
+> "Too many wrong attempts. Wait a moment, then try again."
+
+The message MUST NOT suggest reloading TrackLive as a fix. Reloading
+does NOT re-issue the OTP: `(*Service).GetTracking` calls `otp.Peek`,
+which returns the existing code — a reload surfaces the same code
+that the pro just locked out attempts against. The only legitimate
+unblocks are TIME (the 5-min window) or operational SUPPORT (State E
+contact). The State E support link must be made prominently
+available when the pro is locked out.
+
 ### Service OTP issuance — Peek-then-Issue discipline
 
 `otp.Service.Issue` is an unconditional Redis `SET` — every call mints
