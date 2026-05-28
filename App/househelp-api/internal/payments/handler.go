@@ -145,6 +145,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Post("/validate-vpa", h.ValidateVPA)
 	router.Post("/cashfree/order", h.CreateCashfreeOrder)
 	router.Get("/cashfree/orders/:orderID/status", h.GetCashfreeOrderStatus)
+	// Phase 1 Step 5d.2.d — customer-side SDK on_failure backstop. See
+	// internal/payments/mark_attempt_failed.go for the webhook-wins
+	// design + auth contract.
+	router.Post("/cashfree/orders/:orderID/mark-attempt-failed", h.MarkAttemptFailed)
 }
 
 // RegisterWebhookRoutes mounts the Cashfree webhook handler. The group
