@@ -417,6 +417,18 @@ export default function TrackLiveScreen() {
     }
   }, [proCoord, homeCoord]);
 
+  // Phase 1 Step 5c — real Start OTP. The WebSocket push surfaces
+  // tracking.start_otp_code (backend Peek; self-heal at Step 5a.1).
+  // Empty string = no code outstanding yet (either pre-MarkEnRoute or
+  // the self-heal hasn't recovered after a Redis hiccup; next push
+  // tick will retry). The legacy `otp` route param is kept only as a
+  // first-paint fallback for the pre-WebSocket bookings; once
+  // tracking lands the real code wins.
+  const startOtpCode = (tracking?.start_otp_code && tracking.start_otp_code.length > 0)
+    ? tracking.start_otp_code
+    : (otp ?? '');
+  // Legacy display path keeps the 4-digit + booking-id-hash fallback so
+  // anywhere outside the new big-card render path still works.
   const displayOtp = (otp ?? deriveOtp(bookingId ?? '0000')).padStart(4, '0').slice(0, 4);
   const initial = (helperName || displayHelperName || 'P')[0].toUpperCase();
   const shortId = bookingId
@@ -737,24 +749,44 @@ export default function TrackLiveScreen() {
             </Text>
           )}
 
-          {/* OTP card — only meaningful pre-start. Once started_at is stamped
-              the OTP is consumed and we hide it. */}
-          {(subState === 'en_route' || subState === 'arrived') && (
-            <View style={styles.otp}>
-              <View style={{ flex: 1 }}>
-                <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
-                <Text style={[fontMed, styles.otpHelp]}>
-                  {helperName
-                    ? `Share with ${helperName.split(' ')[0]} when they arrive`
-                    : 'Share this code with your pro when they arrive'}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {displayOtp.split('').map((d, i) => (
-                  <View key={i} style={styles.otpDigit}>
-                    <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
+          {/* Phase 1 Step 5c — BIG Start OTP display. Mockup-style
+              card (eos-payment-spec.html .endcode-card) — same visual
+              vocabulary the End OTP uses in 5d, kept consistent so
+              the customer recognises both as the same affordance.
+              Renders when the pro is in transit AND the backend has
+              issued the code (tracking.start_otp_code is non-empty).
+              Hides once started_at is stamped (gate consumed). */}
+          {(subState === 'en_route' || subState === 'arrived') && startOtpCode.length > 0 && (
+            <View style={styles.startCodeCard}>
+              <Text style={[fontBold, styles.startCodeLabel]}>START CODE</Text>
+              <View style={styles.startCodeDigits}>
+                {startOtpCode.split('').map((d, i) => (
+                  <View key={i} style={styles.startCodeDigit}>
+                    <Text style={[fontMono, styles.startCodeDigitText]}>{d}</Text>
                   </View>
                 ))}
+              </View>
+              <Text style={[fontMed, styles.startCodeHelper]}>
+                Show this code to your pro to start.
+              </Text>
+            </View>
+          )}
+
+          {/* Phase 1 Step 5c — payment expectation copy. Customer's
+              mental-model cue: payment moved from before-matching to
+              end-of-service (Step 1 blast-radius review). Lives on
+              the in-progress state so it lands right when the
+              customer might otherwise wonder "have I paid?" */}
+          {subState === 'in_progress' && (
+            <View style={styles.payExpectationCard}>
+              <Feather name="info" size={14} color={AMBER} style={{ marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[fontBold, styles.payExpectationTitle]}>
+                  You pay when the service is done
+                </Text>
+                <Text style={[fontMed, styles.payExpectationSub]}>
+                  We'll prompt you to choose Cash or Online once your pro finishes.
+                </Text>
               </View>
             </View>
           )}
@@ -1547,6 +1579,85 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: AMBER,
     letterSpacing: -0.3,
+  },
+
+  // Phase 1 Step 5c — BIG Start OTP card. Tokens from
+  // /tmp/eos-payment-spec.html .endcode-card (the End OTP treatment;
+  // we use the same vocabulary for Start so customers recognise both
+  // as the same affordance).
+  startCodeCard: {
+    marginTop: 18,
+    marginHorizontal: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    backgroundColor: 'rgba(245,163,0,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.22)',
+    alignItems: 'center',
+  },
+  startCodeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    color: 'rgba(255,255,255,0.60)',
+    marginBottom: 14,
+    textTransform: 'uppercase',
+  },
+  startCodeDigits: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  startCodeDigit: {
+    width: 42,
+    height: 60,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  startCodeDigitText: {
+    fontSize: 34,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+    color: '#FFFFFF',
+  },
+  startCodeHelper: {
+    marginTop: 18,
+    marginHorizontal: 28,
+    textAlign: 'center',
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: 'rgba(255,255,255,0.5)',
+  },
+
+  // Phase 1 Step 5c — payment expectation copy card on in_progress.
+  payExpectationCard: {
+    marginTop: 14,
+    marginHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: 'rgba(245,163,0,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.20)',
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  payExpectationTitle: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    letterSpacing: -0.1,
+  },
+  payExpectationSub: {
+    fontSize: 11.5,
+    marginTop: 2,
+    color: 'rgba(255,255,255,0.55)',
+    lineHeight: 16,
   },
 
   // Step marker

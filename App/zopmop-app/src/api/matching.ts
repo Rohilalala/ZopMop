@@ -95,6 +95,13 @@ export interface BookingDetail {
   updated_at: string;
   helper?: BookingDetailHelper;
   services: BookingDetailService[];
+  // Phase 1 (Steps 1, 3, 5c) — payment + OTP-verification state.
+  // Backend already serialises these on the Booking row.
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  payment_method?: 'cashfree' | 'wallet' | 'cash' | 'cod' | null;
+  cash_collected_at?: string | null;
+  start_otp_verified_at?: string | null;
+  end_otp_verified_at?: string | null;
 }
 
 export interface InstantBookingPayload {
@@ -276,6 +283,13 @@ export interface TrackingResponse {
   eta_minutes: number;
   polyline: string;
   last_updated_at: string;
+  // Phase 1 Step 2 + Step 5a.1 — service OTP codes. Backend Peek surfaces
+  // these and the self-heal (GetTracking, internal/booking/service.go)
+  // re-issues if absent + precondition met. Empty string means no code
+  // outstanding (either pre-issuance, post-consume, or self-heal hasn't
+  // recovered yet — the next push tick will retry).
+  start_otp_code?: string;
+  end_otp_code?: string;
 }
 
 /**
