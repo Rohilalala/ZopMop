@@ -625,9 +625,17 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 	// unpaid case (admin force-close escape hatch) remains hidden — that
 	// state is what GetUnpaidBookingsForCustomer keys on for the booking
 	// block, and the customer sees it via the block toast, not the list.
+	// Phase 1 Step 5b — added the four lifecycle timestamps
+	// (en_route_at, arrived_at, started_at, completed_at) to the SELECT
+	// so the customer app can derive the "live booking" home pill
+	// (accepted+en_route, accepted+arrived, in_progress) from the same
+	// list payload the upcoming-bookings tab already loads. No new
+	// round-trip; cost is 4 nullable timestamp columns per row.
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise,
+		        en_route_at, arrived_at, started_at, completed_at,
+		        created_at, updated_at
 		 FROM bookings
 		 WHERE customer_id = $1
 		   AND (payment_method IS DISTINCT FROM 'cashfree'
@@ -646,7 +654,9 @@ func (r *Repository) GetCustomerBookings(ctx context.Context, customerID string,
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
 			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
-			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.PromoCode, &b.DiscountPaise,
+			&b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
+			&b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan booking: %w", err)
 		}
 		bookings = append(bookings, b)
