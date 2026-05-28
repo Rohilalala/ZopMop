@@ -375,34 +375,62 @@ func (s *Service) ResolveCash(ctx context.Context, bookingID, customerID string)
 	}
 
 	// Idempotency: a second tap from the customer (or a retry from a
-	// flaky network) lands here. We are already in target state; the
-	// only side effect needed is re-Issuing the End OTP so TrackLive
-	// has something to display if the prior OTP's TTL expired or was
-	// consumed. Commit first to release the row lock before the Redis
-	// call so we don't block the gate handler.
+	// flaky network) lands here. We are already in target state.
+	//
+	// Critical: do NOT unconditionally re-Issue the End OTP. otp.Issue
+	// always overwrites (mints a fresh code), which would desync a
+	// customer who has already read the outstanding code off TrackLive
+	// and started reading it to the pro. Instead: Peek first; only
+	// Issue if no code is outstanding (true self-heal). Commit first
+	// to release the row lock before the Redis hop.
 	if cashAt != nil {
 		if err := tx.Commit(txCtx); err != nil {
 			return fmt.Errorf("resolve-cash commit (idempotent): %w", err)
 		}
-		if _, oerr := s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID); oerr != nil {
-			log.Warn().Err(oerr).Str("booking_id", bookingID).
-				Msg("[resolve-cash] idempotent end-OTP re-issue failed; TrackLive self-heal will retry")
+		if _, perr := s.otpSvc.Peek(ctx, otp.ScopeEnd, bookingID); perr != nil {
+			if errors.Is(perr, otp.ErrNotFound) {
+				// No outstanding code — Issue to self-heal. Mirrors the
+				// TrackLive self-heal contract spec'd for Step 5.
+				if _, ierr := s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID); ierr != nil {
+					log.Warn().Err(ierr).Str("booking_id", bookingID).
+						Msg("[resolve-cash] idempotent end-OTP self-heal failed; TrackLive self-heal will retry")
+				}
+			} else {
+				log.Warn().Err(perr).Str("booking_id", bookingID).
+					Msg("[resolve-cash] idempotent end-OTP peek failed; TrackLive self-heal will retry")
+			}
 		}
+		// A code IS outstanding — leave it. Customer already has it on
+		// their screen; minting a new one here would desync the customer
+		// and the pro mid-handoff.
 		return nil
 	}
 
-	// Residual-race guard: any Cashfree order in 'pending' for this
-	// booking means an online charge is mid-flight and may succeed
-	// any second. Reject; the app shows "An online payment is
-	// processing, please wait." See phase-1-payment-gated-flow.md.
+	// Residual-race guard: a RECENT Cashfree order in 'pending' for
+	// this booking means an online charge is mid-flight and may
+	// succeed any second. Reject; the app shows "An online payment is
+	// processing, please wait."
+	//
+	// Freshness bound (2 minutes): when a customer abandons the
+	// Cashfree drop-in (closes the sheet), Cashfree fires
+	// PAYMENT_USER_DROPPED_WEBHOOK which flips gateway_status to
+	// 'failed' (see internal/payments/handler.go PAYMENT_FAILED /
+	// PAYMENT_USER_DROPPED branch). The webhook typically lands
+	// within ~30s, but slow UPI flows can take a couple of minutes.
+	// Without the freshness bound a stuck 'pending' row would trap
+	// the customer forever — they tried online, gave up, and we
+	// refuse cash. With it, anything older than 2 minutes is treated
+	// as abandoned and falls through to cash, which is the rule
+	// recorded in docs/phase-1-payment-gated-flow.md.
 	var pendingExists bool
 	if err := tx.QueryRow(txCtx,
 		`SELECT EXISTS (
 		   SELECT 1
 		     FROM payments
-		    WHERE booking_id = $1::uuid
+		    WHERE booking_id     = $1::uuid
 		      AND payment_method = 'cashfree'
 		      AND gateway_status = 'pending'
+		      AND created_at     > NOW() - INTERVAL '2 minutes'
 		 )`,
 		bookingID,
 	).Scan(&pendingExists); err != nil {

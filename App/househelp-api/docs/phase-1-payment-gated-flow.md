@@ -24,11 +24,19 @@ the other path:
 
 **Residual-race guard.** When the customer taps "Yes, pay cash",
 `ResolveCash` checks for an existing Cashfree order in
-`gateway_status='pending'` for the booking. If one exists, the cash
-confirmation is rejected with `ONLINE_PAYMENT_PENDING` ("An online
-payment is processing, please wait."). This is the single guard that
-prevents a cash resolve from racing a Cashfree webhook to a
-double-payment outcome. The earlier symmetric guard at Cashfree
+`gateway_status='pending'` for the booking **created within the
+last 2 minutes**. If one exists, the cash confirmation is rejected
+with `ONLINE_PAYMENT_PENDING` ("An online payment is processing,
+please wait.").
+
+The freshness bound is critical for the "cash works if online fails"
+rule. When the customer abandons the Cashfree drop-in, Cashfree fires
+`PAYMENT_USER_DROPPED_WEBHOOK` and the payment row flips to `'failed'`
+— typically within ~30 seconds, but a slow UPI flow can take longer.
+Without a freshness bound a stuck `'pending'` row would trap a
+customer who tried online, gave up, and now wants cash. With the
+2-minute bound: any `'pending'` row older than the customer's most
+recent attempt is treated as abandoned and falls through to cash. The earlier symmetric guard at Cashfree
 order creation + webhook-side conflict detection + auto-refund machinery
 were considered and rejected as overkill for the pilot — the single
 pending-order check at the cash entry point closes the only meaningful
@@ -148,6 +156,34 @@ TrackLive (Cashfree) or pay the pro in cash.
 **Backend supports this already.** The booking row carries the full
 state — frontend just needs to render it correctly. No backend change
 needed.
+
+### Service OTP issuance — Peek-then-Issue discipline
+
+`otp.Service.Issue` is an unconditional Redis `SET` — every call mints
+a fresh code and overwrites any prior one. This is correct at the
+genuine issuance points (`MarkEnRoute`, `CashfreeWebhook` success,
+first cash resolution): a fresh code is the point.
+
+It is **wrong** at idempotent / self-heal entry points (a second
+`ResolveCash` tap, a TrackLive load when an OTP already exists). A
+fresh code there would desync a customer mid-handoff: they read code
+`X` to the pro, server mints `Y`, gate now rejects `X`.
+
+The contract for any self-heal / idempotent issuance point is
+**Peek-then-Issue**:
+
+```text
+existing, err := otp.Peek(scope, ownerID)
+if errors.Is(err, otp.ErrNotFound):
+    otp.Issue(scope, ownerID)   # no code outstanding — self-heal
+else:
+    # code IS outstanding — leave it. Customer already has it.
+```
+
+Locked into `(*booking.Service).ResolveCash` for the idempotent
+repeat-tap path. **Same pattern is required by the Step 5 TrackLive
+self-heal** — implementers must use Peek-then-Issue there too, not
+unconditional Issue.
 
 ### 2. End-OTP self-heal on TrackLive load (Step 5 sub-requirement)
 
