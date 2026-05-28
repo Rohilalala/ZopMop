@@ -148,6 +148,35 @@ func (s *Service) Revoke(ctx context.Context, scope Scope, ownerID string) error
 	return s.rdb.Del(ctx, keyFor(scope, ownerID)).Err()
 }
 
+// Peek returns the current stored code for (scope, ownerID) WITHOUT
+// consuming it. Intended for the customer-facing TrackLive endpoint:
+// the customer queries TrackLive repeatedly while waiting for the pro,
+// and each query must surface the same outstanding code so the customer
+// can read it out. Verify is the single consume path.
+//
+// Peek does NOT extend the TTL — a stale outstanding code expires on its
+// original schedule, not on every read.
+//
+// Returns ErrNotFound when no code is outstanding (none issued, expired,
+// or already consumed). The caller MUST treat ErrNotFound as "no code to
+// display yet" — never as a server error.
+func (s *Service) Peek(ctx context.Context, scope Scope, ownerID string) (string, error) {
+	if !validScope(scope) {
+		return "", ErrInvalidScope
+	}
+	if ownerID == "" {
+		return "", ErrNotFound
+	}
+	stored, err := s.rdb.Get(ctx, keyFor(scope, ownerID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("otp: peek: %w", err)
+	}
+	return stored, nil
+}
+
 // keyFor returns the Redis key for (scope, ownerID). The scope segment is
 // part of the key so cross-namespace verification is structurally impossible.
 func keyFor(scope Scope, ownerID string) string {

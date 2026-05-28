@@ -26,6 +26,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/internal/otp"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -337,6 +338,25 @@ func mapAcceptError(c *fiber.Ctx, err error) error {
 // is assigned and the booking is still in 'accepted' state. Fires a
 // customer FCM push (best-effort) so the customer sees the pro is
 // moving without waiting for the next poll.
+//
+// Phase 1 Step 2: this is ALSO the single trigger for Start OTP
+// issuance. Tapping "On my way" is what makes the booking "live":
+//
+//  1. Stamps en_route_at (existing behavior).
+//  2. Issues the Start OTP into Redis at otp:start:<bookingID>. The
+//     customer's TrackLive endpoint peeks this code and displays it;
+//     the customer reads it to the pro; the pro types it back into
+//     the pro app, which calls StartBooking and the OTP is consumed
+//     atomically with the accepted->in_progress transition.
+//  3. Fires the customer FCM push so the customer's app surfaces the
+//     home pill + can poll TrackLive without waiting for the next list
+//     refresh.
+//
+// OTP issuance is best-effort post-commit (same discipline as the End
+// OTP webhook hook in Step 1): if Redis is briefly unavailable the
+// booking still goes en_route, and Step 5 will add a TrackLive
+// self-heal that issues missing OTPs on next load. Logging the failure
+// is enough here.
 func (s *Service) MarkEnRoute(ctx context.Context, bookingID, helperID string) error {
 	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -353,6 +373,15 @@ func (s *Service) MarkEnRoute(ctx context.Context, bookingID, helperID string) e
 			return ErrJobNotInState
 		}
 		return fmt.Errorf("mark en-route: %w", err)
+	}
+
+	// Issue Start OTP — best-effort, post-commit. Redis-only side effect,
+	// so a failure here does not unwind the en_route stamp. TrackLive
+	// self-heal (Step 5) covers the missing-OTP case on the next load.
+	if s.otpSvc != nil {
+		if _, oerr := s.otpSvc.Issue(ctx, otp.ScopeStart, bookingID); oerr != nil {
+			log.Warn().Err(oerr).Str("booking_id", bookingID).Msg("[en_route] start-OTP issuance failed; TrackLive self-heal will retry")
+		}
 	}
 
 	// Customer push — best-effort. Failure shouldn't block the pro.

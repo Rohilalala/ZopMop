@@ -223,6 +223,19 @@ type MatchedHelper struct {
 // TrackingResponse is returned by GET /bookings/:id/tracking.
 // It contains the helper's live location, the customer's location, a walking
 // ETA and an encoded Google Maps polyline for the route.
+//
+// Phase 1 Step 2: the customer-facing TrackLive screen also reads the two
+// service OTP codes from this response. Both are populated only when an
+// outstanding code exists in Redis (see internal/otp); when empty the app
+// hides the OTP display chip. Peek is read-only — querying TrackLive does
+// not consume the codes; only the pro's StartBooking / CompleteBooking
+// calls do.
+//
+//   - StartOTPCode appears once the pro taps "On my way" (MarkEnRoute) and
+//     disappears once the pro consumes it via StartBooking.
+//   - EndOTPCode appears once payment resolves (Cashfree webhook 'paid' or
+//     cash-marked in Step 3) and disappears once the pro consumes it via
+//     CompleteBooking.
 type TrackingResponse struct {
 	HelperLat       float64 `json:"helper_lat"`
 	HelperLng       float64 `json:"helper_lng"`
@@ -231,4 +244,8 @@ type TrackingResponse struct {
 	ETAMinutes      int     `json:"eta_minutes"`
 	EncodedPolyline string  `json:"polyline"`
 	LastUpdatedAt   string  `json:"last_updated_at"` // ISO8601
+	// Phase 1 Step 2 — booking-scoped service OTPs. Empty string when no
+	// outstanding code; the app must treat empty as "no code to display".
+	StartOTPCode string `json:"start_otp_code,omitempty"`
+	EndOTPCode   string `json:"end_otp_code,omitempty"`
 }

@@ -1642,6 +1642,18 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 		}
 	}
 
+	// Phase 1 Step 2 — surface the outstanding service OTPs. Peek is
+	// read-only; the codes survive repeated TrackLive loads. ErrNotFound
+	// is the expected "no code yet" state for both — silently skip.
+	if s.otpSvc != nil {
+		if code, oerr := s.otpSvc.Peek(ctx, otp.ScopeStart, bookingID); oerr == nil {
+			resp.StartOTPCode = code
+		}
+		if code, oerr := s.otpSvc.Peek(ctx, otp.ScopeEnd, bookingID); oerr == nil {
+			resp.EndOTPCode = code
+		}
+	}
+
 	return resp, nil
 }
 

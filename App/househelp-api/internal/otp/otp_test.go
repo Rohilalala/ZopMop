@@ -232,3 +232,48 @@ func TestKeyShape(t *testing.T) {
 		t.Fatalf("keyFor(end, abc) = %q, want otp:end:abc", got)
 	}
 }
+
+// TestPeek_IdempotentRead asserts that Peek returns the code without
+// consuming it — the same code can be read repeatedly, and a subsequent
+// Verify still works. This is what the customer's TrackLive endpoint
+// depends on: it loads many times while the customer waits and must
+// always surface the same outstanding code.
+func TestPeek_IdempotentRead(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	code, err := svc.Issue(ctx, ScopeStart, "booking-1")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	for i := range 3 {
+		got, err := svc.Peek(ctx, ScopeStart, "booking-1")
+		if err != nil {
+			t.Fatalf("Peek %d: %v", i, err)
+		}
+		if got != code {
+			t.Fatalf("Peek %d = %q, want %q (must not rotate)", i, got, code)
+		}
+	}
+	// Verify still consumes after multiple peeks.
+	if err := svc.Verify(ctx, ScopeStart, "booking-1", code); err != nil {
+		t.Fatalf("Verify after peeks: %v", err)
+	}
+	// Post-consume peek must return ErrNotFound.
+	if _, err := svc.Peek(ctx, ScopeStart, "booking-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Peek after Verify: err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPeek_NotFound asserts Peek returns ErrNotFound when no code is
+// outstanding (the customer's TrackLive must treat this as "no code yet
+// to display", not a server error).
+func TestPeek_NotFound(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.Peek(ctx, ScopeStart, "booking-nonexistent"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
