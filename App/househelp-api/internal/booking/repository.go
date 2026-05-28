@@ -49,12 +49,19 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	defer cancel()
 
 	b := &Booking{}
+	// payment_status / payment_method / cash_collected_at are load-bearing
+	// for the customer TrackLive screen: until they're in the response,
+	// the "Pay for this service" CTA never hides after cash resolve and
+	// the State 4a inline chip never renders (caught on first iPhone cash
+	// round-trip — fetchDetail returned with cash_collected_at always nil
+	// because the SELECT didn't include it).
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise,
 		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
 		        accepted_at, en_route_at, arrived_at, started_at, completed_at,
 		        pro_earnings_paise, actual_duration_minutes, customer_rating_pending,
+		        payment_status, payment_method, cash_collected_at,
 		        created_at, updated_at
 		 FROM bookings WHERE id = $1`,
 		bookingID,
@@ -65,6 +72,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
 		&b.AcceptedAt, &b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
 		&b.ProEarningsPaise, &b.ActualDurationMinutes, &b.CustomerRatingPending,
+		&b.PaymentStatus, &b.PaymentMethod, &b.CashCollectedAt,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {

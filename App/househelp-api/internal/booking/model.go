@@ -116,6 +116,13 @@ type Booking struct {
 	EndOTPVerifiedAt    *time.Time `json:"end_otp_verified_at,omitempty"`
 	CashCollectedByPro  *string    `json:"cash_collected_by_pro,omitempty"`
 	CashCollectedAt     *time.Time `json:"cash_collected_at,omitempty"`
+	// PaymentStatus + PaymentMethod gate the customer TrackLive payment
+	// states 4a (cash) / 4b (paid online) and the "Pay for this service"
+	// CTA hide. Both nullable because they are unset until either the
+	// Cashfree webhook flips payment_status='paid' (with method='cashfree')
+	// or ResolveCash stamps the cash side (leaves payment_status nil).
+	PaymentStatus       *string    `json:"payment_status,omitempty"`
+	PaymentMethod       *string    `json:"payment_method,omitempty"`
 	// Phase 1 Step 3 — cash settlement tracking (migration 113). Stamped
 	// when an admin clicks "Mark settled" in the CRM, recording the
 	// hand-over of physical cash from the pro to the company.
