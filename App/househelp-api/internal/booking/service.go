@@ -472,6 +472,32 @@ func (s *Service) ResolveCash(ctx context.Context, bookingID, customerID string)
 		log.Warn().Err(oerr).Str("booking_id", bookingID).
 			Msg("[resolve-cash] post-commit end-OTP issuance failed; TrackLive self-heal will retry")
 	}
+
+	// Post-commit PRO push — load-bearing for the cash loop. Without
+	// this, the pro's JobDetail stays on the "waiting for payment"
+	// panel after the customer pays cash; the pro never sees the End
+	// OTP entry UI and can't ask the customer for the code, so the
+	// loop stalls (pro standing in the kitchen, customer staring at
+	// the End OTP card on their screen, neither side moving).
+	//
+	// The pro app's JobDetailScreen subscribes to booking_status_change
+	// for its own bookingID and re-fetches GetJobDetail on receipt;
+	// fresh fetch shows cash_collected_at populated, which flips the
+	// OTP panel from "waiting" into End OTP entry mode.
+	//
+	// Non-fatal: the cash IS resolved + committed at this point. A
+	// failed FCM push must not undo cash_collected_at — the customer
+	// already saw success on their screen and would have no idea their
+	// "successful" cash payment got rolled back. Same discipline as the
+	// post-commit Issue above. The booking-detail fetch on next
+	// foreground / re-mount is the recovery path.
+	if s.notifications != nil {
+		_ = s.notifications.SendData(ctx, *helperID, map[string]string{
+			"type":       "booking_status_change",
+			"booking_id": bookingID,
+			"status":     string(StatusInProgress),
+		})
+	}
 	return nil
 }
 
@@ -1968,21 +1994,38 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, startOT
 		}
 		return fmt.Errorf("start OTP verify: %w", err)
 	}
-	res, err := s.db.Exec(ctx,
+	var customerID string
+	if err := s.db.QueryRow(ctx,
 		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW(),
 		                    start_otp_verified_at = NOW()
-		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'`,
+		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'
+		 RETURNING customer_id::text`,
 		bookingID, helperID,
-	)
-	if err != nil {
+	).Scan(&customerID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("booking not found or cannot be started")
+		}
 		return fmt.Errorf("failed to start booking: %w", err)
-	}
-	if res.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found or cannot be started")
 	}
 	s.analytics.Track(ctx, analytics.EventBookingStarted, helperID, bookingID, nil)
 
 	s.fireWebhook(ctx, webhooks.EventOrderStarted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusInProgress)))
+
+	// Post-commit customer push — booking_status_change so the customer's
+	// TrackLive subscription (pushRouter.ts -> emitShiftEvent ->
+	// TrackLiveScreen.onShiftEvent + ActiveBookingPill.onShiftEvent)
+	// re-fetches GetBookingDetail and flips from "accepted/arrived" UI
+	// into the in_progress payment-CTA layout. Non-fatal: the booking is
+	// already started + committed; a failed FCM push must not undo that.
+	// Same discipline as the post-commit OTP issuance below and the
+	// existing MarkEnRoute / MarkArrived pushes in jobs.go.
+	if s.notifications != nil {
+		_ = s.notifications.SendData(ctx, customerID, map[string]string{
+			"type":       "booking_status_change",
+			"booking_id": bookingID,
+			"status":     string(StatusInProgress),
+		})
+	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
 	return nil
@@ -2305,6 +2348,20 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID, endO
 
 	s.analytics.Track(ctx, analytics.EventBookingCompleted, helperID, bookingID, nil)
 	s.fireWebhook(ctx, webhooks.EventOrderCompleted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusCompleted)))
+
+	// Post-commit customer push — booking_status_change so the customer's
+	// TrackLive subscription re-fetches GetBookingDetail and renders the
+	// completed/rating state (or the customer's home indicator drops the
+	// active-booking pill). Non-fatal: the booking is already completed +
+	// committed; a failed FCM push must not roll that back. Same
+	// discipline as MarkEnRoute / MarkArrived above and StartBooking.
+	if s.notifications != nil {
+		_ = s.notifications.SendData(ctx, customerID, map[string]string{
+			"type":       "booking_status_change",
+			"booking_id": bookingID,
+			"status":     string(StatusCompleted),
+		})
+	}
 
 	mw.SafeGo("booking.complete.increment_jobs", func() {
 		uCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
