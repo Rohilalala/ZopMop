@@ -15,6 +15,7 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
@@ -869,9 +870,24 @@ function PayChip({ kind, amount, styles }: { kind: 'paid' | 'cash'; amount: numb
 // CashCollectBanner — prominent amber gradient banner (State C2 in the
 // mockup). Read-only: pro taps NOTHING here. The cash amount is the
 // booking's net price (amount_paise - discount_paise).
+//
+// Gradient via the SVG overlay pattern PrimaryButton uses
+// (react-native-svg is already a dep — no new package). Matches the
+// mockup's #FFC042 -> #F5A300 -> #E88F00 amber sweep so this banner is
+// unmistakably the loudest thing on the screen when cash is owed.
 function CashCollectBanner({ amount, styles }: { amount: number; styles: ReturnType<typeof createStyles> }) {
   return (
     <View style={styles.cashBanner}>
+      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+        <Defs>
+          <SvgLinearGradient id="cashBannerGrad" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0%" stopColor="#FFC042" />
+            <Stop offset="60%" stopColor="#F5A300" />
+            <Stop offset="100%" stopColor="#E88F00" />
+          </SvgLinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" rx="16" fill="url(#cashBannerGrad)" />
+      </Svg>
       <View style={styles.cashBannerIcon}>
         <Feather name="credit-card" size={22} color="#0D0D0F" />
       </View>
@@ -1187,12 +1203,11 @@ function createStyles(c: ReturnType<typeof useColors>) {
       marginBottom: 4,
     },
     payChipText: { fontFamily: FontFamily.bold, fontSize: 12 },
-    // CashCollectBanner — bold amber. Background uses a flat amber per
-    // the mockup gradient's midpoint (#F5A300) since RN's StyleSheet
-    // doesn't natively support gradients without an extra dep, and the
-    // hard rule on this step is no new deps. Visual difference vs the
-    // gradient is small enough that it doesn't compromise the "this is
-    // the urgent state" affordance.
+    // CashCollectBanner — bold amber gradient via the SVG overlay
+    // pattern PrimaryButton uses (react-native-svg, already a dep).
+    // backgroundColor on the wrapper provides the layout box and serves
+    // as fallback during the SVG initial paint; the SVG <Rect> above
+    // covers it with the real #FFC042 -> #F5A300 -> #E88F00 sweep.
     cashBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1200,6 +1215,7 @@ function createStyles(c: ReturnType<typeof useColors>) {
       padding: 16,
       borderRadius: 16,
       backgroundColor: '#F5A300',
+      overflow: 'hidden',
     },
     cashBannerIcon: {
       width: 42,
