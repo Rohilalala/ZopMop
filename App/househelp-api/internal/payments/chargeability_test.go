@@ -47,13 +47,16 @@ func TestDecideChargeable_TruthTable(t *testing.T) {
 			"the Phase 1 double-charge case the cart used to enable",
 		},
 		{
-			"payment_status='refunded' — block as online-paid for safety",
-			// Defensive: if a booking was paid then refunded, do NOT
-			// re-charge — admin/CRM is the right channel for re-collection.
-			// Returns Chargeable today; flag this row for an explicit
-			// review when refund handling is revisited.
-			&refundedStatus, nil, Chargeable,
-			"refunded state isn't currently blocked; admin reconciliation path applies",
+			"payment_status='refunded' — block; admin-only re-collection",
+			// Refunded means the transaction was deliberately unwound
+			// (dispute, post-pay cancellation, Step 3 cash-conflict
+			// auto-refund, admin correction). Self-service re-charge is
+			// the wrong channel — re-collection must route through
+			// admin/CRM. The booking error code is distinct so the
+			// frontend can tell the customer the truth: this isn't
+			// "already paid", this is "refunded — contact support".
+			&refundedStatus, nil, BlockedRefunded,
+			"refunded state requires admin reconciliation, not customer self-recharge",
 		},
 		{
 			"cash_collected_at set — block",
@@ -81,9 +84,13 @@ func TestDecideChargeable_PureFunctionStability(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	paid := "paid"
+	refunded := "refunded"
 	for i := 0; i < 100; i++ {
 		if got := DecideChargeable(&paid, nil); got != BlockedAlreadyPaidOnline {
 			t.Fatalf("paid iter %d: got %v, want BlockedAlreadyPaidOnline", i, got)
+		}
+		if got := DecideChargeable(&refunded, nil); got != BlockedRefunded {
+			t.Fatalf("refunded iter %d: got %v, want BlockedRefunded", i, got)
 		}
 		if got := DecideChargeable(nil, &now); got != BlockedAlreadyPaidCash {
 			t.Fatalf("cash iter %d: got %v, want BlockedAlreadyPaidCash", i, got)

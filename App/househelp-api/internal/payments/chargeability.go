@@ -21,7 +21,8 @@ type PaymentChargeability int
 const (
 	// Chargeable — no resolved payment exists; the order may proceed.
 	// This includes unpaid bookings (the legitimate "settle a stranded
-	// completed-unpaid booking from Bookings list" path).
+	// completed-unpaid booking from Bookings list" path) and prior
+	// failed attempts (user retry is legit).
 	Chargeable PaymentChargeability = iota
 	// BlockedAlreadyPaidOnline — bookings.payment_status='paid'.
 	// Cashfree webhook or wallet path already settled this booking.
@@ -31,6 +32,13 @@ const (
 	// Customer's ResolveCash already recorded the cash. Caller maps
 	// to 409 ALREADY_PAID_CASH.
 	BlockedAlreadyPaidCash
+	// BlockedRefunded — bookings.payment_status='refunded'. The
+	// transaction was deliberately unwound (dispute, post-pay
+	// cancellation, Step 3 cash-conflict auto-refund, an admin
+	// correction). Re-collection through the self-service flow is the
+	// WRONG channel — it must route through admin/CRM. Caller maps to
+	// 409 BOOKING_REFUNDED with copy that names the right next step.
+	BlockedRefunded
 )
 
 // DecideChargeable is the pure-function decision used by
@@ -38,16 +46,27 @@ const (
 // Cashfree order. paymentStatus + cashCollectedAt come from a single
 // SELECT against bookings; nil means the column is NULL.
 //
-// Precedence: cash wins over online. If both flags were ever set
-// (defensively, should never happen — backend writes guard against
-// it), the cash path is the more specific failure mode (a pro
-// physically holds the money) and should be surfaced.
+// Precedence:
+//   1. cash_collected_at wins over everything else — a pro physically
+//      holds the money. Most specific failure mode.
+//   2. payment_status='paid' — settled via gateway or wallet.
+//   3. payment_status='refunded' — admin reconciliation only.
+//   4. otherwise (NULL / pending / failed) — Chargeable.
+//
+// The two block ordering (cash before paid) is defensive: if both flags
+// were ever set (shouldn't happen — backend writes guard against it),
+// cash is the more specific failure to surface.
 func DecideChargeable(paymentStatus *string, cashCollectedAt *time.Time) PaymentChargeability {
 	if cashCollectedAt != nil {
 		return BlockedAlreadyPaidCash
 	}
-	if paymentStatus != nil && *paymentStatus == "paid" {
-		return BlockedAlreadyPaidOnline
+	if paymentStatus != nil {
+		switch *paymentStatus {
+		case "paid":
+			return BlockedAlreadyPaidOnline
+		case "refunded":
+			return BlockedRefunded
+		}
 	}
 	return Chargeable
 }

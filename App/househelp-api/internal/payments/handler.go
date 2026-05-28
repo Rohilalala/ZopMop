@@ -481,6 +481,12 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 	case BlockedAlreadyPaidCash:
 		return errResp(c, fiber.StatusConflict, "already_paid_cash",
 			"booking has already been settled in cash")
+	case BlockedRefunded:
+		// Refunded bookings can only be re-collected through admin /
+		// CRM. The self-service Cashfree flow refuses to open a new
+		// order here. Frontend should surface a contact-support CTA.
+		return errResp(c, fiber.StatusConflict, "booking_refunded",
+			"this booking was refunded — contact support to re-collect")
 	}
 
 	netPaise := amountPaise - discountPaise
