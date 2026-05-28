@@ -114,8 +114,8 @@ export default function ChatScreen() {
     }
   }, [draft, sending, token, bookingId, myId]);
 
-  const headerName = helperName ?? 'Your pro';
-  const headerInitial = headerName[0].toUpperCase();
+  const headerName = (helperName && helperName.trim().length > 0) ? helperName : 'Your pro';
+  const headerInitial = (headerName[0] ?? '?').toUpperCase();
 
   return (
     <View style={styles.root}>

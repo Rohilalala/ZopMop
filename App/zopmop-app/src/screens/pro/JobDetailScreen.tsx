@@ -27,9 +27,6 @@ import {
   jobStart,
   listBookingServices,
   getJobDetail,
-  startService,
-  completeService,
-  skipService,
   fetchCustomerContact,
   type CustomerContact,
   type JobServiceLine,
@@ -387,58 +384,10 @@ export default function JobDetailScreen() {
     ]);
   }
 
-  async function tapServiceStart(s: JobServiceLine) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await startService(bookingID, s.id);
-      await refresh();
-    } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function tapServiceComplete(s: JobServiceLine) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await completeService(bookingID, s.id);
-      haptics.light();
-      await refresh();
-    } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function tapServiceSkip(s: JobServiceLine) {
-    Alert.prompt
-      ? // iOS supports Alert.prompt for free-text input
-        Alert.prompt(
-          t('jobDetail.skipReasonTitle'),
-          undefined,
-          async (reason: string) => {
-            try {
-              await skipService(bookingID, s.id, reason ?? '');
-              await refresh();
-            } catch (e: any) {
-              showError(e?.message ?? t('common.error'));
-            }
-          },
-        )
-      : (async () => {
-          // Android fallback: skip without a reason.
-          try {
-            await skipService(bookingID, s.id, '');
-            await refresh();
-          } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
-          }
-        })();
-  }
+  // Per-service Start / Skip handlers were removed when the row-level
+  // progress UI was dropped (booking-level Finish-job + End OTP is the
+  // only completion path now). CompleteBooking auto-flushes pending
+  // booking_services rows to 'completed' (service.go:2280).
 
   // Status set that the server-side guard allows. Keep this in sync with
   // the backend RevealCustomerContact switch — drift means the button
@@ -598,15 +547,11 @@ export default function JobDetailScreen() {
             onEndSubmit={handleEndSubmit}
             onContactSupport={tapContactSupport}
             bookingID={bookingID}
-            onServiceStart={tapServiceStart}
-            onServiceComplete={tapServiceComplete}
-            onServiceSkip={tapServiceSkip}
           />
         ) : (
           renderStateBody(detail, services, {
             c, styles, busy, gpsNearby,
             tapEnRoute, tapArrived, tapStart, tapFinish,
-            tapServiceStart, tapServiceComplete, tapServiceSkip,
             onCancelBooking: () =>
               startProBookingCancel({
                 bookingId: bookingID,
@@ -705,7 +650,6 @@ function InProgressBody({
   detail, services, c, styles, busy,
   endOtp, endOtpError, endOtpLockedOut, endOtpPaymentNotResolved,
   onEndOtpChange, onEndSubmit, onContactSupport, bookingID,
-  onServiceStart, onServiceComplete, onServiceSkip,
 }: {
   detail: JobDetail;
   services: JobServiceLine[];
@@ -720,9 +664,6 @@ function InProgressBody({
   onEndSubmit: () => void;
   onContactSupport: () => void;
   bookingID: string;
-  onServiceStart: (s: JobServiceLine) => void;
-  onServiceComplete: (s: JobServiceLine) => void;
-  onServiceSkip: (s: JobServiceLine) => void;
 }) {
   const elapsedMin = detail.started_at
     ? Math.max(0, Math.floor((Date.now() - new Date(detail.started_at).getTime()) / 60_000))
@@ -755,16 +696,11 @@ function InProgressBody({
         <Text style={styles.elapsedValue}>{elapsedMin} min</Text>
       </View>
       <View style={styles.taskList}>
-        {services.map((s) => (
+        {services.map((s, idx) => (
           <ServiceRow
-            key={s.id}
+            key={s.id || `svc-${idx}`}
             service={s}
-            colors={c}
             styles={styles}
-            busy={busy}
-            onStart={() => onServiceStart(s)}
-            onComplete={() => onServiceComplete(s)}
-            onSkip={() => onServiceSkip(s)}
           />
         ))}
       </View>
@@ -985,9 +921,6 @@ interface RenderArgs {
   tapArrived: () => void;
   tapStart: () => void;
   tapFinish: () => void;
-  tapServiceStart: (s: JobServiceLine) => void;
-  tapServiceComplete: (s: JobServiceLine) => void;
-  tapServiceSkip: (s: JobServiceLine) => void;
   onCancelBooking: () => void;
 }
 
@@ -1074,51 +1007,22 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
   );
 }
 
+// ServiceRow — display-only since per-row progress tracking was removed.
+// Cleaning bookings finish at the booking level (End OTP); rows here are
+// a "what's included" list, not a checklist. CompleteBooking auto-flushes
+// any non-terminal rows to 'completed' (service.go:2280) so the pro never
+// needs to mark them by hand.
 function ServiceRow({
-  service, colors, styles, busy, onStart, onComplete, onSkip,
+  service, styles,
 }: {
   service: JobServiceLine;
-  colors: ReturnType<typeof useColors>;
   styles: ReturnType<typeof createStyles>;
-  busy: boolean;
-  onStart: () => void;
-  onComplete: () => void;
-  onSkip: () => void;
 }) {
-  const isCompleted = service.status === 'completed';
-  const isSkipped = service.status === 'skipped';
-  const isStruck = isCompleted || isSkipped;
-
   return (
     <View style={styles.serviceRow}>
-      <View style={{ flex: 1, gap: 4 }}>
-        <Text style={[styles.serviceName, isStruck && styles.serviceStruck]}>
-          {service.duration_minutes}min · {service.quantity}×
-        </Text>
-        {isSkipped && (
-          <Text style={styles.skippedTag}>{t('jobDetail.serviceSkippedLabel')}</Text>
-        )}
-      </View>
-      {isCompleted && <Feather name="check-circle" size={20} color={colors.success} />}
-      {!isStruck && service.status === 'pending' && (
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity
-            style={styles.servicePrimary}
-            onPress={onStart}
-            disabled={busy}
-          >
-            <Text style={styles.servicePrimaryText}>{t('jobDetail.serviceStart')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.serviceSkipBtn} onPress={onSkip} disabled={busy}>
-            <Text style={styles.serviceSkipText}>{t('jobDetail.serviceSkip')}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-      {service.status === 'in_progress' && (
-        <TouchableOpacity style={styles.servicePrimary} onPress={onComplete} disabled={busy}>
-          <Text style={styles.servicePrimaryText}>{t('jobDetail.serviceDone')}</Text>
-        </TouchableOpacity>
-      )}
+      <Text style={styles.serviceName}>
+        {service.duration_minutes}min · {service.quantity}×
+      </Text>
     </View>
   );
 }

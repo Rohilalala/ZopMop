@@ -172,18 +172,22 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 12,
+    gap: 8,
     marginVertical: 6,
   },
+  // 48 × 60 boxes + 8 gap = 6*48 + 5*8 = 328 px total. Fits inside the
+  // pro-side address card (paddingHorizontal: Spacing.lg → ~24 each side)
+  // on the narrowest phone we support (~360 dp). Mockup spec was 56 × 64;
+  // shrunk to keep 6 boxes inside the card without overflow.
   box: {
-    width: 56,
-    height: 64,
-    borderRadius: 14,
+    width: 48,
+    height: 60,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   digit: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
     letterSpacing: -0.5,
   },
