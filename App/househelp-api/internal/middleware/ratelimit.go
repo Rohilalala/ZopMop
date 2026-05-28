@@ -56,9 +56,19 @@ var (
 	BookingCreateRateLimit = RateLimitConfig{MaxRequests: 3, Window: time.Minute, FailureMode: "local-fallback"}
 )
 
-// init relaxes PublicRateLimit when running in development. APP_ENV takes
-// precedence over the legacy ENV variable, matching pkg/config's resolution
-// order. Production values are never modified — the env check is the gate.
+// init relaxes the per-IP / per-user limiters when running in development.
+// APP_ENV takes precedence over the legacy ENV variable, matching pkg/config's
+// resolution order. Production values are never modified — the env check is
+// the gate.
+//
+// Why the extra limits get bumped: on a real-device dev install (e.g. iPhone
+// pointed at the host Mac), every customer request lands at the backend from
+// the docker bridge IP (192.168.65.1 on Docker Desktop). The phone fans out
+// many endpoints in parallel on a single screen mount (bookings list + cart +
+// addresses + insights + WS auth + OTP), and the Sensitive + Auth limiters
+// fail-closed at 20/min and 100/min respectively. A single sign-in burst can
+// exhaust both within seconds, and MyBookings stays on the skeleton loader
+// because the list call is 429'd.
 func init() {
 	env := os.Getenv("APP_ENV")
 	if env == "" {
@@ -66,6 +76,9 @@ func init() {
 	}
 	if env == "development" {
 		PublicRateLimit.MaxRequests = 10000
+		SensitivePublicRateLimit.MaxRequests = 10000
+		AuthRateLimit.MaxRequests = 10000
+		BookingCreateRateLimit.MaxRequests = 1000
 	}
 }
 

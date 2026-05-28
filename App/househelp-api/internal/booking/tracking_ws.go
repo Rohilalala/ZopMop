@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/middleware"
@@ -71,7 +72,20 @@ func upgradeCheck(c *fiber.Ctx) error {
 	}
 	// Stash bookingID for the websocket handler — c.Params is not available
 	// once the connection is upgraded.
-	c.Locals("track_booking_id", c.Params("id"))
+	//
+	// IMPORTANT: c.Params() returns a string that aliases fiber's request
+	// context buffer. The buffer is recycled when the request context is
+	// pooled — but the websocket handler runs in a new goroutine that reads
+	// from c.Locals long after this fasthttp request handler returns. By
+	// that time the buffer may have been reused by another in-flight
+	// request, corrupting bookingID at random (observed on iPhone real-
+	// device testing: booking_id arrived as "roups/me-06c7-…",
+	// "nearby39-06c7-…", etc., with the first 8 chars overwritten by
+	// fragments of unrelated URLs the same worker was handling).
+	//
+	// strings.Clone copies into a fresh allocation that outlives the
+	// request context pool.
+	c.Locals("track_booking_id", strings.Clone(c.Params("id")))
 	return c.Next()
 }
 
