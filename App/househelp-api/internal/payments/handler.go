@@ -419,17 +419,29 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 	ctx, cancel := context.WithTimeout(c.UserContext(), 15*time.Second)
 	defer cancel()
 
-	// Load booking + verify ownership + status.
+	// Load booking + verify ownership + status + payment state.
+	// Phase 1 (Step 5d.1 cart cleanup): payment_status + cash_collected_at
+	// added so DecideChargeable can block double-charge at the API
+	// level — the load-bearing guard against opening a second order
+	// for a booking that has already been paid online or settled in
+	// cash. Whatever any frontend does, this guard makes the
+	// double-charge impossible.
 	var (
 		bookingCustomerID string
 		amountPaise       int64
 		discountPaise     int64
 		status            string
+		paymentStatus     *string
+		cashCollectedAt   *time.Time
 	)
 	err := h.db.QueryRow(ctx, `
-		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), status
+		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), status,
+		       payment_status, cash_collected_at
 		FROM bookings WHERE id = $1::uuid
-	`, bookingID).Scan(&bookingCustomerID, &amountPaise, &discountPaise, &status)
+	`, bookingID).Scan(
+		&bookingCustomerID, &amountPaise, &discountPaise, &status,
+		&paymentStatus, &cashCollectedAt,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errResp(c, fiber.StatusNotFound, "booking_not_found", "booking not found")
@@ -441,8 +453,10 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 		return errResp(c, fiber.StatusForbidden, "not_owner", "booking does not belong to caller")
 	}
 	switch status {
-	case "pending", "accepted":
-		// OK to charge.
+	case "pending", "accepted", "in_progress":
+		// OK to charge. 'in_progress' admitted for Phase 1 (customer
+		// pays at end of service while the booking is still
+		// in_progress — see docs/phase-1-payment-gated-flow.md).
 	case "completed":
 		return errResp(c, fiber.StatusConflict, "already_completed",
 			"booking already completed")
@@ -451,6 +465,22 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 	default:
 		return errResp(c, fiber.StatusConflict, "bad_status",
 			fmt.Sprintf("booking in status %s cannot be charged", status))
+	}
+
+	// Phase 1 Step 5d.1 — chargeability guard. Closes the
+	// double-charge window: even if a frontend forgets the lock rule
+	// (or a malicious caller bypasses it), the backend refuses to
+	// open a second Cashfree order against a booking that has
+	// already been paid online or settled in cash. The Chargeable
+	// branch admits unpaid bookings so the kept PaymentScreen
+	// settle-a-stranded-booking path still works.
+	switch DecideChargeable(paymentStatus, cashCollectedAt) {
+	case BlockedAlreadyPaidOnline:
+		return errResp(c, fiber.StatusConflict, "already_paid_online",
+			"booking has already been paid online")
+	case BlockedAlreadyPaidCash:
+		return errResp(c, fiber.StatusConflict, "already_paid_cash",
+			"booking has already been settled in cash")
 	}
 
 	netPaise := amountPaise - discountPaise
