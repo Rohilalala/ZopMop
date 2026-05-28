@@ -82,17 +82,29 @@ type devSeedStateResp struct {
 // the shared-secret header.
 func RegisterDevSeedRoutes(router fiber.Router, db *pgxpool.Pool, otpSvc *otp.Service, notif Notifier) {
 	h := &devSeedHandler{db: db, otpSvc: otpSvc, notif: notif}
-	dev := router.Group("/dev", devGateMiddleware)
+	// Group prefix is "/dev-seed" not "/dev" because fiber's group
+	// matching is path-prefix not segment-boundary; "/dev" would
+	// intercept the unrelated /devices/register route and bounce all
+	// FCM registrations with this middleware (caught empirically on
+	// the iPhone install — push register failed: 404).
+	dev := router.Group("/dev-seed", devGateMiddleware)
 	dev.Post("/seed-helper", h.seedHelper)
 	dev.Post("/bookings/:id/seed-state", h.seedState)
-	log.Warn().Msg("[dev-seed] DEV seed endpoints ARMED at /api/v1/dev/* — build tag `dev` is present. This MUST NOT be a prod binary.")
+	log.Warn().Msg("[dev-seed] DEV seed endpoints ARMED at /api/v1/dev-seed/* — build tag `dev` is present. This MUST NOT be a prod binary.")
 }
 
 // devGateMiddleware enforces gates (2) APP_ENV=development and (3)
 // X-Dev-Seed-Key matches env DEV_SEED_KEY. Gate (1) is enforced by
 // the build tag on this file.
 func devGateMiddleware(c *fiber.Ctx) error {
-	if os.Getenv("APP_ENV") != "development" {
+	// Accept either APP_ENV or ENV — matches the precedence in
+	// pkg/config/config.go:101 (APP_ENV first, then ENV). The
+	// .env.local that ships with the repo only sets ENV.
+	appEnv := os.Getenv("APP_ENV")
+	if appEnv == "" {
+		appEnv = os.Getenv("ENV")
+	}
+	if appEnv != "development" {
 		// 404 on purpose — the endpoint should appear nonexistent.
 		return c.SendStatus(http.StatusNotFound)
 	}
