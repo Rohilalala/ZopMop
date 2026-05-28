@@ -26,7 +26,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { useTheme } from '../../context/ThemeContext';
+import { useColors, useTheme } from '../../context/ThemeContext';
 
 export interface OTPInputProps {
   /** Total digit count. Backend issues 6-digit codes; default 6. */
@@ -60,6 +60,12 @@ export function OTPInput({
   autoFocus = true,
   style,
 }: OTPInputProps) {
+  // Theme access in Phase 1 uses useColors() for semantic tokens and
+  // useTheme().isDark only where a raw boolean is needed (here, for
+  // picking between the two mockup tint variants that don't map to
+  // current useColors() vocabulary — see
+  // App/househelp-api/docs/phase-1-payment-gated-flow.md).
+  const c = useColors();
   const { isDark } = useTheme();
   const inputRef = useRef<TextInput | null>(null);
 
@@ -90,15 +96,18 @@ export function OTPInput({
 
   const focus = () => inputRef.current?.focus();
 
-  // Box backgrounds + borders branch on (filled, active, error) state. We
-  // build them inline rather than via StyleSheet so the colour decisions
-  // are obvious to a reviewer comparing against the mockup.
+  // Box backgrounds + borders branch on (filled, active, error) state.
+  // The glass / amber-tint literals here are mockup-spec tints not
+  // present in the current useColors() vocabulary; they migrate to
+  // useC().glass / amberSoft / amberLine etc. when the appearance-
+  // toast branch lands. Tracked in phase-1-payment-gated-flow.md.
   const idleBg = isDark ? 'rgba(255,255,255,0.045)' : '#FFFFFF';
   const idleBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.10)';
   const filledBg = isDark ? 'rgba(245,163,0,0.06)' : '#FFF8EA';
   const amber = '#F5A300';
   const errorBorder = '#F87171';
-  const digitColor = isDark ? '#FFFFFF' : '#0D0D0F';
+  // Digit color IS a semantic token, so it comes from useColors().
+  const digitColor = c.text;
 
   return (
     <TouchableWithoutFeedback onPress={focus}>
