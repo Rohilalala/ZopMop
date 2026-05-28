@@ -79,6 +79,41 @@ The React screens for these endpoints in `App/zopmop-crm/` are Step
 deferred. Until 3.B lands, the founder hits the endpoints directly
 each evening for reconciliation.
 
+## Deployment coupling — MANDATORY merge order
+
+The Phase 1 backend (Steps 0-3) turns `POST /bookings/:id/start` and
+`POST /bookings/:id/complete` into hard OTP gates (Step 1). The
+`/pro/jobs/:id/start|complete` aliases share the same handler.
+
+Any pro-app build that pre-dates Step 4 sends NO request body to those
+endpoints. Under the Phase 1 backend it gets `400 OTP_REQUIRED`. **A
+booking in flight when the backend ships strands its pro** — they
+cannot start, cannot complete, and the toast is unactionable.
+
+**Required merge order**, no exceptions:
+
+1. Ship the new pro app (Step 4 + Step 5 of Phase 1) to **every** pro
+   first. Force-update the app on launch so older builds cannot
+   reach the production backend after the gate flips. App-store
+   release windows + a `min_app_version` server-side check
+   (already-existing pattern in this app) gate the cutover.
+
+2. **Only then** merge `feature/otp-namespace-separation` (backend
+   Steps 0-3) → `develop` → `main`. Railway picks up `main`.
+
+3. Verify zero in-flight bookings on the old pro-app build (or treat
+   the small residual cohort as known acceptable churn, with support
+   manually unblocking via the existing CRM mark-complete escape).
+
+Reverse order = silent regression for any pro who hasn't updated
+their app. Do NOT merge the backend ahead of the pro release.
+
+The customer-app changes (Step 5) have the same property to a lesser
+degree: an OLD customer build won't render the Start OTP / End OTP /
+payment-choice surface, so the customer can't complete their side of
+the flow. Same cutover discipline applies — pro AND customer apps
+ship first, backend merges last.
+
 ## Known, accepted risks (pilot)
 
 ### 1. Matched-but-never-paid pro time
