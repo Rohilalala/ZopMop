@@ -17,7 +17,7 @@ type Props = {
   testID?: string;
 };
 
-const DEFAULT_LOTTIE = require('../../assets/animation/lookaway.lottie');
+const DEFAULT_LOTTIE = require('../../assets/animation/lookaway.json');
 
 export function EmptyState({
   title,

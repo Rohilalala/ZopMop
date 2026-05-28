@@ -135,7 +135,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       <View style={styles.lottie} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/phone.lottie')}
+          source={require('../../../assets/animation/phone.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
