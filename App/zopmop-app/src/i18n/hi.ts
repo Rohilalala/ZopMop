@@ -16,6 +16,7 @@ type LangDict = {
   language: Record<string, string>;
   offer: Record<string, string>;
   jobDetail: Record<string, string>;
+  jobStuck: Record<string, string>;
 };
 
 const hi: LangDict = {
@@ -198,6 +199,9 @@ const hi: LangDict = {
     callUnavailable: 'Contact नहीं ले सकते अभी',
     callNetworkError: 'Network issue. कृपया दोबारा try करें',
   },
+  // Phase 1 Step 4d — Hindi keys land before pilot widens; English
+  // falls through via Record<string,string> until then.
+  jobStuck: {},
 };
 
 export default hi;

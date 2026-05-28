@@ -340,18 +340,15 @@ export default function JobDetailScreen() {
     }
   }
 
-  // tel:${SUPPORT_PHONE} matches the existing pattern in
-  // ProProfileScreen.tsx / ZoneApprovalRequestScreen.tsx. Booking ID is
-  // surfaced near the link (rendered in the panel) so the pro can read
-  // it to support during the call — there's no pre-fill mechanism for a
-  // tel: URI. The State E screen (Step 4d) will surface the booking ID
-  // more prominently; for 4c the panel's existing header is enough.
+  // Phase 1 Step 4d — Contact Support now navigates to JobStuckScreen
+  // (State E) instead of dialling tel: directly. That screen displays
+  // the booking ID centrally so the pro has it on screen before the
+  // call connects — there is no pre-fill mechanism on tel: URIs, so
+  // the pro must read the booking ID aloud to support. Dialling
+  // directly from here would race the pro into a call without the ID
+  // visible.
   function tapContactSupport() {
-    const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
-    const tel = `tel:${SUPPORT_PHONE}`;
-    Linking.canOpenURL(tel).then((ok) => {
-      if (ok) Linking.openURL(tel).catch(() => { /* ignore */ });
-    });
+    navigation.navigate('JobStuck', { booking_id: bookingID });
   }
 
   // tapStart kept as a no-op shim so renderStateBody's RenderArgs type

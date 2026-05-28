@@ -202,6 +202,18 @@ const en: Dict = {
     contactSupport: 'Contact support',
     contactSupportPrompt: 'Trouble finishing? Contact support',
     finishJob: 'Finish job',
+  },
+  // Phase 1 Step 4d — State E "stuck job" support screen.
+  jobStuck: {
+    headerTitle: 'Need help',
+    title: 'Stuck on this job?',
+    subtitle:
+      "We'll help finish it. Call support and read your booking number out loud — they'll take it from there.",
+    bookingLabel: 'Booking',
+    bookingHelp: 'Read this number to support during the call.',
+    callSupport: 'Call support',
+    fineprint:
+      "Support can close this booking on your behalf if the customer can't pay. Your time is still recorded for payroll.",
     finishConfirmTitle: 'Finish job?',
     finishConfirmBody: 'Are you sure you want to finish?',
     elapsedLabel: 'Elapsed',

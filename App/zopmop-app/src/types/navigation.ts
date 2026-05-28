@@ -86,6 +86,14 @@ export type MainStackParamList = {
   LanguageToggle: undefined;
   JobOffer: { booking_id: string };
   JobDetail: { booking_id: string };
+  // Phase 1 Step 4d — State E "stuck job" help screen. Reached from the
+  // ContactSupportLink in the OTP entry panels when a pro is stuck
+  // (lockout / customer won't pay / End OTP never unlocks). Central
+  // booking-ID display + single tel: support CTA; no cancel affordance
+  // (pro-self-service cancel for in-progress would bypass the unpaid
+  // block — backend now rejects, but the UX shouldn't even imply the
+  // path exists). See docs/phase-1-payment-gated-flow.md.
+  JobStuck: { booking_id: string };
   // ProMatched / ProActive / ProScheduledInvite retired in Phase 10.
   // Replaced by JobDetail + JobOffer below. Screens archived at
   // _legacy/pro_legacy_screens/.

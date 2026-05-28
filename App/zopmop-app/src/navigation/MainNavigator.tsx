@@ -28,6 +28,7 @@ import ProMoneyScreen from '../screens/pro/ProMoneyScreen';
 import LanguageToggleScreen from '../screens/pro/LanguageToggleScreen';
 import JobOfferScreen from '../screens/pro/JobOfferScreen';
 import JobDetailScreen from '../screens/pro/JobDetailScreen';
+import JobStuckScreen from '../screens/pro/JobStuckScreen';
 import ProNavigator from './ProNavigator';
 import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
@@ -215,6 +216,11 @@ export default function MainNavigator() {
           name="JobDetail"
           component={JobDetailScreen}
           options={{ animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="JobStuck"
+          component={JobStuckScreen}
+          options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
         />
         <Stack.Screen
           name="RoomiesSetup"
