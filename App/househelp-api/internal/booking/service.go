@@ -485,18 +485,26 @@ func (s *Service) ResolveCash(ctx context.Context, bookingID, customerID string)
 	// fresh fetch shows cash_collected_at populated, which flips the
 	// OTP panel from "waiting" into End OTP entry mode.
 	//
-	// Non-fatal: the cash IS resolved + committed at this point. A
-	// failed FCM push must not undo cash_collected_at — the customer
-	// already saw success on their screen and would have no idea their
-	// "successful" cash payment got rolled back. Same discipline as the
-	// post-commit Issue above. The booking-detail fetch on next
-	// foreground / re-mount is the recovery path.
+	// Non-fatal but observable: the cash IS resolved + committed at this
+	// point. A failed FCM push must not undo cash_collected_at — the
+	// customer already saw success on their screen and would have no
+	// idea their "successful" cash payment got rolled back. Same
+	// discipline as the post-commit Issue above. The booking-detail
+	// fetch on next foreground / re-mount is the recovery path. We log
+	// the failure rather than swallow it so a broken FCM path
+	// (expired credentials, bad token mapping) surfaces in the
+	// aggregator instead of silently leaving handsets out of sync.
 	if s.notifications != nil {
-		_ = s.notifications.SendData(ctx, *helperID, map[string]string{
+		if perr := s.notifications.SendData(ctx, *helperID, map[string]string{
 			"type":       "booking_status_change",
 			"booking_id": bookingID,
 			"status":     string(StatusInProgress),
-		})
+		}); perr != nil {
+			log.Warn().Err(perr).
+				Str("booking_id", bookingID).
+				Str("helper_id", *helperID).
+				Msg("[resolve-cash] post-commit booking_status_change push to pro failed; JobDetail will refresh on next focus")
+		}
 	}
 	return nil
 }
@@ -2015,16 +2023,23 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, startOT
 	// TrackLive subscription (pushRouter.ts -> emitShiftEvent ->
 	// TrackLiveScreen.onShiftEvent + ActiveBookingPill.onShiftEvent)
 	// re-fetches GetBookingDetail and flips from "accepted/arrived" UI
-	// into the in_progress payment-CTA layout. Non-fatal: the booking is
-	// already started + committed; a failed FCM push must not undo that.
-	// Same discipline as the post-commit OTP issuance below and the
-	// existing MarkEnRoute / MarkArrived pushes in jobs.go.
+	// into the in_progress payment-CTA layout. Non-fatal but observable:
+	// the booking is already started + committed; a failed FCM push must
+	// not undo that, but we log so a broken FCM path surfaces in the
+	// aggregator instead of silently leaving customers stuck on the
+	// accepted screen. Same discipline as the post-commit OTP issuance
+	// below and the existing MarkEnRoute / MarkArrived pushes in jobs.go.
 	if s.notifications != nil {
-		_ = s.notifications.SendData(ctx, customerID, map[string]string{
+		if perr := s.notifications.SendData(ctx, customerID, map[string]string{
 			"type":       "booking_status_change",
 			"booking_id": bookingID,
 			"status":     string(StatusInProgress),
-		})
+		}); perr != nil {
+			log.Warn().Err(perr).
+				Str("booking_id", bookingID).
+				Str("customer_id", customerID).
+				Msg("[start-booking] post-commit booking_status_change push to customer failed; TrackLive will refresh on next focus")
+		}
 	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
@@ -2352,15 +2367,23 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID, endO
 	// Post-commit customer push — booking_status_change so the customer's
 	// TrackLive subscription re-fetches GetBookingDetail and renders the
 	// completed/rating state (or the customer's home indicator drops the
-	// active-booking pill). Non-fatal: the booking is already completed +
-	// committed; a failed FCM push must not roll that back. Same
-	// discipline as MarkEnRoute / MarkArrived above and StartBooking.
+	// active-booking pill). Non-fatal but observable: the booking is
+	// already completed + committed; a failed FCM push must not roll
+	// that back, but we log so a broken FCM path surfaces in the
+	// aggregator instead of silently leaving the customer stuck on the
+	// End OTP card. Same discipline as MarkEnRoute / MarkArrived above
+	// and StartBooking.
 	if s.notifications != nil {
-		_ = s.notifications.SendData(ctx, customerID, map[string]string{
+		if perr := s.notifications.SendData(ctx, customerID, map[string]string{
 			"type":       "booking_status_change",
 			"booking_id": bookingID,
 			"status":     string(StatusCompleted),
-		})
+		}); perr != nil {
+			log.Warn().Err(perr).
+				Str("booking_id", bookingID).
+				Str("customer_id", customerID).
+				Msg("[complete-booking] post-commit booking_status_change push to customer failed; TrackLive will refresh on next focus")
+		}
 	}
 
 	mw.SafeGo("booking.complete.increment_jobs", func() {
