@@ -65,6 +65,36 @@ At scale this becomes a real audit gap and the model needs a different
 proof (e.g. pro confirms receipt in their app, customer + pro both
 acknowledge, signed digital receipt). Not now.
 
+## Theme-hook convention — Phase 1 uses useColors()
+
+Phase 1 frontend (pro app Step 4, customer app Step 5) uses
+`useColors()` from `src/context/ThemeContext` for all semantic token
+access. `useTheme().isDark` is used ONLY where a raw boolean is
+genuinely needed (e.g. choosing a `StatusBar` `barStyle`, or picking
+between dark/light tint variants that don't map to any current
+`useColors()` token).
+
+A second theme hook, `useC()` from `src/theme/screen.ts`, exists on
+`feature/appearance-and-location-toast` (unmerged). It expands the
+vocabulary with glass, amber-soft, amber-line, etc. tokens that the
+Phase 1 mockups reference directly. `useC()` is NOT available on the
+Phase 1 lineage (`develop` → `feature/otp-namespace-separation` →
+`feature/pro-app-two-otp-flow`), so Phase 1 sticks with `useColors()`
+plus literal mockup tints where the vocabulary gap matters (see
+`src/components/ui/OTPInput.tsx`).
+
+**Non-blocking tech debt.** Functionally `useColors()` works and is
+fully theme-aware. The only cost is two theme hooks coexisting in the
+codebase. If `feature/appearance-and-location-toast` merges to
+`develop`, the migration is mechanical:
+
+- Rename `useColors()` callsites to `useC()` (callable from anywhere)
+- Replace literal tint constants with `useC().glass`,
+  `useC().amberSoft`, `useC().amberLine` etc.
+
+If the toast-branch never merges, `useColors()` stays — it works.
+There is no migration blocker either way.
+
 ## CRM cash UI (Step 3.B)
 
 The `internal/crm/cash` package exposes:
