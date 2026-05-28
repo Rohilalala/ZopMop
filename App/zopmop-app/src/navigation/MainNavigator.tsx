@@ -38,6 +38,7 @@ import RoomiesWelcomeScreen from '../screens/main/RoomiesWelcomeScreen';
 import ManageHouseholdScreen from '../screens/main/ManageHouseholdScreen';
 import BookingConfirmedScreen from '../screens/main/BookingConfirmedScreen';
 import TrackLiveScreen from '../screens/main/TrackLiveScreen';
+import EndOfServicePaymentScreen from '../screens/main/EndOfServicePaymentScreen';
 import ChatScreen from '../screens/main/ChatScreen';
 import TipScreen from '../screens/main/TipScreen';
 import ReferralEarnScreen from '../screens/main/ReferralEarnScreen';
@@ -158,6 +159,11 @@ export default function MainNavigator() {
           name="ActiveBooking"
           component={TrackLiveScreen}
           options={{ animation: 'fade', gestureEnabled: false }}
+        />
+        <Stack.Screen
+          name="EndOfServicePayment"
+          component={EndOfServicePaymentScreen}
+          options={{ animation: 'slide_from_bottom', presentation: 'modal', gestureEnabled: true }}
         />
         <Stack.Screen
           name="Pro"

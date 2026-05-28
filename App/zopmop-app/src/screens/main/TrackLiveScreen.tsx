@@ -22,6 +22,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity as TouchableOpacityRN,
   View,
   type TextStyle,
 } from 'react-native';
@@ -43,6 +44,7 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
+import EndCodeCard from '../../components/payment/EndCodeCard';
 import { useAuth } from '../../context/AuthContext';
 import {
   getBookingTrackingWsUrl,
@@ -776,8 +778,12 @@ export default function TrackLiveScreen() {
               mental-model cue: payment moved from before-matching to
               end-of-service (Step 1 blast-radius review). Lives on
               the in-progress state so it lands right when the
-              customer might otherwise wonder "have I paid?" */}
-          {subState === 'in_progress' && (
+              customer might otherwise wonder "have I paid?"
+              Hides once payment is resolved (paid OR cash) — the
+              expectation has been met. */}
+          {subState === 'in_progress'
+            && detail?.payment_status !== 'paid'
+            && !detail?.cash_collected_at && (
             <View style={styles.payExpectationCard}>
               <Feather name="info" size={14} color={AMBER} style={{ marginTop: 2 }} />
               <View style={{ flex: 1 }}>
@@ -785,10 +791,68 @@ export default function TrackLiveScreen() {
                   You pay when the service is done
                 </Text>
                 <Text style={[fontMed, styles.payExpectationSub]}>
-                  We'll prompt you to choose Cash or Online once your pro finishes.
+                  When you see your pro packing up, tap below to pay.
                 </Text>
               </View>
             </View>
+          )}
+
+          {/* Phase 1 Step 5d.1 — "Pay for this service" CTA. Calm +
+              available throughout in_progress per the planning gate
+              (pro has no separate done-flag; customer is the one who
+              observes the pro finishing). Hidden once payment
+              resolves — at that point states 4a/4b take over below. */}
+          {subState === 'in_progress'
+            && detail?.payment_status !== 'paid'
+            && !detail?.cash_collected_at && (
+            <TouchableOpacityRN
+              style={styles.payCtaBtn}
+              onPress={() => {
+                if (!bookingId) return;
+                navigation.navigate('EndOfServicePayment', {
+                  bookingId,
+                  amountPaise: detail?.price_paise ?? 0,
+                  helperName: helperName ?? undefined,
+                });
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={[fontExtra, styles.payCtaText]}>
+                Pay for this service
+              </Text>
+              <Feather name="chevron-right" size={16} color="#0D0D0F" />
+            </TouchableOpacityRN>
+          )}
+
+          {/* Phase 1 Step 5d — inline End OTP display after payment
+              resolves. 4a (cash) shows the amber reminder; 4b (paid
+              online) shows the green Paid chip. End code itself
+              renders via the shared EndCodeCard component. */}
+          {subState === 'in_progress' && detail?.payment_status === 'paid' && (
+            <View style={styles.payResolvedChip}>
+              <Feather name="check-circle" size={14} color={GREEN} />
+              <Text style={[fontBold, styles.payResolvedChipText, { color: GREEN }]}>
+                Paid ₹{Math.round((detail.price_paise ?? 0) / 100)}
+              </Text>
+            </View>
+          )}
+          {subState === 'in_progress' && !!detail?.cash_collected_at && detail?.payment_status !== 'paid' && (
+            <View style={[styles.payResolvedChip, { borderColor: 'rgba(245,163,0,0.30)', backgroundColor: 'rgba(245,163,0,0.10)' }]}>
+              <Feather name="credit-card" size={14} color={AMBER} />
+              <Text style={[fontBold, styles.payResolvedChipText, { color: AMBER }]}>
+                Hand ₹{Math.round((detail.price_paise ?? 0) / 100)} to {helperName ? helperName.split(' ')[0] : 'your pro'}
+              </Text>
+            </View>
+          )}
+          {subState === 'in_progress'
+            && (detail?.payment_status === 'paid' || !!detail?.cash_collected_at)
+            && !!tracking?.end_otp_code
+            && tracking.end_otp_code.length > 0 && (
+            <EndCodeCard
+              code={tracking.end_otp_code}
+              label="END CODE"
+              helper={`Read this code to ${helperName ? helperName.split(' ')[0] : 'your pro'} so they can finish up.`}
+            />
           )}
 
           {/* Task checklist — in-progress only. Lists every booking_service
@@ -1658,6 +1722,44 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: 'rgba(255,255,255,0.55)',
     lineHeight: 16,
+  },
+
+  // Phase 1 Step 5d.1 — "Pay for this service" calm CTA.
+  payCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    marginHorizontal: 20,
+    paddingVertical: 16,
+    borderRadius: 14,
+    backgroundColor: '#F5A300',
+  },
+  payCtaText: {
+    fontSize: 15,
+    color: '#0D0D0F',
+    letterSpacing: -0.2,
+  },
+
+  // Phase 1 Step 5d — resolved-payment chip (4a cash / 4b paid).
+  payResolvedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: 12,
+    marginHorizontal: 20,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 99,
+    backgroundColor: 'rgba(34,197,94,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.28)',
+  },
+  payResolvedChipText: {
+    fontSize: 12,
+    letterSpacing: -0.1,
   },
 
   // Step marker

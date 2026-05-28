@@ -63,6 +63,15 @@ export type MainStackParamList = {
     helperLng?: number;
     etaMinutes: number;
   };
+  // Phase 1 Step 5d — end-of-service payment-method choice. Reached
+  // from the "Pay for this service" CTA on TrackLive in_progress
+  // when payment has not yet resolved. Modal presentation; back
+  // returns to TrackLive.
+  EndOfServicePayment: {
+    bookingId: string;
+    amountPaise: number;
+    helperName?: string;
+  };
   /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile). */
   Pro: undefined;
   /** Legacy single-screen routes kept for back-compat with anything that
