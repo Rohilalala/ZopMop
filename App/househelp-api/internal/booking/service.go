@@ -428,13 +428,18 @@ func (s *Service) ResolveCash(ctx context.Context, bookingID, customerID string)
 	// refuse cash. With it, anything older than 2 minutes is treated
 	// as abandoned and falls through to cash, which is the rule
 	// recorded in docs/phase-1-payment-gated-flow.md.
+	// NOTE: the payments table uses `gateway` (text), not `payment_method`
+	// — caught empirically on the first iPhone cash test (SQLSTATE 42703).
+	// The bookings table has payment_method; payments has gateway. Easy
+	// confusion because the chargeability guard reads payment_method off
+	// bookings a few hundred lines up.
 	var pendingExists bool
 	if err := tx.QueryRow(txCtx,
 		`SELECT EXISTS (
 		   SELECT 1
 		     FROM payments
 		    WHERE booking_id     = $1::uuid
-		      AND payment_method = 'cashfree'
+		      AND gateway        = 'cashfree'
 		      AND gateway_status = 'pending'
 		      AND created_at     > NOW() - INTERVAL '2 minutes'
 		 )`,
