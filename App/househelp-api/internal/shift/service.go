@@ -66,23 +66,30 @@ func (s *Service) CommitShift(ctx context.Context, proID string, req CommitReque
 
 	now := IST()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, istLocation)
-	if !shiftDate.After(today) {
-		// shift_date must be > today. Today's shift is already locked.
+
+	// shift_date must be today or later. Past dates are always blocked.
+	if shiftDate.Before(today) {
 		return nil, ErrShiftDateInPast
 	}
 
-	// Same-day-as-shift lock: if shift is for tomorrow AND we're past
-	// 3 AM IST of tomorrow (impossible since shift_date is tomorrow
-	// and now is < tomorrow 3 AM means we're fine), so this check
-	// fires only when shift_date == tomorrow AND now is past tomorrow
-	// 03:00. Trivially impossible given the today() guard above —
-	// keep the explicit check for the day-of-tomorrow edge.
-	tomorrow := today.AddDate(0, 0, 1)
-	if shiftDate.Equal(tomorrow) {
-		lock := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 3, 0, 0, 0, istLocation)
-		if !now.Before(lock) {
-			return nil, ErrShiftAfterLockWindow
+	// Lock window: a shift dated `D` must be committed before 03:00 IST
+	// on date `D`. After that, `D` is locked and `D`'s shift can no
+	// longer be added. This is uniform across today + tomorrow + any
+	// future date — historically the rule was "no same-day at all",
+	// but that blocked a pro who woke up at 1 AM IST and wanted to
+	// commit the day they were already in. The shift_date == today
+	// path is allowed when now < today 03:00 IST; same rule that the
+	// shift_date == tomorrow path follows against tomorrow 03:00.
+	lock := time.Date(shiftDate.Year(), shiftDate.Month(), shiftDate.Day(), 3, 0, 0, 0, istLocation)
+	if !now.Before(lock) {
+		// Today after 03:00 → ErrShiftDateInPast (today is "locked",
+		// matches the prior surface contract the mobile client
+		// branches on for the "Today" disabled-state copy). Tomorrow+
+		// after their respective 03:00 → ErrShiftAfterLockWindow.
+		if shiftDate.Equal(today) {
+			return nil, ErrShiftDateInPast
 		}
+		return nil, ErrShiftAfterLockWindow
 	}
 
 	return s.repo.InsertCommitment(ctx, proID, req.ShiftDate, req.StartTime, req.EndTime)
