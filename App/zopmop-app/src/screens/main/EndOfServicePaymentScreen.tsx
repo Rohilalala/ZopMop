@@ -15,8 +15,9 @@
 // (light mode lives on the unmerged appearance-toast branch; whole-
 // screen migration happens when that lands).
 
-import React, { useMemo, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
   ScrollView,
@@ -41,6 +42,9 @@ import { Feather } from '@expo/vector-icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
 
 import type { MainStackParamList } from '../../types/navigation';
+import { useAuth } from '../../context/AuthContext';
+import { resolveCash, ResolveCashError } from '../../api/bookings';
+import { showError, showInfo, showSuccess } from '../../utils/toast';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
@@ -65,10 +69,19 @@ export default function EndOfServicePaymentScreen() {
     useNavigation<NativeStackNavigationProp<MainStackParamList, 'EndOfServicePayment'>>();
   const route = useRoute<RouteProp<MainStackParamList, 'EndOfServicePayment'>>();
   const { bookingId, amountPaise, helperName } = route.params;
+  const { token } = useAuth();
 
-  // Local UI state machine. 5d.2 will wire real triggers; 5d.1 uses
-  // dev toggles to walk every state.
+  // Local UI state machine. 5d.2.b wires State 2; 5d.2.c/d wire 1+5.
   const [state, setState] = useState<LocalState>('choose');
+
+  // Phase 1 Step 5d.2.b — cash-confirm in-flight gate. submittingCash
+  // drives the popup button's disabled + spinner UI; the ref guards
+  // against rapid double-tap landing two POST /resolve-cash calls
+  // before the first response. The backend's ResolveCash is idempotent
+  // on repeat tap (Peek-then-Issue), so this is belt + braces, not
+  // load-bearing for correctness — just keeps the UI honest.
+  const [submittingCash, setSubmittingCash] = useState(false);
+  const cashInFlight = useRef(false);
 
   const amountRupees = Math.round((amountPaise ?? 0) / 100);
   const proFirstName = (helperName ?? 'your pro').split(' ')[0];
@@ -76,15 +89,89 @@ export default function EndOfServicePaymentScreen() {
   // Navigation handlers.
   const close = () => navigation.goBack();
 
-  // 5d.1 mock handlers — 5d.2 replaces these with real calls.
+  // 5d.1 mock handlers — 5d.2.c/d will replace these.
   const tapPayOnline = () => setState('opening');
   const tapPayCashInstead = () => setState('cash_confirm');
-  const tapYesPayCash = () => {
-    // Mock: success → close (TrackLive will pick up cash_collected_at
-    // on next push tick and render State 4a inline). Real flow in 5d.2
-    // calls POST /bookings/:id/resolve-cash here.
-    close();
+
+  // Phase 1 Step 5d.2.b — REAL cash resolve.
+  //
+  // Flow:
+  //   1. Guard against re-entry (cashInFlight) + state-driven disable.
+  //   2. POST /bookings/:id/resolve-cash → backend stamps
+  //      cash_collected_at + issues End OTP via Peek-then-Issue.
+  //   3. Success: close modal. TrackLive's useFocusEffect re-runs
+  //      fetchDetail() on regaining focus → cash_collected_at lands
+  //      in the local `detail` state → State 4a inline chip renders
+  //      immediately. The End OTP card (EndCodeCard) appears once
+  //      the next WS push delivers tracking.end_otp_code (push tick
+  //      = ~5s — usually faster than the user can look down).
+  //      NOTE: TrackingResponse does NOT carry cash_collected_at or
+  //      payment_status; those live on the booking detail. The
+  //      focus-effect refresh is what closes the gap.
+  //   4. Error: branch on the typed wire code. Lock-rule outcomes
+  //      below match the planning gate's error map; no retry loop
+  //      yet — ONLINE_PAYMENT_PENDING just stays on State 1 with a
+  //      "processing, please wait" hint until 5d.2.d wires the
+  //      retry-with-mark-attempt-failed backstop.
+  const tapYesPayCash = async () => {
+    if (cashInFlight.current) return;
+    if (!token) {
+      showError('Please sign in again.');
+      return;
+    }
+    cashInFlight.current = true;
+    setSubmittingCash(true);
+    try {
+      await resolveCash(token, bookingId);
+      showSuccess('Cash recorded — show the End OTP to your pro to wrap up.');
+      close();
+    } catch (e) {
+      if (e instanceof ResolveCashError) {
+        switch (e.code) {
+          case 'ALREADY_PAID_ONLINE':
+            // Online payment landed between modal-open and confirm.
+            // TrackLive will render State 4b (paid online) inline.
+            showInfo('Already paid online.');
+            close();
+            return;
+          case 'JOB_NOT_IN_STATE':
+            showError("This service isn't in progress anymore.");
+            close();
+            return;
+          case 'NO_HELPER_ASSIGNED':
+            showError('No pro is assigned to this booking.');
+            close();
+            return;
+          case 'BOOKING_NOT_FOUND':
+            showError('Booking not found.');
+            close();
+            return;
+          case 'ONLINE_PAYMENT_PENDING':
+            // 5d.2.d will replace this with a retry-with-cancel loop
+            // that calls mark-attempt-failed on the stale Cashfree
+            // order. For 5d.2.b: surface, back off, let the user
+            // try again from State 1.
+            showInfo('An online payment is processing — please wait a moment.');
+            setState('choose');
+            return;
+          case 'OTP_SERVICE_UNAVAILABLE':
+            showError('Service temporarily unavailable — please try again.');
+            setState('choose');
+            return;
+          default:
+            showError(e.message || 'Could not record cash payment.');
+            setState('choose');
+            return;
+        }
+      }
+      showError('Could not record cash payment. Check your connection.');
+      setState('choose');
+    } finally {
+      cashInFlight.current = false;
+      setSubmittingCash(false);
+    }
   };
+
   const tapPayOnlineInsteadFromPopup = () => {
     setState('opening');
   };
@@ -92,9 +179,9 @@ export default function EndOfServicePaymentScreen() {
   const tapCashInsteadFromFailure = () => {
     // CRITICAL: from State 5 the cash fallback is offered cleanly
     // WITHOUT the State-2 nudge-back popup. Online already failed;
-    // cash is the legitimate fallback. 5d.2 calls resolveCash
-    // directly here (with retry-on-ONLINE_PAYMENT_PENDING for the
-    // residual webhook-lag race documented in the planning gate).
+    // cash is the legitimate fallback. 5d.2.d calls resolveCash
+    // directly here (with retry-on-ONLINE_PAYMENT_PENDING + the
+    // mark-attempt-failed backstop endpoint).
     close();
   };
 
@@ -156,7 +243,14 @@ export default function EndOfServicePaymentScreen() {
           proFirstName={proFirstName}
           onPayOnlineInstead={tapPayOnlineInsteadFromPopup}
           onYesPayCash={tapYesPayCash}
-          onDismiss={() => setState('choose')}
+          onDismiss={() => {
+            // While the resolve-cash POST is in flight, suppress the
+            // backdrop-dismiss to avoid stranding the loading button
+            // in a state the user can't see.
+            if (submittingCash) return;
+            setState('choose');
+          }}
+          submitting={submittingCash}
         />
       )}
     </SafeAreaView>
@@ -235,12 +329,14 @@ function CashConfirmPopup({
   onPayOnlineInstead,
   onYesPayCash,
   onDismiss,
+  submitting,
 }: {
   amountRupees: number;
   proFirstName: string;
   onPayOnlineInstead: () => void;
   onYesPayCash: () => void;
   onDismiss: () => void;
+  submitting: boolean;
 }) {
   return (
     <View style={s.popupBackdrop}>
@@ -251,11 +347,15 @@ function CashConfirmPopup({
           You'll hand ₹{amountRupees} to {proFirstName} directly. Paying online is faster and gives you an instant receipt.
         </Text>
 
-        {/* PRIMARY — "Pay online instead" pulls back to online. */}
+        {/* PRIMARY — "Pay online instead" pulls back to online.
+            Also disabled while a cash resolve is in flight so a
+            mid-flight tap can't kick off the Cashfree drop sheet
+            while the cash POST is still landing. */}
         <TouchableOpacity
-          style={s.popupPrimaryBtn}
+          style={[s.popupPrimaryBtn, submitting && s.popupBtnDisabled]}
           onPress={onPayOnlineInstead}
           accessibilityRole="button"
+          disabled={submitting}
         >
           <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
             <Defs>
@@ -270,13 +370,19 @@ function CashConfirmPopup({
           <Text style={[fontExtra, s.popupPrimaryBtnText]}>Pay online instead</Text>
         </TouchableOpacity>
 
-        {/* QUIET — "Yes, pay cash" deliberately understated. */}
+        {/* QUIET — "Yes, pay cash" deliberately understated.
+            Disabled + spinner while the POST is in flight. */}
         <TouchableOpacity
           style={s.popupQuietBtn}
           onPress={onYesPayCash}
           accessibilityRole="button"
+          disabled={submitting}
         >
-          <Text style={[fontMed, s.popupQuietBtnText]}>Yes, pay cash</Text>
+          {submitting ? (
+            <ActivityIndicator size="small" color="rgba(255,255,255,0.55)" />
+          ) : (
+            <Text style={[fontMed, s.popupQuietBtnText]}>Yes, pay cash</Text>
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -460,8 +566,14 @@ const s = StyleSheet.create({
     marginTop: 6,
   },
   popupPrimaryBtnText: { fontSize: 15, color: INK, letterSpacing: -0.2 },
-  popupQuietBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
+  popupQuietBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    minHeight: 38,
+  },
   popupQuietBtnText: { fontSize: 13, color: 'rgba(255,255,255,0.55)' },
+  popupBtnDisabled: { opacity: 0.55 },
 
   // STATE 3 opening
   openingWrap: { alignItems: 'center', gap: 16, paddingTop: 60 },

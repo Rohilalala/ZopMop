@@ -855,6 +855,23 @@ export default function TrackLiveScreen() {
             />
           )}
 
+          {/* Phase 1 Step 5d.2.b — "Generating your code…" placeholder.
+              Bridges the ~5s window between payment resolving (booking
+              detail refresh fires cash_collected_at / payment_status)
+              and the next WebSocket push delivering end_otp_code from
+              Redis. Same footprint as EndCodeCard so when the code
+              arrives the layout doesn't jump. Without this the screen
+              reads "paid ✓ — nothing below" which looks broken. */}
+          {subState === 'in_progress'
+            && (detail?.payment_status === 'paid' || !!detail?.cash_collected_at)
+            && (!tracking?.end_otp_code || tracking.end_otp_code.length === 0) && (
+            <View style={styles.endCodePending}>
+              <Text style={[fontBold, styles.endCodePendingLabel]}>END CODE</Text>
+              <ActivityIndicator size="small" color={AMBER} style={{ marginTop: 14, marginBottom: 14 }} />
+              <Text style={[fontMed, styles.endCodePendingText]}>Generating your code…</Text>
+            </View>
+          )}
+
           {/* Task checklist — in-progress only. Lists every booking_service
               row with its per-service status. */}
           {subState === 'in_progress' && detail && detail.services.length > 0 && (
@@ -1759,6 +1776,33 @@ const styles = StyleSheet.create({
   },
   payResolvedChipText: {
     fontSize: 12,
+    letterSpacing: -0.1,
+  },
+
+  // Phase 1 Step 5d.2.b — End OTP pending placeholder.
+  // Matches EndCodeCard's footprint so swap-in is seamless (no layout
+  // shift the moment the WS push lands the real code).
+  endCodePending: {
+    marginTop: 18,
+    marginHorizontal: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 16,
+    borderRadius: 24,
+    backgroundColor: 'rgba(245,163,0,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,163,0,0.22)',
+    alignItems: 'center',
+  },
+  endCodePendingLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    color: 'rgba(255,255,255,0.60)',
+    textTransform: 'uppercase',
+  },
+  endCodePendingText: {
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.55)',
     letterSpacing: -0.1,
   },
 
