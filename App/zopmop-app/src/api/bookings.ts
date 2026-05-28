@@ -36,6 +36,20 @@ export interface ApiBooking {
   helper_rating?: number;
   helper_lat?: number;
   helper_lng?: number;
+  // Phase 1 Step 5b — lifecycle timestamps now serialised on the
+  // GetCustomerBookings list payload. Used to derive the home
+  // ActiveBookingPill (live-booking state machine: en_route ->
+  // arrived -> in_progress) without a per-row detail round-trip.
+  en_route_at?: string | null;
+  arrived_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  // Phase 1 Step 5d — payment state. Backend already serialises these
+  // on the Booking row; declared here for the end-of-service payment
+  // screen + lock-rule UI gates.
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  payment_method?: 'cashfree' | 'wallet' | 'cash' | 'cod' | null;
+  cash_collected_at?: string | null;
 }
 
 export interface CreateBookingPayload {

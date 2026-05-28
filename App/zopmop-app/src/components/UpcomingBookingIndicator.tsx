@@ -24,7 +24,14 @@ export default function UpcomingBookingIndicator() {
     if (!token) return;
     try {
       const list = await getBookings(token, 'upcoming');
-      const next = list.find(b => b.status === 'pending' || b.status === 'accepted') ?? null;
+      // Phase 1 Step 5b mutual exclusion: skip bookings that the new
+      // ActiveBookingPill is showing — anything with en_route_at set
+      // (the pro is in transit / arrived / service started). Without
+      // this filter the customer would see two pills stacked at the
+      // bottom of HomeScreen.
+      const next = list.find(b =>
+        (b.status === 'pending' || b.status === 'accepted') && !b.en_route_at,
+      ) ?? null;
       setBooking(next);
       Animated.timing(opacity, {
         toValue: next ? 1 : 0,

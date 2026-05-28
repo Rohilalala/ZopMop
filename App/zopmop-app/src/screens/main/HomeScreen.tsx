@@ -51,6 +51,7 @@ import { apiFetch } from '../../api/client';
 
 import LocationSelectorModal from '../../components/LocationSelectorModal';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
+import ActiveBookingPill from '../../components/home/ActiveBookingPill';
 import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
@@ -558,6 +559,7 @@ export default function HomeScreen() {
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
+      <ActiveBookingPill />
       {locationModal}
     </SafeAreaView>
   );
