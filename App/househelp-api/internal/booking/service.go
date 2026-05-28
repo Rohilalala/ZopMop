@@ -877,7 +877,13 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 		return nil, err
 	}
 
-	if booking.Status != StatusPending && booking.Status != StatusAccepted {
+	// Truth-table guard. IsCancellable encodes the full rule (status +
+	// the accepted-substate timestamps) so this site can't drift from
+	// the policy and so cancel_truth_table_test.go can pin it from
+	// outside the SQL transaction. See model.go for the rationale +
+	// docs/phase-1-payment-gated-flow.md for the escape-hatch model
+	// that depends on in_progress cancel being unavailable.
+	if !IsCancellable(booking) {
 		return nil, fmt.Errorf("booking cannot be cancelled in current status")
 	}
 

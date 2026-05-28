@@ -19,6 +19,66 @@ const (
 	StatusCancelled  BookingStatus = "cancelled"
 )
 
+// IsCancellableStatus reports whether the supplied BookingStatus is one of
+// the states from which a customer or pro may cancel via
+// POST /bookings/:id/cancel. Pure function over the enum; substate guards
+// (the en_route_at / arrived_at timestamps that further restrict
+// status='accepted') live in IsCancellable.
+//
+// Truth table — pinned by cancel_truth_table_test.go so a future enum
+// addition forces a deliberate review here instead of silently
+// inheriting a default:
+//
+//   pending      cancellable     (customer hasn't been matched)
+//   searching    NOT cancellable (matching engine actively dispatching)
+//   accepted     cancellable     (pro accepted but hasn't committed
+//                                 to the trip yet — substates further
+//                                 restrict; see IsCancellable)
+//   in_progress  NOT cancellable (service has STARTED; the only out is
+//                                 admin force-complete via CRM. A pro-
+//                                 self-service cancel here would silently
+//                                 bypass the customer-block escape hatch.
+//                                 See docs/phase-1-payment-gated-flow.md.)
+//   completed    NOT cancellable (terminal)
+//   cancelled    NOT cancellable (already terminal)
+//
+// Unknown / future statuses default to NOT cancellable. The test asserts
+// this so a regression that silently allows a new status is impossible.
+func IsCancellableStatus(s BookingStatus) bool {
+	switch s {
+	case StatusPending, StatusAccepted:
+		return true
+	case StatusSearching, StatusInProgress, StatusCompleted, StatusCancelled:
+		return false
+	}
+	return false
+}
+
+// IsCancellable applies the full cancel rule: status truth table PLUS
+// the accepted-substate guards. Even within status='accepted', once the
+// pro has committed to the trip (en_route_at set) or arrived
+// (arrived_at set), the pro-self-service cancel is no longer available.
+// The only out from that point is admin force-complete via the CRM
+// (mark-complete-as-unpaid → customer block fires).
+//
+// This is the function CancelBooking uses. IsCancellableStatus is the
+// status-only subset, exposed because the truth-table test pins the
+// enum behaviour separately from the substate behaviour.
+func IsCancellable(b *Booking) bool {
+	if b == nil {
+		return false
+	}
+	if !IsCancellableStatus(b.Status) {
+		return false
+	}
+	if b.Status == StatusAccepted {
+		if b.EnRouteAt != nil || b.ArrivedAt != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // Booking represents a service booking.
 // Amount is always stored as integer paise to avoid floating point errors.
 type Booking struct {
