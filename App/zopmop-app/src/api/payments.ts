@@ -111,3 +111,49 @@ export async function getCashfreeOrderStatus(
   }
   return res.json() as Promise<CashfreeOrderStatus>;
 }
+
+/** Response from POST /payments/cashfree/orders/:orderID/mark-attempt-failed
+ *  (Phase 1 Step 5d.2.d). The returned gateway_status is load-bearing for
+ *  the SDK on_failure handler: 'failed' means the conditional UPDATE
+ *  flipped the row (proceed to cash fallback), 'success' means the
+ *  webhook beat the SDK callback (payment is real — treat as paid). */
+export type MarkCashfreeAttemptFailedResponse = {
+  order_id: string;
+  gateway_status: 'pending' | 'success' | 'failed' | 'refunded';
+};
+
+/**
+ * POST /payments/cashfree/orders/:orderID/mark-attempt-failed
+ *
+ * Customer-side SDK on_failure backstop. Flips the payment row's
+ * gateway_status from 'pending' -> 'failed' via a conditional UPDATE
+ * (WHERE gateway_status='pending'). The atomic gate is the webhook-wins
+ * race protection: if a real Cashfree success webhook lands first the
+ * row already reads 'success', the UPDATE no-ops, and the response
+ * carries the actual status so the caller can detect the race.
+ *
+ * Auth contract: customer-only. Backend rejects helpers / admins /
+ * mismatched JWTs with 403; orderID alone is not a capability.
+ *
+ * Idempotent: same orderID called N times returns the same status.
+ *
+ * Throws CashfreeOrderError on any 4xx/5xx (auth failure, unknown
+ * order, gateway misconfig).
+ */
+export async function markCashfreeAttemptFailed(
+  token: string,
+  orderID: string,
+): Promise<MarkCashfreeAttemptFailedResponse> {
+  const res = await apiFetch(
+    `${BASE_URL}/payments/cashfree/orders/${encodeURIComponent(orderID)}/mark-attempt-failed`,
+    { method: 'POST', headers: authHeaders(token) },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const code = (body as { code?: string }).code ?? 'unknown';
+    const message =
+      (body as { error?: string }).error ?? `mark-attempt-failed failed (${res.status})`;
+    throw new CashfreeOrderError(res.status, code, message);
+  }
+  return res.json() as Promise<MarkCashfreeAttemptFailedResponse>;
+}

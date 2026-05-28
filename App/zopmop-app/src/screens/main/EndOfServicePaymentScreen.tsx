@@ -44,6 +44,16 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'reac
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { resolveCash, ResolveCashError } from '../../api/bookings';
+import {
+  createCashfreeOrder,
+  CashfreeOrderError,
+  markCashfreeAttemptFailed,
+} from '../../api/payments';
+import {
+  useCashfreePayment,
+  PollAbortedError,
+  PollTimeoutError,
+} from '../../hooks/useCashfreePayment';
 import { showError, showInfo, showSuccess } from '../../utils/toast';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -71,8 +81,11 @@ export default function EndOfServicePaymentScreen() {
   const { bookingId, amountPaise, helperName } = route.params;
   const { token } = useAuth();
 
-  // Local UI state machine. 5d.2.b wires State 2; 5d.2.c/d wire 1+5.
+  // Local UI state machine. 5d.2.b wires State 2; 5d.2.c wires 1+5.
   const [state, setState] = useState<LocalState>('choose');
+  // State 5 sub-copy. Set when the SDK / poll path resolves with an
+  // explicit message; falls back to a generic line when null.
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
 
   // Phase 1 Step 5d.2.b — cash-confirm in-flight gate. submittingCash
   // drives the popup button's disabled + spinner UI; the ref guards
@@ -83,14 +96,41 @@ export default function EndOfServicePaymentScreen() {
   const [submittingCash, setSubmittingCash] = useState(false);
   const cashInFlight = useRef(false);
 
+  // Phase 1 Step 5d.2.c — online-pay single-flight gate. Defends
+  // against:
+  //   1. Rapid double-tap on "Pay online" creating two Cashfree
+  //      orders (the backend has findReusableCashfreeOrder protection
+  //      but we also gate client-side so the UI never momentarily
+  //      opens two Drop sheets).
+  //   2. The user tapping "Pay online" on State 1, getting State 2
+  //      popup, then tapping "Pay online instead" — both routes share
+  //      the same gate so we can't double-fire.
+  // Pairs with the useCashfreePayment hook's internal inFlightRef
+  // which guards the SDK callback registration globally.
+  const onlineInFlight = useRef(false);
+  const pollAbortRef = useRef<AbortController | null>(null);
+
+  // Cashfree hook — drop sheet + post-checkout poll. Hook's own
+  // single-flight ref dedupes concurrent startPayment calls; ours
+  // gates the surrounding flow (createCashfreeOrder + state
+  // transitions) which the hook can't see.
+  const { startPayment, pollStatus } = useCashfreePayment();
+
+  // Abort any in-flight poll if the user dismisses the modal or the
+  // screen unmounts — prevents a backgrounded poll from racing a
+  // resumed state-1 flow with stale order ids.
+  React.useEffect(() => {
+    return () => {
+      pollAbortRef.current?.abort();
+    };
+  }, []);
+
   const amountRupees = Math.round((amountPaise ?? 0) / 100);
   const proFirstName = (helperName ?? 'your pro').split(' ')[0];
 
   // Navigation handlers.
   const close = () => navigation.goBack();
 
-  // 5d.1 mock handlers — 5d.2.c/d will replace these.
-  const tapPayOnline = () => setState('opening');
   const tapPayCashInstead = () => setState('cash_confirm');
 
   // Phase 1 Step 5d.2.b — REAL cash resolve.
@@ -172,17 +212,245 @@ export default function EndOfServicePaymentScreen() {
     }
   };
 
-  const tapPayOnlineInsteadFromPopup = () => {
+  // ─────────────────────────────────────────────────────────────────
+  // Phase 1 Step 5d.2.c — REAL online payment via Cashfree Drop.
+  //
+  // Flow:
+  //   1. Single-flight gate (onlineInFlight) prevents double-tap
+  //      kicking off two orders. State transitions to 'opening' so
+  //      the user sees the spinner while the backend mint is in
+  //      flight.
+  //   2. POST /payments/cashfree/order to mint a new (or reuse an
+  //      existing pending) Cashfree session. Returns a
+  //      payment_session_id + our merchant order_id.
+  //   3. Hand the session to the SDK via useCashfreePayment.startPayment.
+  //      The hook owns the SDK callback global; we receive on_success
+  //      / on_failure via the opts we pass in.
+  //   4. on_success: poll the backend status endpoint. The SDK fires
+  //      onVerify BEFORE the gateway webhook lands on our server, so
+  //      the SDK callback alone is not authoritative; the poll reads
+  //      the canonical ledger after the webhook commits. On 'success'
+  //      we close (TrackLive's useFocusEffect refreshes detail on
+  //      regaining focus and inline State 4b chip renders).
+  //   5. on_failure: call POST /payments/cashfree/orders/:orderID/
+  //      mark-attempt-failed. The endpoint's conditional UPDATE is
+  //      the atomic webhook-wins gate — if a real success webhook
+  //      landed between the SDK on_failure callback and our request,
+  //      the row already reads 'success' and the response tells us
+  //      so. Branch:
+  //        - gateway_status='success' → webhook won; payment is real;
+  //          showSuccess + close, TrackLive flips to 4b on focus.
+  //        - gateway_status='failed' → SDK callback wins; transition
+  //          to State 5 with the SDK's error message.
+  //        - other → treat as failed; defer to the user to retry or
+  //          fall back to cash.
+  //
+  // SAFETY: the mark-attempt-failed call's trigger is the SDK's
+  // on_failure callback specifically — never a timeout or heuristic.
+  // A user backgrounding mid-payment doesn't fire on_failure, so a
+  // slow-but-successful charge isn't raced into wrongly-cancelled
+  // state.
+  const startOnlinePayment = async (): Promise<void> => {
+    if (onlineInFlight.current) return;
+    if (!token) {
+      showError('Please sign in again.');
+      return;
+    }
+    onlineInFlight.current = true;
+    setFailureMessage(null);
     setState('opening');
+
+    // Step 2 — mint the Cashfree order. Backend handles ownership +
+    // chargeability gating; map known 409s into actionable UI.
+    let order;
+    try {
+      order = await createCashfreeOrder(token, {
+        booking_id: bookingId,
+        payment_source: 'direct',
+      });
+    } catch (e) {
+      onlineInFlight.current = false;
+      if (e instanceof CashfreeOrderError) {
+        switch (e.code) {
+          case 'already_paid_online':
+          case 'already_paid':
+            // Payment landed via another tab / webhook race window.
+            showInfo('Already paid online.');
+            close();
+            return;
+          case 'already_paid_cash':
+            showInfo('Cash payment already recorded.');
+            close();
+            return;
+          case 'booking_refunded':
+            showError('This booking was refunded — contact support.');
+            close();
+            return;
+          case 'booking_cancelled':
+            showError("This booking isn't active anymore.");
+            close();
+            return;
+          case 'gateway_unconfigured':
+          case 'gateway_error':
+            setFailureMessage("Payment gateway is having trouble. Try again or pay cash.");
+            setState('failed');
+            return;
+          default:
+            setFailureMessage(e.message);
+            setState('failed');
+            return;
+        }
+      }
+      setFailureMessage("Couldn't start payment. Check your connection.");
+      setState('failed');
+      return;
+    }
+
+    // Step 3 — open Drop sheet. The hook's promise resolves once the
+    // SDK fires either onVerify or onError; the actual branching
+    // happens inside on_success / on_failure below.
+    await startPayment({
+      payment_session_id: order.payment_session_id,
+      order_id: order.order_id,
+      on_success: async () => {
+        // Step 4 — wait for the webhook to flip gateway_status.
+        const ctrl = new AbortController();
+        pollAbortRef.current = ctrl;
+        try {
+          const snap = await pollStatus(order.order_id, { signal: ctrl.signal });
+          onlineInFlight.current = false;
+          if (snap.status === 'success') {
+            showSuccess(`Paid ₹${amountRupees}.`);
+            close();
+            return;
+          }
+          if (snap.status === 'failed') {
+            setFailureMessage('Payment failed. Try again or pay cash.');
+            setState('failed');
+            return;
+          }
+          // 'refunded' here is unusual — defer to a fresh start from
+          // State 1.
+          showError('Unexpected payment state — please try again.');
+          setState('choose');
+        } catch (pollErr) {
+          onlineInFlight.current = false;
+          if (pollErr instanceof PollAbortedError) {
+            // Screen unmounted or user dismissed — do nothing.
+            return;
+          }
+          if (pollErr instanceof PollTimeoutError) {
+            // Webhook will land within a minute. Close + let the
+            // customer see the canonical state on TrackLive.
+            showInfo('Confirming payment — should land in a moment.');
+            close();
+            return;
+          }
+          setFailureMessage("Couldn't confirm payment. Check Bookings to see status.");
+          setState('failed');
+        }
+      },
+      on_failure: async (cfErr) => {
+        // Step 5 — flag the order failed so the cash fallback (if the
+        // user picks it from State 5) doesn't trip the residual-race
+        // guard on /resolve-cash. The conditional UPDATE on the
+        // backend is the webhook-wins atomic gate.
+        const sdkMessage = cfErr.getMessage?.() || 'Payment didn\'t go through';
+        try {
+          const flagged = await markCashfreeAttemptFailed(token, order.order_id);
+          onlineInFlight.current = false;
+          if (flagged.gateway_status === 'success') {
+            // Webhook beat the SDK callback. Money moved. Treat as paid.
+            showSuccess(`Paid ₹${amountRupees}.`);
+            close();
+            return;
+          }
+          // 'failed' / 'refunded' / 'pending' (rare race) — show
+          // State 5 so the user can retry or fall back to cash.
+          setFailureMessage(sdkMessage);
+          setState('failed');
+        } catch {
+          // mark-attempt-failed itself failed (network blip /
+          // backend down). Still surface failure to the user; the
+          // residual-race guard on resolveCash will trip on the cash
+          // fallback only if the row stays pending past the 2-min
+          // freshness window. Worst case: user waits.
+          onlineInFlight.current = false;
+          setFailureMessage(sdkMessage);
+          setState('failed');
+        }
+      },
+    });
   };
-  const tapTryAgainFromFailure = () => setState('opening');
-  const tapCashInsteadFromFailure = () => {
-    // CRITICAL: from State 5 the cash fallback is offered cleanly
-    // WITHOUT the State-2 nudge-back popup. Online already failed;
-    // cash is the legitimate fallback. 5d.2.d calls resolveCash
-    // directly here (with retry-on-ONLINE_PAYMENT_PENDING + the
-    // mark-attempt-failed backstop endpoint).
-    close();
+
+  const tapPayOnline = () => {
+    void startOnlinePayment();
+  };
+  const tapPayOnlineInsteadFromPopup = () => {
+    void startOnlinePayment();
+  };
+  const tapTryAgainFromFailure = () => {
+    void startOnlinePayment();
+  };
+
+  // Phase 1 Step 5d.2.c — State 5 cash fallback. NO popup — online
+  // already failed; cash is the legitimate path forward. Calls
+  // resolveCash directly. The mark-attempt-failed call in the SDK
+  // on_failure handler above already flipped the order to 'failed'
+  // (assuming the webhook didn't win), so the residual-race guard
+  // sees no pending Cashfree order on the booking and accepts the
+  // cash fallback on the first attempt.
+  const tapCashInsteadFromFailure = async () => {
+    if (cashInFlight.current) return;
+    if (!token) {
+      showError('Please sign in again.');
+      return;
+    }
+    cashInFlight.current = true;
+    setSubmittingCash(true);
+    try {
+      await resolveCash(token, bookingId);
+      showSuccess('Cash recorded — show the End OTP to your pro to wrap up.');
+      close();
+    } catch (e) {
+      if (e instanceof ResolveCashError) {
+        switch (e.code) {
+          case 'ALREADY_PAID_ONLINE':
+            showInfo('Already paid online.');
+            close();
+            return;
+          case 'JOB_NOT_IN_STATE':
+            showError("This service isn't in progress anymore.");
+            close();
+            return;
+          case 'NO_HELPER_ASSIGNED':
+            showError('No pro is assigned to this booking.');
+            close();
+            return;
+          case 'BOOKING_NOT_FOUND':
+            showError('Booking not found.');
+            close();
+            return;
+          case 'ONLINE_PAYMENT_PENDING':
+            // Rare race: mark-attempt-failed hadn't landed yet
+            // when the customer tapped the cash fallback. Give the
+            // residual-race window a moment, then try once more —
+            // if it still bounces, defer to user.
+            showInfo('Wrapping up the online attempt — try again in a moment.');
+            return;
+          case 'OTP_SERVICE_UNAVAILABLE':
+            showError('Service temporarily unavailable — please try again.');
+            return;
+          default:
+            showError(e.message || 'Could not record cash payment.');
+            return;
+        }
+      }
+      showError('Could not record cash payment. Check your connection.');
+    } finally {
+      cashInFlight.current = false;
+      setSubmittingCash(false);
+    }
   };
 
   return (
@@ -209,6 +477,8 @@ export default function EndOfServicePaymentScreen() {
         {state === 'failed' && (
           <FailedState
             amountRupees={amountRupees}
+            subCopy={failureMessage}
+            cashBusy={submittingCash}
             onTryAgain={tapTryAgainFromFailure}
             onCashInstead={tapCashInsteadFromFailure}
           />
@@ -410,24 +680,40 @@ function OpeningState({ amountRupees }: { amountRupees: number }) {
 
 function FailedState({
   amountRupees,
+  subCopy,
+  cashBusy,
   onTryAgain,
   onCashInstead,
 }: {
   amountRupees: number;
+  // Optional SDK error message. When null, defaults to the calm
+  // "Don't worry, ₹X hasn't been charged" line — works for the
+  // generic-failure case and the createCashfreeOrder gateway-error
+  // case alike.
+  subCopy: string | null;
+  // Spinner-in-button while the cash-fallback POST is in flight.
+  cashBusy: boolean;
   onTryAgain: () => void;
   onCashInstead: () => void;
 }) {
+  const subLine =
+    subCopy && subCopy.trim().length > 0
+      ? subCopy
+      : `Don't worry, ₹${amountRupees} hasn't been charged. Try again or pay with cash.`;
   return (
     <View style={s.failedWrap}>
       <View style={s.failedIcon}>
         <Feather name="alert-triangle" size={26} color={AMBER} />
       </View>
       <Text style={[fontExtra, s.failedTitle]}>Payment didn't go through</Text>
-      <Text style={[fontMed, s.failedSub]}>
-        Don't worry, ₹{amountRupees} hasn't been charged. Try again or pay with cash.
-      </Text>
+      <Text style={[fontMed, s.failedSub]}>{subLine}</Text>
 
-      <TouchableOpacity style={s.primaryBtn} onPress={onTryAgain} accessibilityRole="button">
+      <TouchableOpacity
+        style={[s.primaryBtn, cashBusy && { opacity: 0.55 }]}
+        onPress={onTryAgain}
+        accessibilityRole="button"
+        disabled={cashBusy}
+      >
         <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
           <Defs>
             <SvgLinearGradient id="eosFailRetryGrad" x1="0" y1="0" x2="1" y2="1">
@@ -444,8 +730,17 @@ function FailedState({
       </TouchableOpacity>
 
       {/* Cash from State 5 is the CLEAN fallback — no popup. */}
-      <TouchableOpacity style={s.ghostBtn} onPress={onCashInstead} accessibilityRole="button">
-        <Text style={[fontBold, s.ghostBtnText]}>Pay with cash instead</Text>
+      <TouchableOpacity
+        style={s.ghostBtn}
+        onPress={onCashInstead}
+        accessibilityRole="button"
+        disabled={cashBusy}
+      >
+        {cashBusy ? (
+          <ActivityIndicator size="small" color="rgba(255,255,255,0.75)" />
+        ) : (
+          <Text style={[fontBold, s.ghostBtnText]}>Pay with cash instead</Text>
+        )}
       </TouchableOpacity>
     </View>
   );
