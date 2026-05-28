@@ -7,7 +7,7 @@ package auth
 //
 //  1. TestSendLoginOTP_StoresVerificationID — asserts that after a successful
 //     SendLoginOTP call the vendor's verificationId is written at
-//     "otp:vid:{phone}" in Redis. SKIPPED: Repository.GetUserByPhone requires
+//     "otp:login:vid:{phone}" in Redis. SKIPPED: Repository.GetUserByPhone requires
 //     a live Postgres connection (pgxpool.Pool wraps pgx; no in-memory
 //     substitute exists for pgx). The vendor-side behaviour is already
 //     exercised in messagecentral_test.go; this path is covered by the

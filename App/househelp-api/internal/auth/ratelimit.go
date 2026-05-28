@@ -72,11 +72,11 @@ func (l *OTPRateLimiter) CheckSend(ctx context.Context, phone, ip string) error 
 	if l == nil || l.rdb == nil {
 		return nil
 	}
-	if err := l.bump(ctx, "otp:send:phone:"+phone, otpSendPhoneMax, otpSendPhoneWindow, "send/phone"); err != nil {
+	if err := l.bump(ctx, "otp:login:send:phone:"+phone, otpSendPhoneMax, otpSendPhoneWindow, "send/phone"); err != nil {
 		return err
 	}
 	if ip != "" {
-		if err := l.bump(ctx, "otp:send:ip:"+ip, otpSendIPMax, otpSendIPWindow, "send/ip"); err != nil {
+		if err := l.bump(ctx, "otp:login:send:ip:"+ip, otpSendIPMax, otpSendIPWindow, "send/ip"); err != nil {
 			return err
 		}
 	}
@@ -89,7 +89,7 @@ func (l *OTPRateLimiter) CheckVerify(ctx context.Context, phone string) error {
 	if l == nil || l.rdb == nil {
 		return nil
 	}
-	return l.bump(ctx, "otp:verify:phone:"+phone, otpVerifyPhoneMax, otpVerifyPhoneWindow, "verify/phone")
+	return l.bump(ctx, "otp:login:verify:phone:"+phone, otpVerifyPhoneMax, otpVerifyPhoneWindow, "verify/phone")
 }
 
 // ResetVerify clears the verify counter after a successful verify so
@@ -98,7 +98,7 @@ func (l *OTPRateLimiter) ResetVerify(ctx context.Context, phone string) {
 	if l == nil || l.rdb == nil {
 		return
 	}
-	_ = l.rdb.Del(ctx, "otp:verify:phone:"+phone).Err()
+	_ = l.rdb.Del(ctx, "otp:login:verify:phone:"+phone).Err()
 }
 
 // bump is the shared INCR + EXPIRE-on-first-hit primitive.

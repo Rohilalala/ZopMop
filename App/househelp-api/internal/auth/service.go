@@ -146,7 +146,7 @@ func (s *Service) AccessTTL() time.Duration {
 // brand-new user. The is-new-user signal is what the client uses to decide
 // whether to render the privacy-policy checkbox on the OTP screen.
 func (s *Service) SendOTP(ctx context.Context, phone string) (otp string, isNewUser bool, err error) {
-	lockKey := fmt.Sprintf("otp:lock:%s", phone)
+	lockKey := fmt.Sprintf("otp:login:lock:%s", phone)
 	locked, err := s.rdb.Exists(ctx, lockKey).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("failed to check OTP lock: %w", err)
@@ -160,7 +160,7 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (otp string, isNewU
 	// window is rejected with a Retry-After hint. This protects against SMS
 	// spam / toll-fraud targeting a single phone even when the global IP
 	// limiter (SensitivePublicRateLimit) allows the request.
-	cooldownKey := fmt.Sprintf("otp:cooldown:%s", phone)
+	cooldownKey := fmt.Sprintf("otp:login:cooldown:%s", phone)
 	ok, err := s.rdb.SetNX(ctx, cooldownKey, "1", otpSendCooldown).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("failed to set OTP cooldown: %w", err)
@@ -188,12 +188,12 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (otp string, isNewU
 		return "", false, fmt.Errorf("failed to generate OTP: %w", err)
 	}
 
-	otpKey := fmt.Sprintf("otp:%s", phone)
+	otpKey := fmt.Sprintf("otp:login:code:%s", phone)
 	if err := s.rdb.Set(ctx, otpKey, otpCode, otpExpiry).Err(); err != nil {
 		return "", false, fmt.Errorf("failed to store OTP: %w", err)
 	}
 
-	failKey := fmt.Sprintf("otp:fail:%s", phone)
+	failKey := fmt.Sprintf("otp:login:fail:%s", phone)
 	if err := s.rdb.Del(ctx, failKey).Err(); err != nil {
 		log.Warn().Err(err).Str("phone_mask", logger.MaskPhone(phone)).Msg("failed to reset OTP failure counter")
 	}
@@ -214,7 +214,7 @@ func (s *Service) SendOTP(ctx context.Context, phone string) (otp string, isNewU
 // on the freshly-created user row); for returning users a true value
 // idempotently stamps acceptance, false is ignored.
 func (s *Service) VerifyOTP(ctx context.Context, phone, code string, hasAcceptedPrivacyPolicy bool) (*LoginResponse, error) {
-	lockKey := fmt.Sprintf("otp:lock:%s", phone)
+	lockKey := fmt.Sprintf("otp:login:lock:%s", phone)
 	locked, err := s.rdb.Exists(ctx, lockKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check OTP lock: %w", err)
@@ -223,7 +223,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string, hasAccepted
 		return nil, &ErrOTPLocked{}
 	}
 
-	otpKey := fmt.Sprintf("otp:%s", phone)
+	otpKey := fmt.Sprintf("otp:login:code:%s", phone)
 	storedOTP, err := s.rdb.Get(ctx, otpKey).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -233,7 +233,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string, hasAccepted
 	}
 
 	if subtle.ConstantTimeCompare([]byte(storedOTP), []byte(code)) != 1 {
-		failKey := fmt.Sprintf("otp:fail:%s", phone)
+		failKey := fmt.Sprintf("otp:login:fail:%s", phone)
 		failCount, incrErr := s.rdb.Incr(ctx, failKey).Result()
 		if incrErr != nil {
 			log.Error().Err(incrErr).Msg("failed to increment OTP failure counter")
@@ -254,7 +254,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string, hasAccepted
 	if delErr := s.rdb.Del(ctx, otpKey).Err(); delErr != nil {
 		log.Error().Err(delErr).Msg("failed to delete used OTP")
 	}
-	failKey := fmt.Sprintf("otp:fail:%s", phone)
+	failKey := fmt.Sprintf("otp:login:fail:%s", phone)
 	if delErr := s.rdb.Del(ctx, failKey).Err(); delErr != nil {
 		log.Warn().Err(delErr).Msg("failed to delete OTP failure counter")
 	}
@@ -417,7 +417,7 @@ func (s *Service) SendLoginOTP(ctx context.Context, phone, ip string) (devOTP st
 	// Message Central is stateful: VerifyOTP needs this verificationId.
 	// A fresh send intentionally overwrites any prior id — only the most
 	// recent OTP is verifiable (mirrors MSG91; documented in the spec).
-	vidKey := fmt.Sprintf("otp:vid:%s", phone)
+	vidKey := fmt.Sprintf("otp:login:vid:%s", phone)
 	if err := s.rdb.Set(ctx, vidKey, vid, otpExpiry).Err(); err != nil {
 		log.Error().Err(err).Str("phone_mask", logger.MaskPhone(phone)).
 			Msg("OTP dispatched but failed to store verification id — user cannot verify")
@@ -454,7 +454,7 @@ func (s *Service) VerifyLoginOTP(ctx context.Context, phone, code string, hasAcc
 		return nil, rlErr
 	}
 
-	vidKey := fmt.Sprintf("otp:vid:%s", phone)
+	vidKey := fmt.Sprintf("otp:login:vid:%s", phone)
 	vid, gerr := s.rdb.Get(ctx, vidKey).Result()
 	if gerr == redis.Nil {
 		// Preserve the current mobile contract: an expired/missing OTP
