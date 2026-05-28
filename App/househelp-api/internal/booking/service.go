@@ -1852,13 +1852,72 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 	// Phase 1 Step 2 — surface the outstanding service OTPs. Peek is
 	// read-only; the codes survive repeated TrackLive loads. ErrNotFound
 	// is the expected "no code yet" state for both — silently skip.
+	//
+	// Phase 1 Step 5a.1 — TrackLive self-heal. Both Issue points
+	// upstream (MarkEnRoute, Cashfree webhook, ResolveCash) are
+	// post-commit best-effort; a Redis hiccup at the moment of Issue
+	// silently strands the code. Every TrackLive load is the recovery
+	// surface: check the precondition, then Issue only when Peek
+	// returned ErrNotFound (genuine absence). Pure-function decisions
+	// in self_heal.go pin the truth table for both scopes; the
+	// guards short-circuit the common path so a code that exists
+	// triggers ZERO writes per push tick (WS pushes every 5s, every
+	// in-flight booking — turning this into a write storm would matter).
 	if s.otpSvc != nil {
+		var startCode, endCode string
 		if code, oerr := s.otpSvc.Peek(ctx, otp.ScopeStart, bookingID); oerr == nil {
-			resp.StartOTPCode = code
+			startCode = code
 		}
 		if code, oerr := s.otpSvc.Peek(ctx, otp.ScopeEnd, bookingID); oerr == nil {
-			resp.EndOTPCode = code
+			endCode = code
 		}
+
+		// Start OTP self-heal. Skip path is the common one — code
+		// present OR en_route_at not yet set — and emits zero writes.
+		if DecideStartOTPSelfHeal(booking, startCode) == SelfHealIssue {
+			if newCode, ierr := s.otpSvc.Issue(ctx, otp.ScopeStart, bookingID); ierr == nil {
+				startCode = newCode
+			} else {
+				log.Warn().Err(ierr).Str("booking_id", bookingID).
+					Msg("[tracking] start-OTP self-heal Issue failed; will retry next push tick")
+			}
+		}
+
+		// End OTP self-heal. Requires status='in_progress' AND payment
+		// resolved (paid OR cash). Pull payment_status + cash_collected_at
+		// with a tight timeout; both columns live on bookings but are
+		// not on the Booking struct exposed via GetBookingByID yet.
+		// Only issue this extra round-trip when there's actually a
+		// chance the heal applies — the if-guards above already
+		// eliminated the common case.
+		if booking.Status == StatusInProgress && endCode == "" {
+			var paymentStatus *string
+			var cashCollectedAt *time.Time
+			sqlCtx, sqlCancel := context.WithTimeout(ctx, 2*time.Second)
+			sqlErr := s.db.QueryRow(sqlCtx,
+				`SELECT payment_status, cash_collected_at FROM bookings WHERE id = $1`,
+				bookingID,
+			).Scan(&paymentStatus, &cashCollectedAt)
+			sqlCancel()
+			if sqlErr == nil {
+				paid := paymentStatus != nil && *paymentStatus == "paid"
+				cashCollected := cashCollectedAt != nil
+				if DecideEndOTPSelfHeal(booking, endCode, paid, cashCollected) == SelfHealIssue {
+					if newCode, ierr := s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID); ierr == nil {
+						endCode = newCode
+					} else {
+						log.Warn().Err(ierr).Str("booking_id", bookingID).
+							Msg("[tracking] end-OTP self-heal Issue failed; will retry next push tick")
+					}
+				}
+			} else {
+				log.Warn().Err(sqlErr).Str("booking_id", bookingID).
+					Msg("[tracking] payment-state lookup for end-OTP self-heal failed; will retry next push tick")
+			}
+		}
+
+		resp.StartOTPCode = startCode
+		resp.EndOTPCode = endCode
 	}
 
 	return resp, nil

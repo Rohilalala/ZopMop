@@ -284,7 +284,46 @@ repeat-tap path. **Same pattern is required by the Step 5 TrackLive
 self-heal** — implementers must use Peek-then-Issue there too, not
 unconditional Issue.
 
-### 2. End-OTP self-heal on TrackLive load (Step 5 sub-requirement)
+### Self-heal implementation (Phase 1 Step 5a.1)
+
+Implemented in `(*Service).GetTracking` (`internal/booking/service.go`) so
+BOTH the REST `GET /bookings/:id/tracking` and the WebSocket push loop
+(`internal/booking/tracking_ws.go` calls the same `GetTracking`) benefit
+without duplication.
+
+**Decision logic** lives in `internal/booking/self_heal.go` as pure
+functions `DecideStartOTPSelfHeal` and `DecideEndOTPSelfHeal`, pinned
+by `self_heal_test.go`. Truth tables forbid:
+
+- Regenerating an outstanding code (the Step-3 mid-handoff desync risk).
+  Both deciders Skip when `peekedCode != ""`.
+- Issuing on every push tick when the code exists. The common path —
+  code present after the existing Peek — short-circuits before any
+  Issue or extra SQL hit. WebSocket pushes happen every 5s per active
+  booking; a stateful or time-dependent decision could turn this into
+  a write storm.
+- Healing past a gate that's already consumed. Start skips when
+  `started_at != nil` (StartBooking already verified + consumed). End
+  skips on any status other than `in_progress` (gate is past, terminal,
+  or never relevant).
+
+**End-OTP precondition fetch.** `payment_status` and `cash_collected_at`
+are not on the Booking struct exposed by `GetBookingByID`. The
+self-heal fires a tight 2-second `SELECT payment_status,
+cash_collected_at` only when `status='in_progress' AND end_otp_code ==
+""` — both common-path conditions are already false 99% of the time
+for live bookings, so the extra round-trip is rare. The full common
+path (code present) emits ZERO writes and ZERO extra SQL.
+
+**Recovery model.** Both Issue points upstream (`MarkEnRoute`,
+`CashfreeWebhook`, `ResolveCash`) are post-commit best-effort and log
+on failure. A Redis hiccup at the moment of Issue silently strands the
+code. The TrackLive self-heal re-fires Issue on the next customer load
+of the same booking and the response carries the freshly-issued code.
+On retry, the path is idempotent: subsequent loads Peek the code that
+was just issued and skip.
+
+### 2. End-OTP self-heal on TrackLive load (Step 5 sub-requirement — original spec)
 
 **The problem.** `CashfreeWebhook` issues the End OTP post-commit
 (`internal/payments/handler.go`), and the cash-mark path (Step 3) does
