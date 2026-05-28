@@ -38,6 +38,7 @@ import { showError, showInfo, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
 import { t } from '../../i18n';
+import { OTPInput } from '../../components/ui/OTPInput';
 
 const ARRIVED_RADIUS_METERS = 100;
 
@@ -55,6 +56,13 @@ interface JobDetail {
   pro_earnings_paise?: number;
   actual_duration_minutes?: number;
   customer_rating_pending?: boolean;
+  // Phase 1 Step 4 — payment + OTP-verification state used to derive
+  // the State-A/B/C1/C2/D render branch.
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  payment_method?: 'cashfree' | 'wallet' | 'cash' | 'cod' | null;
+  cash_collected_at?: string | null;
+  start_otp_verified_at?: string | null;
+  end_otp_verified_at?: string | null;
 }
 
 function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -80,6 +88,15 @@ export default function JobDetailScreen() {
   const [busy, setBusy] = useState(false);
   const [gpsNearby, setGpsNearby] = useState(false);
   const [, forceTick] = useState(0);
+
+  // Phase 1 Step 4b — Start OTP entry state. Owned at this level so that
+  // a transient state change in renderStateBody (refresh, route param
+  // tick) doesn't blow away the digits the pro just typed. Cleared after
+  // a successful start; preserved through OTP_INVALID so the pro sees
+  // their wrong code in the red boxes and can edit, not retype from
+  // scratch.
+  const [startOtp, setStartOtp] = useState('');
+  const [startOtpError, setStartOtpError] = useState(false);
   const completeNavTimerRef = useRef<NodeJS.Timeout | null>(null);
   // Customer contact cache. Populated lazily on first Call tap, kept for
   // the lifetime of this screen mount. Discarded automatically when the
@@ -214,29 +231,57 @@ export default function JobDetailScreen() {
     }
   }
 
-  function tapStart() {
-    Alert.alert(t('jobDetail.startConfirmTitle'), t('jobDetail.startConfirmBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('jobDetail.startJob'),
-        onPress: async () => {
-          if (!detail || busy) return;
-          setBusy(true);
-          try {
-            await jobStart(bookingID);
-            haptics.success();
-            await refresh();
-          } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
+  // Submit the Start OTP entered by the pro. Replaces the prior
+  // Alert.alert("Start service?") confirmation: the OTP itself is the
+  // confirmation now, and the backend gates the transition on its
+  // verification (Phase 1 Step 1).
+  //
+  // Error mapping (codes come back via expectOk on the err.code field):
+  //   OTP_INVALID            — wrong code. Flip the boxes to red and
+  //                            let the pro fix the digits in place. Do
+  //                            NOT clear the value or unfocus.
+  //   OTP_REQUIRED           — defensive; button is disabled until 6
+  //                            digits, so this should never fire from
+  //                            the UI. Treat as generic error.
+  //   OTP_SERVICE_UNAVAILABLE — backend misconfig. Toast and keep the
+  //                            value so the pro can retry.
+  //   other                  — generic toast with backend message.
+  async function handleStartSubmit() {
+    if (!detail || busy || startOtp.length < 6) return;
+    setBusy(true);
+    setStartOtpError(false);
+    try {
+      await jobStart(bookingID, startOtp);
+      haptics.success();
+      setStartOtp('');
+      await refresh();
+    } catch (e: any) {
+      const code = e?.code;
+      if (code === 'OTP_INVALID') {
+        setStartOtpError(true);
+        haptics.error();
+      } else if (code === 'OTP_SERVICE_UNAVAILABLE') {
+        showError(t('jobDetail.startOtpServiceUnavailable'));
+      } else {
+        showError(e?.message ?? t('common.error'));
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
+  // tapStart kept as a no-op shim so renderStateBody's RenderArgs type
+  // does not need to change in 4b. State A no longer uses it; the OTP
+  // submit IS the start trigger. Removable in 4c when the in_progress
+  // branch is split into C1/C2/D.
+  function tapStart() {}
+
   function tapFinish() {
+    // Step 4c wires this through the End OTP entry — the Finish button
+    // is hidden in State B for 4b (renderStateBody returns the
+    // awaiting-payment placeholder instead). Keeping the function shell
+    // so RenderArgs doesn't change shape; the empty-string OTP arg
+    // would always 400 OTP_REQUIRED if this somehow fired.
     Alert.alert(t('jobDetail.finishConfirmTitle'), t('jobDetail.finishConfirmBody'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
@@ -245,7 +290,9 @@ export default function JobDetailScreen() {
           if (!detail || busy) return;
           setBusy(true);
           try {
-            const res = await jobComplete(bookingID);
+            // Step 4c: replace '' with the End OTP digits entered by
+            // the pro on the State D panel.
+            const res = await jobComplete(bookingID, '');
             haptics.success();
             showSuccess(`₹${Math.round(res.pro_earnings_paise / 100)}`);
             await refresh();
@@ -429,19 +476,87 @@ export default function JobDetailScreen() {
           </View>
         </View>
 
-        {renderStateBody(detail, services, {
-          c, styles, busy, gpsNearby,
-          tapEnRoute, tapArrived, tapStart, tapFinish,
-          tapServiceStart, tapServiceComplete, tapServiceSkip,
-          onCancelBooking: () =>
-            startProBookingCancel({
-              bookingId: bookingID,
-              estimatedJobMinutes: undefined,
-              onCancelled: () => navigation.goBack(),
-            }),
-        })}
+        {detail.arrived_at && !detail.started_at && detail.status === 'accepted' ? (
+          <StartOtpPanel
+            c={c}
+            styles={styles}
+            busy={busy}
+            value={startOtp}
+            error={startOtpError}
+            onChange={(v) => {
+              // Clear the error state the moment the pro edits a digit so
+              // the red boxes don't persist across the next attempt.
+              if (startOtpError) setStartOtpError(false);
+              setStartOtp(v);
+            }}
+            onSubmit={handleStartSubmit}
+          />
+        ) : (
+          renderStateBody(detail, services, {
+            c, styles, busy, gpsNearby,
+            tapEnRoute, tapArrived, tapStart, tapFinish,
+            tapServiceStart, tapServiceComplete, tapServiceSkip,
+            onCancelBooking: () =>
+              startProBookingCancel({
+                bookingId: bookingID,
+                estimatedJobMinutes: undefined,
+                onCancelled: () => navigation.goBack(),
+              }),
+          })
+        )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// StartOtpPanel — State A from the Phase 1 Step 4 mockup.
+//
+// Pro reads the 6-digit code off the customer's TrackLive screen and
+// types it here. Submit is gated on 6 digits + non-error + non-busy.
+// On OTP_INVALID, the parent flips error=true; this component renders
+// the red boxes + the err-helper line + the "Try again" button label.
+// The pro can edit any box to retry — they don't have to clear first
+// (onChange in the parent clears the error on the first edit).
+function StartOtpPanel({
+  c, styles, busy, value, error, onChange, onSubmit,
+}: {
+  c: ReturnType<typeof useColors>;
+  styles: ReturnType<typeof createStyles>;
+  busy: boolean;
+  value: string;
+  error: boolean;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+}) {
+  const ready = value.length === 6 && !error && !busy;
+  return (
+    <View style={styles.actionZone}>
+      <Text style={styles.otpLabel}>{t('jobDetail.startOtpLabel')}</Text>
+      <OTPInput
+        length={6}
+        value={value}
+        onChange={onChange}
+        error={error}
+        disabled={busy}
+        autoFocus
+      />
+      <Text style={[styles.otpHelper, error && { color: '#F87171' }]}>
+        {error ? t('jobDetail.startOtpHelperError') : t('jobDetail.startOtpHelper')}
+      </Text>
+      <TouchableOpacity
+        style={[styles.primaryBtn, !ready && styles.primaryBtnDisabled]}
+        onPress={onSubmit}
+        disabled={!ready}
+      >
+        {busy ? (
+          <ActivityIndicator size="small" color="#0D0D0F" />
+        ) : (
+          <Text style={styles.primaryBtnText}>
+            {error ? t('jobDetail.startOtpTryAgain') : t('jobDetail.startService')}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -490,9 +605,12 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
     );
   }
 
-  // In progress — task checklist + finish.
+  // In progress — State B. The mockup-spec'd payment-method banner
+  // (C1 pending / C1 paid / C2 cash) + End-OTP entry (D) replace the
+  // "Finish job" button in Step 4c. For 4b the screen shows the
+  // pre-payment placeholder so the pro sees the service is live and
+  // knows payment is the next gate.
   if (detail.status === 'in_progress') {
-    const allDone = services.length > 0 && services.every((s) => s.status === 'completed' || s.status === 'skipped');
     const elapsedMin = detail.started_at
       ? Math.max(0, Math.floor((Date.now() - new Date(detail.started_at).getTime()) / 60_000))
       : 0;
@@ -516,24 +634,24 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
             />
           ))}
         </View>
-        <TouchableOpacity
-          style={[styles.primaryBtn, (!allDone || busy) && { opacity: 0.5 }]}
-          onPress={args.tapFinish}
-          disabled={!allDone || busy}
-        >
-          <Text style={styles.primaryBtnText}>{t('jobDetail.finishJob')}</Text>
-        </TouchableOpacity>
+        {/* Step 4b placeholder. Step 4c replaces this with the
+            payment-method banner (pending/paid/cash) + End OTP entry. */}
+        <View style={styles.awaitingPaymentCard}>
+          <Text style={styles.awaitingPaymentTitle}>{t('jobDetail.awaitingPaymentTitle')}</Text>
+          <Text style={styles.awaitingPaymentSub}>{t('jobDetail.awaitingPaymentSub')}</Text>
+        </View>
       </>
     );
   }
 
-  // Arrived — start job.
-  if (detail.arrived_at) {
-    return (
-      <TouchableOpacity style={[styles.primaryBtn, busy && { opacity: 0.5 }]} onPress={args.tapStart} disabled={busy}>
-        <Text style={styles.primaryBtnText}>{t('jobDetail.startJob')}</Text>
-      </TouchableOpacity>
-    );
+  // Arrived — State A is rendered INLINE in JobDetailScreen (not here)
+  // because it owns the OTP input state. Reaching this branch means
+  // arrived_at is set but the State A panel rendered upstream; fall
+  // through to the en-route default below for safety.
+  if (detail.arrived_at && detail.started_at) {
+    // Defensive: arrived + started should land us in the in_progress
+    // branch above; if we get here something's stale, render nothing.
+    return null;
   }
 
   // En route — arrived gate.
@@ -643,6 +761,45 @@ function createStyles(c: ReturnType<typeof useColors>) {
     iconBtnText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.text },
     primaryBtn: { backgroundColor: c.accent, borderRadius: Radius.lg, paddingVertical: Spacing.base, alignItems: 'center' },
     primaryBtnText: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: '#1a1a1a' },
+    primaryBtnDisabled: {
+      backgroundColor: c.surface,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    // Phase 1 Step 4b — action zone wraps the OTP entry + helper + CTA.
+    actionZone: {
+      padding: Spacing.lg,
+      backgroundColor: c.surface,
+      borderRadius: Radius.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      gap: Spacing.base,
+    },
+    otpLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.base,
+      color: c.text,
+      textAlign: 'center',
+    },
+    otpHelper: {
+      fontFamily: FontFamily.regular,
+      fontSize: FontSize.sm,
+      color: c.textSecondary,
+      textAlign: 'center',
+    },
+    // Phase 1 Step 4b — pre-payment placeholder in State B. Replaced by
+    // the payment-method banner + End OTP entry in Step 4c.
+    awaitingPaymentCard: {
+      padding: Spacing.lg,
+      backgroundColor: c.surface,
+      borderRadius: Radius.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      gap: 4,
+      alignItems: 'center',
+    },
+    awaitingPaymentTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.base, color: c.text },
+    awaitingPaymentSub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center' },
     helperText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center' },
     cancelLink: { paddingVertical: Spacing.sm, alignItems: 'center' },
     cancelLinkText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger },

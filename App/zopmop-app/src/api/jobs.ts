@@ -82,13 +82,51 @@ export async function jobArrived(bookingID: string, lat: number, lng: number): P
   await expectOk<{ message: string }>(res, 'mark arrived');
 }
 
-export async function jobStart(bookingID: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/start`, { method: 'POST' });
+/**
+ * POST /pro/jobs/:id/start
+ * Phase 1 Step 1+: the backend gates the accepted -> in_progress transition
+ * on a Start OTP that the customer reads off their TrackLive screen. The
+ * caller is responsible for collecting the 6-digit code via <OTPInput> and
+ * passing it as the `otp` argument.
+ *
+ * Server error codes (mapped to err.code by expectOk):
+ *   OTP_REQUIRED          400  empty / missing body (defensive)
+ *   OTP_INVALID           401  user typed wrong code  -> show red boxes + retry
+ *   OTP_SERVICE_UNAVAILABLE 503 backend misconfig     -> toast + retry later
+ */
+export async function jobStart(bookingID: string, otp: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
   await expectOk<{ message: string }>(res, 'start job');
 }
 
-export async function jobComplete(bookingID: string): Promise<CompleteJobResponse> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/complete`, { method: 'POST' });
+/**
+ * POST /pro/jobs/:id/complete
+ * Phase 1 Step 1+: the backend gates the in_progress -> completed transition
+ * on the End OTP AND on payment resolution (Cashfree paid OR cash collected).
+ * Caller wires the 6-digit End OTP via <OTPInput>; the payment-resolution
+ * check is enforced server-side, but the End OTP is only ever ISSUED after
+ * payment resolves, so reaching this call with a valid OTP implies the
+ * payment side has already settled in practice.
+ *
+ * Server error codes:
+ *   OTP_REQUIRED          400
+ *   OTP_INVALID           401  -> red boxes + retry
+ *   PAYMENT_NOT_RESOLVED  409  -> "Waiting for payment to clear" (should be
+ *                                rare: the End OTP cannot be issued without
+ *                                payment, so this would mean a stale code
+ *                                survived a payment-state change)
+ *   OTP_SERVICE_UNAVAILABLE 503
+ */
+export async function jobComplete(bookingID: string, otp: string): Promise<CompleteJobResponse> {
+  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
   return expectOk<CompleteJobResponse>(res, 'complete job');
 }
 
@@ -123,6 +161,15 @@ export async function getJobDetail(bookingID: string): Promise<HelperBooking & {
   pro_earnings_paise?: number;
   actual_duration_minutes?: number;
   customer_rating_pending?: boolean;
+  // Phase 1 Step 4 — payment-state visibility for the pro. Backend already
+  // serializes these on the Booking row (see internal/booking/model.go);
+  // we just declare the shape on the wire so the screen can derive
+  // States A/B/C1/C2/D without an extra round-trip.
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  payment_method?: 'cashfree' | 'wallet' | 'cash' | 'cod' | null;
+  cash_collected_at?: string | null;
+  start_otp_verified_at?: string | null;
+  end_otp_verified_at?: string | null;
 }> {
   const res = await apiFetch(`${BASE_URL}/bookings/${bookingID}`);
   return expectOk(res, 'get job detail');

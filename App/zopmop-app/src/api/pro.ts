@@ -30,6 +30,14 @@ export interface HelperBooking {
   discount_paise: number;
   created_at: string;
   updated_at: string;
+  // Phase 1 Step 4 — payment + OTP-verification visibility for the pro
+  // so JobDetailScreen can derive State A/B/C1/C2/D without an extra
+  // round-trip. All optional — older backend responses omit them.
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded' | null;
+  payment_method?: 'cashfree' | 'wallet' | 'cash' | 'cod' | null;
+  cash_collected_at?: string | null;
+  start_otp_verified_at?: string | null;
+  end_otp_verified_at?: string | null;
 }
 
 /**

@@ -162,6 +162,18 @@ const en: Dict = {
     startJob: 'Start job',
     startConfirmTitle: 'Start job?',
     startConfirmBody: 'Is the customer ready? Timer starts as soon as you start the job.',
+    // Phase 1 Step 4b — Start OTP entry copy. Pro reads the OTP off the
+    // customer's TrackLive screen and types it here to start the service.
+    startOtpLabel: 'Enter the start code from the customer',
+    startOtpHelper: 'Ask the customer to read their 6-digit start code.',
+    startOtpHelperError: 'Incorrect code. Ask the customer to read it again.',
+    startService: 'Start service',
+    startOtpTryAgain: 'Try again',
+    startOtpServiceUnavailable: 'Service temporarily unavailable, try again',
+    // Phase 1 Step 4b — State B "Awaiting payment" placeholder. Replaced
+    // by the C1/C2/D payment-banner UI in Step 4c.
+    awaitingPaymentTitle: 'Service in progress',
+    awaitingPaymentSub: 'Customer will pay at the end of service.',
     finishJob: 'Finish job',
     finishConfirmTitle: 'Finish job?',
     finishConfirmBody: 'Are you sure you want to finish?',
