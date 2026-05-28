@@ -1,3 +1,10 @@
+// Package payroll computes the salaried pro pay for one half-month cycle
+// as a pure function of online + working minutes. It MUST stay decoupled
+// from customer-payment state and from the cash-collection / settlement
+// ledger. The pro is paid identically regardless of whether or how the
+// customer paid. See docs/phase-1-payment-gated-flow.md for the
+// rationale; decoupling_test.go in this package enforces the rule via a
+// grep over package source files.
 package payroll
 
 import (

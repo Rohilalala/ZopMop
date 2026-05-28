@@ -56,6 +56,11 @@ type Booking struct {
 	EndOTPVerifiedAt    *time.Time `json:"end_otp_verified_at,omitempty"`
 	CashCollectedByPro  *string    `json:"cash_collected_by_pro,omitempty"`
 	CashCollectedAt     *time.Time `json:"cash_collected_at,omitempty"`
+	// Phase 1 Step 3 — cash settlement tracking (migration 113). Stamped
+	// when an admin clicks "Mark settled" in the CRM, recording the
+	// hand-over of physical cash from the pro to the company.
+	CashSettledAt       *time.Time `json:"cash_settled_at,omitempty"`
+	CashSettledByAdmin  *string    `json:"cash_settled_by_admin,omitempty"`
 	// CanCancelFree and FreeCancelUntil are computed at read time on the
 	// booking detail endpoint. nil for terminal-state bookings (no longer
 	// cancellable).

@@ -71,6 +71,9 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Delete("/:id", h.CancelBooking)
 	router.Post("/:id/reschedule", h.RescheduleBooking)
 	router.Post("/:id/keep-looking", h.KeepLookingBooking)
+	// Customer-initiated cash-resolve (Phase 1 Step 3). Customer auth only;
+	// the SQL guard enforces customer_id ownership.
+	router.Post("/:id/resolve-cash", h.ResolveCash)
 	router.Post("/:id/accept", append(proChain, h.AcceptBooking)...)
 	router.Post("/:id/arrived", append(proChain, h.MarkArrived)...)
 	router.Post("/:id/start", append(proChain, h.StartBooking)...)
@@ -661,6 +664,56 @@ func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "booking completed"})
+}
+
+// ResolveCash handles POST /bookings/:id/resolve-cash.
+// Customer-initiated. Closes the payment-choice screen with a cash
+// resolution. See (*Service).ResolveCash for the guard ordering and the
+// residual-race rationale.
+func (h *Handler) ResolveCash(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	customerID, _ := c.Locals("userID").(string)
+	if customerID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
+	}
+
+	if err := h.service.ResolveCash(c.UserContext(), bookingID, customerID); err != nil {
+		switch {
+		case errors.Is(err, ErrOTPServiceNotWired):
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "OTP service not available", "code": "OTP_SERVICE_UNAVAILABLE",
+			})
+		case errors.Is(err, ErrBookingNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "booking not found", "code": "BOOKING_NOT_FOUND",
+			})
+		case errors.Is(err, ErrNoHelperAssigned):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "no helper assigned", "code": "NO_HELPER_ASSIGNED",
+			})
+		case errors.Is(err, ErrJobNotInState):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "booking is not in progress", "code": "JOB_NOT_IN_STATE",
+			})
+		case errors.Is(err, ErrAlreadyPaidOnline):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "booking already paid online", "code": "ALREADY_PAID_ONLINE",
+			})
+		case errors.Is(err, ErrOnlinePaymentPending):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "an online payment is processing, please wait",
+				"code":  "ONLINE_PAYMENT_PENDING",
+			})
+		}
+		log.Error().Err(err).Str("booking_id", bookingID).Str("customer_id", customerID).Msg("[resolve-cash] failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to resolve cash payment",
+		})
+	}
+	return c.JSON(fiber.Map{"message": "cash payment recorded"})
 }
 
 // mapOTPGateError translates the typed errors returned by StartBooking /

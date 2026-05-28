@@ -242,6 +242,25 @@ var (
 	// End OTP cannot have been issued in this state, but we double-check
 	// here as defense-in-depth. Maps to 409.
 	ErrPaymentNotResolved = errors.New("booking: payment not resolved")
+	// ErrBookingNotFound is returned when ResolveCash targets a booking
+	// that does not exist or the customer does not own. Maps to 404 (we
+	// intentionally do not distinguish "missing" from "not yours" so
+	// neither leaks information about other customers' bookings).
+	ErrBookingNotFound = errors.New("booking: not found")
+	// ErrNoHelperAssigned is returned when ResolveCash is invoked on a
+	// booking that has no helper assigned yet (pending/searching). The
+	// cash attribution requires a real pro to owe the money. Maps to 409.
+	ErrNoHelperAssigned = errors.New("booking: no helper assigned")
+	// ErrAlreadyPaidOnline is returned when ResolveCash is invoked but
+	// the booking already shows payment_status='paid'. The online path
+	// closed the cash option. Maps to 409.
+	ErrAlreadyPaidOnline = errors.New("booking: already paid online")
+	// ErrOnlinePaymentPending is the residual-race guard: a Cashfree
+	// order exists for this booking with gateway_status='pending'. The
+	// customer's online payment is mid-flight and may succeed at any
+	// moment; allowing cash now would double-pay. Maps to 409. The
+	// customer-app copy is "An online payment is processing, please wait."
+	ErrOnlinePaymentPending = errors.New("booking: online payment pending")
 )
 
 // IssueStartOTP generates a fresh start OTP for the booking and stores it
@@ -263,7 +282,8 @@ func (s *Service) IssueStartOTP(ctx context.Context, bookingID string) (string, 
 //
 //   - The Cashfree webhook handler when it flips payment_status='paid'
 //     (Step 1.B — webhook hook).
-//   - The pro-side "paid by cash" handler (Step 3).
+//   - The customer-initiated ResolveCash handler (Step 3) after the
+//     "Yes, pay cash" confirmation.
 //
 // Idempotent re-issue rotates the outstanding code (overwrites). The
 // caller publishes the code to the customer's TrackLive screen.
@@ -272,6 +292,153 @@ func (s *Service) IssueEndOTP(ctx context.Context, bookingID string) (string, er
 		return "", ErrOTPServiceNotWired
 	}
 	return s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID)
+}
+
+// ResolveCash is the customer-initiated cash resolution. The customer
+// reaches it from the payment-method choice screen at the end of service:
+// they tap CASH, confirm "Yes, pay cash", and this is the resulting call.
+//
+// Phase 1 Step 3 — the cash path. The model is intentionally simple:
+// no pro action, no webhook conflict logic, no auto-refund. The customer
+// chooses; one successful resolution closes the other path.
+//
+// Guards (in order, single tx with SELECT FOR UPDATE on the booking row):
+//
+//  1. Booking must belong to the calling customer  → ErrBookingNotFound
+//  2. Helper must be assigned                       → ErrNoHelperAssigned
+//  3. Status must be 'in_progress'                  → ErrJobNotInState
+//  4. payment_status must NOT already be 'paid'     → ErrAlreadyPaidOnline
+//  5. cash_collected_at IS NOT NULL                 → idempotent success
+//                                                      (re-Issue End OTP)
+//  6. No Cashfree order with gateway_status='pending'→ ErrOnlinePaymentPending
+//                                                      (the residual-race
+//                                                      guard — online
+//                                                      payment in flight)
+//
+// On success: stamp cash_collected_by_pro = helper_id (snapshot the
+// assigned pro at resolve time so a future helper reassignment cannot
+// silently shift the owed-money attribution) and cash_collected_at = NOW().
+// Post-commit: issue the End OTP via the SAME IssueEndOTP path the
+// Cashfree webhook uses. Failure is non-fatal — TrackLive self-heal
+// (Step 5) covers a missed issuance on the next customer load.
+//
+// Payroll is NOT touched here. The pro's pay is salaried on
+// online/working minutes; the cash they now owe the company is a
+// separate ledger (internal/crm/cash). The two never net against
+// each other. See docs/phase-1-payment-gated-flow.md.
+func (s *Service) ResolveCash(ctx context.Context, bookingID, customerID string) error {
+	if s.otpSvc == nil {
+		return ErrOTPServiceNotWired
+	}
+
+	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer txCancel()
+
+	tx, err := s.db.BeginTx(txCtx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("resolve-cash begin tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	// Lock the booking row for the duration of the tx so concurrent
+	// resolve-cash calls and the Cashfree webhook handler serialize on
+	// this booking. The webhook also takes a FOR UPDATE lock on the
+	// payment row (handler.go ~line 940); even if the two locks are on
+	// different tables, the BEGIN/COMMIT boundaries serialise the
+	// observed state per-booking.
+	var (
+		helperID    *string
+		status      string
+		paymentStat *string
+		cashAt      *time.Time
+	)
+	if err := tx.QueryRow(txCtx,
+		`SELECT helper_id::text, status, payment_status, cash_collected_at
+		   FROM bookings
+		  WHERE id = $1 AND customer_id = $2
+		  FOR UPDATE`,
+		bookingID, customerID,
+	).Scan(&helperID, &status, &paymentStat, &cashAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrBookingNotFound
+		}
+		return fmt.Errorf("resolve-cash load booking: %w", err)
+	}
+	if helperID == nil {
+		return ErrNoHelperAssigned
+	}
+	if status != string(StatusInProgress) {
+		return ErrJobNotInState
+	}
+	if paymentStat != nil && *paymentStat == "paid" {
+		return ErrAlreadyPaidOnline
+	}
+
+	// Idempotency: a second tap from the customer (or a retry from a
+	// flaky network) lands here. We are already in target state; the
+	// only side effect needed is re-Issuing the End OTP so TrackLive
+	// has something to display if the prior OTP's TTL expired or was
+	// consumed. Commit first to release the row lock before the Redis
+	// call so we don't block the gate handler.
+	if cashAt != nil {
+		if err := tx.Commit(txCtx); err != nil {
+			return fmt.Errorf("resolve-cash commit (idempotent): %w", err)
+		}
+		if _, oerr := s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID); oerr != nil {
+			log.Warn().Err(oerr).Str("booking_id", bookingID).
+				Msg("[resolve-cash] idempotent end-OTP re-issue failed; TrackLive self-heal will retry")
+		}
+		return nil
+	}
+
+	// Residual-race guard: any Cashfree order in 'pending' for this
+	// booking means an online charge is mid-flight and may succeed
+	// any second. Reject; the app shows "An online payment is
+	// processing, please wait." See phase-1-payment-gated-flow.md.
+	var pendingExists bool
+	if err := tx.QueryRow(txCtx,
+		`SELECT EXISTS (
+		   SELECT 1
+		     FROM payments
+		    WHERE booking_id = $1::uuid
+		      AND payment_method = 'cashfree'
+		      AND gateway_status = 'pending'
+		 )`,
+		bookingID,
+	).Scan(&pendingExists); err != nil {
+		return fmt.Errorf("resolve-cash check pending payment: %w", err)
+	}
+	if pendingExists {
+		return ErrOnlinePaymentPending
+	}
+
+	// All guards passed. Stamp the cash resolution. Snapshot the
+	// assigned helper_id into cash_collected_by_pro: the owes ledger
+	// must be attributable even if a future code path ever rewrites
+	// helper_id (e.g. reschedule reassignment), and the snapshot is
+	// the durable record of "who collected this".
+	if _, err := tx.Exec(txCtx,
+		`UPDATE bookings
+		    SET cash_collected_by_pro = $2::uuid,
+		        cash_collected_at     = NOW(),
+		        updated_at            = NOW()
+		  WHERE id = $1`,
+		bookingID, *helperID,
+	); err != nil {
+		return fmt.Errorf("resolve-cash stamp booking: %w", err)
+	}
+	if err := tx.Commit(txCtx); err != nil {
+		return fmt.Errorf("resolve-cash commit: %w", err)
+	}
+
+	// Post-commit End OTP issuance. Mirrors the Cashfree webhook hook
+	// (Step 1) — Redis-only side effect, non-fatal. Step 5's TrackLive
+	// self-heal covers any transient failure on the next customer load.
+	if _, oerr := s.otpSvc.Issue(ctx, otp.ScopeEnd, bookingID); oerr != nil {
+		log.Warn().Err(oerr).Str("booking_id", bookingID).
+			Msg("[resolve-cash] post-commit end-OTP issuance failed; TrackLive self-heal will retry")
+	}
+	return nil
 }
 
 // payBookingFromWallet runs the wallet debit + payments row insert + booking

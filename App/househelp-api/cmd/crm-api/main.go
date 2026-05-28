@@ -22,6 +22,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/auth"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/cash"
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
@@ -232,6 +233,11 @@ func main() {
 	expRepo := experiments.NewRepository(readPool, dbPool)
 	expHandler := experiments.NewHandler(expRepo, auditRecorder)
 
+	// Phase 1 Step 3 — cash owes + settle. Read-only "who owes how much"
+	// + a per-pro batch settle action that writes a crm_audit_log row.
+	cashRepo := cash.NewRepository(dbPool)
+	cashHandler := cash.NewHandler(cashRepo, auditRecorder)
+
 	analyticsSvc := analytics.NewService(readPool)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 
@@ -418,6 +424,7 @@ func main() {
 	workersHandler.RegisterRoutes(authed)
 	ordersHandler.RegisterRoutes(authed)
 	refundsHandler.RegisterRoutes(authed)
+	cashHandler.RegisterRoutes(authed)
 	promosHandler.RegisterRoutes(authed)
 	bannersHandler.RegisterRoutes(authed)
 	expHandler.RegisterRoutes(authed)

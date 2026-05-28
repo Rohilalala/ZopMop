@@ -5,6 +5,72 @@ implementation lives in `internal/otp`, `internal/booking`, and
 `internal/payments`. Phase 1 plan is in the conversation transcript, not
 checked in.
 
+## Cash path — customer choice, not pro choice
+
+**Decision (Phase 1 Step 3).** Cash is a CUSTOMER-initiated payment
+method, not a pro action. At end of service the customer's TrackLive
+screen shows a payment-method choice: CASH (with a "Are you sure?"
+confirmation) or ONLINE (Cashfree). One successful resolution closes
+the other path:
+
+- Online payment SUCCEEDS → cash option closed (booking is now
+  `payment_status='paid'` so the `ResolveCash` handler returns
+  `ALREADY_PAID_ONLINE`).
+- Cash CONFIRMED → online option closed (the booking carries
+  `cash_collected_at`; the customer app hides the pay-online button
+  and the Cashfree-order endpoint should not be hit again).
+- Online FAILS or is ABANDONED → both options stay open. Cash is the
+  fallback.
+
+**Residual-race guard.** When the customer taps "Yes, pay cash",
+`ResolveCash` checks for an existing Cashfree order in
+`gateway_status='pending'` for the booking. If one exists, the cash
+confirmation is rejected with `ONLINE_PAYMENT_PENDING` ("An online
+payment is processing, please wait."). This is the single guard that
+prevents a cash resolve from racing a Cashfree webhook to a
+double-payment outcome. The earlier symmetric guard at Cashfree
+order creation + webhook-side conflict detection + auto-refund machinery
+were considered and rejected as overkill for the pilot — the single
+pending-order check at the cash entry point closes the only meaningful
+window.
+
+**Attribution.** When the customer confirms cash, the assigned helper's
+id is snapshot into `bookings.cash_collected_by_pro` at that moment.
+This is a defensive snapshot — if any future code path ever rewrites
+`bookings.helper_id` (e.g. a reschedule-with-reassignment flow), the
+owed-money ledger stays correctly attributed to the pro who physically
+took the cash.
+
+**Tradeoff — accepted for pilot.** Tapping "Yes, pay cash" issues the
+End OTP with no in-app proof that the pro physically received the
+money. Enforcement is operational, not technical:
+
+- Booking is attributed to the assigned pro and counts in their owes
+  total.
+- Settlement happens in person, end of day, via the CRM "Mark settled"
+  flow in `internal/crm/cash`.
+- Pro is salaried (no per-job incentive to inflate or skip).
+- Small society / contained pilot population means the company knows
+  who every pro is.
+
+At scale this becomes a real audit gap and the model needs a different
+proof (e.g. pro confirms receipt in their app, customer + pro both
+acknowledge, signed digital receipt). Not now.
+
+## CRM cash UI (Step 3.B)
+
+The `internal/crm/cash` package exposes:
+
+- `GET  /crm-api/cash/owes` — list every pro with unsettled cash
+- `GET  /crm-api/cash/owes/:proID` — per-collection detail for one pro
+- `POST /crm-api/cash/owes/:proID/settle` — batch settle (admin only,
+  audited)
+
+The React screens for these endpoints in `App/zopmop-crm/` are Step
+3.B in the Phase 1 plan — explicitly scheduled, not indefinitely
+deferred. Until 3.B lands, the founder hits the endpoints directly
+each evening for reconciliation.
+
 ## Known, accepted risks (pilot)
 
 ### 1. Matched-but-never-paid pro time

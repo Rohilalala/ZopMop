@@ -123,6 +123,10 @@ var permissions = map[string]string{
 	"zones.approval.approve": RoleAdmin,
 	"zones.approval.reject":  RoleAdmin,
 
+	// cash (Phase 1 Step 3 — owes/settle reconciliation)
+	"cash.read":   RoleSupport, // pro PII via name + amounts owed
+	"cash.settle": RoleAdmin,   // writes to booking rows; money handling
+
 	// SUPERADMIN-only
 	"flags.update":       RoleSuperadmin,
 	"flags.rollback":     RoleSuperadmin,
