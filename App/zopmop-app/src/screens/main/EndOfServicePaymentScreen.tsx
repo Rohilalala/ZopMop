@@ -185,23 +185,6 @@ export default function EndOfServicePaymentScreen() {
     close();
   };
 
-  // Mock dev toggle — 5d.1 only. Walks every state for sim review.
-  // Will be deleted before the final 5d push.
-  const DevStateToggles = () => (
-    <View style={s.devToggleRow}>
-      <Text style={[fontReg, s.devToggleLabel]}>DEV:</Text>
-      {(['choose', 'cash_confirm', 'opening', 'failed'] as LocalState[]).map((k) => (
-        <TouchableOpacity
-          key={k}
-          onPress={() => setState(k)}
-          style={[s.devTogglePill, state === k && s.devTogglePillActive]}
-        >
-          <Text style={[fontMed, s.devTogglePillText]}>{k}</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" />
@@ -230,9 +213,6 @@ export default function EndOfServicePaymentScreen() {
             onCashInstead={tapCashInsteadFromFailure}
           />
         )}
-
-        {/* 5d.1 — dev toggles. Removed before final 5d push. */}
-        {__DEV__ && <DevStateToggles />}
       </ScrollView>
 
       {/* Cash confirmation popup overlays the choose state. Renders
@@ -612,29 +592,4 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 4,
   },
-
-  // 5d.1 dev toggles (removed before final 5d push)
-  devToggleRow: {
-    flexDirection: 'row',
-    gap: 6,
-    flexWrap: 'wrap',
-    marginTop: 40,
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-  },
-  devToggleLabel: { fontSize: 11, color: 'rgba(255,255,255,0.4)' },
-  devTogglePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  devTogglePillActive: { borderColor: AMBER, backgroundColor: 'rgba(245,163,0,0.12)' },
-  devTogglePillText: { fontSize: 11, color: 'rgba(255,255,255,0.75)' },
 });
