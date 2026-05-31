@@ -1,5 +1,27 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/block-secrets.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/block-eas-prod.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|Bash",
@@ -8,6 +30,36 @@
             "type": "command",
             "command": "git rev-parse --git-dir >/dev/null 2>&1 && code-review-graph update --skip-flows 2>/dev/null || true",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/migration-name.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/sql-lint.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/go-fmt-vet.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "/Users/adityarohilla/Documents/ZopMop/.claude/hooks/js-lint.sh",
+            "timeout": 60
           }
         ]
       }
@@ -34,5 +86,17 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "sourcegraph@claude-plugins-official": true,
+    "expo@claude-plugins-official": true,
+    "session-report@claude-plugins-official": true,
+    "railway@claude-plugins-official": true
   }
 }

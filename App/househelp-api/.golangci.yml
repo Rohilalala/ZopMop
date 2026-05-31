@@ -1,0 +1,12 @@
+# golangci-lint v2 config for househelp-api.
+# CI / `make vet` run only `go vet ./...`; these linters add the high-value
+# classes vet misses for a Fiber + pgx + redis payments backend.
+# Install: brew install golangci-lint   (run: golangci-lint run)
+# v2 defaults already enable errcheck, govet, ineffassign, staticcheck, unused.
+version: "2"
+
+linters:
+  enable:
+    - bodyclose      # unclosed HTTP response bodies (outbound Cashfree calls)
+    - sqlclosecheck  # unclosed sql.Rows / sql.Stmt
+    - rowserrcheck   # missing rows.Err() after iteration

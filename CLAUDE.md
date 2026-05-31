@@ -1,3 +1,16 @@
+# ZopMop — monorepo
+
+| Package | Stack | Dev commands |
+|---------|-------|--------------|
+| `App/zopmop-app` | React Native + Expo (customer + pro flows) | `expo start`, `expo run:ios`, `expo run:android` |
+| `App/zopmop-crm` | Vite + React | `npm run dev` / `build` / `lint` / `typecheck` |
+| `App/househelp-api` | Go 1.26.3 backend | `make up` / `make preflight` / `make migrate` — see its CLAUDE.md |
+| `web` | Next.js 16.2.6 (bleeding edge — read `node_modules/next/dist/docs/` first) | `npm run dev` / `build` / `lint` |
+| `website` | marketing site | — |
+
+Each sub-project has its own CLAUDE.md with the specifics. `main` is the Railway-watched
+production branch for the backend — never push/merge to it without `make preflight`.
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
