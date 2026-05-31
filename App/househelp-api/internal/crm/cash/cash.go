@@ -27,13 +27,16 @@ package cash
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -67,6 +70,17 @@ type SettleResult struct {
 // ErrProNotFound is returned by Settle when the supplied pro id has
 // no unsettled cash collections. Maps to 404 — nothing to settle.
 var ErrProNotFound = errors.New("crm.cash: pro has no unsettled cash")
+
+// SettleAudit carries the request-scoped audit context into Settle so the
+// crm_audit_log row can be written inside the same transaction as the money
+// UPDATE. AdminID is passed separately (it also stamps cash_settled_by_admin),
+// these are the remaining fields the audit row needs.
+type SettleAudit struct {
+	AdminEmail string
+	IPAddress  string
+	UserAgent  string
+	RequestID  string
+}
 
 // Repository is the data layer for the CRM cash module.
 type Repository struct {
@@ -144,8 +158,21 @@ func (r *Repository) GetProOwes(ctx context.Context, proID string) ([]Collection
 // to settled, stamping who (adminID) and when (NOW()). Returns the count
 // of rows flipped and the total paise. ErrProNotFound when the pro has
 // nothing unsettled — admin clicked settle on a stale view.
-func (r *Repository) Settle(ctx context.Context, proID, adminID string) (SettleResult, error) {
-	rows, err := r.db.Query(ctx, `
+//
+// The money UPDATE and its crm_audit_log row are written inside ONE
+// transaction: a settle can never commit the money change without its
+// audit row, and vice versa. If the audit insert fails the whole settle
+// rolls back. (This is why the audit row is written here rather than via
+// the fire-and-forget audit.Recorder in the handler — the Recorder runs on
+// the pool in autocommit and cannot enlist in this tx.)
+func (r *Repository) Settle(ctx context.Context, proID, adminID string, a SettleAudit) (SettleResult, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return SettleResult{}, fmt.Errorf("crm.cash settle begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `
 		UPDATE bookings
 		   SET cash_settled_at       = NOW(),
 		       cash_settled_by_admin = $2::uuid,
@@ -157,23 +184,85 @@ func (r *Repository) Settle(ctx context.Context, proID, adminID string) (SettleR
 	if err != nil {
 		return SettleResult{}, fmt.Errorf("crm.cash settle: %w", err)
 	}
-	defer rows.Close()
 	res := SettleResult{ProID: proID}
 	for rows.Next() {
 		var paise int64
 		if err := rows.Scan(&paise); err != nil {
+			rows.Close()
 			return SettleResult{}, fmt.Errorf("crm.cash scan settle result: %w", err)
 		}
 		res.SettledCount++
 		res.SettledPaise += paise
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return SettleResult{}, err
 	}
 	if res.SettledCount == 0 {
 		return SettleResult{}, ErrProNotFound
 	}
+
+	// Audit. Module=cash, action=cash.settle, target=proID. After-value
+	// carries the count + total paise so one audit row captures what was
+	// settled even though the UPDATE touched many bookings.
+	if err := insertSettleAudit(ctx, tx, proID, adminID, a, res); err != nil {
+		return SettleResult{}, fmt.Errorf("crm.cash settle audit: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return SettleResult{}, fmt.Errorf("crm.cash settle commit: %w", err)
+	}
 	return res, nil
+}
+
+// insertSettleAudit writes the crm_audit_log row for a settle on the supplied
+// tx. Mirrors audit.Recorder.Log's INSERT (same columns, same JSONB + INET
+// handling) so the audit row is identical to a Recorder-written one, but
+// transactional with the money UPDATE.
+func insertSettleAudit(ctx context.Context, tx pgx.Tx, proID, adminID string, a SettleAudit, res SettleResult) error {
+	afterJSON, err := json.Marshal(map[string]any{
+		"settled_count": res.SettledCount,
+		"settled_paise": res.SettledPaise,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal after value: %w", err)
+	}
+
+	var ip any
+	if a.IPAddress != "" {
+		if parsed := net.ParseIP(a.IPAddress); parsed != nil {
+			ip = parsed.String()
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO crm_audit_log (
+			admin_id, admin_email, action, module,
+			target_type, target_id, before_value, after_value,
+			ip_address, user_agent, request_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`,
+		nilIfEmpty(adminID),
+		nilIfEmpty(a.AdminEmail),
+		"cash.settle",
+		"cash",
+		"pro",
+		nilIfEmpty(proID),
+		nil,
+		afterJSON,
+		ip,
+		nilIfEmpty(a.UserAgent),
+		nilIfEmpty(a.RequestID),
+	)
+	return err
+}
+
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // Handler is the fiber-level HTTP surface for the CRM cash module.
@@ -233,7 +322,16 @@ func (h *Handler) Settle(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
 	}
 
-	res, err := h.repo.Settle(c.UserContext(), proID, adminID)
+	// The settle UPDATE and its crm_audit_log row are written atomically
+	// inside Settle (see Repository.Settle), so the money change can never
+	// commit without its audit row. The audit context is threaded through
+	// here rather than written via the fire-and-forget audit.Recorder.
+	adminEmail, _ := c.Locals("crmAdminEmail").(string)
+	res, err := h.repo.Settle(c.UserContext(), proID, adminID, SettleAudit{
+		AdminEmail: adminEmail,
+		IPAddress:  c.IP(),
+		UserAgent:  string(c.Request().Header.UserAgent()),
+	})
 	if err != nil {
 		if errors.Is(err, ErrProNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -242,27 +340,6 @@ func (h *Handler) Settle(c *fiber.Ctx) error {
 		}
 		log.Error().Err(err).Str("pro_id", proID).Msg("[crm.cash] settle failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
-	}
-
-	// Audit. Module=cash, action=settle, target=proID. After-value carries
-	// the count + total paise so the audit log captures what was settled
-	// in one row even though the underlying UPDATE touched many bookings.
-	if h.recorder != nil {
-		adminEmail, _ := c.Locals("crmAdminEmail").(string)
-		h.recorder.Log(c.UserContext(), audit.Entry{
-			AdminID:    adminID,
-			AdminEmail: adminEmail,
-			Action:     "cash.settle",
-			Module:     "cash",
-			TargetType: "pro",
-			TargetID:   proID,
-			After: map[string]any{
-				"settled_count": res.SettledCount,
-				"settled_paise": res.SettledPaise,
-			},
-			IPAddress: c.IP(),
-			UserAgent: string(c.Request().Header.UserAgent()),
-		})
 	}
 
 	return c.JSON(res)

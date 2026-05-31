@@ -570,7 +570,7 @@ func (s *Service) sendDataToTokens(ctx context.Context, tokens []string, data ma
 			Msg("[notif] data-only multicast mocked (FCM offline)")
 		return nil
 	}
-	_, err := s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
+	br, err := s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
 		Data:   data,
 		Tokens: tokens,
 		Android: &messaging.AndroidConfig{
@@ -591,6 +591,35 @@ func (s *Service) sendDataToTokens(ctx context.Context, tokens []string, data ma
 	})
 	if err != nil {
 		return fmt.Errorf("FCM data multicast failed: %w", err)
+	}
+	// Walk the per-token responses and prune devices FCM flags as
+	// unregistered / invalid — same eviction the notification-bearing
+	// multicast does. Pre-fix the data-only path discarded the batch
+	// response, so stale tokens leaked on cross-app data pushes.
+	// Audit S-009.
+	if s.resolver != nil {
+		var invalid []string
+		for i, r := range br.Responses {
+			if r == nil || r.Success || r.Error == nil {
+				continue
+			}
+			if messaging.IsUnregistered(r.Error) {
+				if i < len(tokens) {
+					invalid = append(invalid, tokens[i])
+				}
+			}
+		}
+		if len(invalid) > 0 {
+			for _, deadToken := range invalid {
+				if delErr := s.resolver.DeleteToken(ctx, deadToken); delErr != nil {
+					log.Warn().Err(delErr).
+						Str("token_stub", tokenStub(deadToken)).
+						Msg("[notif] failed to prune unregistered FCM token (data multicast)")
+				}
+			}
+			log.Info().Int("count", len(invalid)).
+				Msg("[notif] pruned unregistered FCM tokens (data multicast)")
+		}
 	}
 	return nil
 }

@@ -35,6 +35,7 @@ package booking
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,7 +116,11 @@ func devGateMiddleware(c *fiber.Ctx) error {
 			JSON(fiber.Map{"error": "DEV_SEED_KEY env unset"})
 	}
 	supplied := c.Get("X-Dev-Seed-Key")
-	if supplied == "" || supplied != configured {
+	// Constant-time compare to avoid leaking the key via timing. Keep
+	// the empty-string guard — ConstantTimeCompare of two empty slices
+	// returns 1 (equal), which would wrongly pass when both are empty,
+	// but `configured` is already proven non-empty above.
+	if supplied == "" || subtle.ConstantTimeCompare([]byte(supplied), []byte(configured)) != 1 {
 		return c.SendStatus(http.StatusForbidden)
 	}
 	return c.Next()
