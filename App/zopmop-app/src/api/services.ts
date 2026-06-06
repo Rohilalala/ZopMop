@@ -49,11 +49,18 @@ export interface ServiceAddon {
   display_order: number;
 }
 
+export interface ServiceFaq {
+  question: string;
+  answer: string;
+  display_order: number;
+}
+
 export interface ServiceDetails {
   service: ApiService;
   includes: ServiceInclude[];
   excludes: ServiceExclude[];
   steps: ServiceStep[];
+  faqs: ServiceFaq[];
 }
 
 export async function listServices(): Promise<ApiService[]> {
