@@ -292,14 +292,14 @@ export default function ServiceAboutScreen() {
         {!expanded ? (
           <View style={s.body}>
             <PressFx style={s.viewFull} onPress={() => setExpanded(true)}>
-              <Text style={s.viewFullText}>View full details</Text>
+              <Text style={s.viewFullText}>View more details</Text>
               <Feather name="chevron-down" size={16} color={c.amber} />
             </PressFx>
           </View>
         ) : null}
 
         {/* Expanded sections — gate on non-empty data */}
-        {details && details.includes.length > 0 && (
+        {expanded && details && details.includes.length > 0 && (
           <>
             <Text style={s.secH}>What's included</Text>
             <View style={s.body}>
@@ -317,7 +317,7 @@ export default function ServiceAboutScreen() {
           </>
         )}
 
-        {details && details.excludes.length > 0 && (
+        {expanded && details && details.excludes.length > 0 && (
           <>
             <Text style={s.secH}>What's not included</Text>
             <View style={s.body}>
@@ -335,7 +335,7 @@ export default function ServiceAboutScreen() {
           </>
         )}
 
-        {details && details.steps.length > 0 && (
+        {expanded && details && details.steps.length > 0 && (
           <>
             <Text style={s.secH}>How it's done</Text>
             <View style={s.body}>
@@ -368,7 +368,7 @@ export default function ServiceAboutScreen() {
           </>
         )}
 
-        {details && (details.faqs?.length ?? 0) > 0 && (
+        {expanded && details && (details.faqs?.length ?? 0) > 0 && (
           <>
             <Text style={s.secH}>Frequently asked</Text>
             <View style={s.body}>
