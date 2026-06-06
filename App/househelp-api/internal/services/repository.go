@@ -206,13 +206,85 @@ func (r *Repository) GetDetails(ctx context.Context, serviceID string) (*Service
 	if err != nil {
 		return nil, err
 	}
+	faqs, err := r.listFaqs(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ServiceDetails{
 		Service:  svc,
 		Includes: includes,
 		Excludes: excludes,
 		Steps:    steps,
+		Faqs:     faqs,
 	}, nil
+}
+
+// listFaqs returns the resolved FAQ list for a service: the non-overridden
+// global faq_items followed by the per-service service_faqs. A per-service FAQ
+// suppresses any global FAQ that shares the same question, so a service never
+// shows two contradictory answers (e.g. Pre and Post Party Clean overrides the
+// global price FAQ with its fixed-90-minute version).
+func (r *Repository) listFaqs(ctx context.Context, serviceID string) ([]ServiceFaq, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Per-service FAQs first (supplies line + any override like the party price FAQ).
+	svcRows, err := r.db.Query(ctx,
+		`SELECT question, answer, display_order FROM service_faqs
+		 WHERE service_id = $1 ORDER BY display_order ASC LIMIT 50`, serviceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query service faqs: %w", err)
+	}
+	var perService []ServiceFaq
+	overridden := make(map[string]bool)
+	for svcRows.Next() {
+		var f ServiceFaq
+		if err := svcRows.Scan(&f.Question, &f.Answer, &f.DisplayOrder); err != nil {
+			svcRows.Close()
+			return nil, err
+		}
+		perService = append(perService, f)
+		overridden[f.Question] = true
+	}
+	err = svcRows.Err()
+	svcRows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	// Global FAQs, skipping any question a per-service FAQ overrides.
+	gRows, err := r.db.Query(ctx,
+		`SELECT question, answer, display_order FROM faq_items
+		 WHERE is_active = true ORDER BY display_order ASC LIMIT 50`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query global faqs: %w", err)
+	}
+	defer gRows.Close()
+
+	var globals []ServiceFaq
+	for gRows.Next() {
+		var f ServiceFaq
+		if err := gRows.Scan(&f.Question, &f.Answer, &f.DisplayOrder); err != nil {
+			return nil, err
+		}
+		if overridden[f.Question] {
+			continue
+		}
+		globals = append(globals, f)
+	}
+	if err := gRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Non-overridden globals (pro-safety, price) first, then per-service (supplies, overrides).
+	faqs := append(globals, perService...)
+	if faqs == nil {
+		faqs = []ServiceFaq{}
+	}
+	return faqs, nil
 }
 
 // GetAddons returns add-on services for a base service.

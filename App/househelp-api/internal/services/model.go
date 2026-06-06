@@ -46,6 +46,16 @@ type ServiceStep struct {
 	Icon        *string `json:"icon,omitempty"`
 }
 
+// ServiceFaq is one FAQ shown on the service detail sheet. The list returned in
+// ServiceDetails is the resolved union of global faq_items and per-service
+// service_faqs, with per-service entries overriding any global FAQ that shares
+// the same question (e.g. Pre and Post Party Clean overrides the price FAQ).
+type ServiceFaq struct {
+	Question     string `json:"question"`
+	Answer       string `json:"answer"`
+	DisplayOrder int    `json:"display_order"`
+}
+
 // ServiceAddon is a related service that can be added on.
 type ServiceAddon struct {
 	ID            string  `json:"id"`
@@ -62,6 +72,7 @@ type ServiceDetails struct {
 	Includes []ServiceInclude `json:"includes"`
 	Excludes []ServiceExclude `json:"excludes"`
 	Steps    []ServiceStep    `json:"steps"`
+	Faqs     []ServiceFaq     `json:"faqs"`
 }
 
 // AdminUpdateServiceRequest is the payload for PATCH /admin/services/:id.
