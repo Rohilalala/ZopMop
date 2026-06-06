@@ -143,6 +143,10 @@ export function BottomSheet({
     right: 0,
     bottom: 0,
     height: sheetH,
+    // Explicit zIndex so the (transformed) sheet orders BELOW the footer by
+    // zIndex; without it, at the peek snap the non-zero translateY composites
+    // the sheet above the footer and hides the sticky add bar.
+    zIndex: 1,
     backgroundColor: c.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
