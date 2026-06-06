@@ -228,6 +228,7 @@ export default function ServiceAboutScreen() {
       expanded={expanded}
       onExpandedChange={setExpanded}
       header={header}
+      footer={footer}
     >
       <ScrollView
         style={{ flex: 1 }}
@@ -387,7 +388,6 @@ export default function ServiceAboutScreen() {
           <Text style={s.loadingText}>Loading details…</Text>
         ) : null}
       </ScrollView>
-      {footer}
     </BottomSheet>
   );
 }
