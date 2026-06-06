@@ -32,6 +32,8 @@ type Props = {
    * scrollable body in `children` scrolls without fighting the sheet pan.
    */
   header?: React.ReactNode;
+  /** Override the sheet surface colour (default: theme `surface`). */
+  surfaceColor?: string;
   /**
    * Optional sticky footer pinned to the screen bottom (e.g. an add-to-cart
    * bar). Rendered outside the animated sheet so it stays in place across the
@@ -53,6 +55,7 @@ export function BottomSheet({
   expanded,
   onExpandedChange,
   header,
+  surfaceColor,
   footer,
   children,
 }: Props) {
@@ -147,7 +150,7 @@ export function BottomSheet({
     // zIndex; without it, at the peek snap the non-zero translateY composites
     // the sheet above the footer and hides the sticky add bar.
     zIndex: 1,
-    backgroundColor: c.surface,
+    backgroundColor: surfaceColor ?? c.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingTop: 8,

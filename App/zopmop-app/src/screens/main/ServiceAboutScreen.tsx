@@ -229,6 +229,7 @@ export default function ServiceAboutScreen() {
       onExpandedChange={setExpanded}
       header={header}
       footer={footer}
+      surfaceColor={c.bg}
     >
       <ScrollView
         style={{ flex: 1 }}
