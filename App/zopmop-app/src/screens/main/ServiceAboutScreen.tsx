@@ -37,7 +37,7 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 const H_PAD = 20;
 const { height: SCREEN_H } = Dimensions.get('window');
-const PEEK_H = Math.round(SCREEN_H * 0.56);
+const PEEK_H = Math.round(SCREEN_H * 0.48);
 const EXPANDED_H = Math.round(SCREEN_H * 0.92);
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
