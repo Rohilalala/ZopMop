@@ -48,6 +48,7 @@ import { listServices, type ApiService } from '../../api/services';
 import { getNearbyStats } from '../../api/insights';
 import { useCart } from '../../context/CartContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 
 import { Bloom } from '../../components/home/Bloom';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
@@ -128,6 +129,8 @@ const servicesMemCache: {
 
 export default function AllServicesScreen() {
   const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const insets = useSafeAreaInsets();
@@ -237,8 +240,8 @@ export default function AllServicesScreen() {
       <ScrollView
         // Background colour bleeds into the iOS overscroll gap so the area
         // above the content stays dark instead of flashing white.
-        style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: '#0A0A0A' }}
+        style={{ flex: 1, backgroundColor: c.bg }}
+        contentContainerStyle={{ paddingBottom: 200, backgroundColor: c.bg }}
         showsVerticalScrollIndicator={false}
         stickyHeaderIndices={[0]}
         refreshControl={
@@ -261,7 +264,7 @@ export default function AllServicesScreen() {
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
 
             <View style={{ flex: 1 }}>
@@ -282,7 +285,7 @@ export default function AllServicesScreen() {
               accessibilityRole="button"
               accessibilityLabel="Search"
             >
-              <Feather name="search" size={16} color="#FFFFFF" />
+              <Feather name="search" size={16} color={c.text} />
             </PressFx>
           </View>
 
@@ -338,7 +341,7 @@ export default function AllServicesScreen() {
 
         {!loading && groups.every((g) => g.services.length === 0) && (
           <View style={styles.emptyWrap}>
-            <Feather name="search" size={32} color="rgba(255,255,255,0.4)" />
+            <Feather name="search" size={32} color={c.textMuted} />
             <Text style={styles.emptyTitle}>No services available</Text>
             <Text style={styles.emptySub}>Try a different filter</Text>
           </View>
@@ -360,6 +363,9 @@ function ModeToggle({
   mode: Mode;
   onChange: (next: Mode) => void;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const [w, setW] = useState(0);
   const offset = useSharedValue(mode === 'schedule' ? 0 : 1);
 
@@ -414,12 +420,16 @@ function ModeBtn({
   icon: 'calendar' | 'zap';
   label: string;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <PressFx onPress={onPress} style={styles.modeBtn}>
       <Feather
         name={icon}
         size={14}
-        color={active ? '#0D0D0F' : 'rgba(255,255,255,0.7)'}
+        // active icon sits on the amber glider → ink in both themes
+        color={active ? '#0D0D0F' : c.textSecondary}
       />
       <Text style={[styles.modeLabel, active && styles.modeLabelActive]}>{label}</Text>
     </PressFx>
@@ -431,6 +441,9 @@ function ModeBtn({
 // "come back tomorrow" message instead of the service grid.
 
 function NightClosed() {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const float = useSharedValue(0);
   useEffect(() => {
     float.value = withRepeat(
@@ -453,7 +466,7 @@ function NightClosed() {
         Instant booking is closed for the night.{'\n'}Come back tomorrow at 6 am.
       </Text>
       <Text style={styles.nightHint}>
-        Tap <Text style={{ color: '#F5A300' }}>Schedule</Text> above to book ahead.
+        Tap <Text style={{ color: c.amber }}>Schedule</Text> above to book ahead.
       </Text>
     </View>
   );
@@ -472,6 +485,9 @@ function Chip({
   active: boolean;
   onPress: () => void;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <PressFx onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
       <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{label}</Text>
@@ -493,6 +509,9 @@ function ServiceCard({
   service: ApiService;
   instantMode: boolean;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
   const [busy, setBusy] = useState(false);
@@ -515,6 +534,8 @@ function ServiceCard({
       navigation.navigate('InstantMatching', {
         serviceId: service.id,
         serviceName: service.name,
+        // Carried so "switch to scheduled" can seed the cart with this service.
+        durationMinutes: service.min_duration_minutes,
       });
       return;
     }
@@ -538,6 +559,14 @@ function ServiceCard({
     if (busy || !cartItem) return;
     setBusy(true);
     try {
+      // Fixed-duration service (single slot, step 0 — e.g. Party Cleanup):
+      // there is nothing to decrement, so minus removes the item and plus is a
+      // no-op. Without this, `next` stays at the fixed duration and the item is
+      // re-added instead of removed.
+      if (service.duration_step_minutes <= 0) {
+        if (delta < 0) await removeItem(cartItem.id);
+        return;
+      }
       const next = cartItem.duration_minutes + delta * service.duration_step_minutes;
       if (next < service.min_duration_minutes) {
         await removeItem(cartItem.id);
@@ -602,14 +631,15 @@ function ServiceCard({
                 }}
               />
             ) : (
-              <Feather name="package" size={40} color="rgba(255,255,255,0.7)" />
+              <Feather name="package" size={40} color={c.textSecondary} />
             )}
           </View>
 
           {/* rating chip */}
           {rating && (
             <View style={styles.ratingChip}>
-              <Text style={{ color: '#F5A300', fontSize: 10 }}>★</Text>
+              <Text style={{ color: c.amber, fontSize: 10 }}>★</Text>
+              {/* ink text on the white rating badge → theme-independent */}
               <Text style={[fontBold, { color: '#0D0D0F', fontSize: 10 }]}>
                 {rating}
                 {showReviews ? ` · ${reviews}` : ''}
@@ -628,11 +658,12 @@ function ServiceCard({
                   disabled={busy}
                 >
                   {busy
-                    ? <LoadingBars size="small" color="#F5A300" />
-                    : <Feather name="minus" size={16} color="#F5A300" />
+                    ? <LoadingBars size="small" color={c.amber} />
+                    : <Feather name="minus" size={16} color={c.amber} />
                   }
                 </PressFx>
                 <View style={styles.stepMid}>
+                  {/* ink + gray text on the white stepper → theme-independent */}
                   <Text style={[fontBold, { color: '#0D0D0F', fontSize: 12 }]}>
                     {cartItem.duration_minutes}
                   </Text>
@@ -662,7 +693,7 @@ function ServiceCard({
                     color={
                       cartItem.duration_minutes >= service.max_duration_minutes
                         ? 'rgba(245,163,0,0.35)'
-                        : '#F5A300'
+                        : c.amber
                     }
                   />
                 </PressFx>
@@ -674,8 +705,8 @@ function ServiceCard({
                 style={styles.addFab}
               >
                 {busy
-                  ? <LoadingBars size="small" color="#F5A300" />
-                  : <Feather name="plus" size={16} color="#F5A300" />
+                  ? <LoadingBars size="small" color={c.amber} />
+                  : <Feather name="plus" size={16} color={c.amber} />
                 }
               </PressFx>
             )
@@ -690,13 +721,13 @@ function ServiceCard({
           {service.name.replace(/\n/g, ' ')}
         </Text>
         <View style={styles.priceRow}>
-          <Text style={[fontExtra, { color: '#FFFFFF', fontSize: 14 }]}>{price}</Text>
+          <Text style={[fontExtra, { color: c.text, fontSize: 14 }]}>{price}</Text>
           {mrp && (
             <Text
               style={[
                 fontMed,
                 {
-                  color: 'rgba(255,255,255,0.35)',
+                  color: c.textMuted,
                   fontSize: 11,
                   textDecorationLine: 'line-through',
                 },
@@ -710,7 +741,7 @@ function ServiceCard({
               fontSemi,
               {
                 fontSize: 10.5,
-                color: 'rgba(255,255,255,0.45)',
+                color: c.textMuted,
                 marginLeft: 'auto',
               },
             ]}
@@ -725,16 +756,33 @@ function ServiceCard({
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 pixel-identical; light adds the
+// cream bg + amber. The dark-only raised/white surfaces (chip-active ink,
+// rating badge, add-fab, stepper) are forked via locals below so dark keeps
+// its exact literal while light gets a readable equivalent.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Header overlay: opaque-ish dark wash in dark (keeps the sticky bar reading
+  // over content) → solid cream bg in light.
+  const headBg = isDark ? 'rgba(10,10,10,0.92)' : c.bg;
+  // Active chip + add-fab are dark ink chips in dark mode. On cream they invert
+  // to the ink colour so the amber label/icon stays legible (button is "dark"
+  // in both — the amber sits on a dark chip). Ink is theme-independent here.
+  const inkChip = '#0D0D0F';
+  // White surfaces (rating badge, stepper) read on the dark thumbnail in both
+  // themes — keep the near-white literal in both.
+  const whiteSurface = 'rgba(255,255,255,0.96)';
+
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: c.bg },
 
   head: {
-    backgroundColor: 'rgba(10,10,10,0.92)',
+    backgroundColor: headBg,
     paddingTop: 10,
     paddingBottom: 14,
     paddingHorizontal: H_PAD,
     borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: c.glassBorder,
     zIndex: 30,
   },
   headRow: {
@@ -749,21 +797,21 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.glassHi,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   title: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 24,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.6,
     lineHeight: 26,
   },
   subtitle: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
     marginTop: 2,
   },
 
@@ -774,13 +822,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   chipActive: {
-    backgroundColor: '#0D0D0F',
-    borderColor: '#0D0D0F',
+    backgroundColor: inkChip,
+    borderColor: inkChip,
     shadowColor: '#000',
     shadowOpacity: 0.4,
     shadowRadius: 14,
@@ -790,29 +838,29 @@ const styles = StyleSheet.create({
   chipLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12.5,
-    color: 'rgba(255,255,255,0.7)',
+    color: c.textSecondary,
   },
-  chipLabelActive: { color: '#F5A300' },
+  chipLabelActive: { color: c.amber },
   chipCount: {
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
   },
   chipCountActive: { backgroundColor: 'rgba(245,163,0,0.2)' },
   chipCountText: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 10,
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
   },
-  chipCountTextActive: { color: '#F5A300' },
+  chipCountTextActive: { color: c.amber },
 
   // Mode toggle (Schedule | Instant) — segmented control with sliding glider.
   modeWrap: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
     borderRadius: 12,
     padding: 4,
     position: 'relative',
@@ -823,7 +871,7 @@ const styles = StyleSheet.create({
     left: 0,
     bottom: 4,
     borderRadius: 9,
-    backgroundColor: '#F5A300',
+    backgroundColor: c.amber,
     shadowColor: '#F5A300',
     shadowOpacity: 0.3,
     shadowOffset: { width: 0, height: 4 },
@@ -843,9 +891,10 @@ const styles = StyleSheet.create({
   modeLabel: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
+    color: c.textSecondary,
     letterSpacing: -0.13,
   },
+  // active label sits on the amber glider → ink in both themes
   modeLabelActive: { color: '#0D0D0F' },
 
   loadWrap: { padding: 60, alignItems: 'center' },
@@ -860,13 +909,13 @@ const styles = StyleSheet.create({
   secTitle: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.15,
   },
   secMeta: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
   },
 
   grid: {
@@ -882,7 +931,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: whiteSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
@@ -895,7 +944,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#0D0D0F',
+    backgroundColor: inkChip,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -917,7 +966,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 6,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: whiteSurface,
     zIndex: 3,
     shadowColor: '#000',
     shadowOpacity: 0.25,
@@ -940,7 +989,7 @@ const styles = StyleSheet.create({
 
   cardName: {
     fontSize: 13,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.2,
     lineHeight: 16,
     marginTop: 10,
@@ -963,14 +1012,14 @@ const styles = StyleSheet.create({
   nightTitle: {
     fontFamily: 'PlusJakartaSans_800ExtraBold',
     fontSize: 24,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.6,
     textAlign: 'center',
   },
   nightSub: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 14,
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
     marginTop: 10,
@@ -978,7 +1027,7 @@ const styles = StyleSheet.create({
   nightHint: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
     textAlign: 'center',
     marginTop: 24,
   },
@@ -991,11 +1040,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
-    color: '#FFFFFF',
+    color: c.text,
   },
   emptySub: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 13,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
   },
-});
+  });
+}

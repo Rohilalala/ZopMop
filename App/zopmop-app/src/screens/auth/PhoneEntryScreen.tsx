@@ -19,7 +19,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { haptics } from '../../utils/haptics';
 import { IndiaFlag } from '../../components/ui/IndiaFlag';
 import { posthog } from '../../config/posthog';
@@ -32,7 +31,8 @@ type Props = {
 const COUNTRY_CODE = '+91';
 
 export default function PhoneEntryScreen({ navigation }: Props) {
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = lightColors;
   const styles = useMemo(() => createStyles(c), [c]);
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -212,7 +212,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <LoadingBars color="#FFFFFF" size="small" />
+              <LoadingBars color="#0D0D0F" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Send OTP</Text>
             )}
@@ -298,7 +298,7 @@ function createStyles(c: typeof lightColors) {
       lineHeight: 21,
       textAlign: 'center',
     },
-    termsLink: { color: c.primary, fontFamily: FontFamily.medium },
+    termsLink: { color: c.accentOnSurface, fontFamily: FontFamily.medium },
     bottomSpacer: { flex: 1 },
     bottom: {
       paddingHorizontal: 24,
@@ -306,7 +306,7 @@ function createStyles(c: typeof lightColors) {
     },
     continueButton: {
       height: 54,
-      backgroundColor: c.primary,
+      backgroundColor: c.accent,
       borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
@@ -315,7 +315,7 @@ function createStyles(c: typeof lightColors) {
     continueButtonText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.md,
-      color: '#FFFFFF',
+      color: '#0D0D0F',
       letterSpacing: 0.2,
     },
   });

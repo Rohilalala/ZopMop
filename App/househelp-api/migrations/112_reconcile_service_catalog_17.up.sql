@@ -4,7 +4,7 @@
 -- Reconciles service_categories to the final 17-service catalog on the
 -- 30/60/90-minute time-tiered model:
 --   * standard tier  → min_duration_minutes=30, max=90, duration_step_minutes=30
---   * Pre and Post Party Clean → FIXED 90: min=90, max=90, step=0
+--   * Party Cleanup → FIXED 90: min=90, max=90, step=0
 --
 -- Rules honoured:
 --   * No Go / front-end / content / icon changes here (those are later steps).
@@ -47,7 +47,7 @@ VALUES
     ('a1000000-0000-0000-0000-000000000019', 'Packing',                  '📦', '#FFF7ED', 100, 100, 30, 90, 30, true, 5,  'other'),         -- PLACEHOLDER price
     ('a1000000-0000-0000-0000-000000000020', 'Unpacking',                '📭', '#EEF2FF', 100, 100, 30, 90, 30, true, 6,  'other'),         -- PLACEHOLDER price
     ('a1000000-0000-0000-0000-000000000021', 'Fan Cleaning',             '🪭', '#F0F9FF', 100, 100, 30, 90, 30, true, 13, 'home_cleaning'), -- PLACEHOLDER price
-    ('a1000000-0000-0000-0000-000000000022', 'Pre and Post Party Clean', '🎊', '#FDF4FF', 100, 100, 90, 90, 0,  true, 17, 'other')          -- PLACEHOLDER price; FIXED 90 min
+    ('a1000000-0000-0000-0000-000000000022', 'Party Cleanup',            '🎊', '#FDF4FF', 100, 100, 90, 90, 0,  true, 17, 'other')          -- PLACEHOLDER price; FIXED 90 min
 ON CONFLICT (id) DO NOTHING;
 
 -- ── 4. DEACTIVATE — real rows not in the final 17 (is_active=false only) ───────

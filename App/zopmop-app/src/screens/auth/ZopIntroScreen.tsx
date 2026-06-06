@@ -3,20 +3,20 @@ import { StyleSheet, StatusBar } from 'react-native';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
-import { useColors, useTheme } from '../../context/ThemeContext';
+import { lightColors } from '../../theme/colors';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'ZopIntro'>;
 };
 
 export default function ZopIntroScreen({ navigation }: Props) {
-  const c = useColors();
-  const { isDark } = useTheme();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = lightColors;
   const ref = useRef<LottieView>(null);
 
   return (
     <>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={c.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={c.background} />
       <LottieView
         ref={ref}
         source={require('../../../assets/animation/intro.lottie')}

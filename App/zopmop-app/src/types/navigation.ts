@@ -53,7 +53,7 @@ export type MainStackParamList = {
   YourExperts: undefined;
   BookingRate: { bookingId: string; helperId?: string; helperName?: string };
   ReportIssue: { bookingId: string; serviceName?: string };
-  InstantMatching: { serviceId: string; serviceName: string };
+  InstantMatching: { serviceId: string; serviceName: string; durationMinutes?: number };
   ActiveBooking: {
     bookingId: string;
     serviceName: string;

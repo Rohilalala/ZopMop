@@ -43,8 +43,10 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
+import ServiceComplete from '../../components/ServiceComplete';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 import {
   getBookingTrackingWsUrl,
   getBookingDetail,
@@ -138,6 +140,10 @@ const DARK_MAP_STYLE = [
 
 export default function TrackLiveScreen() {
   const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  // Success green: dark brand green kept exact; light uses a readable deep green.
+  const success = isDark ? GREEN : c.green;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'TrackLive'>>();
   const insets = useSafeAreaInsets();
@@ -582,7 +588,7 @@ export default function TrackLiveScreen() {
           {/* Dispatching: no pro yet. Spinner + reassuring copy. */}
           {subState === 'dispatching' && (
             <View style={styles.statePanel}>
-              <ActivityIndicator size="large" color={AMBER} />
+              <ActivityIndicator size="large" color={c.amber} />
               <Text style={[fontBold, styles.stateHeadline]}>ZopMop is finding a pro for you...</Text>
               <Text style={[fontMed, styles.stateSub]}>Most bookings confirm in under 30 seconds</Text>
             </View>
@@ -592,7 +598,7 @@ export default function TrackLiveScreen() {
           {subState === 'cancelled' && (
             <View style={styles.statePanel}>
               <View style={styles.cancelIcon}>
-                <Feather name="x" size={28} color="#FFFFFF" />
+                <Feather name="x" size={28} color={isDark ? '#FFFFFF' : c.danger} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>Booking cancelled</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -611,7 +617,7 @@ export default function TrackLiveScreen() {
           {subState === 'no_pro_available' && (
             <View style={styles.statePanel}>
               <View style={styles.warnIcon}>
-                <Feather name="alert-triangle" size={26} color="#FFFFFF" />
+                <Feather name="alert-triangle" size={26} color={isDark ? '#FFFFFF' : c.amber} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>No pros available right now</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -631,7 +637,7 @@ export default function TrackLiveScreen() {
           {subState === 'no_show' && (
             <View style={styles.statePanel}>
               <View style={styles.warnIcon}>
-                <Feather name="user-x" size={26} color="#FFFFFF" />
+                <Feather name="user-x" size={26} color={isDark ? '#FFFFFF' : c.amber} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>Pro didn't show up</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -654,7 +660,7 @@ export default function TrackLiveScreen() {
           {subState === 'pending_action' && (
             <View style={styles.statePanel}>
               <View style={styles.warnIcon}>
-                <Feather name="clock" size={26} color="#FFFFFF" />
+                <Feather name="clock" size={26} color={isDark ? '#FFFFFF' : c.amber} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>Still looking for a pro</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -699,7 +705,7 @@ export default function TrackLiveScreen() {
                 <View style={styles.metaRow}>
                   {(helperRating !== undefined || helperJobs !== undefined) && (
                     <>
-                      <Feather name="star" size={11} color={AMBER} />
+                      <Feather name="star" size={11} color={c.amber} />
                       <Text style={[fontSemi, styles.metaText]}>
                         {[
                           helperRating !== undefined ? helperRating.toFixed(1) : null,
@@ -719,7 +725,7 @@ export default function TrackLiveScreen() {
               {subState !== 'completed' && (
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <PressFx onPress={onMessagePro} style={[styles.proAction, styles.proActionGhost]}>
-                    <Feather name="message-circle" size={16} color="#FFFFFF" />
+                    <Feather name="message-circle" size={16} color={c.text} />
                   </PressFx>
                   <PressFx
                     onPress={onCallPro}
@@ -771,14 +777,14 @@ export default function TrackLiveScreen() {
                   <View
                     style={[
                       styles.taskBullet,
-                      s.status === 'completed' && { backgroundColor: GREEN },
-                      s.status === 'in_progress' && { backgroundColor: AMBER },
-                      s.status === 'skipped' && { backgroundColor: 'rgba(255,255,255,0.15)' },
+                      s.status === 'completed' && { backgroundColor: success },
+                      s.status === 'in_progress' && { backgroundColor: c.amber },
+                      s.status === 'skipped' && { backgroundColor: c.glassBorderHi },
                     ]}
                   >
                     {s.status === 'completed' && <Feather name="check" size={11} color="#FFFFFF" />}
                     {s.status === 'in_progress' && <Feather name="clock" size={11} color="#0D0D0F" />}
-                    {s.status === 'skipped' && <Feather name="minus" size={11} color="rgba(255,255,255,0.6)" />}
+                    {s.status === 'skipped' && <Feather name="minus" size={11} color={c.textSecondary} />}
                   </View>
                   <Text
                     style={[
@@ -795,21 +801,16 @@ export default function TrackLiveScreen() {
             </View>
           )}
 
-          {/* Completed: hide steps, surface inline rating + tip placeholder. */}
+          {/* Completed: hide steps, surface the Service-Complete view. */}
           {subState === 'completed' && (
-            <RatingPanel
+            <ServiceComplete
               helperName={helperName}
               priceText={detail ? `₹${(detail.price_paise / 100).toFixed(0)}` : undefined}
               onSubmit={async (stars, text) => {
                 if (!bookingId || !token || token === '__guest__') return;
-                try {
-                  await submitBookingReview(token, bookingId, stars, text);
-                  showSuccess('Thanks for your feedback!');
-                  navigation.navigate('Tabs', { screen: 'Bookings' });
-                } catch (e) {
-                  showError((e as Error)?.message ?? 'Could not submit rating');
-                }
+                await submitBookingReview(token, bookingId, stars, text);
               }}
+              onDone={() => navigation.navigate('Tabs', { screen: 'Bookings' })}
               onSkip={() => navigation.navigate('Tabs', { screen: 'Bookings' })}
             />
           )}
@@ -823,6 +824,10 @@ export default function TrackLiveScreen() {
             subState === 'in_progress') && (
             <View style={{ marginTop: 18, paddingHorizontal: 20 }}>
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state="done"
                 icon="check"
                 title="Booking confirmed"
@@ -831,6 +836,10 @@ export default function TrackLiveScreen() {
                 connectorBelow="solid-green"
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state={
                   subState === 'en_route'
                     ? 'active'
@@ -854,6 +863,10 @@ export default function TrackLiveScreen() {
                 connectorBelow={subState === 'en_route' ? 'amber-fade' : subState === 'assigned' ? 'muted' : 'solid-green'}
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state={
                   subState === 'arrived'
                     ? 'active'
@@ -875,23 +888,16 @@ export default function TrackLiveScreen() {
                 connectorBelow="muted"
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state="pending"
                 icon="check"
                 title="Service completed"
                 sub="Rate your pro after the service"
                 time={'—'}
               />
-            </View>
-          )}
-
-          {/* Tip placeholder — visible on completed but disabled. Real
-              tipping flow is post-MVP. */}
-          {subState === 'completed' && (
-            <View style={styles.tipPlaceholder}>
-              <Feather name="dollar-sign" size={14} color="rgba(255,255,255,0.4)" />
-              <Text style={[fontMed, { color: 'rgba(255,255,255,0.4)', fontSize: 12 }]}>
-                Tip (coming soon)
-              </Text>
             </View>
           )}
 
@@ -904,89 +910,11 @@ export default function TrackLiveScreen() {
 
           {loading && !detail && (
             <View style={{ alignItems: 'center', marginTop: 12 }}>
-              <ActivityIndicator size="small" color={AMBER} />
+              <ActivityIndicator size="small" color={c.amber} />
             </View>
           )}
         </ScrollView>
       </View>
-    </View>
-  );
-}
-
-// ── Rating panel (inline) ────────────────────────────────────────────────────
-// Inline (not modal) per UX choice: persistent, dismiss-resistant, fits the
-// completed-state sheet space, measurably higher submission rate.
-
-function RatingPanel({
-  helperName,
-  priceText,
-  onSubmit,
-  onSkip,
-}: {
-  helperName?: string;
-  priceText?: string;
-  onSubmit: (stars: number, comment: string) => Promise<void>;
-  onSkip: () => void;
-}) {
-  const [stars, setStars] = useState(0);
-  const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const canSubmit = stars > 0 && !submitting;
-
-  const submit = async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(stars, comment.trim());
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <View style={styles.ratingPanel}>
-      <Text style={[fontExtra, styles.ratingHeadline]}>Service completed</Text>
-      {priceText && (
-        <Text style={[fontMed, styles.ratingSub]}>Total {priceText}</Text>
-      )}
-      <Text style={[fontBold, styles.ratingPrompt]}>
-        Rate {helperName ? helperName.split(' ')[0] : 'your pro'}
-      </Text>
-      <View style={styles.starsRow}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <Pressable key={n} onPress={() => setStars(n)} hitSlop={6}>
-            <Feather
-              name="star"
-              size={32}
-              color={n <= stars ? AMBER : 'rgba(255,255,255,0.18)'}
-              // @ts-ignore — Feather supports filled via overlay; use color only
-            />
-          </Pressable>
-        ))}
-      </View>
-      <TextInput
-        style={styles.ratingInput}
-        placeholder="Add your feedback (optional)"
-        placeholderTextColor="rgba(255,255,255,0.35)"
-        value={comment}
-        onChangeText={setComment}
-        multiline
-        maxLength={500}
-      />
-      <PressFx
-        onPress={submit}
-        style={[styles.primaryCta, !canSubmit && { opacity: 0.4 }]}
-        disabled={!canSubmit}
-      >
-        <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>
-          {submitting ? 'Submitting…' : 'Submit rating'}
-        </Text>
-      </PressFx>
-      <Pressable onPress={onSkip} hitSlop={6} style={{ marginTop: 10, alignSelf: 'center' }}>
-        <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 13 }]}>
-          Skip rating
-        </Text>
-      </Pressable>
     </View>
   );
 }
@@ -1066,6 +994,10 @@ type StepState = 'done' | 'active' | 'pending';
 type Connector = 'solid-green' | 'amber-fade' | 'muted';
 
 function Step({
+  c,
+  isDark,
+  styles,
+  success,
   state,
   icon,
   title,
@@ -1074,6 +1006,10 @@ function Step({
   timeAccent,
   connectorBelow,
 }: {
+  c: ScreenColors;
+  isDark: boolean;
+  styles: ReturnType<typeof makeStyles>;
+  success: string;
   state: StepState;
   icon: React.ComponentProps<typeof Feather>['name'];
   title: string;
@@ -1124,15 +1060,15 @@ function Step({
             width: 2,
             backgroundColor:
               connectorBelow === 'solid-green'
-                ? GREEN
+                ? success
                 : connectorBelow === 'muted'
-                ? 'rgba(255,255,255,0.10)'
+                ? c.glassBorderHi
                 : 'transparent',
           }}
         >
           {connectorBelow === 'amber-fade' && (
             <View style={StyleSheet.absoluteFill}>
-              <View style={{ flex: 0.2, backgroundColor: AMBER }} />
+              <View style={{ flex: 0.2, backgroundColor: c.amber }} />
               <View style={{ flex: 0.8, backgroundColor: 'rgba(245,163,0,0.10)' }} />
             </View>
           )}
@@ -1142,16 +1078,16 @@ function Step({
       <Animated.View
         style={[
           styles.marker,
-          state === 'done' && { backgroundColor: GREEN },
+          state === 'done' && { backgroundColor: success },
           state === 'active' && {
-            backgroundColor: AMBER,
-            shadowColor: AMBER,
+            backgroundColor: c.amber,
+            shadowColor: c.amber,
             shadowOpacity: 0.5,
             shadowRadius: 8,
             shadowOffset: { width: 0, height: 0 },
             elevation: 6,
           },
-          state === 'pending' && { backgroundColor: 'rgba(255,255,255,0.06)' },
+          state === 'pending' && { backgroundColor: c.glass },
           markerAStyle,
         ]}
       >
@@ -1173,20 +1109,20 @@ function Step({
         <Feather
           name={icon}
           size={13}
-          color={state === 'done' ? '#FFFFFF' : state === 'active' ? '#0D0D0F' : 'rgba(255,255,255,0.4)'}
+          color={state === 'done' ? '#FFFFFF' : state === 'active' ? '#0D0D0F' : c.textMuted}
         />
       </Animated.View>
       <View style={{ flex: 1, paddingTop: 4 }}>
         <Text
           style={[
             fontBold,
-            { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.07, lineHeight: 16 },
+            { color: c.text, fontSize: 13, letterSpacing: -0.07, lineHeight: 16 },
             state === 'pending' && { opacity: 0.5 },
           ]}
         >
           {title}
         </Text>
-        <Text style={[fontMed, { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }]}>
+        <Text style={[fontMed, { color: c.textSecondary, fontSize: 11, marginTop: 2 }]}>
           {sub}
         </Text>
       </View>
@@ -1196,7 +1132,7 @@ function Step({
           {
             fontSize: 11,
             paddingTop: 5,
-            color: timeAccent ? AMBER : 'rgba(255,255,255,0.4)',
+            color: timeAccent ? c.amber : c.textMuted,
           },
         ]}
       >
@@ -1279,10 +1215,32 @@ function addMinutes(min: number): string {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 identical; light adds cream + amber.
+// Floating chips/pins/route sit over a hardcoded-dark Google map (DARK_MAP_STYLE
+// is unchanged in both themes), so their dark surfaces + white glyphs stay
+// literal in both — theming them to cream would make them unreadable on the map.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Success green: dark brand green kept exact; light uses a readable deep green.
+  const success = isDark ? GREEN : c.green;
+  // Map backdrop flash colour behind the map tiles — dark map base in dark,
+  // cream in light so the brief pre-render flash matches the theme.
+  const mapBg = isDark ? '#0A1218' : c.bg;
+  // Bottom sheet surface (#0F0F11) has no useC equivalent → documented literal
+  // in dark (identical); white card in light. `verify` ring matches it.
+  const surface = isDark ? '#0F0F11' : c.white;
+  // Sheet grab handle — bright white handle on dark sheet in dark; a subtle
+  // ink hairline on the cream sheet in light.
+  const grabColor = isDark ? 'rgba(255,255,255,0.18)' : c.glassBorderHi;
+  // Cancel icon uses a soft red wash — exact literal in dark, danger tokens
+  // in light so it reads on cream.
+  const cancelBg = isDark ? 'rgba(255,90,90,0.18)' : c.dangerSoft;
+  const cancelBorder = isDark ? 'rgba(255,90,90,0.4)' : c.dangerBorder;
+
+  return StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#0A1218',
+    backgroundColor: mapBg,
   },
 
   // Top bar
@@ -1400,7 +1358,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#0F0F11',
+    backgroundColor: surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingTop: 8,
@@ -1410,14 +1368,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -12 },
     elevation: 24,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: c.glassBorder,
     zIndex: 40,
   },
   grab: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: grabColor,
     alignSelf: 'center',
     marginVertical: 6,
     marginBottom: 16,
@@ -1434,12 +1392,12 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: AMBER,
+    backgroundColor: c.amber,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)',
-    shadowColor: AMBER,
+    shadowColor: c.amber,
     shadowOpacity: 0.3,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -1452,14 +1410,14 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: GREEN,
+    backgroundColor: success,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#0F0F11',
+    borderColor: surface,
   },
   pname: {
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 16,
     letterSpacing: -0.32,
   },
@@ -1470,7 +1428,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,163,0,0.18)',
   },
   badgeText: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 9,
     letterSpacing: 0.4,
   },
@@ -1481,14 +1439,14 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   metaText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11.5,
   },
   metaDot: {
     width: 3,
     height: 3,
     borderRadius: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.5)',
+    backgroundColor: c.textMuted,
   },
   proAction: {
     width: 42,
@@ -1498,13 +1456,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   proActionGhost: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   proActionPrimary: {
-    backgroundColor: AMBER,
-    shadowColor: AMBER,
+    backgroundColor: c.amber,
+    shadowColor: c.amber,
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
@@ -1520,18 +1478,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: 'rgba(245,163,0,0.10)',
+    backgroundColor: c.amberSoft,
     borderWidth: 1,
     borderColor: 'rgba(245,163,0,0.45)',
     borderStyle: 'dashed',
   },
   otpLabel: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 11,
     letterSpacing: 0.8,
   },
   otpHelp: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11.5,
     marginTop: 2,
   },
@@ -1539,7 +1497,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: c.bg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -1547,7 +1505,7 @@ const styles = StyleSheet.create({
   },
   otpDigitText: {
     fontSize: 18,
-    color: AMBER,
+    color: c.amber,
     letterSpacing: -0.3,
   },
 
@@ -1569,7 +1527,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,163,0,0.15)',
   },
   bkIdText: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 10,
     letterSpacing: -0.1,
   },
@@ -1582,14 +1540,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stateHeadline: {
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 16,
     textAlign: 'center',
     marginTop: 8,
     letterSpacing: -0.2,
   },
   stateSub: {
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     fontSize: 12.5,
     textAlign: 'center',
     lineHeight: 18,
@@ -1598,11 +1556,11 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(255,90,90,0.18)',
+    backgroundColor: cancelBg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,90,90,0.4)',
+    borderColor: cancelBorder,
   },
   warnIcon: {
     width: 48,
@@ -1616,7 +1574,7 @@ const styles = StyleSheet.create({
   },
   primaryCta: {
     marginTop: 14,
-    backgroundColor: AMBER,
+    backgroundColor: c.amber,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 999,
@@ -1631,12 +1589,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondaryCtaText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 13,
   },
 
   assignedHint: {
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     fontSize: 12,
     paddingHorizontal: 20,
     marginTop: 8,
@@ -1648,7 +1606,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   sectionHeader: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11,
     letterSpacing: 0.8,
     marginBottom: 10,
@@ -1664,76 +1622,20 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
     alignItems: 'center',
     justifyContent: 'center',
   },
   taskName: {
     flex: 1,
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 13.5,
   },
   taskDuration: {
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
     fontSize: 11,
   },
 
   // Rating panel (completed)
-  ratingPanel: {
-    marginTop: 6,
-    marginHorizontal: 16,
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: 'rgba(245,163,0,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(245,163,0,0.20)',
-  },
-  ratingHeadline: {
-    color: AMBER,
-    fontSize: 18,
-    letterSpacing: -0.3,
-  },
-  ratingSub: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12.5,
-    marginTop: 2,
-  },
-  ratingPrompt: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    marginTop: 14,
-  },
-  starsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    marginBottom: 14,
-  },
-  ratingInput: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans_500Medium',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-
-  tipPlaceholder: {
-    marginTop: 14,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-});
+  });
+}

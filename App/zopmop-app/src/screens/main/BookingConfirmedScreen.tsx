@@ -55,6 +55,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { GlassCard } from '../../components/home/GlassCard';
 import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
+import { SuccessTick, Confetti } from '../../components/SuccessTick';
 import { PressFx } from '../../components/ui/PressFx';
 import ZopLookingUp from '../../../assets/zop/zop-looking-up.svg';
 import { useAuth } from '../../context/AuthContext';
@@ -346,66 +347,6 @@ function SuccessBackdrop({ isDark }: { isDark: boolean }) {
   );
 }
 
-// ── Confetti — 9 colored dots ───────────────────────────────────────────────
-
-const CONFETTI: { x: number; y: number; w: number; h: number; bg: string; rot: number; round: boolean; delay: number }[] = [
-  { x: 0.18, y: 0.14, w:  8, h:  8, bg: '#F5A300', rot:   0, round: false, delay: 200 },
-  { x: 0.30, y: 0.08, w:  6, h:  6, bg: '#22C55E', rot:   0, round: true,  delay: 400 },
-  { x: 0.62, y: 0.11, w:  7, h: 14, bg: '#60A5FA', rot:  20, round: false, delay: 500 },
-  { x: 0.78, y: 0.18, w:  8, h:  8, bg: '#FFC042', rot:   0, round: true,  delay: 300 },
-  { x: 0.48, y: 0.06, w:  6, h: 12, bg: '#F5A300', rot: -25, round: false, delay: 550 },
-  { x: 0.84, y: 0.32, w:  6, h:  6, bg: '#22C55E', rot:   0, round: true,  delay: 700 },
-  { x: 0.10, y: 0.34, w:  5, h:  5, bg: '#FFC042', rot:   0, round: true,  delay: 600 },
-  { x: 0.90, y: 0.09, w:  6, h: 10, bg: '#F87171', rot:  15, round: false, delay: 450 },
-  { x: 0.24, y: 0.30, w:  5, h:  9, bg: '#22C55E', rot: -15, round: false, delay: 800 },
-];
-
-function Confetti() {
-  return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 400, zIndex: 3 }}
-    >
-      {CONFETTI.map((c, i) => (
-        <ConfettiDot key={i} cfg={c} />
-      ))}
-    </View>
-  );
-}
-
-function ConfettiDot({ cfg }: { cfg: typeof CONFETTI[number] }) {
-  const fall = useSharedValue(0);
-  useEffect(() => {
-    fall.value = withDelay(
-      cfg.delay,
-      withTiming(1, { duration: 2400, easing: Easing.in(Easing.cubic) }),
-    );
-  }, []);
-  const style = useAnimatedStyle(() => ({
-    opacity: fall.value < 0.05 ? 0 : fall.value < 0.2 ? fall.value / 0.2 : 1 - fall.value,
-    transform: [
-      { translateY: -30 + fall.value * 250 },
-      { rotate: `${cfg.rot + fall.value * 140}deg` },
-    ],
-  }));
-  return (
-    <Animated.View
-      style={[
-        style,
-        {
-          position: 'absolute',
-          left: SCREEN_W * cfg.x,
-          top: SCREEN_H * cfg.y,
-          width: cfg.w,
-          height: cfg.h,
-          backgroundColor: cfg.bg,
-          borderRadius: cfg.round ? cfg.w / 2 : 1.5,
-        },
-      ]}
-    />
-  );
-}
-
 // ── Hero — check orb + title + sub + booking id pill ────────────────────────
 
 function Hero({
@@ -419,7 +360,7 @@ function Hero({
   const idBorder = isDark ? 'rgba(245,163,0,0.3)' : 'rgba(245,163,0,0.35)';
   return (
     <View style={styles.hero}>
-      <CheckOrb />
+      <SuccessTick style={{ marginBottom: 12 }} />
       <Text style={[fontExtra, styles.heroTitle, { color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>{title}</Text>
       <Text style={[fontMed, styles.heroSub, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)' }]}>{sub}</Text>
       <View style={[styles.idPill, { backgroundColor: idBg, borderColor: idBorder }]}>
@@ -428,206 +369,6 @@ function Hero({
           Booking #{shortId}
         </Text>
       </View>
-    </View>
-  );
-}
-
-function CheckOrb() {
-  // Layout matches design exactly:
-  //   • Orb              108×108 (radius 54)
-  //   • Solid pulse ring 132×132 (12px outside orb), 2px solid, animated
-  //   • Dashed ring      152×152 (22px outside orb), 1.5px dashed, slow spin
-  // Container: 152×152 with overflow visible so the pulse ring can expand
-  // past it (scale 0.6 → 1.5).
-  const ORB    = 108;
-  const SOLID  = 132;
-  const DASHED = 152;
-
-  // Spring-pop: 0.4 → 1.08 → 1
-  const scale   = useSharedValue(0.4);
-  const opacity = useSharedValue(0);
-  // Pulse ring: 0.6 → 1.5, opacity 0→1→0 over 1.4s
-  const ringScale   = useSharedValue(0.6);
-  const ringOpacity = useSharedValue(0);
-  // Outer dashed ring: continuous slow spin 18s/360° linear
-  const spin = useSharedValue(0);
-
-  useEffect(() => {
-    scale.value = withDelay(
-      150,
-      withSequence(
-        withTiming(1.08, { duration: 420, easing: Easing.out(Easing.cubic) }),
-        withSpring(1, { damping: 14, stiffness: 200 }),
-      ),
-    );
-    opacity.value = withDelay(150, withTiming(1, { duration: 220 }));
-
-    ringScale.value = withDelay(
-      400,
-      withTiming(1.5, { duration: 1400, easing: Easing.out(Easing.cubic) }),
-    );
-    ringOpacity.value = withDelay(
-      400,
-      withSequence(
-        withTiming(1, { duration: 280 }),
-        withTiming(0, { duration: 1120 }),
-      ),
-    );
-
-    spin.value = withRepeat(
-      withTiming(360, { duration: 18000, easing: Easing.linear }),
-      -1,
-      false,
-    );
-  }, []);
-
-  const orbStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
-  const ringStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: ringScale.value }],
-    opacity: ringOpacity.value,
-  }));
-  const dashedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${spin.value}deg` }],
-  }));
-
-  return (
-    <View
-      style={{
-        width: DASHED,
-        height: DASHED,
-        alignSelf: 'center',
-        marginBottom: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      {/* Outer dashed ring — 22px outside orb, 1.5px dashed, continuous spin.
-          Uses SVG (not borderStyle:'dashed') so dashes tile evenly around the
-          circumference — RN's CSS dashed border on circles produces an uneven
-          seam where the ring closes. */}
-      <Animated.View
-        style={[
-          dashedStyle,
-          {
-            position: 'absolute',
-            width: DASHED,
-            height: DASHED,
-          },
-        ]}
-      >
-        {(() => {
-          const STROKE = 1.5;
-          const r = (DASHED - STROKE) / 2;
-          const C = 2 * Math.PI * r;
-          // 50 dash+gap pairs tile exactly into circumference — matches design
-          // density; tiles cleanly so there is no seam.
-          const PAIRS = 50;
-          const DASH = C / PAIRS / 2;
-          return (
-            <Svg width={DASHED} height={DASHED}>
-              <Circle
-                cx={DASHED / 2}
-                cy={DASHED / 2}
-                r={r}
-                stroke="rgba(34,197,94,0.32)"
-                strokeWidth={STROKE}
-                strokeDasharray={[DASH, DASH]}
-                strokeLinecap="butt"
-                fill="none"
-              />
-            </Svg>
-          );
-        })()}
-      </Animated.View>
-
-      {/* Static solid ring — always visible inner halo (matches design). */}
-      <View
-        style={{
-          position: 'absolute',
-          width: SOLID,
-          height: SOLID,
-          borderRadius: SOLID / 2,
-          borderWidth: 1.5,
-          borderColor: 'rgba(34,197,94,0.45)',
-        }}
-      />
-
-      {/* Solid pulse ring — one-shot expand+fade outward from the static ring. */}
-      <Animated.View
-        style={[
-          ringStyle,
-          {
-            position: 'absolute',
-            width: SOLID,
-            height: SOLID,
-            borderRadius: SOLID / 2,
-            borderWidth: 2,
-            borderColor: 'rgba(34,197,94,0.35)',
-          },
-        ]}
-      />
-
-      {/* Orb */}
-      <Animated.View
-        style={[
-          orbStyle,
-          {
-            width: ORB,
-            height: ORB,
-            borderRadius: ORB / 2,
-            alignItems: 'center',
-            justifyContent: 'center',
-            shadowColor: '#22C55E',
-            shadowOffset: { width: 0, height: 20 },
-            shadowOpacity: 0.45,
-            shadowRadius: 50,
-            elevation: 14,
-            overflow: 'hidden',
-            borderWidth: 2,
-            borderTopColor: 'rgba(255,255,255,0.45)',
-            borderBottomColor: 'rgba(0,0,0,0.18)',
-            borderLeftColor: 'rgba(255,255,255,0.18)',
-            borderRightColor: 'rgba(255,255,255,0.18)',
-          },
-        ]}
-      >
-        {/* Orb fill — top→bottom green gradient for 3D ball look. */}
-        <Svg
-          width={ORB}
-          height={ORB}
-          style={{ position: 'absolute', top: 0, left: 0 }}
-        >
-          <Defs>
-            <SvgLinearGradient id="orbGrad" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#5BE08A" />
-              <Stop offset="1" stopColor="#16A34A" />
-            </SvgLinearGradient>
-          </Defs>
-          <Circle cx={ORB / 2} cy={ORB / 2} r={ORB / 2} fill="url(#orbGrad)" />
-        </Svg>
-
-        {/* Tick — custom SVG path with offset shadow path beneath for 3D feel. */}
-        <Svg width={54} height={54} viewBox="0 0 24 24" fill="none">
-          <Path
-            d="M5 12.5l5 5 9-11"
-            stroke="rgba(0,0,0,0.22)"
-            strokeWidth={3.4}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            transform="translate(0,1.4)"
-          />
-          <Path
-            d="M5 12.5l5 5 9-11"
-            stroke="#FFFFFF"
-            strokeWidth={3.4}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </Svg>
-      </Animated.View>
     </View>
   );
 }

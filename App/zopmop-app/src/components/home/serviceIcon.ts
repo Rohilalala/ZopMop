@@ -69,7 +69,7 @@ const NAME_ALIASES: Record<string, string> = {
   'kitchen':                'kitchen-prep',
   'utensil-washing':        'utensils',
   'balcony-cleaning':       'balcony',
-  'pre-and-post-party-clean': 'pre-post-party',
+  'party-cleanup': 'pre-post-party',
 };
 
 export function serviceIcon(opts: {

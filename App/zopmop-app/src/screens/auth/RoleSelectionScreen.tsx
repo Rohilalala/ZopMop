@@ -15,7 +15,6 @@ import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 
 type Props = {
@@ -28,7 +27,7 @@ export default function RoleSelectionScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { user } = useAuth();
-  const c = useColors();
+  const c = lightColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
@@ -119,7 +118,7 @@ export default function RoleSelectionScreen({ route }: Props) {
             activeOpacity={1}
           >
             {loading
-              ? <LoadingBars color="#FFFFFF" size="small" />
+              ? <LoadingBars color="#0D0D0F" size="small" />
               : <Text style={styles.continueButtonText}>Continue</Text>}
           </TouchableOpacity>
         </Animated.View>
@@ -135,7 +134,7 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
   title: string;
   desc: string;
 }) {
-  const c = useColors();
+  const c = lightColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   return (
     <TouchableOpacity
@@ -160,9 +159,9 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
 }
 
 function PersonIcon({ active }: { active: boolean }) {
-  const c = useColors();
+  const c = lightColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
-  const color = active ? '#FFFFFF' : c.primary;
+  const color = active ? '#0D0D0F' : c.accent;
   return (
     <View style={styles.personIcon}>
       <View style={[styles.personHead, { backgroundColor: color }]} />
@@ -172,9 +171,9 @@ function PersonIcon({ active }: { active: boolean }) {
 }
 
 function BriefcaseIcon({ active }: { active: boolean }) {
-  const c = useColors();
+  const c = lightColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
-  const color = active ? '#FFFFFF' : c.primary;
+  const color = active ? '#0D0D0F' : c.accent;
   return (
     <View style={styles.briefcaseIcon}>
       <View style={[styles.briefcaseHandle, { borderColor: color }]} />
@@ -188,8 +187,8 @@ function createStyles(c: typeof lightColors) {
     safe: { flex: 1, backgroundColor: c.background },
     container: { flex: 1, paddingHorizontal: Spacing['2xl'], paddingTop: Spacing['3xl'] },
     header: { marginBottom: Spacing['3xl'], gap: Spacing.md },
-    logoMark: { width: 44, height: 44, borderRadius: Radius.lg, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
-    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#FFFFFF' },
+    logoMark: { width: 44, height: 44, borderRadius: Radius.lg, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+    logoMarkText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.xl, color: '#0D0D0F' },
     title: { fontFamily: FontFamily.bold, fontSize: FontSize['3xl'], color: c.text, letterSpacing: -0.5 },
     subtitle: { fontFamily: FontFamily.regular, fontSize: FontSize.base, color: c.textSecondary },
     cards: { flexDirection: 'row', gap: Spacing.md },
@@ -198,21 +197,21 @@ function createStyles(c: typeof lightColors) {
       borderRadius: Radius.xl, borderWidth: 1.5, borderColor: c.border,
       alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, ...Shadow.sm,
     },
-    cardSelected: { borderColor: c.primary, borderWidth: 2, ...Shadow.md },
+    cardSelected: { borderColor: c.accent, borderWidth: 2, ...Shadow.md },
     checkBadge: {
       position: 'absolute', top: 12, right: 12, width: 20, height: 20,
       borderRadius: Radius.full, backgroundColor: c.border, alignItems: 'center', justifyContent: 'center', opacity: 0,
     },
-    checkBadgeVisible: { backgroundColor: c.primary, opacity: 1 },
+    checkBadgeVisible: { backgroundColor: c.accent, opacity: 1 },
     checkmark: {
       position: 'absolute', width: 4, height: 7, borderRightWidth: 2, borderBottomWidth: 2,
-      borderColor: '#FFFFFF', transform: [{ rotate: '45deg' }, { translateY: -1 }],
+      borderColor: '#0D0D0F', transform: [{ rotate: '45deg' }, { translateY: -1 }],
     },
     checkmarkArm: { display: 'none' },
-    iconBox: { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: c.primaryBg, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
-    iconBoxSelected: { backgroundColor: c.primary },
+    iconBox: { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: 'rgba(245,163,0,0.12)', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
+    iconBoxSelected: { backgroundColor: c.accent },
     cardTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.md, color: c.text, textAlign: 'center' },
-    cardTitleSelected: { color: c.primary },
+    cardTitleSelected: { color: c.accentOnSurface },
     cardDesc: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted, textAlign: 'center', paddingHorizontal: Spacing.sm },
     personIcon: { alignItems: 'center' },
     personHead: { width: 13, height: 13, borderRadius: Radius.full, marginBottom: 3 },
@@ -222,8 +221,8 @@ function createStyles(c: typeof lightColors) {
     briefcaseBody: { width: 24, height: 15, borderRadius: 3 },
     errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, textAlign: 'center', marginTop: Spacing.md },
     bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'] },
-    continueButton: { height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    continueButton: { height: 54, backgroundColor: c.accent, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
     continueButtonDisabled: { opacity: 0.45 },
-    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+    continueButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#0D0D0F', letterSpacing: 0.2 },
   });
 }

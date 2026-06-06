@@ -5,7 +5,7 @@
 // with numeral icons / FAQs). All copy/content comes from live data seeded in
 // Steps 1-3; the HTML reference supplied layout + tokens only. No add-on block.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   Image,
@@ -27,6 +27,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useC, type ScreenColors } from '../../theme/screen';
 import { usePostHog } from 'posthog-react-native';
 import { BottomSheet } from '../../components/ui/BottomSheet';
+import { Motion } from '../../constants/tokens';
 import { PressFx } from '../../components/ui/PressFx';
 import { serviceIcon } from '../../components/home/serviceIcon';
 
@@ -163,7 +164,29 @@ export default function ServiceAboutScreen() {
 
   const priceCents = priceFor(activeSvc, duration);
 
-  const close = useCallback(() => navigation.goBack(), [navigation]);
+  // Sheet visibility drives the slide-down exit. close() animates the sheet
+  // down first, then pops the (transparent) route once it's off-screen. Guarded
+  // so a double tap / backdrop+button race can't dispatch goBack twice (which
+  // throws "GO_BACK was not handled" after the route is already gone).
+  const [sheetVisible, setSheetVisible] = useState(true);
+  const closingRef = useRef(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+
+  const close = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setSheetVisible(false); // slide the sheet back down
+    closeTimer.current = setTimeout(() => {
+      if (navigation.canGoBack()) navigation.goBack();
+    }, Motion.duration.base + 60);
+  }, [navigation]);
 
   const handleAddToCart = useCallback(async () => {
     const pc = priceFor(activeSvc, duration);
@@ -222,7 +245,7 @@ export default function ServiceAboutScreen() {
 
   return (
     <BottomSheet
-      visible
+      visible={sheetVisible}
       onClose={close}
       height={PEEK_H}
       expandedHeight={EXPANDED_H}

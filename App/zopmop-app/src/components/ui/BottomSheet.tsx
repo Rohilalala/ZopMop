@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, View, Dimensions } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -72,16 +72,26 @@ export function BottomSheet({
 
   const openY = twoSnap && expanded ? 0 : PEEK_Y;
 
+  // Keep the native Modal mounted while the sheet slides out. Toggling the
+  // Modal's `visible` directly off `visible` hides it instantly and kills the
+  // exit animation; instead we drive an internal `rendered` flag and only
+  // unmount once translateY has reached CLOSED_Y.
+  const [rendered, setRendered] = useState(visible);
+
   useEffect(() => {
     if (visible) {
+      setRendered(true);
       translateY.value = withSpring(openY, Motion.spring.gentle);
       backdrop.value = withTiming(1, { duration: Motion.duration.base });
     } else {
-      translateY.value = withTiming(CLOSED_Y, {
-        duration: Motion.duration.base,
-        easing: Motion.easing.exit,
-      });
       backdrop.value = withTiming(0, { duration: Motion.duration.quick });
+      translateY.value = withTiming(
+        CLOSED_Y,
+        { duration: Motion.duration.base, easing: Motion.easing.exit },
+        (finished) => {
+          if (finished) runOnJS(setRendered)(false);
+        },
+      );
     }
   }, [visible, openY, CLOSED_Y]);
 
@@ -163,7 +173,7 @@ export function BottomSheet({
   // Handle-only drag (two-snap with a header): body can scroll freely.
   if (twoSnap && header) {
     return (
-      <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+      <Modal visible={rendered} transparent animationType="none" onRequestClose={onClose}>
         <View style={{ flex: 1 }}>
           <Animated.View style={[backdropStyle, { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }]}>
             <Pressable style={{ flex: 1 }} onPress={onClose} />
@@ -191,7 +201,7 @@ export function BottomSheet({
 
   // Original behaviour: whole sheet is draggable.
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
+    <Modal visible={rendered} transparent animationType="none" onRequestClose={onClose}>
       <View style={{ flex: 1 }}>
         <Animated.View style={[backdropStyle, { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }]}>
           <Pressable style={{ flex: 1 }} onPress={onClose} />

@@ -12,7 +12,6 @@ import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NotServiceable'>;
@@ -21,7 +20,8 @@ type Props = {
 
 export default function NotServiceableScreen({ navigation, route }: Props) {
   const { cityName, phone, name } = route.params;
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = lightColors;
   const s = useMemo(() => createStyles(c), [c]);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -115,7 +115,7 @@ function createStyles(c: typeof lightColors) {
       width: 88,
       height: 88,
       borderRadius: 20,
-      backgroundColor: c.primaryBg,
+      backgroundColor: 'rgba(245,163,0,0.12)',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 2,
@@ -124,7 +124,7 @@ function createStyles(c: typeof lightColors) {
       width: 34,
       height: 34,
       borderRadius: Radius.full,
-      backgroundColor: c.primary,
+      backgroundColor: c.accent,
       alignItems: 'center',
       justifyContent: 'center',
       opacity: 0.5,
@@ -143,7 +143,7 @@ function createStyles(c: typeof lightColors) {
       borderTopWidth: 15,
       borderLeftColor: 'transparent',
       borderRightColor: 'transparent',
-      borderTopColor: c.primary,
+      borderTopColor: c.accent,
       opacity: 0.5,
       marginTop: -2,
     },
@@ -151,7 +151,7 @@ function createStyles(c: typeof lightColors) {
       position: 'absolute',
       borderRadius: Radius.full,
       borderStyle: 'dashed',
-      borderColor: c.primary,
+      borderColor: c.accent,
       zIndex: 1,
     },
     ring1: {
@@ -171,7 +171,7 @@ function createStyles(c: typeof lightColors) {
       width: 8,
       height: 8,
       borderRadius: Radius.full,
-      backgroundColor: c.primary,
+      backgroundColor: c.accent,
       opacity: 0.35,
       zIndex: 3,
     },
@@ -234,14 +234,14 @@ function createStyles(c: typeof lightColors) {
       height: 52,
       borderRadius: Radius.xl,
       borderWidth: 1.5,
-      borderColor: c.primary,
+      borderColor: c.accent,
       alignItems: 'center',
       justifyContent: 'center',
     },
     retryText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.md,
-      color: c.primary,
+      color: c.accentOnSurface,
     },
   });
 }

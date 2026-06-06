@@ -39,7 +39,7 @@ const darkC = {
   dangerBorder: 'rgba(239,68,68,0.25)',
 } as const;
 
-const lightC = {
+export const lightC = {
   bg: '#FAF7F2',
   amber: '#F5A300',
   amberHi: '#FFC042',
