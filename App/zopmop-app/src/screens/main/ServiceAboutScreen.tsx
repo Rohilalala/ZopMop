@@ -175,7 +175,8 @@ export default function ServiceAboutScreen() {
       duration_minutes: duration,
       price_paise: pc,
     });
-  }, [addItem, activeSvc, duration, service.id, service.name, posthog]);
+    close();
+  }, [addItem, activeSvc, duration, service.id, service.name, posthog, close]);
 
   const handleShare = useCallback(() => {
     Share.share({ message: `Check out ${service.name} on ZopMop!` });
