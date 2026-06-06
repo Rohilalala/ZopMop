@@ -171,7 +171,11 @@ export function BottomSheet({
             {children}
           </Animated.View>
           {footer != null && (
-            <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>{footer}</View>
+            <View
+              style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20, elevation: 20 }}
+            >
+              {footer}
+            </View>
           )}
         </View>
       </Modal>
