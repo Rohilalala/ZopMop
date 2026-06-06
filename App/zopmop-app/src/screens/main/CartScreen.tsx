@@ -33,7 +33,7 @@ import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
-import { createScheduledBooking, getBookings } from '../../api/bookings';
+import { createScheduledBooking, getBookings, SlotFullError } from '../../api/bookings';
 import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal from '../../components/SchedulingModal';
@@ -317,6 +317,17 @@ export default function CartScreen() {
             { text: 'View Bookings', onPress: () => navigation.navigate('Bookings') },
           ],
         );
+        return;
+      }
+
+      if (err instanceof SlotFullError) {
+        // The slot ran out of capacity between picking and submitting. Drop the
+        // stale selection, tell the user, and reopen the picker so it refetches
+        // live availability and they can choose another slot.
+        setSelectedSlotId(null);
+        setSelectedSlotLabel(null);
+        showError('That slot just filled up. Please pick another time.', { title: 'Slot full' });
+        setSchedulingVisible(true);
         return;
       }
 
@@ -643,6 +654,7 @@ export default function CartScreen() {
       <SchedulingModal
         visible={schedulingVisible}
         token={token ?? ''}
+        addressId={selectedAddress?.id ?? null}
         onClose={() => setSchedulingVisible(false)}
         onConfirm={(slotId, label) => {
           setSelectedSlotId(slotId);

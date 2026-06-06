@@ -13,11 +13,15 @@ import { LoadingBars } from './ui/LoadingBars';
 import { FontFamily } from '../theme';
 import { C } from '../theme/screen';
 import { Bloom } from './home/Bloom';
-import { getTimeSlots, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
+import { getTimeSlots, getSlotAvailability, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
 
 interface Props {
   visible: boolean;
   token: string;
+  // Selected delivery address. When present, slots are fetched with live
+  // capacity gating for that address's locality; when null (no address chosen
+  // yet) we fall back to the plain slot list so the picker still works.
+  addressId?: string | null;
   onClose: () => void;
   onConfirm: (slotId: string, label: string) => void;
 }
@@ -56,7 +60,7 @@ function firstSelectableIso(days: ReturnType<typeof buildDays>): string {
   return (days.find((d) => !d.disabled) ?? days[days.length - 1]).iso;
 }
 
-export default function SchedulingModal({ visible, token, onClose, onConfirm }: Props) {
+export default function SchedulingModal({ visible, token, addressId, onClose, onConfirm }: Props) {
   const DAYS = React.useMemo(() => buildDays(), [visible]);
   const [selectedDay, setSelectedDay] = useState(() => firstSelectableIso(buildDays()));
   const [periods, setPeriods] = useState<ApiSlotPeriod[]>([]);
@@ -72,12 +76,17 @@ export default function SchedulingModal({ visible, token, onClose, onConfirm }: 
     let cancelled = false;
     setLoading(true);
     setSelectedSlot(null);
-    getTimeSlots(token, selectedDay)
+    // Capacity-aware fetch when an address is selected; otherwise the plain
+    // slot list (capacity is applied once an address is chosen).
+    const fetchSlots = addressId
+      ? getSlotAvailability(token, selectedDay, addressId)
+      : getTimeSlots(token, selectedDay);
+    fetchSlots
       .then(data => { if (!cancelled) setPeriods(data); })
       .catch(() => { if (!cancelled) setPeriods([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [visible, selectedDay, token]);
+  }, [visible, selectedDay, token, addressId]);
 
   const handleConfirm = useCallback(() => {
     if (!selectedSlot) return;

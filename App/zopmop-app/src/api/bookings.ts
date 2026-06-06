@@ -2,6 +2,17 @@ import { apiFetch } from './client';
 import { BASE_URL, authHeaders, validateShape } from './config';
 import { UnpaidBookingsError } from './users';
 
+// SlotFullError is thrown when the backend rejects a scheduled booking because
+// the chosen time slot ran out of helper capacity between the customer picking
+// it and submitting (HTTP 409, code "slot_full"). Callers should prompt the
+// user to pick another slot and refresh availability.
+export class SlotFullError extends Error {
+  constructor(message = 'that slot just filled up') {
+    super(message);
+    this.name = 'SlotFullError';
+  }
+}
+
 export type BookingStatus =
   | 'pending'
   | 'accepted'
@@ -71,6 +82,9 @@ export async function createScheduledBooking(
     };
     if (res.status === 409 && err.code === 'UNPAID_BOOKINGS') {
       throw new UnpaidBookingsError(err.count ?? 0, err.total_paise ?? 0);
+    }
+    if (res.status === 409 && err.code === 'slot_full') {
+      throw new SlotFullError(err.error);
     }
     throw new Error(err.error ?? 'Failed to create booking');
   }

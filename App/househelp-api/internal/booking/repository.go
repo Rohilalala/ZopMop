@@ -669,6 +669,7 @@ func (r *Repository) CreateScheduledBooking(
 	isStealthInstant bool,
 	fireAt *time.Time,
 	locality *string,
+	enforceCapacity bool,
 ) (*ScheduledBooking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -679,35 +680,48 @@ func (r *Repository) CreateScheduledBooking(
 	}
 	defer tx.Rollback(queryCtx)
 
-	// Lock the slot row first — prevents two concurrent bookings from racing
-	// past the capacity check. Pessimistic FOR UPDATE serializes inserts on
-	// the same time_slot_id; other slots stay unaffected.
-	var currentBookings, maxBookings int
+	// Capacity gate. Capacity is live-derived — there is no counter column:
+	// approved roster helpers in the locality, minus those on approved leave
+	// that date, minus committed bookings whose window overlaps this slot
+	// (see availableForSlot). Cancellations free capacity automatically. An
+	// advisory xact lock keyed by (locality, date, slot) serialises concurrent
+	// bookings for the SAME slot so the re-count can't race two inserts past a
+	// single remaining seat; other slots/localities are unaffected and the
+	// lock auto-releases on commit/rollback. Capacity is enforced only for the
+	// scheduled flow (enforceCapacity); the instant/cart path passes false.
+	var slotDate string
 	var isActive bool
 	err = tx.QueryRow(queryCtx,
-		`SELECT current_bookings, max_bookings, is_active
+		`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active
 		 FROM time_slots
-		 WHERE id = $1
-		 FOR UPDATE`,
+		 WHERE id = $1`,
 		timeSlotID,
-	).Scan(&currentBookings, &maxBookings, &isActive)
+	).Scan(&slotDate, &isActive)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrSlotUnavailable
 		}
-		return nil, fmt.Errorf("failed to lock time slot: %w", err)
+		return nil, fmt.Errorf("failed to load time slot: %w", err)
 	}
-	if !isActive || currentBookings >= maxBookings {
+	if !isActive {
 		return nil, ErrSlotUnavailable
 	}
 
-	// Reserve capacity inside the same tx — committed atomically with the
-	// booking insert below.
-	if _, err := tx.Exec(queryCtx,
-		`UPDATE time_slots SET current_bookings = current_bookings + 1 WHERE id = $1`,
-		timeSlotID,
-	); err != nil {
-		return nil, fmt.Errorf("failed to reserve slot capacity: %w", err)
+	if enforceCapacity && locality != nil && *locality != "" {
+		lockKey := *locality + "|" + slotDate + "|" + timeSlotID
+		if _, err := tx.Exec(queryCtx,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			lockKey,
+		); err != nil {
+			return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
+		}
+		avail, err := r.availableForSlot(queryCtx, tx, *locality, timeSlotID, slotDate)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
+		}
+		if avail <= 0 {
+			return nil, ErrSlotUnavailable
+		}
 	}
 
 	// Calculate total duration.
