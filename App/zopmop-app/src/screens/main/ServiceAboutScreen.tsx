@@ -367,7 +367,7 @@ export default function ServiceAboutScreen() {
           </>
         )}
 
-        {details && details.faqs.length > 0 && (
+        {details && (details.faqs?.length ?? 0) > 0 && (
           <>
             <Text style={s.secH}>Frequently asked</Text>
             <View style={s.body}>

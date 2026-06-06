@@ -73,7 +73,16 @@ export async function listServices(): Promise<ApiService[]> {
 export async function getServiceDetails(serviceId: string): Promise<ServiceDetails> {
   const res = await apiFetch(`${BASE_URL}/services/${serviceId}/details`);
   if (!res.ok) throw new Error('Failed to fetch service details');
-  return res.json() as Promise<ServiceDetails>;
+  const d = (await res.json()) as ServiceDetails;
+  // Defensive: an older API build may omit list fields (faqs[] was added in 4a).
+  // Normalize so the sheet never reads `.length` of undefined.
+  return {
+    ...d,
+    includes: d.includes ?? [],
+    excludes: d.excludes ?? [],
+    steps: d.steps ?? [],
+    faqs: d.faqs ?? [],
+  };
 }
 
 export async function getServiceAddons(serviceId: string): Promise<ServiceAddon[]> {
