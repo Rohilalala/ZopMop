@@ -169,7 +169,7 @@ function ServiceCard({
         <View style={{ height: thumbH, position: 'relative' }}>
           <ServiceThumb height={thumbH} radius={12} featured={featured} />
 
-          {/* mascot/glyph — 3D PNG render when available, else emoji fallback */}
+          {/* mascot/glyph — 3D PNG render when available, else neutral vector glyph */}
           <View
             pointerEvents="none"
             style={{

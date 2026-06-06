@@ -30,7 +30,6 @@ type PromoSlide struct {
 	CTA      string         `json:"cta"`
 	BG       string         `json:"bg"`
 	Accent   string         `json:"accent"`
-	Emoji    string         `json:"emoji"`
 	Action   map[string]any `json:"action"`
 	ImageURL string         `json:"image_url,omitempty"`
 }
@@ -255,7 +254,6 @@ func fetchActivePromos(db *pgxpool.Pool) func(ctx context.Context, rc RequestCon
 			// Default visual fields — admins can override via banners.accent_color
 			// if that column is added later; for now use brand defaults.
 			s.Eyebrow = ""
-			s.Emoji = ""
 			s.BG = "#1A1A2E"
 			s.Accent = "#F5A300"
 			screen := tapAction

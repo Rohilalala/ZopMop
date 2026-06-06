@@ -6,7 +6,6 @@ export interface ApiService {
   name: string;
   description?: string;
   short_description?: string;
-  emoji?: string;
   bg_color: string;
   base_price_paise: number;
   mrp_paise?: number;
@@ -43,7 +42,6 @@ export interface ServiceStep {
 export interface ServiceAddon {
   id: string;
   name: string;
-  emoji?: string;
   bg_color: string;
   base_price_paise: number;
   display_order: number;

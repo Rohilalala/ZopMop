@@ -266,7 +266,7 @@ export default function ServiceAboutScreen() {
             {icon ? (
               <Image source={icon} style={s.heroIconImg} resizeMode="contain" />
             ) : (
-              <Text style={s.heroEmoji}>{service.emoji ?? '🧹'}</Text>
+              <Feather name="package" size={38} color={c.textSecondary} />
             )}
           </View>
           <View style={s.heroInfo}>
@@ -473,7 +473,6 @@ function makeStyles(c: ScreenColors, isDark: boolean) {
       borderColor: 'rgba(245,163,0,0.2)',
     },
     heroIconImg: { width: 56, height: 56 },
-    heroEmoji: { fontSize: 38 },
     heroInfo: { flex: 1, gap: 4 },
     heroName: { ...fontExtra, fontSize: 19, color: c.text, letterSpacing: -0.3 },
     heroHook: { ...fontMed, fontSize: 12.5, color: c.textSecondary, lineHeight: 18 },

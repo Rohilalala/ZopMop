@@ -62,7 +62,6 @@ export interface PromoSlide {
   cta: string;
   bg: string;
   accent: string;
-  emoji: string;
   action: SduiAction;
   image_url?: string;
 }

@@ -25,7 +25,7 @@ func (r *Repository) List(ctx context.Context) ([]Service, error) {
 	defer cancel()
 
 	rows, err := r.db.Query(ctx,
-		`SELECT id, name, description, short_description, emoji, bg_color,
+		`SELECT id, name, description, short_description, bg_color,
 		        base_price_cents, mrp_cents, rating, review_count,
 		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
 		        is_active, display_order, created_at, category
@@ -40,7 +40,7 @@ func (r *Repository) List(ctx context.Context) ([]Service, error) {
 	for rows.Next() {
 		var s Service
 		if err := rows.Scan(
-			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.BgColor,
 			&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 			&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
 			&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
@@ -62,7 +62,7 @@ func (r *Repository) ListAll(ctx context.Context) ([]Service, error) {
 	defer cancel()
 
 	rows, err := r.db.Query(ctx,
-		`SELECT id, name, description, short_description, emoji, bg_color,
+		`SELECT id, name, description, short_description, bg_color,
 		        base_price_cents, mrp_cents, rating, review_count,
 		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
 		        is_active, display_order, created_at, category
@@ -77,7 +77,7 @@ func (r *Repository) ListAll(ctx context.Context) ([]Service, error) {
 	for rows.Next() {
 		var s Service
 		if err := rows.Scan(
-			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+			&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.BgColor,
 			&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 			&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
 			&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
@@ -120,11 +120,6 @@ func (r *Repository) Update(ctx context.Context, id string, req AdminUpdateServi
 	if req.DisplayOrder != nil {
 		setClauses = append(setClauses, fmt.Sprintf("display_order = $%d", i))
 		args = append(args, *req.DisplayOrder)
-		i++
-	}
-	if req.Emoji != nil {
-		setClauses = append(setClauses, fmt.Sprintf("emoji = $%d", i))
-		args = append(args, *req.Emoji)
 		i++
 	}
 	if req.BgColor != "" {
@@ -170,13 +165,13 @@ func (r *Repository) GetByID(ctx context.Context, serviceID string) (*Service, e
 
 	var s Service
 	err := r.db.QueryRow(ctx,
-		`SELECT id, name, description, short_description, emoji, bg_color,
+		`SELECT id, name, description, short_description, bg_color,
 		        base_price_cents, mrp_cents, rating, review_count,
 		        min_duration_minutes, max_duration_minutes, duration_step_minutes,
 		        is_active, display_order, created_at, category
 		 FROM service_categories WHERE id = $1`, serviceID,
 	).Scan(
-		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.BgColor,
 		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
 		&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,
@@ -293,7 +288,7 @@ func (r *Repository) GetAddons(ctx context.Context, serviceID string) ([]Service
 	defer cancel()
 
 	rows, err := r.db.Query(ctx,
-		`SELECT sc.id, sc.name, sc.emoji, sc.bg_color, sc.base_price_cents, sa.display_order
+		`SELECT sc.id, sc.name, sc.bg_color, sc.base_price_cents, sa.display_order
 		 FROM service_addons sa
 		 JOIN service_categories sc ON sc.id = sa.addon_service_id
 		 WHERE sa.service_id = $1 ORDER BY sa.display_order ASC LIMIT 50`,
@@ -307,7 +302,7 @@ func (r *Repository) GetAddons(ctx context.Context, serviceID string) ([]Service
 	var addons []ServiceAddon
 	for rows.Next() {
 		var a ServiceAddon
-		if err := rows.Scan(&a.ID, &a.Name, &a.Emoji, &a.BgColor, &a.BasePriceCents, &a.DisplayOrder); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.BgColor, &a.BasePriceCents, &a.DisplayOrder); err != nil {
 			return nil, fmt.Errorf("failed to scan addon: %w", err)
 		}
 		addons = append(addons, a)
@@ -420,26 +415,21 @@ func (r *Repository) Create(ctx context.Context, req AdminCreateServiceRequest) 
 		req.Category = "other"
 	}
 
-	var emojiPtr *string
-	if req.Emoji != "" {
-		emojiPtr = &req.Emoji
-	}
-
 	var s Service
 	err := r.db.QueryRow(ctx,
 		`INSERT INTO service_categories (
-			name, emoji, bg_color, base_price_cents, display_order, category,
+			name, bg_color, base_price_cents, display_order, category,
 			min_duration_minutes, max_duration_minutes, duration_step_minutes
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, name, description, short_description, emoji, bg_color,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, name, description, short_description, bg_color,
 		          base_price_cents, mrp_cents, rating, review_count,
 		          min_duration_minutes, max_duration_minutes, duration_step_minutes,
 		          is_active, display_order, created_at, category`,
-		req.Name, emojiPtr, req.BgColor, req.BasePriceCents,
+		req.Name, req.BgColor, req.BasePriceCents,
 		req.DisplayOrder, req.Category, req.MinDurationMinutes,
 		req.MaxDurationMinutes, req.DurationStepMinutes,
 	).Scan(
-		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.Emoji, &s.BgColor,
+		&s.ID, &s.Name, &s.Description, &s.ShortDescription, &s.BgColor,
 		&s.BasePriceCents, &s.MrpCents, &s.Rating, &s.ReviewCount,
 		&s.MinDurationMinutes, &s.MaxDurationMinutes, &s.DurationStepMinutes,
 		&s.IsActive, &s.DisplayOrder, &s.CreatedAt, &s.Category,

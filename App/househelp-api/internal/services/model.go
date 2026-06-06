@@ -8,7 +8,6 @@ type Service struct {
 	Name                string    `json:"name"`
 	Description         *string   `json:"description,omitempty"`
 	ShortDescription    *string   `json:"short_description,omitempty"`
-	Emoji               *string   `json:"emoji"`
 	BgColor             string    `json:"bg_color"`
 	BasePriceCents      int       `json:"base_price_paise"`
 	MrpCents            *int      `json:"mrp_paise,omitempty"`
@@ -60,7 +59,6 @@ type ServiceFaq struct {
 type ServiceAddon struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
-	Emoji         *string `json:"emoji,omitempty"`
 	BgColor       string  `json:"bg_color"`
 	BasePriceCents int    `json:"base_price_paise"`
 	DisplayOrder  int     `json:"display_order"`
@@ -82,7 +80,6 @@ type AdminUpdateServiceRequest struct {
 	BasePriceCents *int    `json:"base_price_paise,omitempty" validate:"omitempty,gt=0"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 	DisplayOrder   *int    `json:"display_order,omitempty"`
-	Emoji          *string `json:"emoji,omitempty"`
 	BgColor        string  `json:"bg_color,omitempty"`
 	Category       string  `json:"category,omitempty"`
 }
@@ -90,7 +87,6 @@ type AdminUpdateServiceRequest struct {
 // AdminCreateServiceRequest is the payload for POST /admin/services.
 type AdminCreateServiceRequest struct {
 	Name                string `json:"name" validate:"required,min=1,max=200"`
-	Emoji               string `json:"emoji,omitempty"`
 	BgColor             string `json:"bg_color,omitempty"`
 	BasePriceCents      int    `json:"base_price_paise" validate:"required,gt=0"`
 	DisplayOrder        int    `json:"display_order"`

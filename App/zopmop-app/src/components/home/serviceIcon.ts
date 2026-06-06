@@ -4,7 +4,7 @@
 // these without re-checking on a clean Metro cache.
 //
 // Returns undefined when no asset exists for the service — caller falls back
-// to the emoji glyph.
+// to a neutral vector glyph.
 
 import type { ImageSourcePropType } from 'react-native';
 
