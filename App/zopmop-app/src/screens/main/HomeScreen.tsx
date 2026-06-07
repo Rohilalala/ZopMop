@@ -698,13 +698,20 @@ export default function HomeScreen() {
               refreshing={refreshing}
               onRefresh={onRefresh}
               // Hide the native pull spinner — the choreographed Zop is the only
-              // refresh visual. A `style` prop here (e.g. opacity:0) is unsupported
-              // on iOS RefreshControl and makes the New-Arch host drop the tint and
-              // fall back to the default gray spinner. Match the working pattern in
-              // AllServicesScreen / BookingsScreen: transparent tint, no style.
-              tintColor="transparent"
-              colors={['transparent']}
-              progressBackgroundColor="transparent"
+              // refresh visual. The app locks native appearance to light
+              // (userInterfaceStyle:"light") while the JS theme toggles freely, so
+              // the native spinner can't follow our theme — it must be painted out.
+              // Two rules, both required:
+              //   1. tintColor MUST be opaque. iOS treats a transparent tint as
+              //      "use default" and draws its gray spinner.
+              //   2. NO `style` prop. style (e.g. opacity:0) is unsupported on iOS
+              //      RefreshControl and makes the New-Arch host drop tintColor.
+              // Tint it the on-screen page colour per JS theme so it blends in both
+              // (light = ScreenBg's ~#FBF9F6 wash; dark = flat theme bg). The
+              // FlashList remounts on theme toggle (key={isDark}) so this re-applies.
+              tintColor={isDark ? sc.bg : '#FBF9F6'}
+              colors={[isDark ? sc.bg : '#FBF9F6']}
+              progressBackgroundColor={isDark ? sc.bg : '#FBF9F6'}
             />
           }
         />
