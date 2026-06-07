@@ -17,7 +17,10 @@ test('extracts hero/greeting and keeps the rest as feed', () => {
     mk('footer', { signoff: { lines: [], brand: '', badges: [], tagline: '' } }),
   ];
   const r = partitionHomeSections(sections);
-  expect(r.feed.map((s) => s.type)).toEqual(['live_pill', 'footer']);
+  // live_pill is extracted (rides inside the hero pager's first page), so the
+  // feed keeps only non-extracted sections.
+  expect(r.feed.map((s) => s.type)).toEqual(['footer']);
+  expect(r.livePill?.type).toBe('live_pill');
   expect(r.greetingHero?.type).toBe('greeting_hero');
   expect(r.headerPromo).toBeNull();
   expect(r.upcomingBooking).toBeNull();
