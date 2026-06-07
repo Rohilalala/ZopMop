@@ -577,13 +577,15 @@ export default function HomeScreen() {
   //     animating) and the fly is rendered as a root overlay (HeroRefreshFlyer)
   //     on page 0, or the simple ZopRefresh spinner on promo pages (below).
   const hasCarousel = (carouselData?.slides?.length ?? 0) > 0;
-  // Mascot rest centre (SafeAreaView-relative) for the carousel overlay fly.
-  // Prefer the measured hero-card rect (pixel-exact): the in-card mascot sits at
-  // the card's top-right — centre = (cardRight + 14 - 65, cardTop - 6 + 65) — and
-  // the overlay's parent is padded by insets.top. Falls back to the tuned guess.
+  // Mascot rest centre for the carousel overlay fly. Use the measured hero-card
+  // window rect directly (pixel-exact): the in-card mascot sits at the card's
+  // top-right — centre = (cardRight + 14 - 65, cardTop - 6 + 65). measureInWindow
+  // returns window coords and the overlay's absolute top is measured from the
+  // window origin too, so NO insets.top adjustment (subtracting it rendered the
+  // mascot ~insets.top too high). Falls back to the computed screen coords.
   const heroFlyRest = heroRect
-    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 - insets.top }
-    : { x: zopRestX, y: zopRestY - insets.top };
+    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 }
+    : { x: zopRestX, y: zopRestY };
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
