@@ -27,6 +27,12 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 type Props = {
   name?: string;
+  /** SDUI override for the kicker line; falls back to the time-of-day greeting. */
+  greeting?: string;
+  /** SDUI override for the headline; joined with newlines. Falls back to time-of-day copy. */
+  titleLines?: string[];
+  /** When false, the Zop mascot is hidden. Defaults to shown. */
+  showMascot?: boolean;
   /** Egg translate X in px. */
   eggTranslateX?: SharedValue<number>;
   /** Egg translate Y in px. Added to the idle bob. */
@@ -69,6 +75,9 @@ function headlineFor(): string {
 
 export function HomeHero({
   name,
+  greeting,
+  titleLines,
+  showMascot,
   eggTranslateX,
   eggTranslateY,
   eggScale,
@@ -78,8 +87,8 @@ export function HomeHero({
   showFace = true,
 }: Props) {
   const { isDark, colors: c } = useTheme();
-  const kicker = useMemo(() => greetingFor(name), [name]);
-  const headline = useMemo(() => headlineFor(), []);
+  const kicker = useMemo(() => greeting ?? greetingFor(name), [greeting, name]);
+  const headline = useMemo(() => (titleLines && titleLines.length ? titleLines.join('\n') : headlineFor()), [titleLines]);
 
   // Idle bob — always running.
   const float = useSharedValue(0);
@@ -123,26 +132,28 @@ export function HomeHero({
     <View style={{ marginHorizontal: 20, marginTop: 14 }}>
       <GlassCard radius={28} hero style={{ padding: 22 }}>
         {/* Zop mascot — animatable for the pull-to-refresh easter egg */}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            containerStyle,
-            {
-              position: 'absolute',
-              top: -6,
-              right: -14,
-              width: 130,
-              height: 130,
-              zIndex: 5,
-            },
-          ]}
-        >
-          <ZopFlyer
-            eyeOpacity={eyeRef}
-            winkProgress={winkRef}
-            showFace={showFace}
-          />
-        </Animated.View>
+        {showMascot !== false ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              containerStyle,
+              {
+                position: 'absolute',
+                top: -6,
+                right: -14,
+                width: 130,
+                height: 130,
+                zIndex: 5,
+              },
+            ]}
+          >
+            <ZopFlyer
+              eyeOpacity={eyeRef}
+              winkProgress={winkRef}
+              showFace={showFace}
+            />
+          </Animated.View>
+        ) : null}
 
         <Text
           style={[

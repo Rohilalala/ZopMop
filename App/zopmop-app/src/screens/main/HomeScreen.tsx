@@ -61,6 +61,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useC } from '../../theme/screen';
 import NotServiceableScreen from './NotServiceableScreen';
 import { HomeScreenSkeleton } from '../../components/skeletons/HomeScreenSkeleton';
+import { partitionHomeSections } from './homeSections';
 
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
@@ -517,12 +518,18 @@ export default function HomeScreen() {
     );
   }
 
-  // Drop the SDUI hero_carousel slot — replaced by the static HomeHero above.
-  const sections = (page?.sections ?? []).filter((s) => s.type !== 'hero_carousel');
+  // Split the SDUI sections into the scrolling feed and the blocks HomeScreen
+  // renders itself (the hero is the FlashList ListHeaderComponent below).
+  const part = partitionHomeSections(page?.sections ?? []);
+  const sections = part.feed;
+  const heroData = part.greetingHero?.data;
 
   const Header = (
     <HomeHero
       name={user?.name ?? undefined}
+      greeting={heroData?.greeting}
+      titleLines={heroData?.title_lines}
+      showMascot={heroData?.show_mascot}
       eggTranslateX={heroTransX}
       eggTranslateY={heroTransY}
       eggScale={heroScale}
