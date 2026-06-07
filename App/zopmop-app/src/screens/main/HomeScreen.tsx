@@ -66,7 +66,6 @@ import { partitionHomeSections } from './homeSections';
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
 import { HeroPager } from '../../components/home/HeroPager';
-import { HeroRefreshFlyer } from '../../components/home/HeroRefreshFlyer';
 import { LivePillSection } from '../../sdui/sections/LivePillSection';
 import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
@@ -532,29 +531,23 @@ export default function HomeScreen() {
   // Default-on: render the indicator unless the section ships and sets visible=false.
   const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
-  // Hero layer: the greeting hero is ALWAYS page 0. When the config ships a
-  // hero_carousel, its slides become pages 1..n — the hero slides left to reveal
-  // them (core-RN HeroPager, no native pager-view).
-  //
-  // Refresh mascot: the bespoke "fly out of the hero card" easter egg only works
-  // when the hero is the direct list header. With a carousel the hero lives
-  // inside HeroPager's horizontal ScrollView, which clips/offsets the flying
-  // mascot — so there we skip the fly and use the standalone ZopRefresh overlay
-  // (rendered below) instead, and let the hero mascot idle.
-  const hasCarousel = (carouselData?.slides?.length ?? 0) > 0;
+  // Hero layer: the greeting hero is ALWAYS page 0 (with its pull-to-refresh
+  // easter egg). When the config ships a hero_carousel, its slides become pages
+  // 1..n — the hero slides left to reveal them. Built from core RN (HeroPager),
+  // so no native pager-view dependency that could crash older app builds.
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
       greeting={heroData?.greeting}
       titleLines={heroData?.title_lines}
-      showMascot={hasCarousel ? heroData?.show_mascot !== false && !refreshing : heroData?.show_mascot}
-      eggTranslateX={hasCarousel ? undefined : heroTransX}
-      eggTranslateY={hasCarousel ? undefined : heroTransY}
-      eggScale={hasCarousel ? undefined : heroScale}
-      eggRotation={hasCarousel ? undefined : heroRotZ}
-      eyeOpacity={hasCarousel ? undefined : heroEye}
-      winkProgress={hasCarousel ? undefined : heroWink}
-      showFace={hasCarousel ? true : heroShowFace}
+      showMascot={heroData?.show_mascot}
+      eggTranslateX={heroTransX}
+      eggTranslateY={heroTransY}
+      eggScale={heroScale}
+      eggRotation={heroRotZ}
+      eyeOpacity={heroEye}
+      winkProgress={heroWink}
+      showFace={heroShowFace}
     />
   );
   // Live pill rides inside the hero pager's page 0 (bundled with the hero —
@@ -656,24 +649,6 @@ export default function HomeScreen() {
         />
         </SduiErrorBoundary>
       </View>
-
-      {/* Carousel hero can't host the fly-out mascot (clipped by the pager's
-          scroll view) — render the SAME fly as a root overlay instead, driven by
-          the same choreography values. In-card hero mascot is hidden while this
-          is up (see showMascot above), so there's no double mascot. */}
-      {hasCarousel && refreshing ? (
-        <HeroRefreshFlyer
-          restX={zopRestX}
-          restY={zopRestY}
-          transX={heroTransX}
-          transY={heroTransY}
-          scale={heroScale}
-          rotation={heroRotZ}
-          eyeOpacity={heroEye}
-          winkProgress={heroWink}
-          showFace={heroShowFace}
-        />
-      ) : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       {showUpcoming ? <UpcomingBookingIndicator /> : null}
