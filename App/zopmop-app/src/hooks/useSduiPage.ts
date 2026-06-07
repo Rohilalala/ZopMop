@@ -37,7 +37,7 @@ import { logEvent } from '../analytics/impressionTracker';
 import { sanitizePage } from '../sdui/safeguards';
 import type { SduiLazySectionResponse, SduiPage } from '../sdui/types';
 
-export const CACHE_SCHEMA_VERSION = 6;
+export const CACHE_SCHEMA_VERSION = 7;
 
 const PAGE_FETCH_TIMEOUT_MS  = 8_000;
 const LAZY_FETCH_TIMEOUT_MS  = 5_000;

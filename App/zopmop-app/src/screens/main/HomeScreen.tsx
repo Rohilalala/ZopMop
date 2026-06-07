@@ -523,6 +523,7 @@ export default function HomeScreen() {
   const part = partitionHomeSections(page?.sections ?? []);
   const sections = part.feed;
   const heroData = part.greetingHero?.data;
+  const headerPromo = part.headerPromo?.data;
 
   const Header = (
     <HomeHero
@@ -549,6 +550,8 @@ export default function HomeScreen() {
         onLocationPress={() => setLocationModalVisible(true)}
         selectedAddressId={selectedAddressId}
         addressTag={addressTag}
+        promo={headerPromo}
+        onAction={handleAction}
       />
 
       {/* DEV SHORTCUT — remove before shipping */}

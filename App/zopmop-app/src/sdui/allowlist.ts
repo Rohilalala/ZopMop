@@ -18,7 +18,7 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'ActiveBooking', 'Addresses', 'AllServices', 'BookingConfirmed',
 	'BookingRate', 'Chat', 'HelpSupport', 'HiZop', 'InstantMatching',
 	'Location', 'ManageHousehold', 'NameEntry', 'NotServiceable',
-	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry',
+	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry', 'ReferralEarn',
 	'RoleSelection', 'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup',
 	'RoomiesWelcome', 'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
 	'YourExperts', 'ZopIntro',
