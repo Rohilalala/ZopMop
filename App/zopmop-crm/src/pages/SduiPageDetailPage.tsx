@@ -220,13 +220,29 @@ export function SduiPageDetailPage() {
                             </button>
                           )}
                           {c.status === 'archived' && (
-                            <button
-                              className="btn-primary !px-3" title="Re-ship this version (re-validates, then goes live)"
-                              disabled={!canActivate}
-                              onClick={() => { if (!canActivate) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setToActivate(c); }}
-                            >
-                              <CheckCircle2 className="w-4 h-4" />Make live
-                            </button>
+                            <>
+                              <button
+                                className="btn-ghost !px-2" title="Edit this layout"
+                                disabled={!canWrite}
+                                onClick={() => { if (!canWrite) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setEditing(c); }}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                className="btn-ghost !px-2 text-danger" title="Delete this layout"
+                                disabled={!canWrite}
+                                onClick={() => { if (!canWrite) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setToDelete(c); }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                className="btn-primary !px-3" title="Re-ship this version (re-validates, then goes live)"
+                                disabled={!canActivate}
+                                onClick={() => { if (!canActivate) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setToActivate(c); }}
+                              >
+                                <CheckCircle2 className="w-4 h-4" />Make live
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
