@@ -66,7 +66,7 @@ import { partitionHomeSections } from './homeSections';
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
 import { HeroPager } from '../../components/home/HeroPager';
-import { ZopRefresh } from '../../components/home/ZopRefresh';
+import { HeroRefreshFlyer } from '../../components/home/HeroRefreshFlyer';
 import { LivePillSection } from '../../sdui/sections/LivePillSection';
 import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
@@ -658,8 +658,22 @@ export default function HomeScreen() {
       </View>
 
       {/* Carousel hero can't host the fly-out mascot (clipped by the pager's
-          scroll view) — use the robust top-anchored ZopRefresh overlay there. */}
-      {hasCarousel ? <ZopRefresh refreshing={refreshing} /> : null}
+          scroll view) — render the SAME fly as a root overlay instead, driven by
+          the same choreography values. In-card hero mascot is hidden while this
+          is up (see showMascot above), so there's no double mascot. */}
+      {hasCarousel && refreshing ? (
+        <HeroRefreshFlyer
+          restX={zopRestX}
+          restY={zopRestY}
+          transX={heroTransX}
+          transY={heroTransY}
+          scale={heroScale}
+          rotation={heroRotZ}
+          eyeOpacity={heroEye}
+          winkProgress={heroWink}
+          showFace={heroShowFace}
+        />
+      ) : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       {showUpcoming ? <UpcomingBookingIndicator /> : null}
