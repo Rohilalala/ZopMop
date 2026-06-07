@@ -15,6 +15,7 @@ import { showToast } from '@/components/ui/Toast';
 import { Can } from '@/auth/Can';
 import { usePermission } from '@/auth/usePermission';
 import { LazyJsonEditor, LazyJsonViewer } from '@/components/sdui/LazyJsonEditor';
+import { SduiVisualPreview } from '@/components/sdui/SduiVisualPreview';
 
 const ENV: Env = 'production';
 
@@ -521,6 +522,7 @@ function PreviewModal({
   const [userId, setUserId] = useState('');
   const [lat, setLat] = useState('');
   const [lon, setLon] = useState('');
+  const [mode, setMode] = useState<'visual' | 'json'>('visual');
 
   const preview = useMutation({
     mutationFn: () =>
@@ -540,14 +542,36 @@ function PreviewModal({
           <input className="input" placeholder="Lat (optional)" value={lat} onChange={(e) => setLat(e.target.value)} />
           <input className="input" placeholder="Lon (optional)" value={lon} onChange={(e) => setLon(e.target.value)} />
         </div>
-        <button className="btn-primary" disabled={preview.isPending} onClick={() => preview.mutate()}>
-          {preview.isPending ? 'Hydrating…' : 'Run preview'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-primary" disabled={preview.isPending} onClick={() => preview.mutate()}>
+            {preview.isPending ? 'Hydrating…' : 'Run preview'}
+          </button>
+          {preview.data != null && (
+            <div className="ml-auto inline-flex rounded-lg border border-border p-0.5">
+              <button
+                className={`rounded-md px-3 py-1 text-xs font-bold ${mode === 'visual' ? 'bg-border' : 'text-text-muted'}`}
+                onClick={() => setMode('visual')}
+              >
+                Visual
+              </button>
+              <button
+                className={`rounded-md px-3 py-1 text-xs font-bold ${mode === 'json' ? 'bg-border' : 'text-text-muted'}`}
+                onClick={() => setMode('json')}
+              >
+                JSON
+              </button>
+            </div>
+          )}
+        </div>
         {preview.data != null ? (
-          <LazyJsonViewer value={JSON.stringify(preview.data, null, 2)} />
+          mode === 'visual' ? (
+            <SduiVisualPreview page={preview.data} />
+          ) : (
+            <LazyJsonViewer value={JSON.stringify(preview.data, null, 2)} />
+          )
         ) : (
           <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-muted">
-            Run a preview to see the hydrated, resolved page payload the client would receive.
+            Run a preview to see the hydrated page — “Visual” renders a phone-frame mock, “JSON” shows the raw resolved payload.
           </div>
         )}
       </div>
