@@ -217,7 +217,14 @@ VALUES (
       "id": "footer",
       "type": "footer",
       "visible": true,
-      "data": {}
+      "data": {
+        "signoff": {
+          "lines": ["We mop.", "You zop."],
+          "brand": "ZopMop",
+          "badges": ["Vetted pros", "30-min support", "Refund if unhappy"],
+          "tagline": "Built in India · One home at a time"
+        }
+      }
     }
   ]
 }
