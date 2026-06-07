@@ -204,6 +204,13 @@ export function useSduiPage(
         const newEtag = res.headers.get('ETag') ?? res.headers.get('etag');
         if (newEtag) etagRef.current = newEtag;
 
+        // Kill-switch / fallback responses are marked no-store. Render them, but
+        // NEVER persist them — otherwise the durable cache holds the safe layout
+        // and the app keeps showing it after the kill switch is turned off.
+        const transient = (res.headers.get('Cache-Control') ?? '')
+          .toLowerCase()
+          .includes('no-store');
+
         const json = await res.json();
         const sanitised = sanitizePage(json);
         if (!sanitised) {
@@ -224,17 +231,19 @@ export function useSduiPage(
         if (etagRef.current) memEtagCache.set(pageId, etagRef.current);
         setError(null);
 
-        // Persist for next launch.
-        try {
-          const envelope: CacheEnvelope = {
-            schemaVersion: CACHE_SCHEMA_VERSION,
-            cachedAt:      Date.now(),
-            page:          sanitised,
-            etag:          etagRef.current ?? undefined,
-          };
-          await AsyncStorage.setItem(cacheKey(pageId), JSON.stringify(envelope));
-        } catch {
-          // Cache write is best-effort.
+        // Persist for next launch — but not transient (kill-switch) responses.
+        if (!transient) {
+          try {
+            const envelope: CacheEnvelope = {
+              schemaVersion: CACHE_SCHEMA_VERSION,
+              cachedAt:      Date.now(),
+              page:          sanitised,
+              etag:          etagRef.current ?? undefined,
+            };
+            await AsyncStorage.setItem(cacheKey(pageId), JSON.stringify(envelope));
+          } catch {
+            // Cache write is best-effort.
+          }
         }
       } catch (err) {
         if (seq !== requestSeq.current) return;

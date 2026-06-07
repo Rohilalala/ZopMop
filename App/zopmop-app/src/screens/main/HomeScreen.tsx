@@ -39,7 +39,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
 import { FlashList } from '@shopify/flash-list';
@@ -129,6 +129,20 @@ export default function HomeScreen() {
       lon: coords?.lon,
       initialPage: prefetched?.page ?? null,
     },
+  );
+
+  // Re-fetch the page when Home regains focus (skip the initial mount focus —
+  // useSduiPage already fetches on mount). Picks up server-side config changes
+  // like a kill switch being toggled off without needing a manual pull.
+  const didMountFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!didMountFocus.current) {
+        didMountFocus.current = true;
+        return;
+      }
+      refetch();
+    }, [refetch]),
   );
 
   // ── Pull-to-refresh easter egg ────────────────────────────────────────────
