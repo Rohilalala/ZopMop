@@ -432,6 +432,12 @@ func main() {
 	healthHandler.RegisterRoutes(authed)
 	zoneApprovalsHandler.RegisterRoutes(authed)
 
+	// SDUI (server-driven UI) admin surface — reuses internal/bff's admin
+	// handler verbatim so config lifecycle logic lives in one place. Mounted
+	// on the same authed group (JWT + per-admin limiter); a locals bridge maps
+	// the CRM admin identity onto the userID/role the bff handler reads.
+	registerSDUIAdmin(authed, dbPool, rdb)
+
 	// Module stub handler — gated behind ENABLE_STUB_ENUMERATOR=1
 	// (audit E2-4). The route exposed the CRM module taxonomy to anyone
 	// with a CRM JWT, which is information leakage with no production
