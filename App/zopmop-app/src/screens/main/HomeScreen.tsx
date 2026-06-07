@@ -30,7 +30,6 @@ import {
   Alert,
   Dimensions,
   Platform,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -78,10 +77,11 @@ import { usePostHog } from 'posthog-react-native';
 import { usePrefetch } from '../../context/PrefetchContext';
 import { writeLastKnownLocation, readLastKnownLocation } from '../../utils/locationCache';
 import type { SduiAction, SduiSection } from '../../sdui/types';
-import {
+import Animated, {
   Easing,
   cancelAnimation,
   runOnJS,
+  useAnimatedStyle,
   useSharedValue,
   withDelay,
   withRepeat,
@@ -98,6 +98,15 @@ const DEFAULT_LAT = 28.4357;
 const DEFAULT_LON = 77.0763;
 
 const { width: SCREEN_W } = Dimensions.get('window');
+
+// Top-overscroll distance (px) that triggers a custom pull-to-refresh. No native
+// RefreshControl is used, so the pull is detected from the scroll offset.
+const PULL_TRIGGER = 90;
+
+// How far the list is held down while refreshing (recreates the RefreshControl
+// rubber-band hold). The carousel fly rest adds this during refresh so the Zop
+// tracks the held card.
+const HOLD_OFFSET = 64;
 
 export default function HomeScreen() {
   const { isDark, colors: themeColors } = useTheme();
@@ -146,7 +155,7 @@ export default function HomeScreen() {
   );
 
   // ── Pull-to-refresh easter egg ────────────────────────────────────────────
-  // Choreography (driven by RefreshControl trigger):
+  // Choreography (driven by the pull-to-refresh scroll trigger):
   //   1. eyes fade out         (180ms)
   //   2. fly up to mid-screen + spin 720°  (650ms, ease-out)
   //   3. hold mid-screen       (200ms)
@@ -156,9 +165,6 @@ export default function HomeScreen() {
   //
   // All driven from shared values so it runs on the UI thread (60fps).
   const [refreshing, setRefreshing] = useState(false);
-  // True while the list is overscrolled at the top (pull gesture in progress).
-  // Used to mask the native gray spinner during the pull, before `refreshing`.
-  const [pulling, setPulling] = useState(false);
   const [heroShowFace, setHeroShowFace] = useState(true);
   // Which hero-pager page is showing (0 = hero card). Drives which refresh
   // mascot plays: full Zop fly on the home card, simple spinner on promo cards.
@@ -182,6 +188,12 @@ export default function HomeScreen() {
   const heroRotZ    = useSharedValue(0);
   const heroEye     = useSharedValue(1);
   const heroWink    = useSharedValue(0);
+  // Manual "hold" — recreates the RefreshControl rubber-band hold without the
+  // native control. While refreshing, the list is translated down HOLD_OFFSET
+  // (a gap opens at the top where the Zop plays); it springs back to 0 when the
+  // refresh completes. Driven from onRefresh; applied to the list wrapper.
+  const holdY = useSharedValue(0);
+  const holdStyle = useAnimatedStyle(() => ({ transform: [{ translateY: holdY.value }] }));
 
   // Land the Zop in the same spot the other-screen ZopRefresh overlay uses:
   // horizontally centred, vertically ABOVE the content (~y=88 in screen
@@ -206,6 +218,12 @@ export default function HomeScreen() {
     haptics.medium();
     setRefreshing(true);
     setHeroAnimating(true);
+
+    // Open the hold: ease the list down so a gap appears at the top (where the
+    // Zop plays), mimicking the RefreshControl rubber-band hold. Springs back
+    // when the choreography lands (see RETURN_AT below).
+    cancelAnimation(holdY);
+    holdY.value = withTiming(HOLD_OFFSET, { duration: 220, easing: Easing.out(Easing.cubic) });
 
     // Cancel any in-flight animations so a re-trigger reads cleanly.
     cancelAnimation(heroTransX);
@@ -259,6 +277,9 @@ export default function HomeScreen() {
       // (the body keeps spinning a touch as the scroll springs back).
       runOnJS(setRefreshing)(false);
 
+      // Close the hold: spring the list back up (the rubber-band release).
+      holdY.value = withSpring(0, { damping: 16, stiffness: 170, mass: 0.9 });
+
       const current = heroRotZ.value;
       const next = Math.ceil((current + 30) / 90) * 90;
       heroRotZ.value = withTiming(
@@ -291,11 +312,12 @@ export default function HomeScreen() {
     }
   }, [
     refetch, flyTargetX, flyTargetY, FLY_SCALE,
-    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink,
+    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink, holdY,
   ]);
 
-  // Wink AFTER the screen has scrolled back up. RefreshControl's spring
-  // returns the content to rest ~250ms after `refreshing` flips false.
+  // Wink AFTER `refreshing` flips false (the list has already rubber-banded back
+  // to rest since there's no native hold). Small delay so the wink reads as a
+  // post-landing beat.
   const prevRefreshing = useRef(false);
   useEffect(() => {
     if (prevRefreshing.current && !refreshing) {
@@ -586,15 +608,14 @@ export default function HomeScreen() {
   // returns window coords and the overlay's absolute top is measured from the
   // window origin too, so NO insets.top adjustment (subtracting it rendered the
   // mascot ~insets.top too high). Falls back to the computed screen coords.
-  // heroRect is the RESTING (un-pulled) measurement. While refreshing, the
-  // RefreshControl holds the content ~REFRESH_PULL lower, so add that only then
-  // (fly matches the pulled card); on the return/rest it drops to the normal
-  // un-pulled position. HERO_FLY_NUDGE is a small global lower (the "5px too up"
-  // tweak). Both are single numbers to tune.
+  // heroRect is the RESTING measurement. The carousel overlay is rendered OUTSIDE
+  // the held list wrapper, so while refreshing the card has slid down HOLD_OFFSET
+  // but heroRect has not — add HOLD_OFFSET so the fly tracks the held card. On
+  // return/rest it drops to REST_NUDGE. HERO_FLY_NUDGE is a small global lower
+  // (the "5px too up" tweak).
   const HERO_FLY_NUDGE = 5;  // fly base nudge while refreshing
-  const REFRESH_PULL = 28;   // content held ~this much lower during refresh
   const REST_NUDGE = 4;      // final landing position (1px higher than the fly base)
-  const flyDrop = refreshing ? HERO_FLY_NUDGE + REFRESH_PULL : REST_NUDGE;
+  const flyDrop = refreshing ? HERO_FLY_NUDGE + HOLD_OFFSET : REST_NUDGE;
   const heroFlyRest = heroRect
     ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + flyDrop }
     : { x: zopRestX, y: zopRestY + flyDrop };
@@ -680,7 +701,7 @@ export default function HomeScreen() {
         </View>
       )}
 
-      <View key={isDark ? 'dark' : 'light'} style={{ flex: 1 }}>
+      <Animated.View key={isDark ? 'dark' : 'light'} style={[{ flex: 1 }, holdStyle]}>
         <SduiErrorBoundary resetKey={page?.config_hash}>
         <FlashList
           data={sections}
@@ -696,51 +717,20 @@ export default function HomeScreen() {
           contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
           showsVerticalScrollIndicator={false}
           extraData={page?.config_hash}
-          // Track top-overscroll so the spinner mask is up during the pull too,
-          // not only once `refreshing` flips. Only flips state on boundary cross.
+          // Custom pull-to-refresh — NO native RefreshControl. That component owns
+          // the iOS spinner, which can't be tinted or hidden on FlashList under the
+          // New Architecture (and native appearance is locked light, so it's a
+          // fixed gray). Instead the list rubber-bands at the top; when pulled past
+          // PULL_TRIGGER we fire the refresh and the Zop choreography is the only
+          // loader. No OS control = no gray spinner to theme, mask, or fight.
           scrollEventThrottle={16}
           onScroll={(e) => {
-            const over = e.nativeEvent.contentOffset.y < -2;
-            setPulling((p) => (p === over ? p : over));
+            if (refreshing || heroAnimating) return;
+            if (e.nativeEvent.contentOffset.y <= -PULL_TRIGGER) onRefresh();
           }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              // NOTE: tintColor does NOT hide the native spinner here. FlashList
-              // forwards this RefreshControl into recyclerlistview's scroll view,
-              // and under the New Architecture the iOS host ignores the tint (the
-              // plain-ScrollView screens — AllServices/Bookings — honour it, but
-              // this list does not). The app also locks native appearance to light
-              // (userInterfaceStyle:"light"), so the spinner is a fixed gray that
-              // can't follow the JS theme. We keep the RefreshControl for the pull
-              // gesture + the content "hold" (the choreography depends on it), and
-              // mask the gray spinner with a page-coloured cover during refresh —
-              // see SpinnerMask below.
-              tintColor="transparent"
-              colors={['transparent']}
-              progressBackgroundColor="transparent"
-            />
-          }
         />
         </SduiErrorBoundary>
-
-        {/* Spinner mask — see the RefreshControl note above. The native pull
-            spinner can't be tinted on FlashList under the New Architecture, and
-            the app locks native appearance to light, so it renders a fixed gray.
-            Cover the top strip (where the indicator sits) with the page colour
-            while refreshing. The flying Zop (HeroRefreshFlyer / ZopRefresh) is a
-            later sibling at the SafeAreaView level, so it renders ABOVE this —
-            only the gray spinner is masked, never the mascot. Carousel only: the
-            non-carousel hero uses the in-card fly, which lives inside the list
-            and would be masked by this. */}
-        {hasCarousel && (pulling || refreshing) ? (
-          <View
-            pointerEvents="none"
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 64, backgroundColor: sc.bg, zIndex: 2 }}
-          />
-        ) : null}
-      </View>
+      </Animated.View>
 
       {/* Carousel refresh mascot, rendered at the root (above the pager, never
           clipped). Full Zop fly+wink on the home card (page 0); the simple
