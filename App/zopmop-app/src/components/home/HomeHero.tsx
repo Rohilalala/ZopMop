@@ -8,7 +8,7 @@
 // Idle state still floats up/down on its own.
 
 import React, { useEffect, useMemo } from 'react';
-import { View, Text, type TextStyle } from 'react-native';
+import { View, Text, type TextStyle, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useDerivedValue,
@@ -47,6 +47,10 @@ type Props = {
   winkProgress?: SharedValue<number>;
   /** When false, Zop renders body-only (no eyes/mouth). */
   showFace?: boolean;
+  /** Ref to the root view so a parent can measureInWindow() the card. */
+  viewRef?: React.Ref<View>;
+  /** Forwarded to the root view (so the parent can re-measure on layout). */
+  onLayout?: (e: LayoutChangeEvent) => void;
 };
 
 function greetingFor(name?: string) {
@@ -85,6 +89,8 @@ export function HomeHero({
   eyeOpacity,
   winkProgress,
   showFace = true,
+  viewRef,
+  onLayout,
 }: Props) {
   const { isDark, colors: c } = useTheme();
   const kicker = useMemo(() => greeting ?? greetingFor(name), [greeting, name]);
@@ -129,7 +135,7 @@ export function HomeHero({
   const winkRef = useDerivedValue(() => wP.value);
 
   return (
-    <View style={{ marginHorizontal: 20, marginTop: 14 }}>
+    <View ref={viewRef} onLayout={onLayout} style={{ marginHorizontal: 20, marginTop: 14 }}>
       <GlassCard radius={28} hero style={{ padding: 22 }}>
         {/* Zop mascot — animatable for the pull-to-refresh easter egg */}
         {showMascot !== false ? (
