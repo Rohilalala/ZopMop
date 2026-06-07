@@ -34,6 +34,12 @@ VALUES (
   "schema_version": 1,
   "sections": [
     {
+      "id": "hero",
+      "type": "greeting_hero",
+      "visible": true,
+      "data": { "title_lines": ["Home,", "handled."], "show_mascot": true }
+    },
+    {
       "id": "live",
       "type": "live_pill",
       "visible": true,

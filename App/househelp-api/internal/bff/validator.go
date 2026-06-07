@@ -42,6 +42,7 @@ var knownSectionTypes = map[string]struct{}{
 	"usuals_row":    {},
 	"service_grid":  {},
 	"footer":        {},
+	"greeting_hero": {},
 }
 
 // NewValidator loads the JSON schema from disk and binds the source registry +
