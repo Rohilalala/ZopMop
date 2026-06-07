@@ -23,7 +23,7 @@ export function SduiVisualPreview({ page }: { page: unknown }) {
   return (
     <div className="flex justify-center py-2">
       {/* phone frame */}
-      <div className="relative w-[380px] h-[720px] rounded-[2.5rem] border-8 border-neutral-800 bg-[#FAF7F2] shadow-2xl overflow-hidden">
+      <div className="relative w-[340px] h-[560px] rounded-[2.5rem] border-8 border-neutral-800 bg-[#FAF7F2] shadow-2xl overflow-hidden">
         {/* notch */}
         <div className="absolute left-1/2 top-0 z-10 h-6 w-32 -translate-x-1/2 rounded-b-2xl bg-neutral-800" />
         <div className="h-full overflow-y-auto px-4 pt-9 pb-6 text-[#0D0D0F]">

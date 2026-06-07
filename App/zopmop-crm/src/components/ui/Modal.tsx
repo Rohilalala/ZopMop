@@ -39,7 +39,7 @@ export function Modal({
         >
           <div className="absolute inset-0 bg-black/40 backdrop-blur-md" />
           <motion.div
-            className={`relative card-elevated w-full ${width} mx-4 p-6`}
+            className={`relative card-elevated w-full ${width} mx-4 p-6 max-h-[90vh] overflow-y-auto`}
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 12 }}
