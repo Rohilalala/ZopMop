@@ -78,6 +78,7 @@ export interface FooterData {
   trust?:         { columns: FooterTrustColumn[] } | null;
   signoff:        FooterSignoff;
 }
+export interface GreetingHeroData { greeting?: string; title_lines?: string[]; show_mascot?: boolean }
 
 // ── Rollout control ──────────────────────────────────────────────────────────
 
@@ -106,7 +107,8 @@ export type SduiSection =
   | (SduiSectionBase & { type: 'live_pill';     data: LivePillData })
   | (SduiSectionBase & { type: 'usuals_row';    data: UsualsRowData })
   | (SduiSectionBase & { type: 'service_grid';  data: ServiceGridData })
-  | (SduiSectionBase & { type: 'footer';        data: FooterData });
+  | (SduiSectionBase & { type: 'footer';        data: FooterData })
+  | (SduiSectionBase & { type: 'greeting_hero'; data: GreetingHeroData });
 
 export type SduiSectionType = SduiSection['type'];
 
