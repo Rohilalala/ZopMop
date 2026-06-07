@@ -55,11 +55,15 @@ import type { MainStackParamList } from '../../types/navigation';
 import { GlassCard } from '../../components/home/GlassCard';
 import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
+import { SuccessTick, Confetti } from '../../components/SuccessTick';
 import { PressFx } from '../../components/ui/PressFx';
 import ZopLookingUp from '../../../assets/zop/zop-looking-up.svg';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useC } from '../../theme/screen';
 import { getMatchStatus } from '../../api/matching';
 import { haptics } from '../../utils/haptics';
+import { showInfo } from '../../utils/toast';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -74,6 +78,8 @@ const H_PAD = 20;
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function BookingConfirmedScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'BookingConfirmed'>>();
   const insets = useSafeAreaInsets();
@@ -86,8 +92,7 @@ export default function BookingConfirmedScreen() {
     paymentLabel, discountCents, promoCode, etaMinutes,
   } = params;
 
-  // Resolve variant: explicit `instant` overrides; else infer from `slot`.
-  const isInstant = params.instant ?? !slot;
+  const isInstant = params.bookingType === 'instant';
   const isScheduled = !isInstant;
 
   const shortId = `ZM-${(bookingId ?? '').replace(/-/g, '').slice(0, 4).toUpperCase()}`;
@@ -190,7 +195,7 @@ export default function BookingConfirmedScreen() {
       helperPhone: livePhone,
       helperRating,
     });
-  const onAddSvc   = () => navigation.navigate('AllServices', {});
+  const onAddSvc   = () => navigation.navigate('Tabs', { screen: 'AllServices' });
 
   const onCallPro = () => {
     if (!livePhone) return;
@@ -207,9 +212,9 @@ export default function BookingConfirmedScreen() {
   const onReschedule = () => { /* scheduled flow only — no-op for instant */ };
 
   return (
-    <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
-      <SuccessBackdrop />
+    <View style={[styles.safe, { backgroundColor: c.bg }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <SuccessBackdrop isDark={isDark} />
 
       <ScrollView
         style={{ flex: 1, backgroundColor: 'transparent' }}
@@ -225,6 +230,7 @@ export default function BookingConfirmedScreen() {
           title={heroTitle}
           sub={heroSub}
           shortId={shortId}
+          isDark={isDark}
         />
 
         {isInstant && liveHelperName && (
@@ -233,6 +239,7 @@ export default function BookingConfirmedScreen() {
             photoUrl={livePhotoUrl}
             rating={liveRating}
             totalJobs={liveTotalJobs}
+            isDark={isDark}
           />
         )}
 
@@ -250,6 +257,7 @@ export default function BookingConfirmedScreen() {
           helperName={liveHelperName ?? helperName}
           helperRating={liveRating ?? helperRating}
           etaMinutes={etaMinutes}
+          isDark={isDark}
         />
 
         {isInstant ? (
@@ -259,14 +267,15 @@ export default function BookingConfirmedScreen() {
             onMessage={onMessage}
             onTip={onAddTip}
             onReschedule={onReschedule}
+            isDark={isDark}
           />
         ) : (
-          <ScheduledActions />
+          <ScheduledActions isDark={isDark} />
         )}
 
         {/* ReferNudge (Refer & earn ₹100) hidden until referral program ships
             end-to-end (P12 / S14, S15). Re-enable when /me/referrals exists. */}
-        {!isInstant && <WhatsNext />}
+        {!isInstant && <WhatsNext isDark={isDark} />}
       </ScrollView>
 
       <BottomDock
@@ -282,6 +291,7 @@ export default function BookingConfirmedScreen() {
             : onDone
         }
         onSecondary={isInstant ? onDone : onAddSvc}
+        isDark={isDark}
       />
     </View>
   );
@@ -289,7 +299,7 @@ export default function BookingConfirmedScreen() {
 
 // ── Backdrop — green + amber radials matching design ────────────────────────
 
-function SuccessBackdrop() {
+function SuccessBackdrop({ isDark }: { isDark: boolean }) {
   return (
     <View
       pointerEvents="none"
@@ -299,90 +309,41 @@ function SuccessBackdrop() {
     >
       <Svg width="100%" height="100%" viewBox={`0 0 ${SCREEN_W} ${SCREEN_H}`}>
         <Defs>
+          {/* Light mode: cream base gradient */}
+          {!isDark && (
+            <SvgLinearGradient id="creamBase" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#FAF7F2" />
+              <Stop offset="0.6" stopColor="#F4EFE7" />
+              <Stop offset="1" stopColor="#EFE9DE" />
+            </SvgLinearGradient>
+          )}
           <RadialGradient
             id="green"
             cx={SCREEN_W / 2} cy={-SCREEN_H * 0.10}
-            rx={SCREEN_W * 0.80} ry={SCREEN_H * 0.50}
+            rx={isDark ? SCREEN_W * 0.80 : SCREEN_W * 1.10}
+            ry={isDark ? SCREEN_H * 0.50 : SCREEN_H * 0.60}
             gradientUnits="userSpaceOnUse"
           >
-            <Stop offset="0%"  stopColor="#22C55E" stopOpacity="0.22" />
+            <Stop offset="0%"  stopColor="#22C55E" stopOpacity={isDark ? '0.22' : '0.30'} />
             <Stop offset="55%" stopColor="#22C55E" stopOpacity="0" />
           </RadialGradient>
           <RadialGradient
             id="amber"
-            cx={SCREEN_W * 1.0} cy={SCREEN_H * 0.30}
-            rx={SCREEN_W * 0.70} ry={SCREEN_H * 0.50}
+            cx={isDark ? SCREEN_W * 1.0 : SCREEN_W * 1.10}
+            cy={SCREEN_H * 0.30}
+            rx={isDark ? SCREEN_W * 0.70 : SCREEN_W * 1.10}
+            ry={isDark ? SCREEN_H * 0.50 : SCREEN_H * 0.70}
             gradientUnits="userSpaceOnUse"
           >
-            <Stop offset="0%"  stopColor="#F5A300" stopOpacity="0.18" />
-            <Stop offset="55%" stopColor="#F5A300" stopOpacity="0" />
+            <Stop offset="0%"  stopColor="#F5A300" stopOpacity={isDark ? '0.18' : '0.20'} />
+            <Stop offset={isDark ? '55%' : '50%'} stopColor="#F5A300" stopOpacity="0" />
           </RadialGradient>
         </Defs>
-        <Rect width={SCREEN_W} height={SCREEN_H} fill="#0A0A0A" />
+        <Rect width={SCREEN_W} height={SCREEN_H} fill={isDark ? '#0A0A0A' : 'url(#creamBase)'} />
         <Rect width={SCREEN_W} height={SCREEN_H} fill="url(#green)" />
         <Rect width={SCREEN_W} height={SCREEN_H} fill="url(#amber)" />
       </Svg>
     </View>
-  );
-}
-
-// ── Confetti — 9 colored dots ───────────────────────────────────────────────
-
-const CONFETTI: { x: number; y: number; w: number; h: number; bg: string; rot: number; round: boolean; delay: number }[] = [
-  { x: 0.18, y: 0.14, w:  8, h:  8, bg: '#F5A300', rot:   0, round: false, delay: 200 },
-  { x: 0.30, y: 0.08, w:  6, h:  6, bg: '#22C55E', rot:   0, round: true,  delay: 400 },
-  { x: 0.62, y: 0.11, w:  7, h: 14, bg: '#60A5FA', rot:  20, round: false, delay: 500 },
-  { x: 0.78, y: 0.18, w:  8, h:  8, bg: '#FFC042', rot:   0, round: true,  delay: 300 },
-  { x: 0.48, y: 0.06, w:  6, h: 12, bg: '#F5A300', rot: -25, round: false, delay: 550 },
-  { x: 0.84, y: 0.32, w:  6, h:  6, bg: '#22C55E', rot:   0, round: true,  delay: 700 },
-  { x: 0.10, y: 0.34, w:  5, h:  5, bg: '#FFC042', rot:   0, round: true,  delay: 600 },
-  { x: 0.90, y: 0.09, w:  6, h: 10, bg: '#F87171', rot:  15, round: false, delay: 450 },
-  { x: 0.24, y: 0.30, w:  5, h:  9, bg: '#22C55E', rot: -15, round: false, delay: 800 },
-];
-
-function Confetti() {
-  return (
-    <View
-      pointerEvents="none"
-      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 400, zIndex: 3 }}
-    >
-      {CONFETTI.map((c, i) => (
-        <ConfettiDot key={i} cfg={c} />
-      ))}
-    </View>
-  );
-}
-
-function ConfettiDot({ cfg }: { cfg: typeof CONFETTI[number] }) {
-  const fall = useSharedValue(0);
-  useEffect(() => {
-    fall.value = withDelay(
-      cfg.delay,
-      withTiming(1, { duration: 2400, easing: Easing.in(Easing.cubic) }),
-    );
-  }, []);
-  const style = useAnimatedStyle(() => ({
-    opacity: fall.value < 0.05 ? 0 : fall.value < 0.2 ? fall.value / 0.2 : 1 - fall.value,
-    transform: [
-      { translateY: -30 + fall.value * 250 },
-      { rotate: `${cfg.rot + fall.value * 140}deg` },
-    ],
-  }));
-  return (
-    <Animated.View
-      style={[
-        style,
-        {
-          position: 'absolute',
-          left: SCREEN_W * cfg.x,
-          top: SCREEN_H * cfg.y,
-          width: cfg.w,
-          height: cfg.h,
-          backgroundColor: cfg.bg,
-          borderRadius: cfg.round ? cfg.w / 2 : 1.5,
-        },
-      ]}
-    />
   );
 }
 
@@ -392,218 +353,22 @@ function Hero({
   title,
   sub,
   shortId,
-}: { title: string; sub: string; shortId: string }) {
+  isDark,
+}: { title: string; sub: string; shortId: string; isDark: boolean }) {
+  const idBg = isDark ? 'rgba(245,163,0,0.14)' : 'rgba(245,163,0,0.18)';
+  const idColor = isDark ? '#F5A300' : '#B96E00';
+  const idBorder = isDark ? 'rgba(245,163,0,0.3)' : 'rgba(245,163,0,0.35)';
   return (
     <View style={styles.hero}>
-      <CheckOrb />
-      <Text style={[fontExtra, styles.heroTitle]}>{title}</Text>
-      <Text style={[fontMed, styles.heroSub]}>{sub}</Text>
-      <View style={styles.idPill}>
-        <Feather name="hash" size={11} color="#F5A300" />
-        <Text style={[fontMono, { color: '#F5A300', fontSize: 12, fontWeight: '700' }]}>
+      <SuccessTick style={{ marginBottom: 12 }} />
+      <Text style={[fontExtra, styles.heroTitle, { color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>{title}</Text>
+      <Text style={[fontMed, styles.heroSub, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)' }]}>{sub}</Text>
+      <View style={[styles.idPill, { backgroundColor: idBg, borderColor: idBorder }]}>
+        <Feather name="hash" size={11} color={idColor} />
+        <Text style={[fontMono, { color: idColor, fontSize: 12, fontWeight: '700' }]}>
           Booking #{shortId}
         </Text>
       </View>
-    </View>
-  );
-}
-
-function CheckOrb() {
-  // Layout matches design exactly:
-  //   • Orb              108×108 (radius 54)
-  //   • Solid pulse ring 132×132 (12px outside orb), 2px solid, animated
-  //   • Dashed ring      152×152 (22px outside orb), 1.5px dashed, slow spin
-  // Container: 152×152 with overflow visible so the pulse ring can expand
-  // past it (scale 0.6 → 1.5).
-  const ORB    = 108;
-  const SOLID  = 132;
-  const DASHED = 152;
-
-  // Spring-pop: 0.4 → 1.08 → 1
-  const scale   = useSharedValue(0.4);
-  const opacity = useSharedValue(0);
-  // Pulse ring: 0.6 → 1.5, opacity 0→1→0 over 1.4s
-  const ringScale   = useSharedValue(0.6);
-  const ringOpacity = useSharedValue(0);
-  // Outer dashed ring: continuous slow spin 18s/360° linear
-  const spin = useSharedValue(0);
-
-  useEffect(() => {
-    scale.value = withDelay(
-      150,
-      withSequence(
-        withTiming(1.08, { duration: 420, easing: Easing.out(Easing.cubic) }),
-        withSpring(1, { damping: 14, stiffness: 200 }),
-      ),
-    );
-    opacity.value = withDelay(150, withTiming(1, { duration: 220 }));
-
-    ringScale.value = withDelay(
-      400,
-      withTiming(1.5, { duration: 1400, easing: Easing.out(Easing.cubic) }),
-    );
-    ringOpacity.value = withDelay(
-      400,
-      withSequence(
-        withTiming(1, { duration: 280 }),
-        withTiming(0, { duration: 1120 }),
-      ),
-    );
-
-    spin.value = withRepeat(
-      withTiming(360, { duration: 18000, easing: Easing.linear }),
-      -1,
-      false,
-    );
-  }, []);
-
-  const orbStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
-  const ringStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: ringScale.value }],
-    opacity: ringOpacity.value,
-  }));
-  const dashedStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${spin.value}deg` }],
-  }));
-
-  return (
-    <View
-      style={{
-        width: DASHED,
-        height: DASHED,
-        alignSelf: 'center',
-        marginBottom: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      {/* Outer dashed ring — 22px outside orb, 1.5px dashed, continuous spin.
-          Uses SVG (not borderStyle:'dashed') so dashes tile evenly around the
-          circumference — RN's CSS dashed border on circles produces an uneven
-          seam where the ring closes. */}
-      <Animated.View
-        style={[
-          dashedStyle,
-          {
-            position: 'absolute',
-            width: DASHED,
-            height: DASHED,
-          },
-        ]}
-      >
-        {(() => {
-          const STROKE = 1.5;
-          const r = (DASHED - STROKE) / 2;
-          const C = 2 * Math.PI * r;
-          // 50 dash+gap pairs tile exactly into circumference — matches design
-          // density; tiles cleanly so there is no seam.
-          const PAIRS = 50;
-          const DASH = C / PAIRS / 2;
-          return (
-            <Svg width={DASHED} height={DASHED}>
-              <Circle
-                cx={DASHED / 2}
-                cy={DASHED / 2}
-                r={r}
-                stroke="rgba(34,197,94,0.32)"
-                strokeWidth={STROKE}
-                strokeDasharray={[DASH, DASH]}
-                strokeLinecap="butt"
-                fill="none"
-              />
-            </Svg>
-          );
-        })()}
-      </Animated.View>
-
-      {/* Static solid ring — always visible inner halo (matches design). */}
-      <View
-        style={{
-          position: 'absolute',
-          width: SOLID,
-          height: SOLID,
-          borderRadius: SOLID / 2,
-          borderWidth: 1.5,
-          borderColor: 'rgba(34,197,94,0.45)',
-        }}
-      />
-
-      {/* Solid pulse ring — one-shot expand+fade outward from the static ring. */}
-      <Animated.View
-        style={[
-          ringStyle,
-          {
-            position: 'absolute',
-            width: SOLID,
-            height: SOLID,
-            borderRadius: SOLID / 2,
-            borderWidth: 2,
-            borderColor: 'rgba(34,197,94,0.35)',
-          },
-        ]}
-      />
-
-      {/* Orb */}
-      <Animated.View
-        style={[
-          orbStyle,
-          {
-            width: ORB,
-            height: ORB,
-            borderRadius: ORB / 2,
-            alignItems: 'center',
-            justifyContent: 'center',
-            shadowColor: '#22C55E',
-            shadowOffset: { width: 0, height: 20 },
-            shadowOpacity: 0.45,
-            shadowRadius: 50,
-            elevation: 14,
-            overflow: 'hidden',
-            borderWidth: 2,
-            borderTopColor: 'rgba(255,255,255,0.45)',
-            borderBottomColor: 'rgba(0,0,0,0.18)',
-            borderLeftColor: 'rgba(255,255,255,0.18)',
-            borderRightColor: 'rgba(255,255,255,0.18)',
-          },
-        ]}
-      >
-        {/* Orb fill — top→bottom green gradient for 3D ball look. */}
-        <Svg
-          width={ORB}
-          height={ORB}
-          style={{ position: 'absolute', top: 0, left: 0 }}
-        >
-          <Defs>
-            <SvgLinearGradient id="orbGrad" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#5BE08A" />
-              <Stop offset="1" stopColor="#16A34A" />
-            </SvgLinearGradient>
-          </Defs>
-          <Circle cx={ORB / 2} cy={ORB / 2} r={ORB / 2} fill="url(#orbGrad)" />
-        </Svg>
-
-        {/* Tick — custom SVG path with offset shadow path beneath for 3D feel. */}
-        <Svg width={54} height={54} viewBox="0 0 24 24" fill="none">
-          <Path
-            d="M5 12.5l5 5 9-11"
-            stroke="rgba(0,0,0,0.22)"
-            strokeWidth={3.4}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            transform="translate(0,1.4)"
-          />
-          <Path
-            d="M5 12.5l5 5 9-11"
-            stroke="#FFFFFF"
-            strokeWidth={3.4}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </Svg>
-      </Animated.View>
     </View>
   );
 }
@@ -615,16 +380,23 @@ function ProProfileCard({
   photoUrl,
   rating,
   totalJobs,
+  isDark,
 }: {
   name: string;
   photoUrl?: string;
   rating?: number;
   totalJobs?: number;
+  isDark: boolean;
 }) {
   const initial = (name || 'P')[0].toUpperCase();
   const ratingValue = typeof rating === 'number' ? rating : undefined;
+  const cardBg = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(13,13,15,0.03)';
+  const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)';
+  const textPrimary = isDark ? '#FFFFFF' : '#0D0D0F';
+  const textMuted = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)';
+  const starEmpty = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.20)';
   return (
-    <View style={styles.proCard}>
+    <View style={[styles.proCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
       <View style={styles.proCardAvWrap}>
         {photoUrl ? (
           <Image source={{ uri: photoUrl }} style={styles.proCardAv} />
@@ -635,18 +407,18 @@ function ProProfileCard({
         )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[fontBold, styles.proCardName]} numberOfLines={1}>
+        <Text style={[fontBold, styles.proCardName, { color: textPrimary }]} numberOfLines={1}>
           {name}
         </Text>
         <View style={styles.proCardStars}>
-          <StarRow rating={ratingValue ?? 0} />
+          <StarRow rating={ratingValue ?? 0} starEmpty={starEmpty} />
           {ratingValue !== undefined && (
             <Text style={[fontSemi, styles.proCardRatingText]}>
               {ratingValue.toFixed(1)}
             </Text>
           )}
         </View>
-        <Text style={[fontMed, styles.proCardJobs]}>
+        <Text style={[fontMed, styles.proCardJobs, { color: textMuted }]}>
           {typeof totalJobs === 'number' ? `${totalJobs} jobs completed` : 'New pro'}
         </Text>
       </View>
@@ -654,7 +426,7 @@ function ProProfileCard({
   );
 }
 
-function StarRow({ rating }: { rating: number }) {
+function StarRow({ rating, starEmpty }: { rating: number; starEmpty: string }) {
   const stars = [0, 1, 2, 3, 4];
   return (
     <View style={{ flexDirection: 'row', gap: 2 }}>
@@ -666,7 +438,7 @@ function StarRow({ rating }: { rating: number }) {
             key={i}
             name="star"
             size={12}
-            color={filled || half ? '#F5A300' : 'rgba(255,255,255,0.25)'}
+            color={filled || half ? '#F5A300' : starEmpty}
           />
         );
       })}
@@ -690,15 +462,18 @@ type TicketProps = {
   helperName?: string;
   helperRating?: number;
   etaMinutes?: number;
+  isDark: boolean;
 };
 
 function Ticket(props: TicketProps) {
   const {
     serviceName, serviceId, durationMinutes, totalRupees, isScheduled,
     slot, addressLine, paymentLabel, discountCents, promoCode,
-    helperName, helperRating, etaMinutes,
+    helperName, helperRating, etaMinutes, isDark,
   } = props;
   const iconSrc = serviceIcon({ id: serviceId, name: serviceName });
+  const textPrimary = isDark ? '#FFFFFF' : '#0D0D0F';
+  const textMuted = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.55)';
 
   return (
     <GlassCard
@@ -728,11 +503,11 @@ function Ticket(props: TicketProps) {
           )}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          {isScheduled && <ScheduledFlag />}
-          <Text style={[fontBold, styles.tkSvcName]} numberOfLines={2}>
+          {isScheduled && <ScheduledFlag isDark={isDark} />}
+          <Text style={[fontBold, styles.tkSvcName, { color: textPrimary }]} numberOfLines={2}>
             {serviceName}
           </Text>
-          <Text style={[fontMed, styles.tkSvcMeta]}>
+          <Text style={[fontMed, styles.tkSvcMeta, { color: textMuted }]}>
             {durationMinutes} min{slot ? '' : ' · 1 service'}
           </Text>
         </View>
@@ -742,7 +517,7 @@ function Ticket(props: TicketProps) {
       </View>
 
       {/* Perforation */}
-      <Perforation />
+      <Perforation isDark={isDark} />
 
       {/* Detail grid */}
       <View style={styles.tkBody}>
@@ -753,6 +528,7 @@ function Ticket(props: TicketProps) {
             paymentLabel={paymentLabel}
             discountCents={discountCents}
             promoCode={promoCode}
+            isDark={isDark}
           />
         ) : (
           <InstantDetails
@@ -762,6 +538,7 @@ function Ticket(props: TicketProps) {
             discountCents={discountCents}
             promoCode={promoCode}
             etaMinutes={etaMinutes}
+            isDark={isDark}
           />
         )}
       </View>
@@ -772,24 +549,27 @@ function Ticket(props: TicketProps) {
           isScheduled={isScheduled}
           helperName={helperName}
           helperRating={helperRating}
+          isDark={isDark}
         />
       </View>
     </GlassCard>
   );
 }
 
-function ScheduledFlag() {
+function ScheduledFlag({ isDark }: { isDark: boolean }) {
+  const flagBg = isDark ? 'rgba(96,165,250,0.18)' : 'rgba(59,130,246,0.18)';
+  const flagColor = isDark ? '#60A5FA' : '#1D4ED8';
   return (
-    <View style={styles.scheduledFlag}>
+    <View style={[styles.scheduledFlag, { backgroundColor: flagBg }]}>
       <View
-        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#60A5FA' }}
+        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: flagColor }}
       />
       <Text
         style={[
           fontExtra,
           {
             fontSize: 10,
-            color: '#60A5FA',
+            color: flagColor,
             letterSpacing: 0.6,
             textTransform: 'uppercase',
           },
@@ -801,12 +581,15 @@ function ScheduledFlag() {
   );
 }
 
-function Perforation() {
+function Perforation({ isDark }: { isDark: boolean }) {
+  const notchBg = isDark ? '#0A0A0A' : '#F4EFE7';
+  const notchBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)';
+  const dashColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.12)';
   return (
     <View style={styles.perfWrap}>
-      <View style={[styles.perfNotch, { left: -12 }]} />
-      <View style={styles.perfDashes} />
-      <View style={[styles.perfNotch, { right: -12 }]} />
+      <View style={[styles.perfNotch, { left: -12, backgroundColor: notchBg, borderColor: notchBorder }]} />
+      <View style={[styles.perfDashes, { borderTopColor: dashColor }]} />
+      <View style={[styles.perfNotch, { right: -12, backgroundColor: notchBg, borderColor: notchBorder }]} />
     </View>
   );
 }
@@ -819,9 +602,10 @@ type DetailsProps = {
   paymentLabel?: string;
   discountCents?: number;
   promoCode?: string;
+  isDark: boolean;
 };
 
-function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoCode, etaMinutes }: DetailsProps & { etaMinutes?: number }) {
+function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoCode, etaMinutes, isDark }: DetailsProps & { etaMinutes?: number }) {
   const savedLine =
     discountCents && discountCents > 0
       ? `₹${Math.round(discountCents / 100)} saved${promoCode ? ` with ${promoCode}` : ''}`
@@ -835,30 +619,20 @@ function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoC
       : 'Tracking ETA…';
   return (
     <>
-      <DetRow
-        icon="clock"
-        label="When"
-        value={whenValue}
-        sub={slot ?? 'Today'}
-      />
+      <DetRow icon="clock" label="When" value={whenValue} sub={slot ?? 'Today'} isDark={isDark} />
       <DetRow
         icon="map-pin"
         label="Where"
         value={addressLine ? addressLine.split(',')[0] || 'Home' : 'Home'}
         sub={addressLine?.split(',').slice(1).join(',').trim()}
+        isDark={isDark}
       />
-      <DetRow
-        icon="credit-card"
-        label="Payment"
-        value={paymentLabel ?? 'Paid'}
-        sub={savedLine}
-        full
-      />
+      <DetRow icon="credit-card" label="Payment" value={paymentLabel ?? 'Paid'} sub={savedLine} full isDark={isDark} />
     </>
   );
 }
 
-function ScheduledDetails({ slot, addressLine, paymentLabel, discountCents, promoCode }: DetailsProps) {
+function ScheduledDetails({ slot, addressLine, paymentLabel, discountCents, promoCode, isDark }: DetailsProps) {
   const savedLine =
     discountCents && discountCents > 0
       ? `₹${Math.round(discountCents / 100)} saved${promoCode ? ` with ${promoCode}` : ''}`
@@ -881,22 +655,17 @@ function ScheduledDetails({ slot, addressLine, paymentLabel, discountCents, prom
 
   return (
     <>
-      <DetRow icon="calendar" label="Date" value={dateLine} sub={isTomorrow ? 'Tomorrow' : undefined} />
-      <DetRow icon="clock"    label="Time" value={timeLine || '—'} sub="2-hr arrival window" />
+      <DetRow icon="calendar" label="Date" value={dateLine} sub={isTomorrow ? 'Tomorrow' : undefined} isDark={isDark} />
+      <DetRow icon="clock" label="Time" value={timeLine || '—'} sub="2-hr arrival window" isDark={isDark} />
       <DetRow
         icon="map-pin"
         label="Address"
         value={addressLine ? addressLine.split(',')[0] || 'Home' : 'Home'}
         sub={addressLine?.split(',').slice(1).join(',').trim()}
         full
+        isDark={isDark}
       />
-      <DetRow
-        icon="credit-card"
-        label="Payment"
-        value={paymentLabel ?? 'Paid'}
-        sub={savedLine}
-        full
-      />
+      <DetRow icon="credit-card" label="Payment" value={paymentLabel ?? 'Paid'} sub={savedLine} full isDark={isDark} />
     </>
   );
 }
@@ -907,29 +676,34 @@ function DetRow({
   value,
   sub,
   full,
+  isDark,
 }: {
   icon: React.ComponentProps<typeof Feather>['name'];
   label: string;
   value: string;
   sub?: string;
   full?: boolean;
+  isDark: boolean;
 }) {
+  const lblColor = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.45)';
+  const valColor = isDark ? '#FFFFFF' : '#0D0D0F';
+  const subColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.5)';
   return (
     <View style={[styles.detRow, full && { width: '100%' }]}>
       <View style={styles.detLbl}>
-        <Feather name={icon} size={11} color="rgba(255,255,255,0.45)" />
+        <Feather name={icon} size={11} color={lblColor} />
         <Text
           style={[
             fontBold,
-            { fontSize: 10, color: 'rgba(255,255,255,0.45)', letterSpacing: 1, textTransform: 'uppercase' },
+            { fontSize: 10, color: lblColor, letterSpacing: 1, textTransform: 'uppercase' },
           ]}
         >
           {label}
         </Text>
       </View>
-      <Text style={[fontBold, styles.detVal]} numberOfLines={2}>{value}</Text>
+      <Text style={[fontBold, styles.detVal, { color: valColor }]} numberOfLines={2}>{value}</Text>
       {sub && (
-        <Text style={[fontMed, styles.detSub]} numberOfLines={2}>
+        <Text style={[fontMed, styles.detSub, { color: subColor }]} numberOfLines={2}>
           {sub}
         </Text>
       )}
@@ -943,26 +717,33 @@ function ProMini({
   isScheduled,
   helperName,
   helperRating,
+  isDark,
 }: {
   isScheduled: boolean;
   helperName?: string;
   helperRating?: number;
+  isDark: boolean;
 }) {
+  const miniBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(13,13,15,0.03)';
+  const miniBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)';
+  const textPrimary = isDark ? '#FFFFFF' : '#0D0D0F';
+  const textMuted = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.55)';
+
   if (isScheduled) {
     // TODO(backend): derive copy from booking.scheduled_at (e.g. "Matching
     // Sat morning"). For now we keep the static "tomorrow" line to match
     // the design preview; it will read incorrectly for far-out schedules.
     return (
-      <View style={styles.proMini}>
-        <View style={[styles.proAv, { backgroundColor: '#64748B' }]}>
+      <View style={[styles.proMini, { backgroundColor: miniBg, borderColor: miniBorder }]}>
+        <View style={[styles.proAv, { backgroundColor: '#64748B', borderColor: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.8)' }]}>
           <Feather name="user" size={16} color="#FFFFFF" />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[fontBold, { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.13 }]}>
+          <Text style={[fontBold, { color: textPrimary, fontSize: 13, letterSpacing: -0.13 }]}>
             Matching tomorrow morning
           </Text>
           <Text
-            style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 }]}
+            style={[fontMed, { color: textMuted, fontSize: 11, marginTop: 2 }]}
           >
             You'll meet your pro 30 min before
           </Text>
@@ -974,24 +755,24 @@ function ProMini({
 
   const initial = (helperName ?? 'P')[0].toUpperCase();
   return (
-    <View style={styles.proMini}>
+    <View style={[styles.proMini, { backgroundColor: miniBg, borderColor: miniBorder }]}>
       <View style={styles.proAv}>
         <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 14 }]}>{initial}</Text>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[fontBold, { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.13 }]}>
+        <Text style={[fontBold, { color: textPrimary, fontSize: 13, letterSpacing: -0.13 }]}>
           {helperName ?? 'Your pro'}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 }}>
           {typeof helperRating === 'number' ? (
             <>
               <Feather name="star" size={11} color="#F5A300" />
-              <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11 }]}>
+              <Text style={[fontMed, { color: textMuted, fontSize: 11 }]}>
                 {helperRating.toFixed(1)} · Verified
               </Text>
             </>
           ) : (
-            <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11 }]}>
+            <Text style={[fontMed, { color: textMuted, fontSize: 11 }]}>
               Verified
             </Text>
           )}
@@ -1046,30 +827,36 @@ function InstantActions({
   onMessage,
   onTip,
   onReschedule,
+  isDark,
 }: {
   canCall: boolean;
   onCall: () => void;
   onMessage: () => void;
   onTip: () => void;
   onReschedule: () => void;
+  isDark: boolean;
 }) {
   return (
     <View style={styles.actGrid}>
-      <ActChip icon="phone"          label="Call pro"    onPress={onCall} disabled={!canCall} />
-      <ActChip icon="message-square" label="Message"     onPress={onMessage} />
-      <ActChip icon="award"          label="Add tip"     onPress={onTip} />
-      <ActChip icon="clock"          label="Reschedule"  onPress={onReschedule} disabled />
+      <ActChip icon="phone"          label="Call pro"    onPress={onCall} disabled={!canCall} isDark={isDark} />
+      <ActChip icon="message-square" label="Message"     onPress={onMessage} isDark={isDark} />
+      <ActChip icon="award"          label="Add tip"     onPress={onTip} isDark={isDark} />
+      <ActChip icon="clock"          label="Reschedule"  onPress={onReschedule} disabled isDark={isDark} />
     </View>
   );
 }
 
-function ScheduledActions() {
+function ScheduledActions({ isDark }: { isDark: boolean }) {
+  const onCalendar = () => showInfo('Coming soon', { title: 'Calendar' });
+  const onReschedule = () => showInfo('Coming soon', { title: 'Reschedule' });
+  const onEditAddress = () => showInfo('Coming soon', { title: 'Edit address' });
+  const onCancel = () => showInfo('Coming soon', { title: 'Cancel booking' });
   return (
     <View style={styles.actGrid}>
-      <ActChip icon="calendar"  label="Calendar" />
-      <ActChip icon="clock"     label="Reschedule" />
-      <ActChip icon="map-pin"   label="Edit address" />
-      <ActChip icon="x"         label="Cancel" danger />
+      <ActChip icon="calendar"  label="Calendar"     onPress={onCalendar}    isDark={isDark} />
+      <ActChip icon="clock"     label="Reschedule"   onPress={onReschedule}  isDark={isDark} />
+      <ActChip icon="map-pin"   label="Edit address" onPress={onEditAddress} isDark={isDark} />
+      <ActChip icon="x"         label="Cancel"       onPress={onCancel}      danger isDark={isDark} />
     </View>
   );
 }
@@ -1080,17 +867,23 @@ function ActChip({
   danger,
   onPress,
   disabled,
+  isDark,
 }: {
   icon: React.ComponentProps<typeof Feather>['name'];
   label: string;
   danger?: boolean;
   onPress?: () => void;
   disabled?: boolean;
+  isDark: boolean;
 }) {
+  const chipBg = isDark ? 'rgba(255,255,255,0.05)' : '#FFFFFF';
+  const chipBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)';
+  const chipText = isDark ? '#FFFFFF' : '#0D0D0F';
+  const chipShadow = !isDark ? { shadowColor: 'rgba(13,13,15,1)', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 0, elevation: 1 } : {};
   return (
     <PressFx
       onPress={disabled ? undefined : onPress}
-      style={[styles.actChip, disabled && { opacity: 0.45 }]}
+      style={[styles.actChip, { backgroundColor: chipBg, borderColor: chipBorder }, chipShadow, disabled && { opacity: 0.45 }]}
     >
       <View
         style={[
@@ -1100,7 +893,7 @@ function ActChip({
       >
         <Feather name={icon} size={18} color={danger ? '#F87171' : '#F5A300'} />
       </View>
-      <Text style={[fontBold, styles.actLbl]}>{label}</Text>
+      <Text style={[fontBold, styles.actLbl, { color: chipText }]}>{label}</Text>
     </PressFx>
   );
 }
@@ -1139,37 +932,46 @@ function ReferNudge() {
 
 // ── What's next (scheduled) ─────────────────────────────────────────────────
 
-function WhatsNext() {
+function WhatsNext({ isDark }: { isDark: boolean }) {
+  const textPrimary = isDark ? '#FFFFFF' : '#0D0D0F';
+  const textMuted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.5)';
+  const headColor = isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.45)';
+  const dividerColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.06)';
+  const chevronColor = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.4)';
+
   const items: { icon: React.ComponentProps<typeof Feather>['name']; title: string; sub: string }[] = [
-    { icon: 'calendar',       title: 'Add to calendar',       sub: 'Apple, Google, or Outlook' },
-    { icon: 'bell',           title: 'Set reminder',           sub: '30 min before pro arrives' },
-    { icon: 'message-square', title: 'Add a note for the pro', sub: 'Pet at home, parking, gate code…' },
+    { icon: 'calendar',  title: 'Add to calendar',       sub: 'Apple, Google, or Outlook' },
+    { icon: 'bell',      title: 'Set reminder',           sub: '30 min before pro arrives' },
+    { icon: 'edit-3',    title: 'Add a note for the pro', sub: 'Pet at home, parking, gate code…' },
   ];
+
+  const onItemPress = (title: string) => showInfo('Coming soon', { title });
+
   return (
     <View style={{ marginHorizontal: H_PAD, marginTop: 22 }}>
-      <Text style={[fontBold, styles.nextH]}>What's next</Text>
+      <Text style={[fontBold, styles.nextH, { color: headColor }]}>What's next</Text>
       <GlassCard radius={16} style={{ overflow: 'hidden' }}>
         {items.map((it, i) => (
-          <PressFx key={it.title} style={styles.nxItem}>
+          <PressFx key={it.title} onPress={() => onItemPress(it.title)} style={styles.nxItem}>
             <View style={styles.nxIcon}>
               <Feather name={it.icon} size={16} color="#F5A300" />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[fontBold, { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.07 }]}>
+              <Text style={[fontBold, { color: textPrimary, fontSize: 13, letterSpacing: -0.07 }]}>
                 {it.title}
               </Text>
-              <Text style={[fontMed, { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }]}>
+              <Text style={[fontMed, { color: textMuted, fontSize: 11, marginTop: 2 }]}>
                 {it.sub}
               </Text>
             </View>
-            <Feather name="chevron-right" size={14} color="rgba(255,255,255,0.4)" />
+            <Feather name="chevron-right" size={14} color={chevronColor} />
             {i < items.length - 1 && (
               <View
                 pointerEvents="none"
                 style={{
                   position: 'absolute', left: 54, right: 14, bottom: 0,
                   height: StyleSheet.hairlineWidth,
-                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  backgroundColor: dividerColor,
                 }}
               />
             )}
@@ -1187,24 +989,31 @@ function BottomDock({
   secondaryLabel,
   onPrimary,
   onSecondary,
+  isDark,
 }: {
   primaryLabel: string;
   secondaryLabel: string;
   onPrimary: () => void;
   onSecondary: () => void;
+  isDark: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const dockBg = isDark ? 'rgba(10,10,10,0.92)' : 'rgba(255,255,255,0.85)';
+  const dockBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.06)';
+  const ghostBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.04)';
+  const ghostBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.06)';
+  const ghostText = isDark ? '#FFFFFF' : '#0D0D0F';
   return (
     <View
       style={[
         styles.dock,
-        { paddingBottom: insets.bottom + 16 },
+        { paddingBottom: insets.bottom + 16, backgroundColor: dockBg, borderTopColor: dockBorder },
       ]}
     >
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        <PressFx onPress={onSecondary} style={[styles.dockBtn, styles.dockGhost]}>
+        <PressFx onPress={onSecondary} style={[styles.dockBtn, styles.dockGhost, { backgroundColor: ghostBg, borderColor: ghostBorder }]}>
           <Text
-            style={[fontBold, { color: '#FFFFFF', fontSize: 14, letterSpacing: -0.14 }]}
+            style={[fontBold, { color: ghostText, fontSize: 14, letterSpacing: -0.14 }]}
             numberOfLines={1}
           >
             {secondaryLabel}
@@ -1227,7 +1036,7 @@ function BottomDock({
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
+  safe: { flex: 1 },
 
   // Hero
   hero: {
@@ -1238,14 +1047,12 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     fontSize: 30,
-    color: '#FFFFFF',
     letterSpacing: -1.05,
     lineHeight: 32,
     textAlign: 'center',
   },
   heroSub: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.6)',
     textAlign: 'center',
     marginTop: 6,
     lineHeight: 20,
@@ -1259,9 +1066,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 99,
     marginTop: 14,
-    backgroundColor: 'rgba(245,163,0,0.14)',
     borderWidth: 0.5,
-    borderColor: 'rgba(245,163,0,0.3)',
   },
 
   // Pro profile card (between hero and ticket)
@@ -1273,9 +1078,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   proCardAvWrap: {
     width: 56,
@@ -1296,7 +1099,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   proCardName: {
-    color: '#FFFFFF',
     fontSize: 15,
     letterSpacing: -0.2,
   },
@@ -1311,7 +1113,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   proCardJobs: {
-    color: 'rgba(255,255,255,0.6)',
     fontSize: 11.5,
     marginTop: 3,
   },
@@ -1330,13 +1131,11 @@ const styles = StyleSheet.create({
   },
   tkSvcName: {
     fontSize: 17,
-    color: '#FFFFFF',
     letterSpacing: -0.34,
     lineHeight: 20,
   },
   tkSvcMeta: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.55)',
     marginTop: 4,
   },
   pricePill: {
@@ -1358,7 +1157,6 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 99,
     marginBottom: 6,
-    backgroundColor: 'rgba(96,165,250,0.18)',
   },
 
   // Perforation
@@ -1374,15 +1172,12 @@ const styles = StyleSheet.create({
     top: 0,
     width: 24, height: 24,
     borderRadius: 12,
-    backgroundColor: '#0A0A0A',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
   perfDashes: {
     flex: 1,
     marginHorizontal: 14,
     borderTopWidth: 1.5,
-    borderTopColor: 'rgba(255,255,255,0.12)',
     borderStyle: 'dashed',
   },
 
@@ -1407,13 +1202,11 @@ const styles = StyleSheet.create({
   },
   detVal: {
     fontSize: 13.5,
-    color: '#FFFFFF',
     letterSpacing: -0.13,
     lineHeight: 17,
   },
   detSub: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
     marginTop: 1,
   },
 
@@ -1425,9 +1218,7 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingHorizontal: 14,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
   proAv: {
     width: 40, height: 40, borderRadius: 20,
@@ -1455,9 +1246,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
   actIcon: {
     width: 36, height: 36, borderRadius: 10,
@@ -1466,7 +1255,6 @@ const styles = StyleSheet.create({
   },
   actLbl: {
     fontSize: 10.5,
-    color: '#FFFFFF',
     textAlign: 'center',
     lineHeight: 13,
   },
@@ -1497,7 +1285,6 @@ const styles = StyleSheet.create({
   // What's next
   nextH: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
     letterSpacing: 1.32,
     textTransform: 'uppercase',
     marginBottom: 10,
@@ -1522,9 +1309,7 @@ const styles = StyleSheet.create({
     left: 0, right: 0, bottom: 0,
     paddingHorizontal: 20,
     paddingTop: 16,
-    backgroundColor: 'rgba(10,10,10,0.92)',
     borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255,255,255,0.06)',
     zIndex: 50,
   },
   dockBtn: {
@@ -1545,8 +1330,6 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   dockGhost: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
 });

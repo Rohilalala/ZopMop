@@ -6,6 +6,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
+import { useTheme } from '../../context/ThemeContext';
 import { PressFx } from '../ui/PressFx';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -30,8 +31,23 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user } = useAuth();
   const { myGroup } = useRoomies();
+  const { isDark, colors: c } = useTheme();
   const isRoomies =
     !!myGroup && !!selectedAddressId && selectedAddressId === myGroup.group.address_id;
+
+  const kickerColor = c.accentOnSurface;
+  const locationTextColor = isDark ? '#FFFFFF' : c.text;
+  const chevronColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.35)';
+
+  // Earn pill: amber-tinted on dark, inverted (dark bg + amber text) on light
+  const earnBg = isDark ? 'rgba(245,163,0,0.12)' : '#0D0D0F';
+  const earnBorder = isDark ? 'rgba(245,163,0,0.3)' : '#0D0D0F';
+  const earnTextColor = '#F5A300';
+
+  // Household pill reuses the same inversion logic
+  const householdBg = isDark ? 'rgba(245,163,0,0.12)' : 'rgba(13,13,15,0.06)';
+  const householdBorder = isDark ? 'rgba(245,163,0,0.3)' : 'rgba(13,13,15,0.12)';
+  const householdTextColor = isDark ? '#F5A300' : c.text;
 
   return (
     <View
@@ -46,13 +62,13 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
     >
       <PressFx onPress={onLocationPress} style={{ flex: 1 }} accessibilityRole="button">
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Feather name="map-pin" size={10} color="#F5A300" />
+          <Feather name="map-pin" size={10} color={kickerColor} />
           <Text
             style={[
               fontBold,
               {
                 fontSize: 10.5,
-                color: '#F5A300',
+                color: kickerColor,
                 letterSpacing: 0.84,
                 textTransform: 'uppercase',
               },
@@ -64,12 +80,12 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
           <Text
-            style={[fontBold, { fontSize: 17, color: '#FFFFFF', letterSpacing: -0.34, maxWidth: 200 }]}
+            style={[fontBold, { fontSize: 17, color: locationTextColor, letterSpacing: -0.34, maxWidth: 200 }]}
             numberOfLines={1}
           >
             {locationName}
           </Text>
-          <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>⌄</Text>
+          <Text style={{ fontSize: 14, color: chevronColor, marginTop: 2 }}>⌄</Text>
         </View>
       </PressFx>
 
@@ -80,15 +96,15 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
               navigation.navigate('ManageHousehold', { groupId: myGroup.group.id })
             }
             style={{
-              backgroundColor: 'rgba(245,163,0,0.12)',
+              backgroundColor: householdBg,
               paddingHorizontal: 10,
               paddingVertical: 6,
               borderRadius: 999,
               borderWidth: 1,
-              borderColor: 'rgba(245,163,0,0.3)',
+              borderColor: householdBorder,
             }}
           >
-            <Text style={[fontBold, { fontSize: 11, color: '#F5A300' }]}>Household</Text>
+            <Text style={[fontBold, { fontSize: 11, color: householdTextColor }]}>Household</Text>
           </PressFx>
         )}
         <PressFx
@@ -100,13 +116,13 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
             height: 36,
             paddingHorizontal: 12,
             borderRadius: 18,
-            backgroundColor: 'rgba(245,163,0,0.12)',
+            backgroundColor: earnBg,
             borderWidth: 1,
-            borderColor: 'rgba(245,163,0,0.3)',
+            borderColor: earnBorder,
           }}
         >
-          <Feather name="plus-circle" size={12} color="#F5A300" />
-          <Text style={[fontBold, { fontSize: 12, color: '#F5A300' }]}>Earn ₹150</Text>
+          <Feather name="plus-circle" size={12} color={earnTextColor} />
+          <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>Earn ₹150</Text>
         </PressFx>
         <PressFx
           onPress={() => navigation.navigate('Profile')}

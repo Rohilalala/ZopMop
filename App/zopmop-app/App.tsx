@@ -87,6 +87,14 @@ function Navigation() {
     })();
   }, [isAuthenticated]);
 
+  // Authenticated customers who haven't set a name yet must finish profile
+  // setup before entering the app. Keeping AuthNavigator mounted (instead of
+  // swapping to MainNavigator) is what makes NameEntry reachable: signIn()
+  // flips isAuthenticated, which would otherwise tear the auth stack down
+  // before NameEntry can render.
+  const needsName =
+    isAuthenticated && user?.role === 'customer' && !user?.name?.trim();
+
   if (isLoading) return null;
   return (
     <ErrorBoundary>
@@ -119,9 +127,9 @@ function Navigation() {
               doesn't lock initialRouteName='Tabs' when /me returns
               'pro' a moment later — React remounts the stack and
               the gate re-evaluates with the fresh role. */}
-          {isAuthenticated
+          {isAuthenticated && !needsName
             ? <MainNavigator key={`main-${user?.role ?? 'unknown'}`} />
-            : <AuthNavigator />}
+            : <AuthNavigator needsName={needsName} phone={user?.phone} />}
         </PostHogProvider>
       </NavigationContainer>
     </ErrorBoundary>

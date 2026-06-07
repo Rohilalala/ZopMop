@@ -3,7 +3,7 @@
 // helpers are added from the post-job rating screen, not from this list.
 // Long-press a row to remove.
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   
   Alert,
@@ -26,6 +26,8 @@ import { listExperts, removeExpert, type Expert } from '../../api/experts';
 import { haptics } from '../../utils/haptics';
 import { showError, showSuccess } from '../../utils/toast';
 
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
 
@@ -43,6 +45,9 @@ type Nav = NativeStackNavigationProp<MainStackParamList>;
 const expertsMemCache: { list: Expert[] | null } = { list: null };
 
 export default function YourExpertsScreen() {
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -105,13 +110,13 @@ export default function YourExpertsScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>
         <View style={s.headRow}>
           <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
-            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            <Feather name="chevron-left" size={18} color={c.text} />
           </PressFx>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Your experts</Text>
@@ -129,7 +134,7 @@ export default function YourExpertsScreen() {
       ) : experts.length === 0 ? (
         <View style={s.empty}>
           <View style={s.emptyIconWrap}>
-            <Feather name="users" size={26} color="#F5A300" />
+            <Feather name="users" size={26} color={c.amber} />
           </View>
           <Text style={s.emptyTitle}>No experts yet</Text>
           <Text style={s.emptySub}>
@@ -165,10 +170,10 @@ export default function YourExpertsScreen() {
                 </View>
               </View>
               {removingId === e.helper_id ? (
-                <LoadingBars color="#F5A300" />
+                <LoadingBars color={c.amber} />
               ) : (
                 <PressFx onPress={() => confirmRemove(e)} style={s.removeBtn}>
-                  <Feather name="x" size={16} color="rgba(255,255,255,0.55)" />
+                  <Feather name="x" size={16} color={c.textSecondary} />
                 </PressFx>
               )}
             </PressFx>
@@ -180,107 +185,121 @@ export default function YourExpertsScreen() {
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). useColors()'s dark palette is Slate (#0F172A bg / slate surface),
+// which would change this screen's dark look and fork the amber — breaking
+// "dark pixel-identical" + "amber #F5A300 in both". useC() keeps dark at
+// #0A0A0A + amber identical and adds the cream + amber light bg, matching the
+// other migrated screens (Wallet, ReferralEarn).
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Ink that sits on the amber avatar — theme-independent (avatar is amber in
+  // both themes, so its text stays dark ink in both). Ink on amber — same in
+  // both themes.
+  const onAmber = '#0A0A0A';
 
-  head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
-  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
-  },
-  title: {
-    ...fontExtra,
-    fontSize: 24, color: '#FFFFFF',
-    letterSpacing: -0.6, lineHeight: 28,
-  },
-  sub: {
-    ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
-    marginTop: 2,
-  },
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  // Empty
-  empty: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 32, gap: 10,
-  },
-  emptyIconWrap: {
-    width: 76, height: 76, borderRadius: 38,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.14)',
-    borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
-    marginBottom: 6,
-  },
-  emptyTitle: {
-    ...fontExtra,
-    fontSize: 20, color: '#FFFFFF',
-    letterSpacing: -0.4,
-  },
-  emptySub: {
-    ...fontMed,
-    fontSize: 13, color: 'rgba(255,255,255,0.55)',
-    textAlign: 'center', lineHeight: 19,
-  },
+    head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
+    headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    iconBtn: {
+      width: 36, height: 36, borderRadius: 18,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glassHi,
+      borderWidth: 0.5, borderColor: c.glassBorderHi,
+    },
+    title: {
+      ...fontExtra,
+      fontSize: 24, color: c.text,
+      letterSpacing: -0.6, lineHeight: 28,
+    },
+    sub: {
+      ...fontMed,
+      fontSize: 12, color: c.textMuted,
+      marginTop: 2,
+    },
 
-  list: { paddingHorizontal: H_PAD, paddingTop: 8, gap: 10 },
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.045)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.07)',
-  },
-  avatar: {
-    width: 50, height: 50, borderRadius: 25,
-    backgroundColor: '#F5A300',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarText: {
-    ...fontExtra,
-    fontSize: 19, color: '#0A0A0A',
-  },
-  name: {
-    ...fontBold,
-    fontSize: 15, color: '#FFFFFF',
-    letterSpacing: -0.2,
-    marginBottom: 4,
-  },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  metaPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: 'rgba(245,163,0,0.12)',
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 99,
-  },
-  starGlyph: {
-    ...fontBold,
-    fontSize: 10.5, color: '#F5A300',
-  },
-  metaText: {
-    ...fontSemi,
-    fontSize: 11, color: '#F5A300',
-  },
-  metaSub: {
-    ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
-  },
-  removeBtn: {
-    width: 32, height: 32, borderRadius: 11,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  hint: {
-    ...fontMed,
-    textAlign: 'center',
-    fontSize: 12, color: 'rgba(255,255,255,0.35)',
-    marginTop: 6,
-  },
-});
+    // Empty
+    empty: {
+      flex: 1, alignItems: 'center', justifyContent: 'center',
+      paddingHorizontal: 32, gap: 10,
+    },
+    emptyIconWrap: {
+      width: 76, height: 76, borderRadius: 38,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amberSoft,
+      borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
+      marginBottom: 6,
+    },
+    emptyTitle: {
+      ...fontExtra,
+      fontSize: 20, color: c.text,
+      letterSpacing: -0.4,
+    },
+    emptySub: {
+      ...fontMed,
+      fontSize: 13, color: c.textSecondary,
+      textAlign: 'center', lineHeight: 19,
+    },
+
+    list: { paddingHorizontal: H_PAD, paddingTop: 8, gap: 10 },
+    card: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderRadius: 18,
+      backgroundColor: c.glass,
+      borderWidth: 0.5,
+      borderColor: c.glassBorder,
+    },
+    avatar: {
+      width: 50, height: 50, borderRadius: 25,
+      backgroundColor: c.amber,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    avatarText: {
+      ...fontExtra,
+      // Ink on amber — same in both themes.
+      fontSize: 19, color: onAmber,
+    },
+    name: {
+      ...fontBold,
+      fontSize: 15, color: c.text,
+      letterSpacing: -0.2,
+      marginBottom: 4,
+    },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    metaPill: {
+      flexDirection: 'row', alignItems: 'center', gap: 3,
+      backgroundColor: c.amberSoft,
+      paddingHorizontal: 8, paddingVertical: 3,
+      borderRadius: 99,
+    },
+    starGlyph: {
+      ...fontBold,
+      fontSize: 10.5, color: c.amber,
+    },
+    metaText: {
+      ...fontSemi,
+      fontSize: 11, color: c.amber,
+    },
+    metaSub: {
+      ...fontMed,
+      fontSize: 12, color: c.textMuted,
+    },
+    removeBtn: {
+      width: 32, height: 32, borderRadius: 11,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glass,
+    },
+    hint: {
+      ...fontMed,
+      textAlign: 'center',
+      fontSize: 12, color: c.textMuted,
+      marginTop: 6,
+    },
+  });
+}

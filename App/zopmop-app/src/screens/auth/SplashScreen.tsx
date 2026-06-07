@@ -1,15 +1,15 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { StyleSheet, StatusBar } from 'react-native';
 import LottieView from 'lottie-react-native';
-import { useColors, useTheme } from '../../context/ThemeContext';
+import { lightColors } from '../../theme/colors';
 
 interface Props {
   onReady: () => void;
 }
 
 export default function SplashScreen({ onReady }: Props) {
-  const c = useColors();
-  const { isDark } = useTheme();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = lightColors;
   const ref = useRef<LottieView>(null);
   const fired = useRef(false);
 
@@ -27,7 +27,7 @@ export default function SplashScreen({ onReady }: Props) {
 
   return (
     <>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={c.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={c.background} />
       <LottieView
         ref={ref}
         source={require('../../../assets/animation/splash.json')}

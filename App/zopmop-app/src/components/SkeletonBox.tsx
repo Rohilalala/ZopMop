@@ -8,7 +8,8 @@ import {
   ViewStyle,
 } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import { C } from '../theme/screen';
+import { useC } from '../theme/screen';
+import { useTheme } from '../context/ThemeContext';
 
 // Shimmer placeholder. Base block is `C.glassHi`; a translucent linear-gradient
 // band sweeps left → right on a 1200ms loop using the native driver. Sweep
@@ -29,6 +30,8 @@ export function SkeletonBox({
   borderRadius = 8,
   style,
 }: Props) {
+  const c = useC();
+  const { isDark } = useTheme();
   const progress = useRef(new Animated.Value(0)).current;
   const [size, setSize] = useState({ w: 0, h: 0 });
 
@@ -64,7 +67,9 @@ export function SkeletonBox({
           width: width as any,
           height,
           borderRadius,
-          backgroundColor: 'rgba(255,255,255,0.035)',
+          // Light: warm cream base (#F2ECE0). Dark: unchanged subtle white.
+          // Note: if light result is too cold, fallback to #F2ECE0 -> #FAF7F2. Flag for Phase 4 review.
+          backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : '#F2ECE0',
           overflow: 'hidden',
         },
         style,
@@ -85,9 +90,9 @@ export function SkeletonBox({
           <Svg width={bandW} height={size.h}>
             <Defs>
               <LinearGradient id="shimmer" x1="0" y1="0" x2="1" y2="0">
-                <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
-                <Stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.07" />
-                <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+                <Stop offset="0" stopColor={c.white} stopOpacity="0" />
+                <Stop offset="0.5" stopColor={c.white} stopOpacity={isDark ? '0.07' : '0.6'} />
+                <Stop offset="1" stopColor={c.white} stopOpacity="0" />
               </LinearGradient>
             </Defs>
             <Rect x={0} y={0} width={bandW} height={size.h} fill="url(#shimmer)" />

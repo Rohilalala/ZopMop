@@ -74,8 +74,8 @@ func (r *Repository) AddItem(ctx context.Context, cartID, serviceID string, dura
 
 	// Enrich with service metadata.
 	_ = r.db.QueryRow(ctx,
-		`SELECT name, emoji FROM service_categories WHERE id = $1`, serviceID,
-	).Scan(&item.ServiceName, &item.ServiceEmoji)
+		`SELECT name FROM service_categories WHERE id = $1`, serviceID,
+	).Scan(&item.ServiceName)
 
 	return &item, nil
 }
@@ -110,7 +110,7 @@ func (r *Repository) ClearCart(ctx context.Context, cartID string) error {
 // listItems returns all items in a cart, enriched with service metadata.
 func (r *Repository) listItems(ctx context.Context, cartID string) ([]CartItem, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT ci.id, ci.cart_id, ci.service_id, sc.name, sc.emoji,
+		`SELECT ci.id, ci.cart_id, ci.service_id, sc.name,
 		        ci.duration_minutes, ci.price_cents
 		 FROM cart_items ci
 		 JOIN service_categories sc ON sc.id = ci.service_id
@@ -128,7 +128,7 @@ func (r *Repository) listItems(ctx context.Context, cartID string) ([]CartItem, 
 		var item CartItem
 		if err := rows.Scan(
 			&item.ID, &item.CartID, &item.ServiceID, &item.ServiceName,
-			&item.ServiceEmoji, &item.DurationMinutes, &item.PriceCents,
+			&item.DurationMinutes, &item.PriceCents,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan cart item: %w", err)
 		}

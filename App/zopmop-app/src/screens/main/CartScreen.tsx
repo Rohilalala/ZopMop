@@ -27,7 +27,8 @@ import ReAnimated, { FadeOutLeft } from 'react-native-reanimated';
 import * as Location from 'expo-location';
 import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily } from '../../theme';
-import { C } from '../../theme/screen';
+import { useC } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { BackgroundGlow, ScreenHeader, SectionHeader, Card } from '../../components/screen/ScreenChrome';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
@@ -37,7 +38,7 @@ import { createScheduledBooking, getBookings } from '../../api/bookings';
 import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal from '../../components/SchedulingModal';
-import AddressPickerModal from '../../components/AddressPickerModal';
+import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
@@ -74,6 +75,8 @@ export default function CartScreen() {
   const { myGroup, bookGroupChore } = useRoomies();
   const insets = useSafeAreaInsets();
   const posthog = usePostHog();
+  const c = useC();
+  const { isDark } = useTheme();
 
   const [addresses, setAddresses] = useState<ApiAddress[]>(cartMemCache.addresses);
   const [selectedAddress, setSelectedAddress] = useState<ApiAddress | null>(cartMemCache.selectedAddress);
@@ -291,6 +294,7 @@ export default function CartScreen() {
           // JSON field is back-compat; value is paise (see backend
           // migration 065). No * 100 conversion needed.
           amount_paise: created.price_paise,
+          bookingType: 'scheduled',
         });
         return;
       }
@@ -301,6 +305,7 @@ export default function CartScreen() {
       navigation.replace('BookingConfirmed', {
         bookingId: created.id,
         totalCents,
+        bookingType: 'scheduled',
         slot: selectedSlotLabel ?? undefined,
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
       });
@@ -351,7 +356,7 @@ export default function CartScreen() {
 
   if (hydrating) {
     return (
-      <View style={s.root}>
+      <View style={[s.root, { backgroundColor: c.bg }]}>
         <BackgroundGlow />
         <SafeAreaView style={{ flex: 1 }} edges={['top']}>
           <ScreenHeader
@@ -372,7 +377,7 @@ export default function CartScreen() {
 
   if (itemCount === 0) {
     return (
-      <View style={s.root}>
+      <View style={[s.root, { backgroundColor: c.bg }]}>
         <BackgroundGlow />
         <SafeAreaView style={{ flex: 1 }} edges={['top']}>
           <ScreenHeader
@@ -384,7 +389,7 @@ export default function CartScreen() {
             title="Let's get cleaning!"
             subtitle="Pick a service and Zop will send a pro your way."
             ctaLabel="Browse services"
-            onCtaPress={() => navigation.navigate('AllServices', {})}
+            onCtaPress={() => navigation.navigate('Tabs', { screen: 'AllServices' })}
             style={{ flex: 1 }}
           />
         </SafeAreaView>
@@ -393,7 +398,7 @@ export default function CartScreen() {
   }
 
   return (
-    <View style={s.root}>
+    <View style={[s.root, { backgroundColor: c.bg }]}>
       <BackgroundGlow />
 
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -412,20 +417,20 @@ export default function CartScreen() {
           <TouchableOpacity activeOpacity={0.85} onPress={() => setAddressPickerVisible(true)}>
             <Card>
               <View style={s.addrRow}>
-                <View style={s.addrPin}>
-                  <Feather name="map-pin" size={16} color={C.amber} />
+                <View style={[s.addrPin, { backgroundColor: c.amberSoft }]}>
+                  <Feather name="map-pin" size={16} color={c.amber} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   {selectedAddress ? (
                     <>
-                      <Text style={s.addrTitle}>{selectedAddress.title || selectedAddress.tag}</Text>
-                      <Text style={s.addrSub} numberOfLines={2}>{selectedAddress.full_address}</Text>
+                      <Text style={[s.addrTitle, { color: c.text }]}>{selectedAddress.title || selectedAddress.tag}</Text>
+                      <Text style={[s.addrSub, { color: c.textMuted }]} numberOfLines={2}>{selectedAddress.full_address}</Text>
                     </>
                   ) : (
-                    <Text style={s.addrTitle}>Add delivery address</Text>
+                    <Text style={[s.addrTitle, { color: c.text }]}>Add delivery address</Text>
                   )}
                 </View>
-                <Text style={s.changeLink}>{selectedAddress ? 'Change' : 'Add'}</Text>
+                <Text style={[s.changeLink, { color: c.amber }]}>{selectedAddress ? 'Change' : 'Add'}</Text>
               </View>
             </Card>
           </TouchableOpacity>
@@ -435,12 +440,12 @@ export default function CartScreen() {
               <SectionHeader>Roomies split</SectionHeader>
               <Card>
                 <View style={s.splitHeader}>
-                  <View style={s.splitIcon}>
-                    <Feather name="home" size={16} color={C.amber} />
+                  <View style={[s.splitIcon, { backgroundColor: c.amberSoft }]}>
+                    <Feather name="home" size={16} color={c.amber} />
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={s.splitTitle}>Split with Roomies</Text>
-                    <Text style={s.splitMeta}>
+                    <Text style={[s.splitTitle, { color: c.text }]}>Split with Roomies</Text>
+                    <Text style={[s.splitMeta, { color: c.textMuted }]}>
                       {splitEnabled
                         ? `Splitting with ${selectedMemberIds.size} roomie${selectedMemberIds.size === 1 ? '' : 's'}`
                         : 'Tap to divide costs with your household'}
@@ -457,10 +462,10 @@ export default function CartScreen() {
                 {splitEnabled && (
                   <>
                     {otherMembers.length === 0 ? (
-                      <Text style={s.splitNote}>You're the only member in this group. Invite roomies to split costs.</Text>
+                      <Text style={[s.splitNote, { color: c.textMuted }]}>You're the only member in this group. Invite roomies to split costs.</Text>
                     ) : (
                       <>
-                        <View style={s.divider} />
+                        <View style={[s.divider, { backgroundColor: c.divider }]} />
                         {otherMembers.map((member, i) => {
                           const sel = selectedMemberIds.has(member.user_id);
                           const isHost = member.role === 'host';
@@ -469,50 +474,50 @@ export default function CartScreen() {
                               key={member.user_id}
                               activeOpacity={0.8}
                               onPress={() => toggleMember(member.user_id)}
-                              style={[s.memberRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.divider }]}
+                              style={[s.memberRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.divider }]}
                             >
-                              <View style={s.memberAvatar}>
-                                <Feather name={isHost ? 'star' : 'user'} size={14} color={C.amber} />
+                              <View style={[s.memberAvatar, { backgroundColor: c.amberSoft }]}>
+                                <Feather name={isHost ? 'star' : 'user'} size={14} color={c.amber} />
                               </View>
                               <View style={{ flex: 1, minWidth: 0 }}>
-                                <Text style={s.memberName}>{isHost ? 'Host' : `Roomie ${i + 1}`}</Text>
-                                <Text style={s.memberMeta}>
+                                <Text style={[s.memberName, { color: c.text }]}>{isHost ? 'Host' : `Roomie ${i + 1}`}</Text>
+                                <Text style={[s.memberMeta, { color: c.textMuted }]}>
                                   {member.prepaid_balance > 0
                                     ? `Vault ₹${(member.prepaid_balance / 100).toFixed(0)}`
                                     : 'No vault balance'}
                                 </Text>
                               </View>
-                              <View style={[s.checkbox, sel && s.checkboxOn]}>
-                                {sel && <Feather name="check" size={12} color={C.ink} />}
+                              <View style={[s.checkbox, { borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.15)' }, sel && s.checkboxOn]}>
+                                {sel && <Feather name="check" size={12} color={c.ink} />}
                               </View>
                             </TouchableOpacity>
                           );
                         })}
 
-                        <View style={s.splitSummary}>
+                        <View style={[s.splitSummary, { backgroundColor: isDark ? 'rgba(245,163,0,0.06)' : 'rgba(245,163,0,0.06)' }]}>
                           <View style={s.splitRow}>
-                            <Text style={s.splitKey}>Total order</Text>
-                            <Text style={s.splitVal}>₹{(totalCents / 100).toFixed(0)}</Text>
+                            <Text style={[s.splitKey, { color: c.textMuted }]}>Total order</Text>
+                            <Text style={[s.splitVal, { color: c.text }]}>₹{(totalCents / 100).toFixed(0)}</Text>
                           </View>
                           <View style={s.splitRow}>
-                            <Text style={s.splitKey}>Split between</Text>
-                            <Text style={s.splitVal}>{splitCount} people</Text>
+                            <Text style={[s.splitKey, { color: c.textMuted }]}>Split between</Text>
+                            <Text style={[s.splitVal, { color: c.text }]}>{splitCount} people</Text>
                           </View>
                           {selectedMemberIds.size > 0 ? (
                             <>
-                              <View style={s.splitDashed} />
+                              <View style={[s.splitDashed, { borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.08)' }]} />
                               <View style={s.splitRow}>
-                                <Text style={s.splitTotalKey}>Your share</Text>
-                                <Text style={s.splitTotalVal}>₹{(myShareCents / 100).toFixed(0)}</Text>
+                                <Text style={[s.splitTotalKey, { color: c.text }]}>Your share</Text>
+                                <Text style={[s.splitTotalVal, { color: c.amber }]}>₹{(myShareCents / 100).toFixed(0)}</Text>
                               </View>
                             </>
                           ) : (
-                            <Text style={[s.splitNote, { textAlign: 'left', marginTop: 4 }]}>
+                            <Text style={[s.splitNote, { color: c.textMuted, textAlign: 'left', marginTop: 4 }]}>
                               Select at least one roomie to split costs.
                             </Text>
                           )}
                         </View>
-                        <Text style={s.splitNote}>
+                        <Text style={[s.splitNote, { color: c.textMuted }]}>
                           Roomies pay from Vault balance. Shortfalls become tracked debts.
                         </Text>
                       </>
@@ -527,23 +532,23 @@ export default function CartScreen() {
           <TouchableOpacity activeOpacity={0.85} onPress={() => setSchedulingVisible(true)}>
             <Card>
               <View style={s.addrRow}>
-                <View style={s.addrPin}>
-                  <Feather name="calendar" size={16} color={C.amber} />
+                <View style={[s.addrPin, { backgroundColor: c.amberSoft }]}>
+                  <Feather name="calendar" size={16} color={c.amber} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   {selectedSlotLabel ? (
                     <>
-                      <Text style={s.addrTitle}>{selectedSlotLabel}</Text>
-                      <Text style={s.addrSub}>Tap to change</Text>
+                      <Text style={[s.addrTitle, { color: c.text }]}>{selectedSlotLabel}</Text>
+                      <Text style={[s.addrSub, { color: c.textMuted }]}>Tap to change</Text>
                     </>
                   ) : (
                     <>
-                      <Text style={s.addrTitle}>Pick a date & time</Text>
-                      <Text style={s.addrSub}>Required to confirm booking</Text>
+                      <Text style={[s.addrTitle, { color: c.text }]}>Pick a date & time</Text>
+                      <Text style={[s.addrSub, { color: c.textMuted }]}>Required to confirm booking</Text>
                     </>
                   )}
                 </View>
-                <Text style={s.changeLink}>{selectedSlotLabel ? 'Change' : 'Select'}</Text>
+                <Text style={[s.changeLink, { color: c.amber }]}>{selectedSlotLabel ? 'Change' : 'Select'}</Text>
               </View>
             </Card>
           </TouchableOpacity>
@@ -559,15 +564,15 @@ export default function CartScreen() {
                       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
                         <Defs>
                           <SvgLinearGradient id={`svcBg-${item.id}`} x1="0" y1="0" x2="0" y2="1">
-                            <Stop offset="0%" stopColor="#1A1A1C" />
-                            <Stop offset="100%" stopColor="#0F0F11" />
+                            <Stop offset="0%" stopColor={isDark ? '#1A1A1C' : '#F5F0E8'} />
+                            <Stop offset="100%" stopColor={isDark ? '#0F0F11' : '#EDE7DB'} />
                           </SvgLinearGradient>
                           <SvgRadialGradient id={`svcTop-${item.id}`} cx="50%" cy="18%" rx="120%" ry="90%">
-                            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.10" />
+                            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={isDark ? '0.10' : '0.60'} />
                             <Stop offset="60%" stopColor="#FFFFFF" stopOpacity="0" />
                           </SvgRadialGradient>
                           <SvgRadialGradient id={`svcBot-${item.id}`} cx="50%" cy="110%" rx="80%" ry="60%">
-                            <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.16" />
+                            <Stop offset="0%" stopColor="#F5A300" stopOpacity={isDark ? '0.16' : '0.12'} />
                             <Stop offset="70%" stopColor="#F5A300" stopOpacity="0" />
                           </SvgRadialGradient>
                         </Defs>
@@ -578,34 +583,34 @@ export default function CartScreen() {
                       {img && <Image source={img} style={s.svcImg} resizeMode="contain" />}
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={s.svcName} numberOfLines={1}>{item.service_name}</Text>
-                      <Text style={s.svcMeta}>{item.duration_minutes} min</Text>
+                      <Text style={[s.svcName, { color: c.text }]} numberOfLines={1}>{item.service_name}</Text>
+                      <Text style={[s.svcMeta, { color: c.textMuted }]}>{item.duration_minutes} min</Text>
                     </View>
                     <View style={s.qtyRow}>
                       <TouchableOpacity
                         onPress={() => handleRemove(item.id)}
                         activeOpacity={0.7}
                         disabled={removing === item.id}
-                        style={s.qtyBtn}
+                        style={[s.qtyBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(13,13,15,0.05)' }]}
                         hitSlop={8}
                       >
                         {removing === item.id
-                          ? <LoadingBars size="small" color={C.textMuted} />
-                          : <Feather name="minus" size={12} color={C.textMuted} />}
+                          ? <LoadingBars size="small" color={c.textMuted} />
+                          : <Feather name="minus" size={12} color={c.textMuted} />}
                       </TouchableOpacity>
-                      <Text style={s.qtyCount}>1</Text>
+                      <Text style={[s.qtyCount, { color: c.text }]}>1</Text>
                       <TouchableOpacity
-                        onPress={() => navigation.navigate('AllServices', {})}
+                        onPress={() => navigation.navigate('Tabs', { screen: 'AllServices' })}
                         activeOpacity={0.7}
-                        style={s.qtyBtn}
+                        style={[s.qtyBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(13,13,15,0.05)' }]}
                         hitSlop={8}
                       >
-                        <Feather name="plus" size={12} color={C.amber} />
+                        <Feather name="plus" size={12} color={c.amber} />
                       </TouchableOpacity>
                     </View>
-                    <Text style={s.svcPrice}>₹{(item.price_paise / 100).toFixed(0)}</Text>
+                    <Text style={[s.svcPrice, { color: c.text }]}>₹{(item.price_paise / 100).toFixed(0)}</Text>
                   </View>
-                  {i < items.length - 1 && <View style={s.divider} />}
+                  {i < items.length - 1 && <View style={[s.divider, { backgroundColor: c.divider }]} />}
                 </ReAnimated.View>
               );
             })}
@@ -615,9 +620,9 @@ export default function CartScreen() {
           <Card>
             <BillRow label="Subtotal" value={`₹${(subtotalCents / 100).toFixed(0)}`} />
             <BillRow label="Platform fee" value={`₹${(feeCents / 100).toFixed(0)}`} />
-            <View style={s.totalRow}>
-              <Text style={s.totalLabel}>Total to pay</Text>
-              <Text style={s.totalValue}>₹{(totalCents / 100).toFixed(0)}</Text>
+            <View style={[s.totalRow, { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
+              <Text style={[s.totalLabel, { color: c.text }]}>Total to pay</Text>
+              <Text style={[s.totalValue, { color: c.text }]}>₹{(totalCents / 100).toFixed(0)}</Text>
             </View>
           </Card>
 
@@ -630,7 +635,7 @@ export default function CartScreen() {
           />
         </ScrollView>
 
-        <View style={[s.payDock, { paddingBottom: 16 + insets.bottom }]}>
+        <View style={[s.payDock, { paddingBottom: 16 + insets.bottom, backgroundColor: isDark ? 'rgba(10,10,10,0.92)' : 'rgba(255,255,255,0.95)', borderTopColor: isDark ? c.glassBorderHi : 'rgba(13,13,15,0.06)' }]}>
           <PrimaryButton
             label={`Confirm booking · ₹${(myShareCents / 100).toFixed(0)}`}
             onPress={handleCheckout}
@@ -651,34 +656,28 @@ export default function CartScreen() {
         }}
       />
 
-      <AddressPickerModal
+      <LocationSelector
         visible={addressPickerVisible}
-        token={token}
-        addresses={addresses}
-        selectedId={selectedAddress?.id ?? null}
-        onSelect={(addr) => setSelectedAddress(addr)}
         onClose={() => setAddressPickerVisible(false)}
-        onAddressEdited={(updated) => setAddresses((prev) => prev.map((a) => a.id === updated.id ? updated : a))}
-        onAddressDeleted={(id) => {
-          setAddresses((prev) => {
-            const next = prev.filter((a) => a.id !== id);
-            if (selectedAddress?.id === id) setSelectedAddress(next[0] ?? null);
-            return next;
-          });
+        mode={{ kind: 'select', initialAddressId: selectedAddress?.id }}
+        theme={isDark ? 'light' : 'light'}
+        onLocationSelect={(_name, _lat, _lon, _addrId, address) => {
+          if (address) {
+            setSelectedAddress(address);
+            setAddresses((prev) => {
+              const exists = prev.find((a) => a.id === address.id);
+              if (exists) return prev.map((a) => a.id === address.id ? address : a);
+              return [address, ...prev];
+            });
+          }
         }}
-        onRefreshAddresses={async (newLat?: number, newLon?: number) => {
+        onAddressesChanged={async () => {
           if (!token) return;
           try {
             const list = await listAddresses(token);
             setAddresses(list);
-            if (newLat !== undefined && newLon !== undefined && list.length > 0) {
-              let best = list[0];
-              let minD = Infinity;
-              for (const a of list) {
-                const d = Math.hypot(a.lat - newLat, a.lon - newLon);
-                if (d < minD) { minD = d; best = a; }
-              }
-              setSelectedAddress(best);
+            if (selectedAddress && !list.find((a) => a.id === selectedAddress.id)) {
+              setSelectedAddress(list[0] ?? null);
             }
           } catch {}
         }}
@@ -688,15 +687,18 @@ export default function CartScreen() {
 }
 
 function BillRow({ label, value }: { label: string; value: string }) {
+  const c = useC();
   return (
     <View style={s.billRow}>
-      <Text style={s.billLabel}>{label}</Text>
-      <Text style={s.billValue}>{value}</Text>
+      <Text style={[s.billLabel, { color: c.textSecondary }]}>{label}</Text>
+      <Text style={[s.billValue, { color: c.textSecondary }]}>{value}</Text>
     </View>
   );
 }
 
 function DarkToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  const c = useC();
+  const { isDark } = useTheme();
   const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
   useEffect(() => {
     Animated.timing(anim, {
@@ -709,14 +711,14 @@ function DarkToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => v
   const left = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 20] });
   return (
     <TouchableOpacity activeOpacity={0.85} onPress={() => onChange(!on)} style={{ padding: 2 }}>
-      <View style={[s.toggleTrack, on ? null : s.toggleOff]}>
+      <View style={[s.toggleTrack, on ? null : { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
         {on && (
           <View style={StyleSheet.absoluteFill}>
             <Svg width="46" height="28">
               <Defs>
                 <SvgLinearGradient id="togGrad" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0%" stopColor={C.amberHi} />
-                  <Stop offset="100%" stopColor={C.amber} />
+                  <Stop offset="0%" stopColor={c.amberHi} />
+                  <Stop offset="100%" stopColor={c.amber} />
                 </SvgLinearGradient>
               </Defs>
               <Rect width="46" height="28" rx="14" fill="url(#togGrad)" />
@@ -730,45 +732,42 @@ function DarkToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => v
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: { flex: 1 },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 14 },
   emptyIconWrap: {
     width: 72, height: 72, borderRadius: 36,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.amberSoft,
     marginBottom: 8,
   },
-  emptyTitle: { fontFamily: FontFamily.bold, fontSize: 20, color: C.white, letterSpacing: -0.4 },
-  emptySub: { fontFamily: FontFamily.medium, fontSize: 13, color: C.textMuted, textAlign: 'center', lineHeight: 18 },
+  emptyTitle: { fontFamily: FontFamily.bold, fontSize: 20, letterSpacing: -0.4 },
+  emptySub: { fontFamily: FontFamily.medium, fontSize: 13, textAlign: 'center', lineHeight: 18 },
   browseBtn: {
     marginTop: 12, height: 50, paddingHorizontal: 28, borderRadius: 14,
     overflow: 'hidden',
     alignItems: 'center', justifyContent: 'center',
   },
-  browseBtnText: { fontFamily: FontFamily.extrabold, fontSize: 14, color: C.ink, letterSpacing: 0.2 },
+  browseBtnText: { fontFamily: FontFamily.extrabold, fontSize: 14, letterSpacing: 0.2 },
 
   // Address row + schedule row
   addrRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   addrPin: {
     width: 36, height: 36, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.amberSoft,
   },
-  addrTitle: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white, letterSpacing: -0.1 },
-  addrSub: { fontFamily: FontFamily.medium, fontSize: 11.5, color: C.textMuted, marginTop: 2, lineHeight: 15 },
-  changeLink: { fontFamily: FontFamily.bold, fontSize: 11.5, color: C.amber, letterSpacing: 0.2 },
+  addrTitle: { fontFamily: FontFamily.bold, fontSize: 14, letterSpacing: -0.1 },
+  addrSub: { fontFamily: FontFamily.medium, fontSize: 11.5, marginTop: 2, lineHeight: 15 },
+  changeLink: { fontFamily: FontFamily.bold, fontSize: 11.5, letterSpacing: 0.2 },
 
   // Roomies split
   splitHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   splitIcon: {
     width: 36, height: 36, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.amberSoft,
   },
-  splitTitle: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white, letterSpacing: -0.1 },
-  splitMeta: { fontFamily: FontFamily.medium, fontSize: 11.5, color: C.textMuted, marginTop: 2 },
+  splitTitle: { fontFamily: FontFamily.bold, fontSize: 14, letterSpacing: -0.1 },
+  splitMeta: { fontFamily: FontFamily.medium, fontSize: 11.5, marginTop: 2 },
   memberRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingVertical: 12,
@@ -776,65 +775,61 @@ const s = StyleSheet.create({
   memberAvatar: {
     width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: C.amberSoft,
   },
-  memberName: { fontFamily: FontFamily.semibold, fontSize: 13, color: C.white, letterSpacing: -0.05 },
-  memberMeta: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, marginTop: 1 },
+  memberName: { fontFamily: FontFamily.semibold, fontSize: 13, letterSpacing: -0.05 },
+  memberMeta: { fontFamily: FontFamily.medium, fontSize: 11, marginTop: 1 },
   checkbox: {
     width: 22, height: 22, borderRadius: 6,
-    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1.5,
     alignItems: 'center', justifyContent: 'center',
   },
-  checkboxOn: { backgroundColor: C.amber, borderColor: C.amber },
+  checkboxOn: { backgroundColor: '#F5A300', borderColor: '#F5A300' },
   splitSummary: {
     marginTop: 4,
-    backgroundColor: 'rgba(245,163,0,0.06)',
     borderRadius: 12,
     padding: 12,
     gap: 4,
   },
   splitRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  splitKey: { fontFamily: FontFamily.medium, fontSize: 12, color: C.textMuted },
-  splitVal: { fontFamily: FontFamily.semibold, fontSize: 12, color: C.text },
+  splitKey: { fontFamily: FontFamily.medium, fontSize: 12 },
+  splitVal: { fontFamily: FontFamily.semibold, fontSize: 12 },
   splitDashed: {
     height: 1, marginVertical: 4,
-    borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: 'rgba(255,255,255,0.10)',
+    borderTopWidth: 1, borderStyle: 'dashed',
   },
-  splitTotalKey: { fontFamily: FontFamily.bold, fontSize: 13, color: C.white },
-  splitTotalVal: { fontFamily: FontFamily.bold, fontSize: 13, color: C.amber },
-  splitNote: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, textAlign: 'center', marginTop: 2 },
-  divider: { height: 1, backgroundColor: C.divider, marginVertical: 8 },
+  splitTotalKey: { fontFamily: FontFamily.bold, fontSize: 13 },
+  splitTotalVal: { fontFamily: FontFamily.bold, fontSize: 13 },
+  splitNote: { fontFamily: FontFamily.medium, fontSize: 11, textAlign: 'center', marginTop: 2 },
+  divider: { height: 1, marginVertical: 8 },
 
   // Service row
   svcRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
   svcIcon: { width: 42, height: 42, borderRadius: 11, position: 'relative', overflow: 'hidden' },
   svcImg: { position: 'absolute', left: '11%', top: '11%', width: '78%', height: '78%' },
-  svcName: { fontFamily: FontFamily.bold, fontSize: 13.5, color: C.white, letterSpacing: -0.1, lineHeight: 16 },
-  svcMeta: { fontFamily: FontFamily.medium, fontSize: 11, color: C.textMuted, marginTop: 2 },
-  svcPrice: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
+  svcName: { fontFamily: FontFamily.bold, fontSize: 13.5, letterSpacing: -0.1, lineHeight: 16 },
+  svcMeta: { fontFamily: FontFamily.medium, fontSize: 11, marginTop: 2 },
+  svcPrice: { fontFamily: FontFamily.bold, fontSize: 14 },
   qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   qtyBtn: {
     width: 26, height: 26, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.07)',
   },
-  qtyCount: { fontFamily: FontFamily.bold, fontSize: 13, color: C.white, minWidth: 16, textAlign: 'center' },
+  qtyCount: { fontFamily: FontFamily.bold, fontSize: 13, minWidth: 16, textAlign: 'center' },
 
   // Bill
   billRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
-  billLabel: { fontFamily: FontFamily.medium, fontSize: 12.5, color: C.textSecondary },
-  billValue: { fontFamily: FontFamily.medium, fontSize: 12.5, color: C.textSecondary },
+  billLabel: { fontFamily: FontFamily.medium, fontSize: 12.5 },
+  billValue: { fontFamily: FontFamily.medium, fontSize: 12.5 },
   totalRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingTop: 10, marginTop: 6,
-    borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: 'rgba(255,255,255,0.08)',
+    borderTopWidth: 1, borderStyle: 'dashed',
   },
-  totalLabel: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
-  totalValue: { fontFamily: FontFamily.bold, fontSize: 14, color: C.white },
+  totalLabel: { fontFamily: FontFamily.bold, fontSize: 14 },
+  totalValue: { fontFamily: FontFamily.bold, fontSize: 14 },
 
   // Toggle
   toggleTrack: { width: 46, height: 28, borderRadius: 14, overflow: 'hidden', position: 'relative' },
-  toggleOff: { backgroundColor: 'rgba(255,255,255,0.08)' },
   toggleThumb: {
     position: 'absolute', top: 2,
     width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF',
@@ -846,22 +841,21 @@ const s = StyleSheet.create({
   payDock: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     paddingHorizontal: 20, paddingTop: 16,
-    backgroundColor: 'rgba(10,10,10,0.92)',
-    borderTopWidth: 0.5, borderTopColor: C.glassBorderHi,
+    borderTopWidth: 0.5,
   },
   payBtnWrap: {
     height: 54, borderRadius: 14, overflow: 'hidden',
-    shadowColor: C.amber, shadowOpacity: 0.4, shadowRadius: 30, shadowOffset: { width: 0, height: 14 },
+    shadowColor: '#F5A300', shadowOpacity: 0.4, shadowRadius: 30, shadowOffset: { width: 0, height: 14 },
     elevation: 12,
   },
   payBtnInner: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 18,
   },
-  payAmt: { fontFamily: FontFamily.extrabold, fontSize: 18, color: C.ink, letterSpacing: -0.4, lineHeight: 20 },
-  paySub: { fontFamily: FontFamily.semibold, fontSize: 10.5, color: C.ink, opacity: 0.7, marginTop: 3 },
+  payAmt: { fontFamily: FontFamily.extrabold, fontSize: 18, color: '#0D0D0F', letterSpacing: -0.4, lineHeight: 20 },
+  paySub: { fontFamily: FontFamily.semibold, fontSize: 10.5, color: '#0D0D0F', opacity: 0.7, marginTop: 3 },
   payCta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  payCtaText: { fontFamily: FontFamily.extrabold, fontSize: 14, color: C.ink, letterSpacing: -0.1 },
+  payCtaText: { fontFamily: FontFamily.extrabold, fontSize: 14, color: '#0D0D0F', letterSpacing: -0.1 },
 });
 
 function FloatingZop() {
@@ -946,7 +940,11 @@ function PaymentSourceCard({
   disabled?: boolean;
   onPress: () => void;
 }) {
-  const tint = disabled ? 'rgba(255,255,255,0.18)' : '#F5A300';
+  const c = useC();
+  const { isDark } = useTheme();
+  const tint = disabled
+    ? (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.20)')
+    : '#F5A300';
   return (
     <TouchableOpacity
       activeOpacity={disabled ? 1 : 0.85}
@@ -956,7 +954,17 @@ function PaymentSourceCard({
       accessibilityLabel={`${title}. ${subtitle}.`}
       style={[
         pickerStyles.card,
-        selected && pickerStyles.cardSelected,
+        {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)',
+        },
+        selected && [
+          pickerStyles.cardSelected,
+          !isDark && {
+            backgroundColor: 'rgba(245,163,0,0.08)',
+            borderColor: 'rgba(245,163,0,0.40)',
+          },
+        ],
         disabled && pickerStyles.cardDisabled,
       ]}
     >
@@ -970,10 +978,10 @@ function PaymentSourceCard({
           </View>
         ) : null}
       </View>
-      <Text style={[pickerStyles.title, disabled && { color: 'rgba(255,255,255,0.45)' }]}>
+      <Text style={[pickerStyles.title, { color: c.text }, disabled && { color: c.textMuted }]}>
         {title}
       </Text>
-      <Text style={pickerStyles.subtitle} numberOfLines={2}>
+      <Text style={[pickerStyles.subtitle, { color: c.textSecondary }]} numberOfLines={2}>
         {subtitle}
       </Text>
     </TouchableOpacity>
@@ -988,9 +996,7 @@ const pickerStyles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     gap: 6,
   },
   cardSelected: {
@@ -1006,13 +1012,11 @@ const pickerStyles = StyleSheet.create({
   title: {
     fontFamily: FontFamily.bold,
     fontSize: 14,
-    color: '#FFFFFF',
     letterSpacing: -0.1,
   },
   subtitle: {
     fontFamily: FontFamily.medium,
     fontSize: 11.5,
-    color: 'rgba(255,255,255,0.6)',
     lineHeight: 15,
   },
 });

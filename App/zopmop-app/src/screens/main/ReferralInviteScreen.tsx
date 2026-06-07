@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
+import { Bloom } from '../../components/home/Bloom';
 import { applyReferralCode, getReferralStats } from '../../api/referral';
 import {
   checkServiceability,
@@ -21,14 +24,10 @@ import {
   type ServiceableCity,
 } from '../../utils/serviceability';
 
-const BG = '#0A0A0A';
-const SURFACE = '#141416';
-const TEXT_HI = '#FFFFFF';
-const TEXT_MID = 'rgba(255,255,255,0.62)';
-const TEXT_DIM = 'rgba(255,255,255,0.38)';
-const AMBER = '#F5A300';
-const HAIRLINE = 'rgba(255,255,255,0.08)';
-const DANGER = '#F87171';
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors) —
+// same as ReferralEarnScreen. useColors()'s dark palette is Slate, which would
+// change this screen's dark look + fork the amber. useC() keeps dark identical
+// (#0A0A0A / #F5A300) and carries the cream + amber light language.
 
 type Step = 'location' | 'not_serviceable' | 'confirm' | 'success' | 'error';
 
@@ -40,6 +39,16 @@ type Props = {
 export default function ReferralInviteScreen({ navigation, route }: Props) {
   const { code } = route.params;
   const { token } = useAuth();
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+
+  // Danger red: keep the exact soft #F87171 in dark; light uses the danger
+  // token (#DC2626) which is tuned to read on cream (raw #F87171 washes out).
+  const danger = isDark ? '#F87171' : c.danger;
+  // Ink on the amber CTA — theme-independent (button is amber in both).
+  const onAmber = '#0A0A0A';
+
   const [step, setStep] = useState<Step>('location');
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -137,9 +146,10 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   if (step === 'location') {
     return (
       <SafeAreaView style={styles.root}>
+        <Bloom />
         {busy && !showManual ? (
           <View style={styles.centered}>
-            <ActivityIndicator color={AMBER} size="large" />
+            <ActivityIndicator color={c.amber} size="large" />
             <Text style={[styles.body, { marginTop: 16 }]}>Checking your location...</Text>
           </View>
         ) : showManual ? (
@@ -150,7 +160,7 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
               keyExtractor={c => c.name}
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.cityRow} onPress={() => selectCity(item)}>
-                  <Feather name="map-pin" size={16} color={AMBER} />
+                  <Feather name="map-pin" size={16} color={c.amber} />
                   <Text style={styles.cityText}>{item.displayName}</Text>
                 </TouchableOpacity>
               )}
@@ -165,8 +175,9 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   if (step === 'not_serviceable') {
     return (
       <SafeAreaView style={styles.root}>
+        <Bloom />
         <View style={styles.centered}>
-          <Feather name="map-pin" size={48} color={TEXT_DIM} />
+          <Feather name="map-pin" size={48} color={c.textMuted} />
           <Text style={[styles.heading, { marginTop: 20 }]}>Not serviceable yet</Text>
           <Text style={[styles.body, { marginTop: 8 }]}>
             ZopMop is not available in your area yet. We are expanding soon!
@@ -185,13 +196,14 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   if (step === 'confirm') {
     return (
       <SafeAreaView style={styles.root}>
+        <Bloom />
         <View style={styles.centered}>
           <View style={styles.inviteCard}>
-            <Feather name="gift" size={40} color={AMBER} />
+            <Feather name="gift" size={40} color={c.amber} />
             <Text style={[styles.heading, { marginTop: 16 }]}>You are invited!</Text>
             <Text style={[styles.body, { marginTop: 8, textAlign: 'center' }]}>
               Accept this invite and get{' '}
-              <Text style={{ color: AMBER, fontWeight: '700' }}>Rs 100</Text> in your wallet
+              <Text style={{ color: c.amber, fontWeight: '700' }}>Rs 100</Text> in your wallet
               after your first booking.
             </Text>
           </View>
@@ -202,7 +214,7 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
             disabled={busy}
           >
             {busy ? (
-              <ActivityIndicator color="#0A0A0A" />
+              <ActivityIndicator color={onAmber} />
             ) : (
               <Text style={styles.primaryBtnText}>Accept Invite</Text>
             )}
@@ -219,12 +231,13 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   if (step === 'success') {
     return (
       <SafeAreaView style={styles.root}>
+        <Bloom />
         <View style={styles.centered}>
-          <Feather name="check-circle" size={56} color={AMBER} />
+          <Feather name="check-circle" size={56} color={c.amber} />
           <Text style={[styles.heading, { marginTop: 20 }]}>Invite accepted!</Text>
           <Text style={[styles.body, { marginTop: 8, textAlign: 'center' }]}>
             Complete your first booking to get{' '}
-            <Text style={{ color: AMBER, fontWeight: '700' }}>Rs 100</Text> in your wallet.
+            <Text style={{ color: c.amber, fontWeight: '700' }}>Rs 100</Text> in your wallet.
           </Text>
           <TouchableOpacity style={[styles.primaryBtn, { marginTop: 40 }]} onPress={handleExplore}>
             <Text style={styles.primaryBtnText}>Explore Services</Text>
@@ -237,7 +250,7 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.centered}>
-        <Feather name="alert-circle" size={48} color={DANGER} />
+        <Feather name="alert-circle" size={48} color={danger} />
         <Text style={[styles.heading, { marginTop: 20 }]}>Oops</Text>
         <Text style={[styles.body, { marginTop: 8, textAlign: 'center' }]}>{errorMsg}</Text>
         <TouchableOpacity style={[styles.primaryBtn, { marginTop: 40 }]} onPress={handleExplore}>
@@ -248,36 +261,55 @@ export default function ReferralInviteScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  heading: { color: TEXT_HI, fontSize: 22, fontWeight: '700', textAlign: 'center' },
-  body: { color: TEXT_MID, fontSize: 15, lineHeight: 22 },
-  inviteCard: {
-    alignItems: 'center',
-    backgroundColor: SURFACE,
-    borderRadius: 20,
-    padding: 28,
-    width: '100%',
-    marginBottom: 32,
-  },
-  primaryBtn: {
-    backgroundColor: AMBER,
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    alignItems: 'center',
-    width: '100%',
-  },
-  primaryBtnText: { color: '#0A0A0A', fontSize: 16, fontWeight: '700' },
-  secondaryBtn: { paddingVertical: 12 },
-  secondaryBtnText: { color: TEXT_DIM, fontSize: 15 },
-  sheet: { flex: 1, padding: 24 },
-  cityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-  },
-  cityText: { color: TEXT_HI, fontSize: 16, marginLeft: 12 },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: HAIRLINE },
-});
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised surface (#141416) has no useC equivalent → documented dark literal;
+  // white card + subtle border/shadow in light so it reads on cream.
+  const surface = isDark ? '#141416' : c.white;
+  const lightCard = isDark
+    ? null
+    : {
+        borderWidth: 1,
+        borderColor: c.glassBorder,
+        shadowColor: '#000',
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 1,
+      };
+
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+    heading: { color: c.text, fontSize: 22, fontWeight: '700', textAlign: 'center' },
+    body: { color: c.textSecondary, fontSize: 15, lineHeight: 22 },
+    inviteCard: {
+      alignItems: 'center',
+      backgroundColor: surface,
+      borderRadius: 20,
+      padding: 28,
+      width: '100%',
+      marginBottom: 32,
+      ...(lightCard || {}),
+    },
+    primaryBtn: {
+      backgroundColor: c.amber,
+      borderRadius: 14,
+      paddingVertical: 16,
+      paddingHorizontal: 40,
+      alignItems: 'center',
+      width: '100%',
+    },
+    // Ink on amber CTA — same in both themes.
+    primaryBtnText: { color: '#0A0A0A', fontSize: 16, fontWeight: '700' },
+    secondaryBtn: { paddingVertical: 12 },
+    secondaryBtnText: { color: c.textMuted, fontSize: 15 },
+    sheet: { flex: 1, padding: 24 },
+    cityRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 16,
+    },
+    cityText: { color: c.text, fontSize: 16, marginLeft: 12 },
+    sep: { height: StyleSheet.hairlineWidth, backgroundColor: c.glassBorder },
+  });
+}

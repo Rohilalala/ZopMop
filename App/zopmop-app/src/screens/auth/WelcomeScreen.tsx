@@ -7,7 +7,6 @@ import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
 import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 
 type Props = {
@@ -19,7 +18,8 @@ const AUTO_ADVANCE_MS = 2600;
 
 export default function WelcomeScreen({ navigation, route }: Props) {
   const { phone } = route.params;
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = lightColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const { user } = useAuth();
@@ -124,7 +124,7 @@ function createStyles(c: typeof lightColors) {
     },
     subtitleBrandZop: {
       fontFamily: FontFamily.extrabold,
-      color: c.primary,
+      color: c.accent,
     },
     subtitleBrandMop: {
       fontFamily: FontFamily.extrabold,

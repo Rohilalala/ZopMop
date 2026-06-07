@@ -12,9 +12,10 @@ import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { PressFx } from '../ui/PressFx';
+import { useTheme } from '../../context/ThemeContext';
 import type { ApiService } from '../../api/services';
 import type { MainStackParamList } from '../../types/navigation';
-import { serviceIcon } from './serviceIcon';
+import { serviceIcon, serviceIconScale } from './serviceIcon';
 
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -46,6 +47,7 @@ function isInstantPin(svc: ApiService): boolean {
 }
 
 export function UsualsRow({ services, onPress, onSeeAll }: Props) {
+  const { isDark } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
 
   const scrollX = useRef(new Animated.Value(0)).current;
@@ -96,7 +98,7 @@ export function UsualsRow({ services, onPress, onSeeAll }: Props) {
           paddingBottom: 10,
         }}
       >
-        <Text style={[fontBold, { fontSize: 18, color: '#FFFFFF', letterSpacing: -0.18 }]}>
+        <Text style={[fontBold, { fontSize: 18, color: isDark ? '#FFFFFF' : '#0D0D0F', letterSpacing: -0.18 }]}>
           Book in 30 seconds
         </Text>
         <PressFx onPress={onSeeAll}>
@@ -129,6 +131,7 @@ export function UsualsRow({ services, onPress, onSeeAll }: Props) {
               key={svc.id}
               service={svc}
               index={idx}
+              isDark={isDark}
               scrollX={scrollX}
               onPress={() => onPress(svc)}
             />
@@ -203,15 +206,18 @@ const CARD_W = 96;
 function PresetCard({
   service,
   index,
+  isDark,
   scrollX,
   onPress,
 }: {
   service: ApiService;
   index: number;
+  isDark: boolean;
   scrollX: Animated.Value;
   onPress: () => void;
 }) {
   const src = serviceIcon({ id: service.id, name: service.name });
+  const iconScale = serviceIconScale({ id: service.id, name: service.name });
 
   // Fade card out as its center crosses the bolt icon's right edge moving left.
   // Uses static layout values (PIN_WIDTH_EXPANDED) — pin shrink slightly shifts
@@ -252,10 +258,10 @@ function PresetCard({
           <Image
             source={src}
             resizeMode="contain"
-            style={{ width: 76, height: 76, marginTop: 5, transform: [{ scale: 1.8 }] }}
+            style={{ width: 76, height: 76, marginTop: 5, transform: [{ scale: 1.8 * iconScale }] }}
           />
         ) : (
-          <Feather name="package" size={38} color="rgba(255,255,255,0.7)" />
+          <Feather name="package" size={38} color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.35)'} />
         )}
       </View>
       <Text
@@ -264,7 +270,7 @@ function PresetCard({
           {
             fontSize: 13,
             lineHeight: 16,
-            color: '#FFFFFF',
+            color: isDark ? '#FFFFFF' : '#0D0D0F',
             letterSpacing: -0.13,
             marginTop: 10,
             textAlign: 'center',

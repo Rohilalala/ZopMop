@@ -33,6 +33,8 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,12 +51,14 @@ import { checkServiceability } from '../../api/zones';
 import { listAddresses } from '../../api/addresses';
 import { apiFetch } from '../../api/client';
 
-import LocationSelectorModal from '../../components/LocationSelectorModal';
+import { LocationSelector } from '../../components/LocationSelector';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
 import { Bloom } from '../../components/home/Bloom';
+import { useTheme } from '../../context/ThemeContext';
+import { useC } from '../../theme/screen';
 import NotServiceableScreen from './NotServiceableScreen';
 import { HomeScreenSkeleton } from '../../components/skeletons/HomeScreenSkeleton';
 
@@ -90,6 +94,8 @@ const DEFAULT_LON = 77.0763;
 const { width: SCREEN_W } = Dimensions.get('window');
 
 export default function HomeScreen() {
+  const { isDark, colors: themeColors } = useTheme();
+  const sc = useC();
   const { token, user } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -476,16 +482,18 @@ export default function HomeScreen() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   const locationModal = (
-    <LocationSelectorModal
+    <LocationSelector
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
       onLocationSelect={handleLocationSelect}
+      mode={{ kind: 'change-location' }}
+      theme={isDark ? 'dark' : 'light'}
     />
   );
 
   if (bootstrapping || (loading && !page)) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
         <Bloom />
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -526,7 +534,7 @@ export default function HomeScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
       <Bloom />
 
       <HomeHeader
@@ -536,25 +544,63 @@ export default function HomeScreen() {
         addressTag={addressTag}
       />
 
-      <FlashList
-        data={sections}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        estimatedItemSize={200}
-        ListHeaderComponent={Header}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
-        showsVerticalScrollIndicator={false}
-        extraData={page?.config_hash}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="transparent"
-            colors={['transparent']}
-            progressBackgroundColor="transparent"
-          />
-        }
-      />
+      {/* DEV SHORTCUT — remove before shipping */}
+      {__DEV__ && (
+        <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingBottom: 4 }}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('BookingConfirmed', {
+              bookingId: 'dev-instant-001', totalCents: 49900, bookingType: 'instant',
+              serviceName: 'Deep Clean', durationMinutes: 120,
+              helperName: 'Ravi K.', helperRating: 4.8, etaMinutes: 6,
+              addressLine: '314c, Gf, Orchid Island, Sec 51',
+            })}
+            style={{ backgroundColor: 'rgba(34,197,94,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#22C55E', fontSize: 10, fontWeight: '700' }}>DEV: Instant</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('BookingConfirmed', {
+              bookingId: 'dev-scheduled-001', totalCents: 49900, bookingType: 'scheduled',
+              serviceName: 'Deep Clean', durationMinutes: 120,
+              slot: 'Sat, 31 May · 10:00 AM',
+              addressLine: '314c, Gf, Orchid Island, Sec 51',
+            })}
+            style={{ backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
+          >
+            <Text style={{ color: '#60A5FA', fontSize: 10, fontWeight: '700' }}>DEV: Scheduled</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <View key={isDark ? 'dark' : 'light'} style={{ flex: 1 }}>
+        <FlashList
+          data={sections}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          estimatedItemSize={200}
+          ListHeaderComponent={Header}
+          contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
+          showsVerticalScrollIndicator={false}
+          extraData={page?.config_hash}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              // Hide the native pull spinner by tinting it the on-screen page
+              // colour. iOS ignores a transparent / near-zero-alpha tint (falls
+              // back to the default gray spinner), so the tint MUST be opaque.
+              // The visible bg in the refresh zone is ScreenBg's near-white
+              // overlay (~#FBF9F6, sampled from the rendered screen) — lighter
+              // than the bare theme token — so match that in light mode; dark
+              // mode uses the flat theme bg.
+              tintColor={isDark ? sc.bg : '#FBF9F6'}
+              colors={[isDark ? sc.bg : '#FBF9F6']}
+              progressBackgroundColor={isDark ? sc.bg : '#FBF9F6'}
+              style={{ opacity: 0 }}
+            />
+          }
+        />
+      </View>
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       <UpcomingBookingIndicator />
@@ -564,6 +610,5 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: '#0A0A0A' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

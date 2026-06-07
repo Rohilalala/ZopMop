@@ -106,7 +106,13 @@ export default function MainNavigator() {
         <Stack.Screen
           name="ServiceAbout"
           component={ServiceAboutScreen}
-          options={{ animation: 'slide_from_bottom' }}
+          options={{
+            // Renders as a bottom sheet over the dimmed catalog — keep the
+            // previous screen visible behind and let the sheet animate itself.
+            presentation: 'transparentModal',
+            animation: 'fade',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
         />
         <Stack.Screen
           name="Cart"

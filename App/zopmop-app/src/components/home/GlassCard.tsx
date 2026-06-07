@@ -17,6 +17,7 @@ import Svg, {
   Rect,
   Stop,
 } from 'react-native-svg';
+import { useTheme } from '../../context/ThemeContext';
 
 type Props = {
   radius?: number;
@@ -27,14 +28,41 @@ type Props = {
 };
 
 export function GlassCard({ radius = 18, style, hero = false, children }: Props) {
+  const { isDark } = useTheme();
+
+  /* ── light / non-hero: pure elevated white card, no SVG at all ── */
+  if (!isDark && !hero) {
+    return (
+      <View
+        style={[
+          {
+            borderRadius: radius,
+            backgroundColor: '#FFFFFF',
+            borderWidth: 1,
+            borderColor: 'rgba(13,13,15,0.06)',
+            shadowColor: '#0D0D0F',
+            shadowOffset: { width: 0, height: 6 },
+            shadowOpacity: 0.04,
+            shadowRadius: 16,
+            elevation: 4,
+          },
+          style,
+        ]}
+      >
+        {children}
+      </View>
+    );
+  }
+
   return (
     <View
       style={[
         {
           borderRadius: radius,
-          shadowColor: '#000',
+          /* dark: original shadow; light hero: warm amber shadow */
+          shadowColor: isDark ? '#000' : 'rgba(100,60,0,1)',
           shadowOffset: { width: 0, height: hero ? 20 : 8 },
-          shadowOpacity: hero ? 0.5 : 0.35,
+          shadowOpacity: isDark ? (hero ? 0.5 : 0.35) : 0.10,
           shadowRadius: hero ? 50 : 24,
           elevation: hero ? 14 : 8,
         },
@@ -53,11 +81,20 @@ export function GlassCard({ radius = 18, style, hero = false, children }: Props)
       >
         <Svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100">
           <Defs>
-            <LinearGradient id="glassFill" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.06" />
-              <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.025" />
-            </LinearGradient>
-            {hero && (
+            {isDark ? (
+              /* ── dark fill gradient (original) ── */
+              <LinearGradient id="glassFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.06" />
+                <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.025" />
+              </LinearGradient>
+            ) : (
+              /* ── light hero fill: solid white at 0.65 ── */
+              <LinearGradient id="glassFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.65" />
+                <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.65" />
+              </LinearGradient>
+            )}
+            {isDark && hero && (
               <>
                 <LinearGradient id="glassSheen" x1="0" y1="0" x2="1" y2="1">
                   <Stop offset="0%"   stopColor="#FFFFFF" stopOpacity="0.22" />
@@ -76,8 +113,8 @@ export function GlassCard({ radius = 18, style, hero = false, children }: Props)
             )}
           </Defs>
           <Rect width="100" height="100" fill="url(#glassFill)" />
-          {hero && <Rect width="100" height="100" fill="url(#glassSheen)" />}
-          {hero && <Rect width="100" height="100" fill="url(#glassBloom)" />}
+          {isDark && hero && <Rect width="100" height="100" fill="url(#glassSheen)" />}
+          {isDark && hero && <Rect width="100" height="100" fill="url(#glassBloom)" />}
         </Svg>
       </View>
 
@@ -89,7 +126,9 @@ export function GlassCard({ radius = 18, style, hero = false, children }: Props)
           top: 0, left: 0, right: 0, bottom: 0,
           borderRadius: radius,
           borderWidth: 0.5,
-          borderColor: hero ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.07)',
+          borderColor: isDark
+            ? (hero ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.07)')
+            : 'rgba(13,13,15,0.06)',
         }}
       />
 

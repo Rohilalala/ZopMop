@@ -1,68 +1,96 @@
-// ServiceAboutScreen — dark home pattern.
-// Layout: sticky header (back + title + share) → overview hero (service icon
-// or emoji + name + rating) → duration selector (− amount +) → what's
-// included / excluded (glass list cards) → how it works (numbered timeline)
-// → add-on services (horizontal glass tiles) → sticky bottom bar (price +
-// add to cart / view cart).
+// ServiceAboutScreen — service detail BOTTOM SHEET (Step 4 of catalog rework).
+// Rises over the dimmed catalog (route presentation: transparentModal). Two
+// snaps via the shared BottomSheet primitive: PEEK (hero + hook + rating +
+// duration + price + add bar) and EXPANDED (includes / excludes / how-it's-done
+// with numeral icons / FAQs). All copy/content comes from live data seeded in
+// Steps 1-3; the HTML reference supplied layout + tokens only. No add-on block.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  
+  Dimensions,
   Image,
   ScrollView,
   Share,
-  StatusBar,
   StyleSheet,
   Text,
   View,
   type TextStyle,
 } from 'react-native';
-import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
-import {
-  getServiceDetails,
-  getServiceAddons,
-  type ServiceDetails,
-  type ServiceAddon,
-} from '../../api/services';
+import { getServiceDetails, type ServiceDetails } from '../../api/services';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 import { usePostHog } from 'posthog-react-native';
-
-import { Bloom } from '../../components/home/Bloom';
-import { GlassCard } from '../../components/home/GlassCard';
+import { BottomSheet } from '../../components/ui/BottomSheet';
+import { Motion } from '../../constants/tokens';
 import { PressFx } from '../../components/ui/PressFx';
 import { serviceIcon } from '../../components/home/serviceIcon';
 
-const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
-const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
-const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
+const fontMed: TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+const fontSemi: TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
+const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 const H_PAD = 20;
+const { height: SCREEN_H } = Dimensions.get('window');
+const PEEK_H = Math.round(SCREEN_H * 0.62) - 75;
+const EXPANDED_H = Math.round(SCREEN_H * 0.92);
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 type Route = RouteProp<MainStackParamList, 'ServiceAbout'>;
 
-function computeNextDuration(
-  current: number | null,
-  service: { min_duration_minutes: number; max_duration_minutes: number; duration_step_minutes: number },
-): number {
-  if (current === null) return service.min_duration_minutes;
-  const next = current + service.duration_step_minutes;
-  return next > service.max_duration_minutes ? current : next;
+// Step numeral assets (Step 3). icon = 'step-1'..'step-4' → 1.png..4.png.
+const NUMERAL_PNG: Record<string, number> = {
+  'step-1': require('../../../assets/icons/1.png'),
+  'step-2': require('../../../assets/icons/2.png'),
+  'step-3': require('../../../assets/icons/3.png'),
+  'step-4': require('../../../assets/icons/4.png'),
+};
+
+// Duration-logic guidance (deferred from Step 2; not in DB — client copy keyed
+// by the fixed service UUID). Shown as a subtitle under the duration selector.
+const DURATION_GUIDANCE: Record<string, string> = {
+  'a1000000-0000-0000-0000-000000000001': '30 min for a compact 1BHK or a few rooms. 60 min for a standard 2 or 3BHK. 90 min for a larger home or floors that need a second pass.',
+  'a1000000-0000-0000-0000-000000000002': '30 min covers 1 bathroom, 60 min covers 1 to 2, 90 min covers 2 to 3.',
+  'a1000000-0000-0000-0000-000000000003': "30 min for a single meal's load for two or three people. 60 min for a full day's pile for a family. 90 min for a larger buildup, big cookware, or after-party cleanup.",
+  'a1000000-0000-0000-0000-000000000004': '30 min for a few rooms or the main living areas. 60 min for a standard 2 or 3BHK. 90 min for a larger home or surfaces that have sat untouched for a while.',
+  'a1000000-0000-0000-0000-000000000005': "30 min for a single meal's prep. 60 min for a few dishes or a day's cooking. 90 min for a larger spread or batch prep.",
+  'a1000000-0000-0000-0000-000000000006': "30 min for a single load. 60 min for a couple of loads or a week's clothes. 90 min for a family's load or a larger backlog.",
+  'a1000000-0000-0000-0000-000000000007': '30 min for a few windows or a room. 60 min for a standard 2 or 3BHK. 90 min for a larger home or windows that need more work.',
+  'a1000000-0000-0000-0000-000000000008': '30 min for a single-door fridge. 60 min for a double-door. 90 min for a larger fridge or more buildup.',
+  'a1000000-0000-0000-0000-000000000009': "30 min for a small load or a day's clothes. 60 min for a week's pile for one or two people. 90 min for a family's load or a larger backlog.",
+  'a1000000-0000-0000-0000-000000000010': '30 min for a small balcony. 60 min for a larger balcony or a couple of them. 90 min for multiple balconies or more buildup.',
+  'a1000000-0000-0000-0000-000000000012': '30 min for counters and stove in a compact kitchen. 60 min for a standard kitchen done properly. 90 min for a larger kitchen or more buildup.',
+  'a1000000-0000-0000-0000-000000000014': '30 min for a single wardrobe or section. 60 min for a full wardrobe. 90 min for a larger wardrobe or more to sort.',
+  'a1000000-0000-0000-0000-000000000018': '30 min for a few plants or a balcony set. 60 min for a larger set across the home. 90 min for many plants or more upkeep.',
+  'a1000000-0000-0000-0000-000000000019': "30 min for a single bag. 60 min for a couple of bags or a longer pack. 90 min for a family's luggage or a larger load.",
+  'a1000000-0000-0000-0000-000000000020': "30 min for a single bag. 60 min for a couple of bags. 90 min for a family's luggage or a larger load.",
+  'a1000000-0000-0000-0000-000000000021': '30 min for a couple of fans. 60 min for a standard 2 or 3BHK. 90 min for a larger home or more fans.',
+  'a1000000-0000-0000-0000-000000000022': 'Fixed 90-minute slot. A party setup or cleanup needs the full block.',
+};
+
+function buildDurations(svc: {
+  min_duration_minutes: number;
+  max_duration_minutes: number;
+  duration_step_minutes: number;
+}): number[] {
+  const { min_duration_minutes: min, max_duration_minutes: max, duration_step_minutes: step } = svc;
+  if (step <= 0 || max <= min) return [min];
+  const out: number[] = [];
+  for (let d = min; d <= max; d += step) out.push(d);
+  return out;
 }
 
-function computePrevDuration(
-  current: number | null,
-  service: { min_duration_minutes: number; duration_step_minutes: number },
-): number | null {
-  if (current === null) return null;
-  const prev = current - service.duration_step_minutes;
-  return prev < service.min_duration_minutes ? null : prev;
+function priceFor(
+  svc: { base_price_paise: number; min_duration_minutes: number },
+  dur: number,
+): number {
+  return Math.round((svc.base_price_paise * dur) / svc.min_duration_minutes);
 }
 
 function formatReviews(n: number): string {
@@ -70,49 +98,52 @@ function formatReviews(n: number): string {
   return String(n);
 }
 
-// Module-level in-memory cache so re-opening a service we've already seen
-// renders the body instantly. Background revalidation still runs.
-type DetailsCacheEntry = { details: ServiceDetails | null; addons: ServiceAddon[] };
-const detailsCache: Map<string, DetailsCacheEntry> = new Map();
+// In-memory cache so re-opening a service renders instantly.
+const detailsCache: Map<string, ServiceDetails> = new Map();
 
 export default function ServiceAboutScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  const successGlyph = isDark ? '#22C55E' : c.green;
+  const dangerGlyph = isDark ? '#EF4444' : c.danger;
+
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { params } = useRoute<Route>();
   const { service } = params;
 
-  const cached = detailsCache.get(service.id);
-  const [details, setDetails] = useState<ServiceDetails | null>(cached?.details ?? null);
-  const [addons, setAddons] = useState<ServiceAddon[]>(cached?.addons ?? []);
+  const cached = detailsCache.get(service.id) ?? null;
+  const [details, setDetails] = useState<ServiceDetails | null>(cached);
   const [loading, setLoading] = useState(cached == null);
-  const [selectedAddons, setSelectedAddons] = useState<Set<string>>(new Set());
-  const [duration, setDuration] = useState<number | null>(service.min_duration_minutes);
+  const [expanded, setExpanded] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
+
+  const activeSvc = details?.service ?? service;
+  const durations = useMemo(() => buildDurations(activeSvc), [activeSvc]);
+  const fixedDuration = durations.length === 1;
+  const [duration, setDuration] = useState<number>(durations[0]);
 
   const { addItem } = useCart();
   const posthog = usePostHog();
 
   useEffect(() => {
     posthog?.capture('service_viewed', {
-      service_id:        service.id,
-      service_name:      service.name,
-      base_price_paise:  service.base_price_paise,
+      service_id: service.id,
+      service_name: service.name,
+      base_price_paise: service.base_price_paise,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [service.id]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [det, add] = await Promise.all([
-          getServiceDetails(service.id),
-          getServiceAddons(service.id),
-        ]);
+        const det = await getServiceDetails(service.id);
         if (!cancelled) {
           setDetails(det);
-          setAddons(add);
-          detailsCache.set(service.id, { details: det, addons: add });
+          detailsCache.set(service.id, det);
         }
       } catch {
         // non-fatal — render with whatever we have
@@ -120,547 +151,487 @@ export default function ServiceAboutScreen() {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [service.id]);
 
-  // Use fresh details.service when available — nav params may be stale if
-  // admin updated the price after this user's SDUI cache was populated.
-  const activeSvc = details?.service ?? service;
+  // Keep selected duration valid if the fetched service changes the options.
+  useEffect(() => {
+    if (!durations.includes(duration)) setDuration(durations[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [durations.join(',')]);
 
-  const priceCents = duration != null
-    ? Math.round((activeSvc.base_price_paise * duration) / activeSvc.min_duration_minutes)
-    : activeSvc.base_price_paise;
+  const priceCents = priceFor(activeSvc, duration);
 
-  const canAddMore = duration === null || duration < activeSvc.max_duration_minutes;
-  const canReduce = duration !== null && duration > activeSvc.min_duration_minutes;
+  // Sheet visibility drives the slide-down exit. close() animates the sheet
+  // down first, then pops the (transparent) route once it's off-screen. Guarded
+  // so a double tap / backdrop+button race can't dispatch goBack twice (which
+  // throws "GO_BACK was not handled" after the route is already gone).
+  const [sheetVisible, setSheetVisible] = useState(true);
+  const closingRef = useRef(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+
+  const close = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setSheetVisible(false); // slide the sheet back down
+    closeTimer.current = setTimeout(() => {
+      if (navigation.canGoBack()) navigation.goBack();
+    }, Motion.duration.base + 60);
+  }, [navigation]);
 
   const handleAddToCart = useCallback(async () => {
-    const svc = details?.service ?? service;
-    const d = duration ?? svc.min_duration_minutes;
-    const pc = Math.round((svc.base_price_paise * d) / svc.min_duration_minutes);
-    await addItem(service.id, d, service.name, pc);
-    setDuration(d);
+    const pc = priceFor(activeSvc, duration);
+    await addItem(service.id, duration, service.name, pc);
     setAddedToCart(true);
     posthog?.capture('service_added_to_cart', {
-      service_id:       service.id,
-      service_name:     service.name,
-      duration_minutes: d,
-      price_paise:      pc,
-      selected_addons:  selectedAddons.size,
+      service_id: service.id,
+      service_name: service.name,
+      duration_minutes: duration,
+      price_paise: pc,
     });
-  }, [addItem, service.id, service.name, duration, selectedAddons.size, posthog, details]);
+    close();
+  }, [addItem, activeSvc, duration, service.id, service.name, posthog, close]);
 
   const handleShare = useCallback(() => {
     Share.share({ message: `Check out ${service.name} on ZopMop!` });
   }, [service.name]);
 
   const icon = serviceIcon({ id: service.id, name: service.name });
+  const hook = details?.service.short_description ?? service.short_description;
+  const guidance = DURATION_GUIDANCE[service.id];
 
-  return (
-    <View style={s.root}>
-      <StatusBar barStyle="light-content" />
-      <Bloom />
+  // Floating controls + grab-area header (drag region for the sheet).
+  const header = (
+    <View style={s.headerRow}>
+      <PressFx onPress={close} style={s.floatBtn}>
+        <Feather name="x" size={18} color={c.text} />
+      </PressFx>
+      <PressFx onPress={handleShare} style={s.floatBtn}>
+        <Feather name="share-2" size={15} color={c.text} />
+      </PressFx>
+    </View>
+  );
 
-      <View style={[s.head, { paddingTop: insets.top + 10 }]}>
-        <View style={s.headRow}>
-          <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
-            <Feather name="chevron-left" size={18} color="#FFFFFF" />
-          </PressFx>
-          <Text style={s.headTitle} numberOfLines={1}>
-            {service.name}
-          </Text>
-          <PressFx onPress={handleShare} style={s.iconBtn}>
-            <Feather name="share-2" size={16} color="#FFFFFF" />
-          </PressFx>
+  // Sticky add bar — stays pinned across peek/expanded.
+  const footer = (
+    <View style={[s.bottomBar, { paddingBottom: 12 + insets.bottom }]}>
+      <View style={s.bottomPriceCol}>
+        <Text style={s.bottomPriceLabel}>Total</Text>
+        <View style={s.bottomPriceRow}>
+          <Text style={s.bottomPrice}>₹{(priceCents / 100).toFixed(0)}</Text>
+          {activeSvc.mrp_paise != null && (
+            <Text style={s.bottomMrp}>₹{(activeSvc.mrp_paise / 100).toFixed(0)}</Text>
+          )}
         </View>
       </View>
+      <PressFx
+        style={[s.addCartBtn, addedToCart && s.addCartBtnDone]}
+        onPress={addedToCart ? () => navigation.navigate('Cart') : handleAddToCart}
+      >
+        <Text style={s.addCartText}>{addedToCart ? 'View cart' : 'Add to cart'}</Text>
+        <Feather name={addedToCart ? 'arrow-right' : 'plus'} size={15} color="#0A0A0A" />
+      </PressFx>
+    </View>
+  );
 
+  return (
+    <BottomSheet
+      visible={sheetVisible}
+      onClose={close}
+      height={PEEK_H}
+      expandedHeight={EXPANDED_H}
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      header={header}
+      footer={footer}
+      surfaceColor={c.bg}
+    >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 130 + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: 92 + insets.bottom }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Overview hero */}
-        <View style={s.body}>
-          <GlassCard radius={22} hero style={s.overviewCard}>
-            <View style={s.overviewIconWrap}>
-              {icon ? (
-                <Image source={icon} style={s.overviewIconImg} resizeMode="contain" />
-              ) : (
-                <Text style={s.overviewEmoji}>{service.emoji ?? '🧹'}</Text>
-              )}
+        {/* Hero */}
+        <View style={s.hero}>
+          <View style={s.heroIconWrap}>
+            {icon ? (
+              <Image source={icon} style={s.heroIconImg} resizeMode="contain" />
+            ) : (
+              <Feather name="package" size={38} color={c.textSecondary} />
+            )}
+          </View>
+          <View style={s.heroInfo}>
+            <Text style={s.heroName}>{service.name}</Text>
+            {hook ? (
+              <Text style={s.heroHook} numberOfLines={2}>
+                {hook}
+              </Text>
+            ) : null}
+            <View style={s.ratingPill}>
+              <Text style={s.ratingStar}>★</Text>
+              <Text style={s.ratingText}>{service.rating}</Text>
+              <Text style={s.reviewText}>· {formatReviews(service.review_count)} reviews</Text>
             </View>
-            <View style={s.overviewInfo}>
-              <Text style={s.overviewName}>{service.name}</Text>
-              {(details?.service.short_description ?? service.short_description) ? (
-                <Text style={s.overviewDesc} numberOfLines={2}>
-                  {details?.service.short_description ?? service.short_description}
-                </Text>
-              ) : null}
-              <View style={s.ratingPill}>
-                <Text style={s.ratingStar}>★</Text>
-                <Text style={s.ratingText}>{service.rating}</Text>
-                <Text style={s.reviewText}>· {formatReviews(service.review_count)} reviews</Text>
-              </View>
-            </View>
-          </GlassCard>
+          </View>
         </View>
 
         {/* Duration */}
         <Text style={s.secH}>Duration</Text>
         <View style={s.body}>
-          <GlassCard radius={20} style={s.durationCard}>
-            <View>
-              <Text style={s.durationLabel}>{`${duration ?? activeSvc.min_duration_minutes} min`}</Text>
-              <Text style={s.durationSub}>{`₹${(priceCents / 100).toFixed(0)}`}</Text>
+          {fixedDuration ? (
+            <View style={s.fixedChip}>
+              <Text style={s.fixedChipText}>{duration} min</Text>
+              <Text style={s.fixedChipNote}>Fixed slot</Text>
             </View>
-            <View style={s.durationControls}>
-              <PressFx
-                style={[s.durationBtn, !canReduce && s.durationBtnDisabled]}
-                disabled={!canReduce}
-                onPress={() => {
-                  const prev = computePrevDuration(duration, activeSvc);
-                  setDuration(prev);
-                  setAddedToCart(false);
-                }}
-              >
-                <Feather
-                  name="minus"
-                  size={16}
-                  color={canReduce ? '#F5A300' : 'rgba(255,255,255,0.25)'}
-                />
-              </PressFx>
-              <Text style={s.durationValue}>{duration ?? activeSvc.min_duration_minutes}</Text>
-              <PressFx
-                style={[s.durationBtn, !canAddMore && s.durationBtnDisabled]}
-                disabled={!canAddMore}
-                onPress={() => {
-                  const next = computeNextDuration(duration, activeSvc);
-                  setDuration(next);
-                  setAddedToCart(false);
-                }}
-              >
-                <Feather
-                  name="plus"
-                  size={16}
-                  color={canAddMore ? '#F5A300' : 'rgba(255,255,255,0.25)'}
-                />
-              </PressFx>
+          ) : (
+            <View style={s.segRow}>
+              {durations.map((d) => {
+                const sel = d === duration;
+                return (
+                  <PressFx
+                    key={d}
+                    style={[s.segChip, sel && s.segChipSel]}
+                    onPress={() => {
+                      setDuration(d);
+                      setAddedToCart(false);
+                    }}
+                  >
+                    <Text style={[s.segChipText, sel && s.segChipTextSel]}>{d} min</Text>
+                  </PressFx>
+                );
+              })}
             </View>
-          </GlassCard>
+          )}
+          {guidance ? <Text style={s.guidance}>{guidance}</Text> : null}
         </View>
 
-        {loading ? (
-          <LoadingSkeleton variant="block" />
-        ) : (
+        {!expanded ? (
+          <View style={s.body}>
+            <PressFx style={s.viewFull} onPress={() => setExpanded(true)}>
+              <Text style={s.viewFullText}>View more details</Text>
+              <Feather name="chevron-down" size={16} color={c.amber} />
+            </PressFx>
+          </View>
+        ) : null}
+
+        {/* Expanded sections — gate on non-empty data */}
+        {expanded && details && details.includes.length > 0 && (
           <>
-            {details && details.includes.length > 0 && (
-              <>
-                <Text style={s.secH}>What's included</Text>
-                <View style={s.body}>
-                  <GlassCard radius={20} style={s.listCard}>
-                    {details.includes.map((inc, i) => (
-                      <View key={inc.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
-                        <View style={s.includeIcon}>
-                          <Feather name="check" size={12} color="#22C55E" />
-                        </View>
-                        <Text style={s.listText}>{inc.item}</Text>
-                      </View>
-                    ))}
-                  </GlassCard>
-                </View>
-              </>
-            )}
+            <Text style={s.secH}>What's included</Text>
+            <View style={s.body}>
+              <View style={s.listCard}>
+                {details.includes.map((inc, i) => (
+                  <View key={inc.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
+                    <View style={s.includeIcon}>
+                      <Feather name="check" size={12} color={successGlyph} />
+                    </View>
+                    <Text style={s.listText}>{inc.item}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </>
+        )}
 
-            {details && details.excludes.length > 0 && (
-              <>
-                <Text style={s.secH}>What's not included</Text>
-                <View style={s.body}>
-                  <GlassCard radius={20} style={s.listCard}>
-                    {details.excludes.map((exc, i) => (
-                      <View key={exc.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
-                        <View style={[s.includeIcon, s.excludeIcon]}>
-                          <Feather name="x" size={12} color="#EF4444" />
-                        </View>
-                        <Text style={s.listText}>{exc.item}</Text>
-                      </View>
-                    ))}
-                  </GlassCard>
-                </View>
-              </>
-            )}
+        {expanded && details && details.excludes.length > 0 && (
+          <>
+            <Text style={s.secH}>What's not included</Text>
+            <View style={s.body}>
+              <View style={s.listCard}>
+                {details.excludes.map((exc, i) => (
+                  <View key={exc.id} style={[s.listRow, i > 0 && s.listRowBorder]}>
+                    <View style={[s.includeIcon, s.excludeIcon]}>
+                      <Feather name="x" size={12} color={dangerGlyph} />
+                    </View>
+                    <Text style={s.listText}>{exc.item}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </>
+        )}
 
-            {details && details.steps.length > 0 && (
-              <>
-                <Text style={s.secH}>How it works</Text>
-                <View style={s.body}>
-                  <View style={s.stepsCol}>
-                    {details.steps.map((step, i) => (
-                      <View key={step.id} style={s.stepRow}>
-                        <View style={s.stepLeft}>
+        {expanded && details && details.steps.length > 0 && (
+          <>
+            <Text style={s.secH}>How it's done</Text>
+            <View style={s.body}>
+              <View style={s.stepsCol}>
+                {details.steps.map((step, i) => {
+                  const numeral = NUMERAL_PNG[step.icon ?? `step-${step.step_number}`];
+                  return (
+                    <View key={step.id} style={s.stepRow}>
+                      <View style={s.stepLeft}>
+                        {numeral ? (
+                          <Image source={numeral} style={s.stepNumImg} resizeMode="contain" />
+                        ) : (
                           <View style={s.stepNumCircle}>
                             <Text style={s.stepNum}>{step.step_number}</Text>
                           </View>
-                          {i < details.steps.length - 1 && <View style={s.stepLine} />}
-                        </View>
-                        <View style={s.stepBody}>
-                          <Text style={s.stepTitle}>{step.title}</Text>
-                          {step.description ? (
-                            <Text style={s.stepDesc}>{step.description}</Text>
-                          ) : null}
-                        </View>
+                        )}
+                        {i < details.steps.length - 1 && <View style={s.stepLine} />}
                       </View>
-                    ))}
-                  </View>
-                </View>
-              </>
-            )}
-
-            {addons.length > 0 && (
-              <>
-                <Text style={s.secH}>Add-on services</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={s.addonsRow}
-                >
-                  {addons.map((addon) => {
-                    const selected = selectedAddons.has(addon.id);
-                    const aIcon = serviceIcon({ id: addon.id, name: addon.name });
-                    return (
-                      <PressFx
-                        key={addon.id}
-                        style={[s.addonCard, selected && s.addonCardSelected]}
-                        onPress={() => {
-                          setSelectedAddons((prev) => {
-                            const next = new Set(prev);
-                            if (selected) next.delete(addon.id);
-                            else next.add(addon.id);
-                            return next;
-                          });
-                        }}
-                      >
-                        <View style={s.addonIconBox}>
-                          {aIcon ? (
-                            <Image source={aIcon} style={s.addonIconImg} resizeMode="contain" />
-                          ) : (
-                            <Text style={s.addonEmoji}>{addon.emoji ?? '✨'}</Text>
-                          )}
-                        </View>
-                        <Text style={s.addonName} numberOfLines={2}>{addon.name}</Text>
-                        <Text style={s.addonPrice}>
-                          ₹{(addon.base_price_paise / 100).toFixed(0)}
-                        </Text>
-                        <View style={[s.addonToggle, selected && s.addonToggleSelected]}>
-                          <Feather
-                            name={selected ? 'check' : 'plus'}
-                            size={11}
-                            color={selected ? '#0A0A0A' : '#F5A300'}
-                          />
-                          <Text
-                            style={[
-                              s.addonToggleText,
-                              selected && s.addonToggleTextSelected,
-                            ]}
-                          >
-                            {selected ? 'Added' : 'Add'}
-                          </Text>
-                        </View>
-                      </PressFx>
-                    );
-                  })}
-                </ScrollView>
-              </>
-            )}
+                      <View style={s.stepBody}>
+                        <Text style={s.stepTitle}>{step.title}</Text>
+                        {step.description ? (
+                          <Text style={s.stepDesc}>{step.description}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
           </>
         )}
-      </ScrollView>
 
-      {/* Sticky bottom CTA */}
-      <View style={[s.bottomBar, { paddingBottom: 12 + insets.bottom }]}>
-        <View style={s.bottomPriceCol}>
-          <Text style={s.bottomPriceLabel}>Total</Text>
-          <View style={s.bottomPriceRow}>
-            <Text style={s.bottomPrice}>₹{(priceCents / 100).toFixed(0)}</Text>
-            {service.mrp_paise != null && (
-              <Text style={s.bottomMrp}>₹{(service.mrp_paise / 100).toFixed(0)}</Text>
-            )}
-          </View>
-        </View>
-        <PressFx
-          style={[s.addCartBtn, addedToCart && s.addCartBtnDone]}
-          onPress={addedToCart ? () => navigation.navigate('Cart') : handleAddToCart}
-        >
-          <Text style={s.addCartText}>
-            {addedToCart ? 'View cart' : 'Add to cart'}
-          </Text>
-          <Feather
-            name={addedToCart ? 'arrow-right' : 'plus'}
-            size={15}
-            color="#0A0A0A"
-          />
-        </PressFx>
-      </View>
-    </View>
+        {expanded && details && (details.faqs?.length ?? 0) > 0 && (
+          <>
+            <Text style={s.secH}>Frequently asked</Text>
+            <View style={s.body}>
+              <View style={s.listCard}>
+                {details.faqs.map((faq, i) => (
+                  <View key={`${faq.question}-${i}`} style={[s.faqRow, i > 0 && s.listRowBorder]}>
+                    <Text style={s.faqQ}>{faq.question}</Text>
+                    <Text style={s.faqA}>{faq.answer}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </>
+        )}
+
+        {loading && !details ? (
+          <Text style={s.loadingText}>Loading details…</Text>
+        ) : null}
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  const successFill = isDark ? 'rgba(34,197,94,0.14)' : c.successSoft;
+  const dangerFill = isDark ? 'rgba(239,68,68,0.14)' : c.dangerSoft;
+  const barBg = isDark ? 'rgba(10,10,10,0.96)' : 'rgba(250,247,242,0.96)';
 
-  // Sticky head
-  head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
-  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
-  },
-  headTitle: {
-    flex: 1,
-    ...fontExtra,
-    fontSize: 18, color: '#FFFFFF',
-    letterSpacing: -0.4,
-    textAlign: 'center',
-  },
+  return StyleSheet.create({
+    headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: H_PAD,
+      paddingTop: 2,
+      paddingBottom: 8,
+    },
+    floatBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.glassHi,
+      borderWidth: 0.5,
+      borderColor: c.glassBorderHi,
+    },
 
-  body: { paddingHorizontal: H_PAD },
+    body: { paddingHorizontal: H_PAD },
+    secH: {
+      ...fontBold,
+      fontSize: 11,
+      color: c.textMuted,
+      letterSpacing: 1.3,
+      textTransform: 'uppercase',
+      paddingHorizontal: H_PAD + 4,
+      paddingTop: 20,
+      paddingBottom: 10,
+    },
 
-  secH: {
-    ...fontBold,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
-    letterSpacing: 1.3,
-    textTransform: 'uppercase',
-    paddingHorizontal: H_PAD + 4,
-    paddingTop: 22,
-    paddingBottom: 10,
-  },
+    // Hero
+    hero: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 16,
+      paddingHorizontal: H_PAD,
+      paddingTop: 4,
+    },
+    heroIconWrap: {
+      width: 76,
+      height: 76,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(245,163,0,0.1)',
+      borderWidth: 0.5,
+      borderColor: 'rgba(245,163,0,0.2)',
+    },
+    heroIconImg: { width: 56, height: 56 },
+    heroInfo: { flex: 1, gap: 4 },
+    heroName: { ...fontExtra, fontSize: 19, color: c.text, letterSpacing: -0.3 },
+    heroHook: { ...fontMed, fontSize: 12.5, color: c.textSecondary, lineHeight: 18 },
+    ratingPill: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+    ratingStar: { ...fontBold, color: c.amber, fontSize: 11.5 },
+    ratingText: { ...fontBold, fontSize: 11.5, color: c.text },
+    reviewText: { ...fontMed, fontSize: 11, color: c.textMuted, marginLeft: 2 },
 
-  // Overview
-  overviewCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    padding: 18,
-    marginTop: 6,
-  },
-  overviewIconWrap: {
-    width: 72, height: 72, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.1)',
-    borderWidth: 0.5, borderColor: 'rgba(245,163,0,0.2)',
-  },
-  overviewIconImg: { width: 52, height: 52 },
-  overviewEmoji: { fontSize: 36 },
-  overviewInfo: { flex: 1, gap: 4 },
-  overviewName: {
-    ...fontExtra,
-    fontSize: 18, color: '#FFFFFF',
-    letterSpacing: -0.3,
-  },
-  overviewDesc: {
-    ...fontMed,
-    fontSize: 12.5, color: 'rgba(255,255,255,0.6)',
-    lineHeight: 18,
-  },
-  ratingPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    marginTop: 4,
-  },
-  ratingStar: { ...fontBold, color: '#F5A300', fontSize: 11.5 },
-  ratingText: {
-    ...fontBold,
-    fontSize: 11.5, color: '#FFFFFF',
-  },
-  reviewText: {
-    ...fontMed,
-    fontSize: 11, color: 'rgba(255,255,255,0.45)',
-    marginLeft: 2,
-  },
+    // Duration segmented
+    segRow: { flexDirection: 'row', gap: 10 },
+    segChip: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 14,
+      alignItems: 'center',
+      backgroundColor: c.glass,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+    },
+    segChipSel: {
+      backgroundColor: c.amberSoft,
+      borderColor: 'rgba(245,163,0,0.5)',
+    },
+    segChipText: { ...fontBold, fontSize: 14, color: c.textSecondary, letterSpacing: -0.2 },
+    segChipTextSel: { color: c.amber },
+    fixedChip: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 10,
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      borderRadius: 14,
+      backgroundColor: c.amberSoft,
+      borderWidth: 1,
+      borderColor: 'rgba(245,163,0,0.5)',
+    },
+    fixedChipText: { ...fontExtra, fontSize: 16, color: c.amber, letterSpacing: -0.3 },
+    fixedChipNote: { ...fontMed, fontSize: 11.5, color: c.textMuted },
+    guidance: { ...fontMed, fontSize: 12, color: c.textMuted, lineHeight: 17, marginTop: 10 },
 
-  // Duration
-  durationCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-  },
-  durationLabel: {
-    ...fontBold,
-    fontSize: 16, color: '#FFFFFF',
-    letterSpacing: -0.2,
-  },
-  durationSub: {
-    ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
-    marginTop: 2,
-  },
-  durationControls: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  durationBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(245,163,0,0.12)',
-    borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  durationBtnDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  durationValue: {
-    ...fontExtra,
-    fontSize: 18, color: '#FFFFFF',
-    minWidth: 32, textAlign: 'center',
-    letterSpacing: -0.3,
-  },
+    viewFull: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: 18,
+      paddingVertical: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(245,163,0,0.35)',
+      backgroundColor: c.amberSoft,
+    },
+    viewFullText: { ...fontBold, fontSize: 13, color: c.amber, letterSpacing: 0.1 },
 
-  // Includes / Excludes list card
-  listCard: { padding: 6 },
-  listRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, paddingVertical: 10, gap: 12,
-  },
-  listRowBorder: {
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-  },
-  listText: {
-    ...fontMed,
-    fontSize: 13, color: 'rgba(255,255,255,0.78)',
-    flex: 1, lineHeight: 18,
-  },
-  includeIcon: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: 'rgba(34,197,94,0.14)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  excludeIcon: { backgroundColor: 'rgba(239,68,68,0.14)' },
+    // Lists
+    listCard: {
+      padding: 6,
+      borderRadius: 18,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : c.white,
+      borderWidth: isDark ? 0 : 1,
+      borderColor: c.glassBorder,
+    },
+    listRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      gap: 12,
+    },
+    listRowBorder: { borderTopWidth: 0.5, borderTopColor: c.divider },
+    listText: { ...fontMed, fontSize: 13, color: c.textSecondary, flex: 1, lineHeight: 18 },
+    includeIcon: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: successFill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    excludeIcon: { backgroundColor: dangerFill },
 
-  // Steps
-  stepsCol: { gap: 0 },
-  stepRow: { flexDirection: 'row', gap: 14 },
-  stepLeft: { alignItems: 'center', width: 28 },
-  stepNumCircle: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: 'rgba(245,163,0,0.18)',
-    borderWidth: 1, borderColor: 'rgba(245,163,0,0.45)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  stepNum: {
-    ...fontExtra,
-    fontSize: 12, color: '#F5A300',
-  },
-  stepLine: {
-    width: 2, flex: 1, minHeight: 18,
-    backgroundColor: 'rgba(245,163,0,0.18)',
-    marginVertical: 4,
-  },
-  stepBody: { flex: 1, paddingBottom: 20 },
-  stepTitle: {
-    ...fontSemi,
-    fontSize: 13.5, color: '#FFFFFF',
-    marginBottom: 2, letterSpacing: -0.1,
-  },
-  stepDesc: {
-    ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.55)',
-    lineHeight: 17,
-  },
+    // Steps
+    stepsCol: { gap: 0 },
+    stepRow: { flexDirection: 'row', gap: 14 },
+    stepLeft: { alignItems: 'center', width: 32 },
+    stepNumImg: { width: 32, height: 32 },
+    stepNumCircle: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(245,163,0,0.18)',
+      borderWidth: 1,
+      borderColor: 'rgba(245,163,0,0.45)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepNum: { ...fontExtra, fontSize: 12, color: c.amber },
+    stepLine: {
+      width: 2,
+      flex: 1,
+      minHeight: 16,
+      backgroundColor: 'rgba(245,163,0,0.18)',
+      marginVertical: 4,
+    },
+    stepBody: { flex: 1, paddingBottom: 18 },
+    stepTitle: { ...fontSemi, fontSize: 13.5, color: c.text, marginBottom: 2, letterSpacing: -0.1 },
+    stepDesc: { ...fontMed, fontSize: 12, color: c.textSecondary, lineHeight: 17 },
 
-  // Addons
-  addonsRow: { paddingLeft: H_PAD, paddingRight: H_PAD - 10, gap: 10 },
-  addonCard: {
-    width: 130,
-    borderRadius: 18,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
-    backgroundColor: 'rgba(255,255,255,0.045)',
-    alignItems: 'center',
-    gap: 6,
-  },
-  addonCardSelected: {
-    borderColor: 'rgba(245,163,0,0.5)',
-    backgroundColor: 'rgba(245,163,0,0.08)',
-  },
-  addonIconBox: {
-    width: 52, height: 52, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.1)',
-    borderWidth: 0.5, borderColor: 'rgba(245,163,0,0.18)',
-  },
-  addonIconImg: { width: 38, height: 38 },
-  addonEmoji: { fontSize: 24 },
-  addonName: {
-    ...fontSemi,
-    fontSize: 11.5, color: '#FFFFFF',
-    textAlign: 'center', lineHeight: 15,
-  },
-  addonPrice: {
-    ...fontExtra,
-    fontSize: 12, color: '#F5A300',
-  },
-  addonToggle: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 99,
-    borderWidth: 0.5, borderColor: 'rgba(245,163,0,0.32)',
-    backgroundColor: 'rgba(245,163,0,0.12)',
-  },
-  addonToggleSelected: {
-    backgroundColor: '#F5A300',
-    borderColor: '#F5A300',
-  },
-  addonToggleText: {
-    ...fontBold,
-    fontSize: 10, color: '#F5A300', letterSpacing: 0.3,
-  },
-  addonToggleTextSelected: { color: '#0A0A0A' },
+    // FAQ
+    faqRow: { paddingHorizontal: 10, paddingVertical: 12, gap: 5 },
+    faqQ: { ...fontSemi, fontSize: 13, color: c.text, letterSpacing: -0.1 },
+    faqA: { ...fontMed, fontSize: 12, color: c.textSecondary, lineHeight: 17 },
 
-  // Bottom bar
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: H_PAD,
-    paddingTop: 12,
-    backgroundColor: 'rgba(10,10,10,0.92)',
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255,255,255,0.08)',
-  },
-  bottomPriceCol: { flex: 1 },
-  bottomPriceLabel: {
-    ...fontMed,
-    fontSize: 11, color: 'rgba(255,255,255,0.45)',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  bottomPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
-  bottomPrice: {
-    ...fontExtra,
-    fontSize: 22, color: '#FFFFFF', letterSpacing: -0.5,
-  },
-  bottomMrp: {
-    ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.4)',
-    textDecorationLine: 'line-through',
-  },
-  addCartBtn: {
-    flex: 1.4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#F5A300',
-    borderRadius: 16,
-    paddingVertical: 14,
-  },
-  addCartBtnDone: { backgroundColor: '#FFC042' },
-  addCartText: {
-    ...fontBold,
-    fontSize: 14, color: '#0A0A0A', letterSpacing: 0.1,
-  },
-});
+    loadingText: {
+      ...fontMed,
+      fontSize: 12,
+      color: c.textMuted,
+      textAlign: 'center',
+      paddingVertical: 24,
+    },
+
+    // Sticky add bar
+    bottomBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: H_PAD,
+      paddingTop: 12,
+      backgroundColor: barBg,
+      borderTopWidth: 0.5,
+      borderTopColor: c.glassBorder,
+    },
+    bottomPriceCol: { flex: 1 },
+    bottomPriceLabel: {
+      ...fontMed,
+      fontSize: 11,
+      color: c.textMuted,
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+    },
+    bottomPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+    bottomPrice: { ...fontExtra, fontSize: 22, color: c.text, letterSpacing: -0.5 },
+    bottomMrp: {
+      ...fontMed,
+      fontSize: 12,
+      color: c.textMuted,
+      textDecorationLine: 'line-through',
+    },
+    addCartBtn: {
+      flex: 1.4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: c.amber,
+      borderRadius: 16,
+      paddingVertical: 14,
+    },
+    addCartBtnDone: { backgroundColor: c.amberHi },
+    addCartText: { ...fontBold, fontSize: 14, color: '#0A0A0A', letterSpacing: 0.1 },
+  });
+}

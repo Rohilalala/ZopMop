@@ -18,6 +18,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontMed: TextStyle  = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -65,20 +66,27 @@ function nightMessage(d = new Date()): string {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
-const SHELL = {
+const SHELL_BASE = {
   marginHorizontal: 20,
   marginTop: 14,
   paddingHorizontal: 14,
   paddingVertical: 10,
   borderRadius: 12,
-  backgroundColor: 'rgba(255,255,255,0.05)',
   borderWidth: 0.5,
-  borderColor: 'rgba(255,255,255,0.08)',
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'center',
   gap: 12,
 } as const;
+
+function shellStyle(dark: boolean) {
+  return {
+    ...SHELL_BASE,
+    backgroundColor: dark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.6)',
+    borderColor: dark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)',
+    borderWidth: dark ? 0.5 : 1,
+  } as const;
+}
 
 function PulseDot({ color }: { color: string }) {
   const op = useSharedValue(1);
@@ -110,11 +118,20 @@ function PulseDot({ color }: { color: string }) {
 }
 
 export function LivePill({ stats, loading }: Props) {
+  const { isDark } = useTheme();
+  const shell = shellStyle(isDark);
+
+  const mutedTextColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.45)';
+  const secondaryTextColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.6)';
+  const statsTextColor = isDark ? '#E3E3E3' : '#3A3A3C';
+  const dotMutedColor = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.25)';
+  const separatorColor = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(13,13,15,0.2)';
+
   if (loading || !stats) {
     return (
-      <View style={SHELL}>
+      <View style={shell}>
         <LoadingBars size="small" color="#F5A300" />
-        <Text style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.55)' }]}>
+        <Text style={[fontMed, { fontSize: 12, color: mutedTextColor }]}>
           Checking nearby pros…
         </Text>
       </View>
@@ -124,17 +141,17 @@ export function LivePill({ stats, loading }: Props) {
   // Night mode wins regardless of supply count — instant booking is closed.
   if (isNightTime()) {
     return (
-      <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
+      <Animated.View entering={FadeIn.duration(420)} style={shell}>
         <View
           style={{
             width: 7,
             height: 7,
             borderRadius: 4,
-            backgroundColor: 'rgba(255,255,255,0.4)',
+            backgroundColor: dotMutedColor,
           }}
         />
         <Text
-          style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.7)' }]}
+          style={[fontMed, { fontSize: 12, color: secondaryTextColor }]}
           numberOfLines={1}
         >
           {nightMessage()}
@@ -146,17 +163,17 @@ export function LivePill({ stats, loading }: Props) {
   // Daytime, no supply.
   if (stats.nearby_count === 0) {
     return (
-      <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
+      <Animated.View entering={FadeIn.duration(420)} style={shell}>
         <View
           style={{
             width: 7,
             height: 7,
             borderRadius: 4,
-            backgroundColor: 'rgba(255,255,255,0.4)',
+            backgroundColor: dotMutedColor,
           }}
         />
         <Text
-          style={[fontMed, { fontSize: 12, color: 'rgba(255,255,255,0.7)' }]}
+          style={[fontMed, { fontSize: 12, color: secondaryTextColor }]}
           numberOfLines={1}
         >
           All our pros are busy right now
@@ -167,22 +184,22 @@ export function LivePill({ stats, loading }: Props) {
 
   // Daytime + supply available.
   return (
-    <Animated.View entering={FadeIn.duration(420)} style={SHELL}>
+    <Animated.View entering={FadeIn.duration(420)} style={shell}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <PulseDot color="#22C55E" />
-        <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+        <Text style={[fontMed, { fontSize: 12, color: statsTextColor }]}>
           <Text style={fontBold}>{stats.nearby_count} pros</Text> nearby
         </Text>
       </View>
-      <Text style={{ color: 'rgba(255,255,255,0.3)' }}>·</Text>
+      <Text style={{ color: separatorColor }}>·</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
         <Text style={{ color: '#F5A300', fontSize: 12 }}>★</Text>
-        <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+        <Text style={[fontMed, { fontSize: 12, color: statsTextColor }]}>
           <Text style={fontBold}>{stats.avg_rating.toFixed(1)}</Text> avg
         </Text>
       </View>
-      <Text style={{ color: 'rgba(255,255,255,0.3)' }}>·</Text>
-      <Text style={[fontMed, { fontSize: 12, color: '#E3E3E3' }]}>
+      <Text style={{ color: separatorColor }}>·</Text>
+      <Text style={[fontMed, { fontSize: 12, color: statsTextColor }]}>
         ~<Text style={fontBold}>{Math.max(1, Math.round(stats.avg_eta_min))} min</Text> arrival
       </Text>
     </Animated.View>

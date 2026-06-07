@@ -8,7 +8,6 @@ type Service struct {
 	Name                string    `json:"name"`
 	Description         *string   `json:"description,omitempty"`
 	ShortDescription    *string   `json:"short_description,omitempty"`
-	Emoji               *string   `json:"emoji"`
 	BgColor             string    `json:"bg_color"`
 	BasePriceCents      int       `json:"base_price_paise"`
 	MrpCents            *int      `json:"mrp_paise,omitempty"`
@@ -46,11 +45,20 @@ type ServiceStep struct {
 	Icon        *string `json:"icon,omitempty"`
 }
 
+// ServiceFaq is one FAQ shown on the service detail sheet. The list returned in
+// ServiceDetails is the resolved union of global faq_items and per-service
+// service_faqs, with per-service entries overriding any global FAQ that shares
+// the same question (e.g. Pre and Post Party Clean overrides the price FAQ).
+type ServiceFaq struct {
+	Question     string `json:"question"`
+	Answer       string `json:"answer"`
+	DisplayOrder int    `json:"display_order"`
+}
+
 // ServiceAddon is a related service that can be added on.
 type ServiceAddon struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
-	Emoji         *string `json:"emoji,omitempty"`
 	BgColor       string  `json:"bg_color"`
 	BasePriceCents int    `json:"base_price_paise"`
 	DisplayOrder  int     `json:"display_order"`
@@ -62,6 +70,7 @@ type ServiceDetails struct {
 	Includes []ServiceInclude `json:"includes"`
 	Excludes []ServiceExclude `json:"excludes"`
 	Steps    []ServiceStep    `json:"steps"`
+	Faqs     []ServiceFaq     `json:"faqs"`
 }
 
 // AdminUpdateServiceRequest is the payload for PATCH /admin/services/:id.
@@ -71,7 +80,6 @@ type AdminUpdateServiceRequest struct {
 	BasePriceCents *int    `json:"base_price_paise,omitempty" validate:"omitempty,gt=0"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 	DisplayOrder   *int    `json:"display_order,omitempty"`
-	Emoji          *string `json:"emoji,omitempty"`
 	BgColor        string  `json:"bg_color,omitempty"`
 	Category       string  `json:"category,omitempty"`
 }
@@ -79,7 +87,6 @@ type AdminUpdateServiceRequest struct {
 // AdminCreateServiceRequest is the payload for POST /admin/services.
 type AdminCreateServiceRequest struct {
 	Name                string `json:"name" validate:"required,min=1,max=200"`
-	Emoji               string `json:"emoji,omitempty"`
 	BgColor             string `json:"bg_color,omitempty"`
 	BasePriceCents      int    `json:"base_price_paise" validate:"required,gt=0"`
 	DisplayOrder        int    `json:"display_order"`

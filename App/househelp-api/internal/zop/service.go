@@ -609,8 +609,7 @@ type SafeCart struct {
 	Items []SafeCartItem `json:"items"`
 }
 
-// SafeCartItem mirrors cart.CartItem but drops cart_id (internal) and
-// service emoji.
+// SafeCartItem mirrors cart.CartItem but drops cart_id (internal).
 type SafeCartItem struct {
 	ItemID          string `json:"item_id"`
 	ServiceID       string `json:"service_id"`

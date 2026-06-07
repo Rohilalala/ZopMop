@@ -17,9 +17,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import polyline from '@mapbox/polyline';
-import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { getBookingTracking, type TrackingResponse } from '../../api/matching';
 import { apiFetch } from '../../api/client';
@@ -54,8 +54,12 @@ export default function ActiveBookingScreen({ route }: Props) {
     route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+
+  // Success accent: dark mint kept exact; light uses readable deep green.
+  const success = isDark ? '#34D399' : c.green;
 
   const mapRef = useRef<MapView>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -279,7 +283,7 @@ export default function ActiveBookingScreen({ route }: Props) {
         {routeCoords.length > 1 && (
           <Polyline
             coordinates={routeCoords}
-            strokeColor={c.primary}
+            strokeColor={c.amber}
             strokeWidth={4}
             lineDashPattern={undefined}
           />
@@ -289,7 +293,7 @@ export default function ActiveBookingScreen({ route }: Props) {
       {/* Loading overlay */}
       {loading && (
         <View style={s.loadingOverlay}>
-          <LoadingBars size="large" color={c.primary} />
+          <LoadingBars size="large" color={c.amber} />
         </View>
       )}
 
@@ -299,8 +303,8 @@ export default function ActiveBookingScreen({ route }: Props) {
           <Ionicons name="chevron-back" size={22} color={c.text} />
         </TouchableOpacity>
         <View style={[s.statusBadge, arrived ? s.badgeArrived : s.badgeActive]}>
-          <View style={[s.statusDot, { backgroundColor: arrived ? c.success : c.primary }]} />
-          <Text style={[s.statusText, { color: arrived ? c.success : c.primary }]}>
+          <View style={[s.statusDot, { backgroundColor: arrived ? success : c.amber }]} />
+          <Text style={[s.statusText, { color: arrived ? success : c.amber }]}>
             {bookingStatus === 'completed' ? 'Service Complete' : arrived ? 'Pro has arrived!' : 'Pro on the way'}
           </Text>
         </View>
@@ -334,7 +338,7 @@ export default function ActiveBookingScreen({ route }: Props) {
           <View style={s.proInfo}>
             <Text style={s.proName}>{helperName}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <SvgIcon name="star-filled" size={13} color={c.primary} />
+              <SvgIcon name="star-filled" size={13} color={c.amber} />
               <Text style={s.proRating}>{helperRating?.toFixed(1)}</Text>
             </View>
           </View>
@@ -376,32 +380,37 @@ export default function ActiveBookingScreen({ route }: Props) {
 }
 
 const HelperMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <Marker coordinate={coord} anchor={{ x: 0.5, y: 0.5 }}>
       <View style={s.helperMarker}>
-        <SvgIcon name="walker" size={22} color={c.primary} />
+        <SvgIcon name="walker" size={22} color={c.amber} />
       </View>
     </Marker>
   );
 });
 
 const CustomerMarker = memo(({ coord }: { coord: { latitude: number; longitude: number } }) => {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  // Destination pin: dark coral kept exact; light uses readable deep red.
+  const danger = isDark ? '#F87171' : c.danger;
   return (
     <Marker coordinate={coord} anchor={{ x: 0.5, y: 1.0 }}>
       <View style={s.customerMarker}>
-        <SvgIcon name="home-pin" size={22} color={c.danger} />
+        <SvgIcon name="home-pin" size={22} color={danger} />
       </View>
     </Marker>
   );
 });
 
 function Step({ label, done, active }: { label: string; done?: boolean; active?: boolean }) {
-  const c = useColors();
-  const s = useMemo(() => createStyles(c), [c]);
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <View style={s.stepItem}>
       <View style={[s.stepDot, done && s.stepDotDone, active && !done && s.stepDotActive]} />
@@ -410,9 +419,24 @@ function Step({ label, done, active }: { label: string; done?: boolean; active?:
   );
 }
 
-function createStyles(c: typeof lightColors) {
+// THEME NOTE: migrated useColors() (theme/colors Slate palette) → useC()
+// (screen.ts). Dark look intentionally shifts from Slate (#0F172A / indigo
+// #818CF8) to #0A0A0A + amber #F5A300, matching the rest of the migrated app.
+// Indigo primary/accent tokens collapse onto amber; raised surfaces (badges,
+// sheet, markers) fork dark #141416 vs light c.white (with a subtle border +
+// soft shadow so cards read on the cream bg). danger/success keep their exact
+// dark literals in dark, readable deep tokens in light.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised surface over the map (#141416 in dark) — no useC equivalent; white
+  // card in light. Light surfaces get a hairline border + soft shadow.
+  const surface = isDark ? '#141416' : c.white;
+  const lightCardBorder = isDark ? undefined : c.glassBorder;
+  // Status accents: dark literals kept exact; light uses readable deep tokens.
+  const danger = isDark ? '#F87171' : c.danger;
+  const success = isDark ? '#34D399' : c.green;
+
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: c.background },
+    container: { flex: 1, backgroundColor: c.bg },
 
     loadingOverlay: {
       ...StyleSheet.absoluteFillObject,
@@ -436,7 +460,9 @@ function createStyles(c: typeof lightColors) {
       width: 36,
       height: 36,
       borderRadius: 18,
-      backgroundColor: c.white,
+      backgroundColor: surface,
+      borderWidth: lightCardBorder ? 1 : 0,
+      borderColor: lightCardBorder,
       alignItems: 'center',
       justifyContent: 'center',
       ...Shadow.sm,
@@ -452,26 +478,26 @@ function createStyles(c: typeof lightColors) {
       borderWidth: 1,
       ...Shadow.sm,
     },
-    badgeActive: { borderColor: `${c.primary}44`, backgroundColor: c.white },
-    badgeArrived: { borderColor: `${c.success}44`, backgroundColor: c.white },
+    badgeActive: { borderColor: `${c.amber}44`, backgroundColor: surface },
+    badgeArrived: { borderColor: `${success}44`, backgroundColor: surface },
     statusDot: { width: 8, height: 8, borderRadius: Radius.full },
     statusText: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm },
 
     // Markers
     helperMarker: {
-      backgroundColor: c.white,
+      backgroundColor: surface,
       borderRadius: 20,
       padding: 6,
       borderWidth: 2,
-      borderColor: c.accent,
+      borderColor: c.amber,
       ...Shadow.sm,
     },
     customerMarker: {
-      backgroundColor: c.white,
+      backgroundColor: surface,
       borderRadius: 20,
       padding: 6,
       borderWidth: 2,
-      borderColor: c.primary,
+      borderColor: danger,
       ...Shadow.sm,
     },
     // Bottom sheet
@@ -480,7 +506,7 @@ function createStyles(c: typeof lightColors) {
       bottom: 0,
       left: 0,
       right: 0,
-      backgroundColor: c.white,
+      backgroundColor: surface,
       borderTopLeftRadius: Radius['2xl'],
       borderTopRightRadius: Radius['2xl'],
       padding: 24,
@@ -506,17 +532,17 @@ function createStyles(c: typeof lightColors) {
       color: c.textMuted,
     },
     etaBadge: {
-      backgroundColor: c.primaryBg,
+      backgroundColor: c.amberSoft,
       borderRadius: Radius.full,
       paddingHorizontal: 12,
       paddingVertical: 6,
       borderWidth: 1,
-      borderColor: `${c.primary}33`,
+      borderColor: `${c.amber}33`,
     },
     etaBadgeText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.sm,
-      color: c.primary,
+      color: c.amber,
     },
 
     proRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
@@ -524,13 +550,13 @@ function createStyles(c: typeof lightColors) {
       width: 48,
       height: 48,
       borderRadius: Radius.full,
-      backgroundColor: c.primaryBg,
+      backgroundColor: c.amberSoft,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 2,
-      borderColor: `${c.primary}22`,
+      borderColor: `${c.amber}22`,
     },
-    proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: c.primary },
+    proAvatarText: { fontFamily: FontFamily.extrabold, fontSize: FontSize.lg, color: c.amber },
     proInfo: { flex: 1 },
     proName: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, marginBottom: 2 },
     proRating: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
@@ -545,20 +571,20 @@ function createStyles(c: typeof lightColors) {
       width: 12,
       height: 12,
       borderRadius: Radius.full,
-      backgroundColor: c.border,
+      backgroundColor: c.glassBorder,
       borderWidth: 1.5,
-      borderColor: c.border,
+      borderColor: c.glassBorder,
     },
-    stepDotDone: { backgroundColor: c.success, borderColor: c.success },
-    stepDotActive: { backgroundColor: c.primary, borderColor: c.primary },
+    stepDotDone: { backgroundColor: success, borderColor: success },
+    stepDotActive: { backgroundColor: c.amber, borderColor: c.amber },
     stepLabel: {
       fontFamily: FontFamily.regular,
       fontSize: 10,
       color: c.textMuted,
     },
     stepLabelActive: { color: c.text, fontFamily: FontFamily.semibold },
-    stepLine: { flex: 1, height: 2, backgroundColor: c.border, marginBottom: 14 },
-    stepLineActive: { backgroundColor: c.primary },
+    stepLine: { flex: 1, height: 2, backgroundColor: c.glassBorder, marginBottom: 14 },
+    stepLineActive: { backgroundColor: c.amber },
 
     cancelBtn: {
       alignSelf: 'center',
@@ -566,12 +592,12 @@ function createStyles(c: typeof lightColors) {
       paddingHorizontal: 24,
       borderRadius: Radius.xl,
       borderWidth: 1,
-      borderColor: c.danger,
+      borderColor: danger,
     },
     cancelBtnText: {
       fontFamily: FontFamily.medium,
       fontSize: FontSize.sm,
-      color: c.danger,
+      color: danger,
     },
   });
 }

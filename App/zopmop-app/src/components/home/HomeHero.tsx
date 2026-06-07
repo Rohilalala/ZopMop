@@ -20,6 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { GlassCard } from './GlassCard';
 import { ZopFlyer } from './ZopFlyer';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
@@ -76,6 +77,7 @@ export function HomeHero({
   winkProgress,
   showFace = true,
 }: Props) {
+  const { isDark, colors: c } = useTheme();
   const kicker = useMemo(() => greetingFor(name), [name]);
   const headline = useMemo(() => headlineFor(), []);
 
@@ -147,7 +149,7 @@ export function HomeHero({
             fontBold,
             {
               fontSize: 11,
-              color: '#F5A300',
+              color: c.accentOnSurface,
               letterSpacing: 1.2,
               textTransform: 'uppercase',
             },
@@ -162,7 +164,7 @@ export function HomeHero({
             {
               fontSize: 26,
               lineHeight: 30,
-              color: '#FFFFFF',
+              color: isDark ? '#FFFFFF' : c.text,
               letterSpacing: -0.6,
               marginTop: 6,
               maxWidth: 240,
