@@ -70,7 +70,14 @@ export interface HeroCarouselData  { greeting_name: string; slides: PromoSlide[]
 export interface LivePillData      { nearby_count: number; avg_eta_min: number; avg_rating: number }
 export interface UsualsRowData     { services: ApiService[] }
 export interface ServiceGridData   { title: string; services: ApiService[]; has_more?: boolean; cursor?: string }
-export type FooterData             = Record<string, never>;
+export interface FooterScheduleCard { title: string; subtitle: string; action: SduiAction }
+export interface FooterTrustColumn  { value: string; label: string }
+export interface FooterSignoff      { lines: string[]; brand: string; badges: string[]; tagline: string }
+export interface FooterData {
+  schedule_card?: FooterScheduleCard | null;
+  trust?:         { columns: FooterTrustColumn[] } | null;
+  signoff:        FooterSignoff;
+}
 
 // ── Rollout control ──────────────────────────────────────────────────────────
 
