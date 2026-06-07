@@ -2,7 +2,9 @@
 // blocks HomeScreen renders itself (pinned header / list header / overlay).
 import type { SduiSection } from '../../sdui/types';
 
-const EXTRACTED = new Set(['hero_carousel', 'greeting_hero', 'header_promo', 'upcoming_booking']);
+// live_pill is extracted so it can ride inside the hero pager's first page
+// (bundled with the hero card — they swipe in/out together).
+const EXTRACTED = new Set(['hero_carousel', 'greeting_hero', 'header_promo', 'upcoming_booking', 'live_pill']);
 
 export interface HomePartition {
   feed: SduiSection[];
@@ -10,6 +12,7 @@ export interface HomePartition {
   greetingHero: Extract<SduiSection, { type: 'greeting_hero' }> | null;
   headerPromo: Extract<SduiSection, { type: 'header_promo' }> | null;
   upcomingBooking: Extract<SduiSection, { type: 'upcoming_booking' }> | null;
+  livePill: Extract<SduiSection, { type: 'live_pill' }> | null;
 }
 
 export function partitionHomeSections(sections: SduiSection[]): HomePartition {
@@ -21,5 +24,6 @@ export function partitionHomeSections(sections: SduiSection[]): HomePartition {
     greetingHero: find('greeting_hero'),
     headerPromo: find('header_promo'),
     upcomingBooking: find('upcoming_booking'),
+    livePill: find('live_pill'),
   };
 }

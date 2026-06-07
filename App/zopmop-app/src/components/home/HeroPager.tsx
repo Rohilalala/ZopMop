@@ -22,10 +22,12 @@ import {
   Text,
   Dimensions,
   ScrollView,
+  StyleSheet,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
   type TextStyle,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { GlassCard } from './GlassCard';
 import { PressFx } from '../ui/PressFx';
 import { useTheme } from '../../context/ThemeContext';
@@ -46,11 +48,15 @@ export interface HeroPagerBehavior {
 
 export function HeroPager({
   hero,
+  heroExtra,
   slides,
   behavior,
   onAction,
 }: {
   hero: React.ReactNode;
+  /** Rendered directly under the hero on page 0 only (e.g. the live pill), so
+   *  it swipes in/out bundled with the first card. */
+  heroExtra?: React.ReactNode;
   slides: PromoSlide[];
   behavior?: HeroPagerBehavior;
   onAction: (a: SduiAction) => void;
@@ -86,7 +92,7 @@ export function HeroPager({
     return () => clearTimeout(t);
   }, [active, autoplay, intervalMs, loop, pageCount, slidesArr]);
 
-  if (slidesArr.length === 0) return <>{hero}</>;
+  if (slidesArr.length === 0) return <>{hero}{heroExtra}</>;
 
   const onMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
@@ -105,7 +111,10 @@ export function HeroPager({
         onScrollEndDrag={() => { draggingRef.current = false; }}
         onMomentumScrollEnd={onMomentumScrollEnd}
       >
-        <View style={{ width: SCREEN_W }}>{hero}</View>
+        <View style={{ width: SCREEN_W }}>
+          {hero}
+          {heroExtra}
+        </View>
         {slidesArr.map((s, idx) => (
           <View
             // restartOnFocus: changing the key when `active` changes remounts the
@@ -146,10 +155,26 @@ function PromoCard({
   onPress: () => void;
 }) {
   const accent = slide.accent || '#F5A300';
+  const onImage = !!slide.image_url;
+  const titleColor = onImage ? '#FFFFFF' : isDark ? '#FFFFFF' : '#0D0D0F';
+  const bodyColor = onImage ? 'rgba(255,255,255,0.85)' : isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.6)';
   return (
     <View style={{ marginHorizontal: 20, marginTop: 14 }}>
       <PressFx onPress={onPress}>
-        <GlassCard radius={28} hero style={{ padding: 22, minHeight: 184, justifyContent: 'center' }}>
+        <GlassCard radius={28} hero style={{ padding: 22, minHeight: 184, justifyContent: 'center', overflow: 'hidden' }}>
+          {onImage && (
+            <>
+              {/* expo-image renders static (png/jpg/webp) AND animated (gif/webp) sources. */}
+              <ExpoImage
+                source={{ uri: slide.image_url }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={200}
+              />
+              {/* scrim so overlaid text stays legible over any image */}
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} />
+            </>
+          )}
           {!!slide.eyebrow && (
             <Text style={[fontBold, { fontSize: 11, color: accent, letterSpacing: 1.2, textTransform: 'uppercase' }]}>
               {slide.eyebrow}
@@ -158,13 +183,13 @@ function PromoCard({
           <Text
             style={[
               fontExtra,
-              { fontSize: 24, lineHeight: 28, color: isDark ? '#FFFFFF' : '#0D0D0F', letterSpacing: -0.5, marginTop: 6, maxWidth: 260 },
+              { fontSize: 24, lineHeight: 28, color: titleColor, letterSpacing: -0.5, marginTop: 6, maxWidth: 260 },
             ]}
           >
             {slide.title}
           </Text>
           {!!slide.body && (
-            <Text style={[fontMed, { fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.6)', marginTop: 6, maxWidth: 260 }]}>
+            <Text style={[fontMed, { fontSize: 13, color: bodyColor, marginTop: 6, maxWidth: 260 }]}>
               {slide.body}
             </Text>
           )}
