@@ -79,6 +79,8 @@ export interface FooterData {
   signoff:        FooterSignoff;
 }
 export interface GreetingHeroData { greeting?: string; title_lines?: string[]; show_mascot?: boolean }
+export interface HeaderPromoData { label: string; amount_label?: string; action: SduiAction; visible?: boolean }
+export interface UpcomingBookingData { visible?: boolean }
 
 // ── Rollout control ──────────────────────────────────────────────────────────
 
@@ -108,7 +110,9 @@ export type SduiSection =
   | (SduiSectionBase & { type: 'usuals_row';    data: UsualsRowData })
   | (SduiSectionBase & { type: 'service_grid';  data: ServiceGridData })
   | (SduiSectionBase & { type: 'footer';        data: FooterData })
-  | (SduiSectionBase & { type: 'greeting_hero'; data: GreetingHeroData });
+  | (SduiSectionBase & { type: 'greeting_hero'; data: GreetingHeroData })
+  | (SduiSectionBase & { type: 'header_promo';  data: HeaderPromoData })
+  | (SduiSectionBase & { type: 'upcoming_booking'; data: UpcomingBookingData });
 
 export type SduiSectionType = SduiSection['type'];
 
