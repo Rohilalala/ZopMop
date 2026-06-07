@@ -522,7 +522,6 @@ function PreviewModal({
   const [userId, setUserId] = useState('');
   const [lat, setLat] = useState('');
   const [lon, setLon] = useState('');
-  const [mode, setMode] = useState<'visual' | 'json'>('visual');
 
   const preview = useMutation({
     mutationFn: () =>
@@ -535,43 +534,28 @@ function PreviewModal({
   });
 
   return (
-    <Modal open onClose={onClose} title={`Preview v${config.version}`} width="max-w-3xl">
+    <Modal open onClose={onClose} title={`Preview v${config.version}`} width="max-w-5xl">
       <div className="space-y-3">
         <div className="grid grid-cols-3 gap-3">
           <input className="input" placeholder="User ID (optional)" value={userId} onChange={(e) => setUserId(e.target.value)} />
           <input className="input" placeholder="Lat (optional)" value={lat} onChange={(e) => setLat(e.target.value)} />
           <input className="input" placeholder="Lon (optional)" value={lon} onChange={(e) => setLon(e.target.value)} />
         </div>
-        <div className="flex items-center gap-2">
-          <button className="btn-primary" disabled={preview.isPending} onClick={() => preview.mutate()}>
-            {preview.isPending ? 'Hydrating…' : 'Run preview'}
-          </button>
-          {preview.data != null && (
-            <div className="ml-auto inline-flex rounded-lg border border-border p-0.5">
-              <button
-                className={`rounded-md px-3 py-1 text-xs font-bold ${mode === 'visual' ? 'bg-border' : 'text-text-muted'}`}
-                onClick={() => setMode('visual')}
-              >
-                Visual
-              </button>
-              <button
-                className={`rounded-md px-3 py-1 text-xs font-bold ${mode === 'json' ? 'bg-border' : 'text-text-muted'}`}
-                onClick={() => setMode('json')}
-              >
-                JSON
-              </button>
-            </div>
-          )}
-        </div>
+        <button className="btn-primary" disabled={preview.isPending} onClick={() => preview.mutate()}>
+          {preview.isPending ? 'Hydrating…' : 'Run preview'}
+        </button>
         {preview.data != null ? (
-          mode === 'visual' ? (
-            <SduiVisualPreview page={preview.data} />
-          ) : (
-            <LazyJsonViewer value={JSON.stringify(preview.data, null, 2)} />
-          )
+          <div className="flex items-start gap-4">
+            <div className="shrink-0">
+              <SduiVisualPreview page={preview.data} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <LazyJsonViewer value={JSON.stringify(preview.data, null, 2)} />
+            </div>
+          </div>
         ) : (
           <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-muted">
-            Run a preview to see the hydrated page — “Visual” renders a phone-frame mock, “JSON” shows the raw resolved payload.
+            Run a preview to see the hydrated page — visual phone-frame mock and raw resolved JSON, side by side.
           </div>
         )}
       </div>
