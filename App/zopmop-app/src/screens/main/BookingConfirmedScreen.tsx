@@ -195,7 +195,7 @@ export default function BookingConfirmedScreen() {
       helperPhone: livePhone,
       helperRating,
     });
-  const onAddSvc   = () => navigation.navigate('AllServices', {});
+  const onAddSvc   = () => navigation.navigate('Tabs', { screen: 'AllServices' });
 
   const onCallPro = () => {
     if (!livePhone) return;

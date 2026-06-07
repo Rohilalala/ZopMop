@@ -389,7 +389,7 @@ export default function CartScreen() {
             title="Let's get cleaning!"
             subtitle="Pick a service and Zop will send a pro your way."
             ctaLabel="Browse services"
-            onCtaPress={() => navigation.navigate('AllServices', {})}
+            onCtaPress={() => navigation.navigate('Tabs', { screen: 'AllServices' })}
             style={{ flex: 1 }}
           />
         </SafeAreaView>
@@ -600,7 +600,7 @@ export default function CartScreen() {
                       </TouchableOpacity>
                       <Text style={[s.qtyCount, { color: c.text }]}>1</Text>
                       <TouchableOpacity
-                        onPress={() => navigation.navigate('AllServices', {})}
+                        onPress={() => navigation.navigate('Tabs', { screen: 'AllServices' })}
                         activeOpacity={0.7}
                         style={[s.qtyBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(13,13,15,0.05)' }]}
                         hitSlop={8}
