@@ -103,7 +103,7 @@ export const sduiApi = {
 
   // Captures the ETag response header for the optimistic-lock flow.
   getConfig: async (pageId: string, version: string, env?: Env): Promise<ConfigWithETag> => {
-    const r = await api.get<ConfigRecord>(`/admin/pages/${pageId}/configs/${version}`, {
+    const r = await api.get<ConfigRecord>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}`, {
       params: env ? { env } : undefined,
     });
     const etag = (r.headers['etag'] as string | undefined) ?? r.data.etag ?? '';
@@ -115,20 +115,20 @@ export const sduiApi = {
 
   patchDraft: (pageId: string, version: string, body: PatchDraftBody, etag: string) =>
     api
-      .patch<ConfigRecord>(`/admin/pages/${pageId}/configs/${version}`, body, {
+      .patch<ConfigRecord>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}`, body, {
         headers: { 'If-Match': etag },
       })
       .then((r) => r.data),
 
   deleteDraft: (pageId: string, version: string) =>
-    api.delete(`/admin/pages/${pageId}/configs/${version}`).then(() => undefined),
+    api.delete(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}`).then(() => undefined),
 
   // On 400 the body carries {errors, warnings} — return them rather than
   // letting the interceptor swallow them into a generic toast.
   stage: async (pageId: string, version: string): Promise<StageResult> => {
     try {
       const r = await api.put<{ config: ConfigRecord; warnings: string[] }>(
-        `/admin/pages/${pageId}/configs/${version}/stage`,
+        `/admin/pages/${pageId}/configs/${encodeURIComponent(version)}/stage`,
       );
       return { ok: true, warnings: r.data.warnings ?? [] };
     } catch (err) {
@@ -146,19 +146,19 @@ export const sduiApi = {
 
   activate: (pageId: string, version: string, etag: string) =>
     api
-      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/${version}/activate`, undefined, {
+      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}/activate`, undefined, {
         headers: { 'If-Match': etag },
       })
       .then((r) => r.data),
 
   rollback: (pageId: string, version: string) =>
     api
-      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/${version}/rollback`)
+      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}/rollback`)
       .then((r) => r.data),
 
   preview: (pageId: string, version: string, params: PreviewParams) =>
     api
-      .get<unknown>(`/admin/pages/${pageId}/configs/${version}/preview`, { params })
+      .get<unknown>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}/preview`, { params })
       .then((r) => r.data),
 
   auditLog: (pageId: string, limit?: number) =>
