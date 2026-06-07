@@ -691,7 +691,11 @@ export default function HomeScreen() {
       {hasCarousel && heroPage === 0 && heroAnimating ? (
         <HeroRefreshFlyer
           restX={zopRestX}
-          restY={zopRestY}
+          // zopRestY is a SCREEN coord (includes insets.top); the overlay is
+          // absolutely positioned inside the SafeAreaView whose content origin is
+          // already at insets.top, so subtract it to avoid double-counting (the
+          // mascot was rendering ~insets.top too low vs the static-1.0 in-card fly).
+          restY={zopRestY - insets.top}
           transX={heroTransX}
           transY={heroTransY}
           scale={heroScale}
