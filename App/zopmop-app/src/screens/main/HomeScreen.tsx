@@ -583,13 +583,17 @@ export default function HomeScreen() {
   // returns window coords and the overlay's absolute top is measured from the
   // window origin too, so NO insets.top adjustment (subtracting it rendered the
   // mascot ~insets.top too high). Falls back to the computed screen coords.
-  // +28 drops it to match the in-card mascot during refresh: the card is held
-  // ~the refresh-indicator height lower while refreshing, but heroRect is the
-  // resting measurement. Tune this single number if it's a touch off.
-  const HERO_FLY_DROP = 28;
+  // heroRect is the RESTING (un-pulled) measurement. While refreshing, the
+  // RefreshControl holds the content ~REFRESH_PULL lower, so add that only then
+  // (fly matches the pulled card); on the return/rest it drops to the normal
+  // un-pulled position. HERO_FLY_NUDGE is a small global lower (the "5px too up"
+  // tweak). Both are single numbers to tune.
+  const HERO_FLY_NUDGE = 5;
+  const REFRESH_PULL = 28;
+  const flyDrop = HERO_FLY_NUDGE + (refreshing ? REFRESH_PULL : 0);
   const heroFlyRest = heroRect
-    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + HERO_FLY_DROP }
-    : { x: zopRestX, y: zopRestY + HERO_FLY_DROP };
+    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + flyDrop }
+    : { x: zopRestX, y: zopRestY + flyDrop };
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
