@@ -5,12 +5,10 @@
 import React from 'react';
 import { Dimensions, View, Text, type TextStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../ui/PressFx';
 import { useTheme } from '../../context/ThemeContext';
 import { GlassCard } from './GlassCard';
+import type { FooterData, FooterScheduleCard, FooterSignoff, FooterTrustColumn, SduiAction } from '../../sdui/types';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -19,14 +17,15 @@ const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
-export function HomeFooter() {
-  // Trust strip ("8,400+ verified pros / 100% / 60 sec avg booking") is
-  // hidden until backend exposes a real /stats endpoint (S20–S22). The
-  // figures were fabricated for a brand-new app and would mislead users.
+export function HomeFooter({ data, onAction }: { data: FooterData; onAction: (a: SduiAction) => void }) {
+  // Trust strip ("8,400+ verified pros / 100% / 60 sec avg booking") stays
+  // hidden until `data.trust` is supplied — the figures were fabricated for a
+  // brand-new app and would mislead users.
   return (
     <View style={{ marginTop: 14, paddingBottom: 16 }}>
-      <ScheduleCard />
-      <Signoff />
+      {data.schedule_card ? <ScheduleCard card={data.schedule_card} onAction={onAction} /> : null}
+      {data.trust ? <TrustStrip columns={data.trust.columns} /> : null}
+      <Signoff signoff={data.signoff} />
     </View>
   );
 }
@@ -34,13 +33,12 @@ export function HomeFooter() {
 // ── Schedule card ────────────────────────────────────────────────────────────
 // `.schedule` — glass surface, amber-tinted icon tile, title + sub + chevron.
 
-function ScheduleCard() {
-  const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
+function ScheduleCard({ card, onAction }: { card: FooterScheduleCard; onAction: (a: SduiAction) => void }) {
   const { isDark } = useTheme();
 
   return (
     <PressFx
-      onPress={() => navigation.navigate('AllServices')}
+      onPress={() => onAction(card.action)}
       style={{ marginHorizontal: 20 }}
     >
       <GlassCard
@@ -65,14 +63,14 @@ function ScheduleCard() {
           <Feather name="calendar" size={18} color="#F5A300" />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[fontBold, { fontSize: 14, color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>Book for later</Text>
+          <Text style={[fontBold, { fontSize: 14, color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>{card.title}</Text>
           <Text
             style={[
               fontReg,
               { fontSize: 11.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.50)', marginTop: 2 },
             ]}
           >
-            Pick your own time — up to 7 days ahead
+            {card.subtitle}
           </Text>
         </View>
         <Text style={{ fontSize: 22, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.35)', fontWeight: '500' }}>
@@ -87,7 +85,7 @@ function ScheduleCard() {
 // `.trust` — flat surface (NOT glass: design uses rgba(255,255,255,.03) +
 // 1px border, no gradient), 3 columns separated by hairline dividers.
 
-function TrustStrip() {
+function TrustStrip({ columns }: { columns: FooterTrustColumn[] }) {
   const { isDark } = useTheme();
   return (
     <View
@@ -105,11 +103,12 @@ function TrustStrip() {
         gap: 16,
       }}
     >
-      <TrustCol top="8,400+" label="verified pros" isDark={isDark} />
-      <Divider isDark={isDark} />
-      <TrustCol top="100%" label={'satisfaction\nor re-clean free'} isDark={isDark} />
-      <Divider isDark={isDark} />
-      <TrustCol top="60 sec" label="avg. booking" isDark={isDark} />
+      {columns.map((col, i) => (
+        <React.Fragment key={`${col.value}-${i}`}>
+          <TrustCol top={col.value} label={col.label} isDark={isDark} />
+          {i < columns.length - 1 && <Divider isDark={isDark} />}
+        </React.Fragment>
+      ))}
     </View>
   );
 }
@@ -148,7 +147,7 @@ function Divider({ isDark }: { isDark: boolean }) {
 // Editorial close — riffs on the brand name. "We mop. You zop." inverts the
 // usual "you do X / we do Y" pattern.
 
-function Signoff() {
+function Signoff({ signoff }: { signoff: FooterSignoff }) {
   const { isDark } = useTheme();
   return (
     <View style={{ marginTop: 48, paddingHorizontal: 20 }}>
@@ -163,7 +162,7 @@ function Signoff() {
           },
         ]}
       >
-        We mop.{'\n'}You zop.
+        {signoff.lines.join('\n')}
       </Text>
 
       <Text
@@ -172,11 +171,11 @@ function Signoff() {
           { fontSize: 22, color: '#F5A300', letterSpacing: 1, marginTop: 24 },
         ]}
       >
-        ZopMop
+        {signoff.brand}
       </Text>
 
       <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap' }}>
-        {['Vetted pros', '30-min support', 'Refund if unhappy'].map((label, i, arr) => (
+        {signoff.badges.map((label, i, arr) => (
           <React.Fragment key={label}>
             <Text
               style={[
@@ -212,7 +211,7 @@ function Signoff() {
           },
         ]}
       >
-        Built in India · One home at a time
+        {signoff.tagline}
       </Text>
     </View>
   );
