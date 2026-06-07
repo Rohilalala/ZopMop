@@ -127,7 +127,7 @@ func (v *Validator) Validate(ctx context.Context, raw []byte) (*ValidationResult
 			}
 			// Not an include — must be a section.
 			v.lintSection(ctx, idx, obj, res)
-			if t, _ := obj["type"].(string); t == "hero_carousel" {
+			if t, _ := obj["type"].(string); t == "hero_carousel" || t == "greeting_hero" {
 				hasHero = true
 			}
 		}
@@ -137,7 +137,7 @@ func (v *Validator) Validate(ctx context.Context, raw []byte) (*ValidationResult
 		res.Errors = append(res.Errors, fmt.Sprintf("include count %d exceeds limit %d", len(includeKeys), maxIncludeCount))
 	}
 	if !hasHero {
-		res.Warnings = append(res.Warnings, "no hero_carousel section found")
+		res.Warnings = append(res.Warnings, "no hero section found (hero_carousel or greeting_hero)")
 	}
 
 	log.Debug().
