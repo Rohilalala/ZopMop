@@ -96,15 +96,19 @@ export function HomeHero({
   const kicker = useMemo(() => greeting ?? greetingFor(name), [greeting, name]);
   const headline = useMemo(() => (titleLines && titleLines.length ? titleLines.join('\n') : headlineFor()), [titleLines]);
 
-  // Idle bob — always running.
+  // Idle bob. Re-armed FROM REST (0) whenever the mascot (re)appears. After a
+  // carousel refresh the mascot remounts; we want the hover to RESUME from the
+  // fly's landing point (rest), not jump to an arbitrary mid-bob phase.
   const float = useSharedValue(0);
   useEffect(() => {
+    if (showMascot === false) return;
+    float.value = 0;
     float.value = withRepeat(
       withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.sin) }),
       -1,
       true,
     );
-  }, []);
+  }, [showMascot]);
 
   // Fallback shared values when the parent doesn't drive the easter egg.
   const noTransX  = useSharedValue(0);
