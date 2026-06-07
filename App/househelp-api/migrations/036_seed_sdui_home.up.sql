@@ -237,6 +237,12 @@ VALUES (
           "tagline": "Built in India · One home at a time"
         }
       }
+    },
+    {
+      "id": "upcoming_booking",
+      "type": "upcoming_booking",
+      "visible": true,
+      "data": { "visible": true }
     }
   ]
 }

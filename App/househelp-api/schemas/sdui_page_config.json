@@ -134,7 +134,7 @@
       "required": ["id", "type", "data"],
       "properties": {
         "id":       { "type": "string", "minLength": 1, "maxLength": 64 },
-        "type":     { "type": "string", "enum": ["hero_carousel", "live_pill", "usuals_row", "service_grid", "footer", "greeting_hero", "header_promo"] },
+        "type":     { "type": "string", "enum": ["hero_carousel", "live_pill", "usuals_row", "service_grid", "footer", "greeting_hero", "header_promo", "upcoming_booking"] },
         "priority": { "type": "string", "enum": ["high", "medium", "low"] },
         "hydration": { "type": "string", "enum": ["eager", "lazy"] },
         "lazy_endpoint": { "type": "string" },
