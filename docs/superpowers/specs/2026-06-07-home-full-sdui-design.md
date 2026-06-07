@@ -17,12 +17,12 @@ controls **which blocks render, in what order, with what data**.
 - Greeting hero ("Home, handled") — copy + visibility (animation preserved)
 - Footer content (sign-off, trust strip, schedule card) — data-driven
 - Header "Earn ₹150" promo pill — copy/amount/visibility
+- Upcoming-booking indicator — **enable/disable toggle only** (stays pinned; component keeps its client-side booking fetch + 30s polling)
 - Already SDUI (no change needed): `live_pill`, `usuals_row`, `service_grid`, `hero_carousel`
 
 **Out of scope — app chrome (treated like the bottom nav bar):**
 - Bottom navigation bar
 - Floating cart bar (`HomeCartBar`) — pinned, reads live cart state
-- Upcoming-booking indicator (`UpcomingBookingIndicator`) — pinned, reads booking state
 - Location selector + profile avatar interactivity (location-picker modal stays app-side)
 - Background backdrop (`ScreenBg`/`Bloom`) — theme-driven, not content
 
@@ -87,6 +87,19 @@ HeaderPromoData { label: string, amount_label?: string, action: SduiAction, visi
   Not rendered in the scroll feed.
 - Location selector + avatar remain app chrome.
 
+### 4. `upcoming_booking` — visibility toggle (enable/disable only)
+```
+UpcomingBookingData { visible?: boolean }
+```
+- Minimal new section type. `HomeScreen` extracts it from `page.sections` (not
+  rendered in feed) and conditionally mounts the existing pinned
+  `<UpcomingBookingIndicator/>` when present and `visible !== false`.
+- The component is otherwise **unchanged** — keeps its client-side booking fetch,
+  30s polling, focus-refetch, pinned placement, and tap→Bookings. No backend data
+  source, no copy/data in config.
+- Intentionally **visibility-only**, narrower than the structure+content model
+  used for the other blocks: config only grants the power to turn it on/off.
+
 ### Per-block change surface (the repeating pattern)
 **App:** `types.ts` (add `*Data` + union member + it flows into `SduiSectionType`),
 `registry.tsx` (add entry; for extracted types still register a no-op/None so the
@@ -110,6 +123,8 @@ config bg token can be added later if wanted.
   `HomeFooter` to be data-driven and supersedes it.)
 - **Phase 2 — `greeting_hero`** + `RefreshChoreographyContext`.
 - **Phase 3 — `header_promo`** for the Earn pill.
+- **Phase 4 — `upcoming_booking`** enable/disable toggle (smallest: a visibility
+  gate around the existing component; no data/copy wiring).
 
 Each phase: app changes + backend schema/validator + seed + safe-layout + a
 forward-only migration, then verify by pull-to-refresh on the running stack.
@@ -119,9 +134,10 @@ forward-only migration, then verify by pull-to-refresh on the running stack.
 - **Hero ↔ refresh coupling** is the highest-risk piece; the context indirection
   must preserve the exact shared-value wiring (`heroTransX/Y/scale/rotZ/eye/wink`,
   `heroShowFace`) used by `onRefresh`.
-- **Extracted vs in-feed sections**: `greeting_hero` and `header_promo` live in the
-  `sections` array but are pulled out for pinned/header rendering — keep this
-  extraction explicit and covered by `sanitizePage` so a missing/extra one is safe.
+- **Extracted vs in-feed sections**: `greeting_hero`, `header_promo`, and
+  `upcoming_booking` live in the `sections` array but are pulled out for
+  pinned/header rendering — keep this extraction explicit and covered by
+  `sanitizePage` so a missing/extra one is safe.
 - **Migration numbering**: feature branch is behind `develop`; number new migrations
   after the current max and rebase before merge (watch for collisions). Backend
   migrations are forward-only; apply to local dev DB on port 5433.
