@@ -624,14 +624,12 @@ export default function HomeScreen() {
       name={user?.name ?? undefined}
       greeting={heroData?.greeting}
       titleLines={heroData?.title_lines}
-      showMascot={hasCarousel ? heroData?.show_mascot !== false && !heroAnimating : heroData?.show_mascot}
-      eggTranslateX={hasCarousel ? undefined : heroTransX}
-      eggTranslateY={hasCarousel ? undefined : heroTransY}
-      eggScale={hasCarousel ? undefined : heroScale}
-      eggRotation={hasCarousel ? undefined : heroRotZ}
-      eyeOpacity={hasCarousel ? undefined : heroEye}
-      winkProgress={hasCarousel ? undefined : heroWink}
-      showFace={hasCarousel ? true : heroShowFace}
+      // The hero ALWAYS lives inside HeroPager's horizontal ScrollView (even with
+      // no carousel — 1 page), which clips a flying in-card mascot. So in BOTH
+      // cases the in-card mascot stays static and is hidden while animating; the
+      // fly is the root overlay (HeroRefreshFlyer), which is never clipped.
+      showMascot={heroData?.show_mascot !== false && !heroAnimating}
+      showFace={true}
       viewRef={heroCardRef}
       onLayout={measureHeroCard}
     />
@@ -732,10 +730,11 @@ export default function HomeScreen() {
         </SduiErrorBoundary>
       </Animated.View>
 
-      {/* Carousel refresh mascot, rendered at the root (above the pager, never
-          clipped). Full Zop fly+wink on the home card (page 0); the simple
-          ZopRefresh spinner on promo cards. Non-carousel uses the in-card fly. */}
-      {hasCarousel && heroPage === 0 && heroAnimating ? (
+      {/* Refresh mascot, rendered at the root (above the pager, never clipped) —
+          used for BOTH carousel and non-carousel, since the hero always sits in
+          HeroPager's ScrollView which would clip an in-card fly. Full Zop fly+wink
+          on the home card (page 0); the simple ZopRefresh spinner on promo cards. */}
+      {heroPage === 0 && heroAnimating ? (
         <HeroRefreshFlyer
           restX={heroFlyRest.x}
           restY={heroFlyRest.y}
