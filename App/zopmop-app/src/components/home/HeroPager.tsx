@@ -27,6 +27,12 @@ import {
   type NativeScrollEvent,
   type TextStyle,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { Image as ExpoImage } from 'expo-image';
 import { GlassCard } from './GlassCard';
 import { PressFx } from '../ui/PressFx';
@@ -128,19 +134,63 @@ export function HeroPager({
       </ScrollView>
 
       <View style={{ flexDirection: 'row', alignSelf: 'center', marginTop: 12, gap: 6 }}>
-        {Array.from({ length: pageCount }).map((_, i) => (
-          <View
-            key={i}
-            style={{
-              width: i === active ? 22 : 6,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor:
-                i === active ? '#F5A300' : isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.18)',
-            }}
-          />
-        ))}
+        {Array.from({ length: pageCount }).map((_, i) =>
+          i === active ? (
+            <ActiveDot
+              // key includes active so the fill remounts (restarts at 0) each
+              // time this dot becomes the active page.
+              key={`active-${active}`}
+              durationMs={active >= 1 ? slidesArr[active - 1]?.duration_ms ?? intervalMs : intervalMs}
+              animate={autoplay}
+              isDark={isDark}
+            />
+          ) : (
+            <View
+              key={i}
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.18)',
+              }}
+            />
+          ),
+        )}
       </View>
+    </View>
+  );
+}
+
+// Active page indicator that fills L→R over the page's dwell, story-style, then
+// the carousel advances. With autoplay off it just shows full (static).
+function ActiveDot({
+  durationMs,
+  animate,
+  isDark,
+}: {
+  durationMs: number;
+  animate: boolean;
+  isDark: boolean;
+}) {
+  const p = useSharedValue(0);
+  useEffect(() => {
+    p.value = 0;
+    p.value = animate
+      ? withTiming(1, { duration: Math.max(300, durationMs), easing: Easing.linear })
+      : 1;
+  }, [durationMs, animate]);
+  const fillStyle = useAnimatedStyle(() => ({ width: `${p.value * 100}%` }));
+  return (
+    <View
+      style={{
+        width: 22,
+        height: 6,
+        borderRadius: 3,
+        overflow: 'hidden',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.12)',
+      }}
+    >
+      <Animated.View style={[{ height: '100%', borderRadius: 3, backgroundColor: '#F5A300' }, fillStyle]} />
     </View>
   );
 }
