@@ -65,7 +65,8 @@ import { partitionHomeSections } from './homeSections';
 
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
-import { HeroCarouselSection } from '../../sdui/sections/HeroCarouselSection';
+import { HeroPager } from '../../components/home/HeroPager';
+import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
@@ -529,11 +530,11 @@ export default function HomeScreen() {
   // Default-on: render the indicator unless the section ships and sets visible=false.
   const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
-  // Hero layer: a swipeable promo carousel takes precedence when the config ships
-  // one; otherwise the static greeting hero (with the pull-to-refresh easter egg).
-  const Header = carouselData ? (
-    <HeroCarouselSection data={carouselData} onAction={handleAction} />
-  ) : (
+  // Hero layer: the greeting hero is ALWAYS page 0 (with its pull-to-refresh
+  // easter egg). When the config ships a hero_carousel, its slides become pages
+  // 1..n — the hero slides left to reveal them. Built from core RN (HeroPager),
+  // so no native pager-view dependency that could crash older app builds.
+  const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
       greeting={heroData?.greeting}
@@ -547,6 +548,9 @@ export default function HomeScreen() {
       winkProgress={heroWink}
       showFace={heroShowFace}
     />
+  );
+  const Header = (
+    <HeroPager hero={heroNode} slides={carouselData?.slides ?? []} onAction={handleAction} />
   );
 
   return (
@@ -591,6 +595,7 @@ export default function HomeScreen() {
       )}
 
       <View key={isDark ? 'dark' : 'light'} style={{ flex: 1 }}>
+        <SduiErrorBoundary resetKey={page?.config_hash}>
         <FlashList
           data={sections}
           renderItem={renderItem}
@@ -618,6 +623,7 @@ export default function HomeScreen() {
             />
           }
         />
+        </SduiErrorBoundary>
       </View>
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
