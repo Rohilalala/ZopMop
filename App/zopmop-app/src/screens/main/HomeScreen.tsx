@@ -583,9 +583,13 @@ export default function HomeScreen() {
   // returns window coords and the overlay's absolute top is measured from the
   // window origin too, so NO insets.top adjustment (subtracting it rendered the
   // mascot ~insets.top too high). Falls back to the computed screen coords.
+  // +28 drops it to match the in-card mascot during refresh: the card is held
+  // ~the refresh-indicator height lower while refreshing, but heroRect is the
+  // resting measurement. Tune this single number if it's a touch off.
+  const HERO_FLY_DROP = 28;
   const heroFlyRest = heroRect
-    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 }
-    : { x: zopRestX, y: zopRestY };
+    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + HERO_FLY_DROP }
+    : { x: zopRestX, y: zopRestY + HERO_FLY_DROP };
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
