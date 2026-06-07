@@ -550,7 +550,17 @@ export default function HomeScreen() {
     />
   );
   const Header = (
-    <HeroPager hero={heroNode} slides={carouselData?.slides ?? []} onAction={handleAction} />
+    <HeroPager
+      hero={heroNode}
+      slides={carouselData?.slides ?? []}
+      behavior={{
+        autoplay: carouselData?.autoplay,
+        intervalMs: carouselData?.interval_ms,
+        loop: carouselData?.loop,
+        restartOnFocus: carouselData?.restart_on_focus,
+      }}
+      onAction={handleAction}
+    />
   );
 
   return (

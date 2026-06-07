@@ -5,10 +5,18 @@
 //
 // Page 0 is always the existing hero card (passed in as `hero`, with its
 // pull-to-refresh easter egg intact). Pages 1..n are promo cards from the SDUI
-// `hero_carousel` section. The hero never goes away — it just slides left to
-// make room for the carousel. With no promo slides, the hero renders alone.
+// `hero_carousel` section. The hero never goes away — it slides left to make
+// room for the carousel.
+//
+// Behaviour is SDUI-controlled (see HeroPagerBehavior):
+//   • autoplay     — auto-advance through pages (default on)
+//   • intervalMs   — dwell per page; a slide's duration_ms overrides it
+//   • loop         — wrap from last page back to the first
+//   • restartOnFocus — remount a card when it becomes active (restarts any
+//                      animation inside it); off = animations run continuously
+// User touch pauses autoplay; it resumes after the gesture settles.
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -27,46 +35,84 @@ const { width: SCREEN_W } = Dimensions.get('window');
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
+const fontMed: TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
+
+export interface HeroPagerBehavior {
+  autoplay?: boolean;
+  intervalMs?: number;
+  loop?: boolean;
+  restartOnFocus?: boolean;
+}
 
 export function HeroPager({
   hero,
   slides,
+  behavior,
   onAction,
 }: {
   hero: React.ReactNode;
   slides: PromoSlide[];
+  behavior?: HeroPagerBehavior;
   onAction: (a: SduiAction) => void;
 }) {
   const { isDark } = useTheme();
+  const slidesArr = slides ?? [];
+  const pageCount = slidesArr.length + 1;
+
+  const autoplay = behavior?.autoplay ?? true;
+  const intervalMs = behavior?.intervalMs ?? 4000;
+  const loop = behavior?.loop ?? true;
+  const restartOnFocus = behavior?.restartOnFocus ?? false;
+
   const [active, setActive] = useState(0);
-  const scrollX = useRef(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const draggingRef = useRef(false);
 
-  // No promo cards → render the hero alone (no pager, no dots).
-  if (!slides || slides.length === 0) return <>{hero}</>;
+  // Auto-advance. Re-armed whenever `active` changes (so each page gets its own
+  // dwell). Paused while the user is dragging.
+  useEffect(() => {
+    if (!autoplay || pageCount <= 1) return;
+    const dwell =
+      active >= 1 ? slidesArr[active - 1]?.duration_ms ?? intervalMs : intervalMs;
+    const t = setTimeout(() => {
+      if (draggingRef.current) return;
+      let next = active + 1;
+      if (next >= pageCount) {
+        if (!loop) return;
+        next = 0;
+      }
+      scrollRef.current?.scrollTo({ x: next * SCREEN_W, animated: true });
+    }, dwell);
+    return () => clearTimeout(t);
+  }, [active, autoplay, intervalMs, loop, pageCount, slidesArr]);
 
-  const pageCount = slides.length + 1;
+  if (slidesArr.length === 0) return <>{hero}</>;
 
   const onMomentumScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
     if (i !== active) setActive(i);
   };
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollX.current = e.nativeEvent.contentOffset.x;
-  };
 
   return (
     <View>
       <ScrollView
+        ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         scrollEventThrottle={16}
-        onScroll={onScroll}
+        onScrollBeginDrag={() => { draggingRef.current = true; }}
+        onScrollEndDrag={() => { draggingRef.current = false; }}
         onMomentumScrollEnd={onMomentumScrollEnd}
       >
         <View style={{ width: SCREEN_W }}>{hero}</View>
-        {slides.map((s) => (
-          <View key={s.key} style={{ width: SCREEN_W }}>
+        {slidesArr.map((s, idx) => (
+          <View
+            // restartOnFocus: changing the key when `active` changes remounts the
+            // card so any animation inside replays from the start on focus.
+            key={restartOnFocus ? `${s.key}-${active}` : s.key}
+            style={{ width: SCREEN_W }}
+          >
             <PromoCard slide={s} isDark={isDark} onPress={() => s.action && onAction(s.action)} />
           </View>
         ))}
@@ -103,7 +149,7 @@ function PromoCard({
   return (
     <View style={{ marginHorizontal: 20, marginTop: 14 }}>
       <PressFx onPress={onPress}>
-        <GlassCard radius={28} hero style={{ padding: 22, minHeight: 150, justifyContent: 'center' }}>
+        <GlassCard radius={28} hero style={{ padding: 22, minHeight: 184, justifyContent: 'center' }}>
           {!!slide.eyebrow && (
             <Text style={[fontBold, { fontSize: 11, color: accent, letterSpacing: 1.2, textTransform: 'uppercase' }]}>
               {slide.eyebrow}
@@ -118,11 +164,7 @@ function PromoCard({
             {slide.title}
           </Text>
           {!!slide.body && (
-            <Text
-              style={[
-                { fontFamily: 'PlusJakartaSans_500Medium', fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.6)', marginTop: 6, maxWidth: 260 },
-              ]}
-            >
+            <Text style={[fontMed, { fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.6)', marginTop: 6, maxWidth: 260 }]}>
               {slide.body}
             </Text>
           )}
