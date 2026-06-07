@@ -65,6 +65,7 @@ import { partitionHomeSections } from './homeSections';
 
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
+import { HeroCarouselSection } from '../../sdui/sections/HeroCarouselSection';
 import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
@@ -523,11 +524,16 @@ export default function HomeScreen() {
   const part = partitionHomeSections(page?.sections ?? []);
   const sections = part.feed;
   const heroData = part.greetingHero?.data;
+  const carouselData = part.heroCarousel?.data;
   const headerPromo = part.headerPromo?.data;
   // Default-on: render the indicator unless the section ships and sets visible=false.
   const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
-  const Header = (
+  // Hero layer: a swipeable promo carousel takes precedence when the config ships
+  // one; otherwise the static greeting hero (with the pull-to-refresh easter egg).
+  const Header = carouselData ? (
+    <HeroCarouselSection data={carouselData} onAction={handleAction} />
+  ) : (
     <HomeHero
       name={user?.name ?? undefined}
       greeting={heroData?.greeting}

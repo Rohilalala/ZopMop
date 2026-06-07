@@ -6,6 +6,7 @@ const EXTRACTED = new Set(['hero_carousel', 'greeting_hero', 'header_promo', 'up
 
 export interface HomePartition {
   feed: SduiSection[];
+  heroCarousel: Extract<SduiSection, { type: 'hero_carousel' }> | null;
   greetingHero: Extract<SduiSection, { type: 'greeting_hero' }> | null;
   headerPromo: Extract<SduiSection, { type: 'header_promo' }> | null;
   upcomingBooking: Extract<SduiSection, { type: 'upcoming_booking' }> | null;
@@ -16,6 +17,7 @@ export function partitionHomeSections(sections: SduiSection[]): HomePartition {
     (sections.find((s) => s.type === t) ?? null) as Extract<SduiSection, { type: T }> | null;
   return {
     feed: sections.filter((s) => !EXTRACTED.has(s.type)),
+    heroCarousel: find('hero_carousel'),
     greetingHero: find('greeting_hero'),
     headerPromo: find('header_promo'),
     upcomingBooking: find('upcoming_booking'),
