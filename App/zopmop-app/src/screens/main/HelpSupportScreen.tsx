@@ -64,8 +64,8 @@ const CONTACT_OPTIONS: ContactOption[] = [
     id: 'email',
     icon: 'mail',
     label: 'Email support',
-    sublabel: 'support@zopmop.com',
-    action: () => Linking.openURL('mailto:support@zopmop.com'),
+    sublabel: 'hello@zopmop.com',
+    action: () => Linking.openURL('mailto:hello@zopmop.com'),
   },
 ];
 
