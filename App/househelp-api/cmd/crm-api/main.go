@@ -119,6 +119,10 @@ func main() {
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 		BodyLimit:    8 * 1024 * 1024, // 8MB — banner uploads.
+		// Config versions are free-text (e.g. "testing again?") and arrive
+		// percent-encoded in the path. Decode :version/:page_id params so the
+		// handler sees "testing again?", not "testing%20again%3F".
+		UnescapePath: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			message := "internal server error"
