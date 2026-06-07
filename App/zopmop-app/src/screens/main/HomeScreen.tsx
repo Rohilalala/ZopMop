@@ -589,6 +589,7 @@ export default function HomeScreen() {
       }}
       onAction={handleAction}
       onActiveChange={setHeroPage}
+      paused={heroAnimating}
     />
   );
 
@@ -686,7 +687,11 @@ export default function HomeScreen() {
           showFace={heroShowFace}
         />
       ) : null}
-      {hasCarousel && heroPage > 0 ? <ZopRefresh refreshing={refreshing} /> : null}
+      {hasCarousel && heroPage > 0 ? (
+        // Promo cards: simple spinner, dropped below the header so it doesn't
+        // overlap it — sits around where the home card's fly mascot travels.
+        <ZopRefresh refreshing={refreshing} top={Math.round(insets.top + 56)} />
+      ) : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       {showUpcoming ? <UpcomingBookingIndicator /> : null}

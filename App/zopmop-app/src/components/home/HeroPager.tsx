@@ -59,6 +59,7 @@ export function HeroPager({
   behavior,
   onAction,
   onActiveChange,
+  paused,
 }: {
   hero: React.ReactNode;
   /** Rendered directly under the hero on page 0 only (e.g. the live pill), so
@@ -70,6 +71,8 @@ export function HeroPager({
   /** Reports the active page index (0 = hero) so the parent can choose the
    *  refresh animation per page. */
   onActiveChange?: (index: number) => void;
+  /** Freeze auto-advance (e.g. while the refresh mascot animation is playing). */
+  paused?: boolean;
 }) {
   const { isDark } = useTheme();
   const slidesArr = slides ?? [];
@@ -91,7 +94,7 @@ export function HeroPager({
   // Auto-advance. Re-armed whenever `active` changes (so each page gets its own
   // dwell). Paused while the user is dragging.
   useEffect(() => {
-    if (!autoplay || pageCount <= 1) return;
+    if (!autoplay || pageCount <= 1 || paused) return;
     const dwell =
       active >= 1 ? slidesArr[active - 1]?.duration_ms ?? intervalMs : intervalMs;
     const t = setTimeout(() => {
@@ -104,7 +107,7 @@ export function HeroPager({
       scrollRef.current?.scrollTo({ x: next * SCREEN_W, animated: true });
     }, dwell);
     return () => clearTimeout(t);
-  }, [active, autoplay, intervalMs, loop, pageCount, slidesArr]);
+  }, [active, autoplay, intervalMs, loop, pageCount, slidesArr, paused]);
 
   if (slidesArr.length === 0) return <>{hero}{heroExtra}</>;
 

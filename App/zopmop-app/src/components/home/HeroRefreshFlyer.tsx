@@ -5,8 +5,15 @@
 // screen root with a high zIndex keeps the exact same easter egg — fly + spin +
 // wink — driven by the same shared values + rest coords, never clipped.
 
-import React from 'react';
-import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import React, { useEffect } from 'react';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { ZopFlyer } from './ZopFlyer';
 
 export function HeroRefreshFlyer({
@@ -31,10 +38,21 @@ export function HeroRefreshFlyer({
   winkProgress: SharedValue<number>;
   showFace: boolean;
 }) {
+  // Idle bob — identical to HomeHero's, so the overlay's motion matches the
+  // in-card mascot exactly (the fly transforms are layered on top of this).
+  const float = useSharedValue(0);
+  useEffect(() => {
+    float.value = withRepeat(
+      withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.sin) }),
+      -1,
+      true,
+    );
+  }, []);
+
   const style = useAnimatedStyle(() => ({
     transform: [
       { translateX: transX.value },
-      { translateY: transY.value },
+      { translateY: -float.value * 6 + transY.value },
       { rotate: `${-12 + rotation.value}deg` }, // -12 matches the in-card resting tilt
       { scale: scale.value },
     ],
