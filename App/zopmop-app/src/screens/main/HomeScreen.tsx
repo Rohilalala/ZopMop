@@ -156,6 +156,9 @@ export default function HomeScreen() {
   //
   // All driven from shared values so it runs on the UI thread (60fps).
   const [refreshing, setRefreshing] = useState(false);
+  // True while the list is overscrolled at the top (pull gesture in progress).
+  // Used to mask the native gray spinner during the pull, before `refreshing`.
+  const [pulling, setPulling] = useState(false);
   const [heroShowFace, setHeroShowFace] = useState(true);
   // Which hero-pager page is showing (0 = hero card). Drives which refresh
   // mascot plays: full Zop fly on the home card, simple spinner on promo cards.
@@ -693,29 +696,50 @@ export default function HomeScreen() {
           contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
           showsVerticalScrollIndicator={false}
           extraData={page?.config_hash}
+          // Track top-overscroll so the spinner mask is up during the pull too,
+          // not only once `refreshing` flips. Only flips state on boundary cross.
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const over = e.nativeEvent.contentOffset.y < -2;
+            setPulling((p) => (p === over ? p : over));
+          }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              // Hide the native pull spinner — the choreographed Zop is the only
-              // refresh visual. The app locks native appearance to light
-              // (userInterfaceStyle:"light") while the JS theme toggles freely, so
-              // the native spinner can't follow our theme — it must be painted out.
-              // Two rules, both required:
-              //   1. tintColor MUST be opaque. iOS treats a transparent tint as
-              //      "use default" and draws its gray spinner.
-              //   2. NO `style` prop. style (e.g. opacity:0) is unsupported on iOS
-              //      RefreshControl and makes the New-Arch host drop tintColor.
-              // Tint it the on-screen page colour per JS theme so it blends in both
-              // (light = ScreenBg's ~#FBF9F6 wash; dark = flat theme bg). The
-              // FlashList remounts on theme toggle (key={isDark}) so this re-applies.
-              tintColor={isDark ? sc.bg : '#FBF9F6'}
-              colors={[isDark ? sc.bg : '#FBF9F6']}
-              progressBackgroundColor={isDark ? sc.bg : '#FBF9F6'}
+              // NOTE: tintColor does NOT hide the native spinner here. FlashList
+              // forwards this RefreshControl into recyclerlistview's scroll view,
+              // and under the New Architecture the iOS host ignores the tint (the
+              // plain-ScrollView screens — AllServices/Bookings — honour it, but
+              // this list does not). The app also locks native appearance to light
+              // (userInterfaceStyle:"light"), so the spinner is a fixed gray that
+              // can't follow the JS theme. We keep the RefreshControl for the pull
+              // gesture + the content "hold" (the choreography depends on it), and
+              // mask the gray spinner with a page-coloured cover during refresh —
+              // see SpinnerMask below.
+              tintColor="transparent"
+              colors={['transparent']}
+              progressBackgroundColor="transparent"
             />
           }
         />
         </SduiErrorBoundary>
+
+        {/* Spinner mask — see the RefreshControl note above. The native pull
+            spinner can't be tinted on FlashList under the New Architecture, and
+            the app locks native appearance to light, so it renders a fixed gray.
+            Cover the top strip (where the indicator sits) with the page colour
+            while refreshing. The flying Zop (HeroRefreshFlyer / ZopRefresh) is a
+            later sibling at the SafeAreaView level, so it renders ABOVE this —
+            only the gray spinner is masked, never the mascot. Carousel only: the
+            non-carousel hero uses the in-card fly, which lives inside the list
+            and would be masked by this. */}
+        {hasCarousel && (pulling || refreshing) ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 64, backgroundColor: sc.bg, zIndex: 2 }}
+          />
+        ) : null}
       </View>
 
       {/* Carousel refresh mascot, rendered at the root (above the pager, never
