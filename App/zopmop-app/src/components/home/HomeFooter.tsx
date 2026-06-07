@@ -24,8 +24,8 @@ export function HomeFooter({ data, onAction }: { data: FooterData; onAction: (a:
   return (
     <View style={{ marginTop: 14, paddingBottom: 16 }}>
       {data.schedule_card ? <ScheduleCard card={data.schedule_card} onAction={onAction} /> : null}
-      {data.trust ? <TrustStrip columns={data.trust.columns} /> : null}
-      <Signoff signoff={data.signoff} />
+      {data.trust?.columns?.length ? <TrustStrip columns={data.trust.columns} /> : null}
+      {data.signoff ? <Signoff signoff={data.signoff} /> : null}
     </View>
   );
 }
@@ -162,7 +162,7 @@ function Signoff({ signoff }: { signoff: FooterSignoff }) {
           },
         ]}
       >
-        {signoff.lines.join('\n')}
+        {(signoff.lines ?? []).join('\n')}
       </Text>
 
       <Text
@@ -175,7 +175,7 @@ function Signoff({ signoff }: { signoff: FooterSignoff }) {
       </Text>
 
       <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap' }}>
-        {signoff.badges.map((label, i, arr) => (
+        {(signoff.badges ?? []).map((label, i, arr) => (
           <React.Fragment key={label}>
             <Text
               style={[
