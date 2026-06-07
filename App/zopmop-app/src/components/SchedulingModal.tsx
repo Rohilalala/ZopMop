@@ -31,21 +31,32 @@ const SCHEDULING_LEAD_DAYS = 2;
 // only day-after slots remain so we don't drop into the stealth-instant path.
 const IST_CUTOFF_HOUR = 20;
 
+// All scheduling math runs in IST — the backend slots and the cutoff are IST.
+// We shift the epoch by +5:30 and then read/write ONLY UTC fields, so the
+// shifted instant's UTC calendar values equal the IST wall-clock, regardless of
+// the device timezone. This avoids the drift where, before 05:30 IST, the real
+// UTC date is still "yesterday" — which made the "Today" chip resolve to
+// yesterday's (already-past) slots and look unbookable.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+function istNow(): Date {
+  return new Date(Date.now() + IST_OFFSET_MS);
+}
+
 function istHour(): number {
-  const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-  return istNow.getUTCHours();
+  return istNow().getUTCHours();
 }
 
 function buildDays(): { iso: string; label: string; dayName: string; disabled: boolean }[] {
   const days = [];
-  const now = new Date();
-  const pastCutoff = istHour() >= IST_CUTOFF_HOUR;
+  const base = istNow();
+  const pastCutoff = base.getUTCHours() >= IST_CUTOFF_HOUR;
   for (let i = 0; i <= SCHEDULING_LEAD_DAYS; i++) {
-    const d = new Date(now);
-    d.setDate(now.getDate() + i);
+    const d = new Date(base);
+    d.setUTCDate(base.getUTCDate() + i);
     const iso = d.toISOString().split('T')[0];
-    const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-IN', { weekday: 'short' });
-    const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'UTC' });
+    const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
     const disabled = pastCutoff && i < 2;
     days.push({ iso, label, dayName, disabled });
   }
