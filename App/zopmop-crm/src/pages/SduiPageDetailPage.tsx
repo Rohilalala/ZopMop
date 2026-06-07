@@ -74,13 +74,24 @@ export function SduiPageDetailPage() {
 
   const activate = useMutation({
     mutationFn: async (c: ConfigRecord) => {
+      // Re-ship path: a non-staged config (e.g. a previously-archived version)
+      // is re-staged first so it's re-validated before going live. Already-staged
+      // configs skip straight to activate.
+      if (c.status !== 'staged') {
+        const res = await sduiApi.stage(pageId, c.version);
+        setValidation((v) => ({
+          ...v,
+          [c.version]: res.ok ? { errors: [], warnings: res.warnings } : res.validation,
+        }));
+        if (!res.ok) throw new Error('validation failed');
+      }
       // Always re-fetch to capture a fresh ETag right before activate — the
       // listing payload's etag may be stale if the row changed underneath us.
       const { etag } = await sduiApi.getConfig(pageId, c.version, ENV);
       return sduiApi.activate(pageId, c.version, etag);
     },
     onSuccess: (_d, c) => {
-      showToast({ kind: 'success', message: `v${c.version} activated.` });
+      showToast({ kind: 'success', message: `v${c.version} is live.` });
       invalidate();
       setToActivate(null);
     },
@@ -206,6 +217,15 @@ export function SduiPageDetailPage() {
                               onClick={() => { if (!canActivate) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setToActivate(c); }}
                             >
                               <CheckCircle2 className="w-4 h-4" />Activate
+                            </button>
+                          )}
+                          {c.status === 'archived' && (
+                            <button
+                              className="btn-primary !px-3" title="Re-ship this version (re-validates, then goes live)"
+                              disabled={!canActivate}
+                              onClick={() => { if (!canActivate) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; } setToActivate(c); }}
+                            >
+                              <CheckCircle2 className="w-4 h-4" />Make live
                             </button>
                           )}
                         </div>
