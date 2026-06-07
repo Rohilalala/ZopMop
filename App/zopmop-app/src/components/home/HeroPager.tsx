@@ -58,6 +58,7 @@ export function HeroPager({
   slides,
   behavior,
   onAction,
+  onActiveChange,
 }: {
   hero: React.ReactNode;
   /** Rendered directly under the hero on page 0 only (e.g. the live pill), so
@@ -66,6 +67,9 @@ export function HeroPager({
   slides: PromoSlide[];
   behavior?: HeroPagerBehavior;
   onAction: (a: SduiAction) => void;
+  /** Reports the active page index (0 = hero) so the parent can choose the
+   *  refresh animation per page. */
+  onActiveChange?: (index: number) => void;
 }) {
   const { isDark } = useTheme();
   const slidesArr = slides ?? [];
@@ -79,6 +83,10 @@ export function HeroPager({
   const [active, setActive] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const draggingRef = useRef(false);
+
+  useEffect(() => {
+    onActiveChange?.(active);
+  }, [active, onActiveChange]);
 
   // Auto-advance. Re-armed whenever `active` changes (so each page gets its own
   // dwell). Paused while the user is dragging.

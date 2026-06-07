@@ -66,6 +66,8 @@ import { partitionHomeSections } from './homeSections';
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
 import { HeroPager } from '../../components/home/HeroPager';
+import { HeroRefreshFlyer } from '../../components/home/HeroRefreshFlyer';
+import { ZopRefresh } from '../../components/home/ZopRefresh';
 import { LivePillSection } from '../../sdui/sections/LivePillSection';
 import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
@@ -141,6 +143,13 @@ export default function HomeScreen() {
   // All driven from shared values so it runs on the UI thread (60fps).
   const [refreshing, setRefreshing] = useState(false);
   const [heroShowFace, setHeroShowFace] = useState(true);
+  // Which hero-pager page is showing (0 = hero card). Drives which refresh
+  // mascot plays: full Zop fly on the home card, simple spinner on promo cards.
+  const [heroPage, setHeroPage] = useState(0);
+  // True for the whole fly+wink window (outlives `refreshing`, which flips off
+  // when the Zop lands ~before the wink) so the overlay mascot stays mounted
+  // through the wink.
+  const [heroAnimating, setHeroAnimating] = useState(false);
   const heroTransX  = useSharedValue(0);
   const heroTransY  = useSharedValue(0);
   const heroScale   = useSharedValue(1);
@@ -170,6 +179,7 @@ export default function HomeScreen() {
   const onRefresh = useCallback(async () => {
     haptics.medium();
     setRefreshing(true);
+    setHeroAnimating(true);
 
     // Cancel any in-flight animations so a re-trigger reads cleanly.
     cancelAnimation(heroTransX);
@@ -269,8 +279,11 @@ export default function HomeScreen() {
           withDelay(100, withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) })),
         );
       }, 350);
+      // Keep the overlay mascot mounted until the wink finishes (~350 + 440ms),
+      // then hand back to the idle in-card mascot.
+      const tEnd = setTimeout(() => setHeroAnimating(false), 1000);
       prevRefreshing.current = refreshing;
-      return () => clearTimeout(t);
+      return () => { clearTimeout(t); clearTimeout(tEnd); };
     }
     prevRefreshing.current = refreshing;
   }, [refreshing, heroWink]);
@@ -531,23 +544,29 @@ export default function HomeScreen() {
   // Default-on: render the indicator unless the section ships and sets visible=false.
   const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
-  // Hero layer: the greeting hero is ALWAYS page 0 (with its pull-to-refresh
-  // easter egg). When the config ships a hero_carousel, its slides become pages
-  // 1..n — the hero slides left to reveal them. Built from core RN (HeroPager),
-  // so no native pager-view dependency that could crash older app builds.
+  // Hero layer: greeting hero is page 0; hero_carousel slides are pages 1..n.
+  //
+  // Refresh mascot:
+  //   • No carousel — the hero is the direct list header, so the in-card mascot
+  //     does the full fly+wink (original behaviour, never clipped).
+  //   • Carousel — the hero sits inside HeroPager's ScrollView which clips a
+  //     flying in-card mascot. So the in-card mascot stays idle (hidden while
+  //     animating) and the fly is rendered as a root overlay (HeroRefreshFlyer)
+  //     on page 0, or the simple ZopRefresh spinner on promo pages (below).
+  const hasCarousel = (carouselData?.slides?.length ?? 0) > 0;
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
       greeting={heroData?.greeting}
       titleLines={heroData?.title_lines}
-      showMascot={heroData?.show_mascot}
-      eggTranslateX={heroTransX}
-      eggTranslateY={heroTransY}
-      eggScale={heroScale}
-      eggRotation={heroRotZ}
-      eyeOpacity={heroEye}
-      winkProgress={heroWink}
-      showFace={heroShowFace}
+      showMascot={hasCarousel ? heroData?.show_mascot !== false && !heroAnimating : heroData?.show_mascot}
+      eggTranslateX={hasCarousel ? undefined : heroTransX}
+      eggTranslateY={hasCarousel ? undefined : heroTransY}
+      eggScale={hasCarousel ? undefined : heroScale}
+      eggRotation={hasCarousel ? undefined : heroRotZ}
+      eyeOpacity={hasCarousel ? undefined : heroEye}
+      winkProgress={hasCarousel ? undefined : heroWink}
+      showFace={hasCarousel ? true : heroShowFace}
     />
   );
   // Live pill rides inside the hero pager's page 0 (bundled with the hero —
@@ -569,6 +588,7 @@ export default function HomeScreen() {
         restartOnFocus: carouselData?.restart_on_focus,
       }}
       onAction={handleAction}
+      onActiveChange={setHeroPage}
     />
   );
 
@@ -649,6 +669,24 @@ export default function HomeScreen() {
         />
         </SduiErrorBoundary>
       </View>
+
+      {/* Carousel refresh mascot, rendered at the root (above the pager, never
+          clipped). Full Zop fly+wink on the home card (page 0); the simple
+          ZopRefresh spinner on promo cards. Non-carousel uses the in-card fly. */}
+      {hasCarousel && heroPage === 0 && heroAnimating ? (
+        <HeroRefreshFlyer
+          restX={zopRestX}
+          restY={zopRestY}
+          transX={heroTransX}
+          transY={heroTransY}
+          scale={heroScale}
+          rotation={heroRotZ}
+          eyeOpacity={heroEye}
+          winkProgress={heroWink}
+          showFace={heroShowFace}
+        />
+      ) : null}
+      {hasCarousel && heroPage > 0 ? <ZopRefresh refreshing={refreshing} /> : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
       {showUpcoming ? <UpcomingBookingIndicator /> : null}
