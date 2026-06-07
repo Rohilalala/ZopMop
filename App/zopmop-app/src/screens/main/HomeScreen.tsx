@@ -586,9 +586,16 @@ export default function HomeScreen() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="transparent"
-              colors={['transparent']}
-              progressBackgroundColor="transparent"
+              // Hide the native pull spinner by tinting it the on-screen page
+              // colour. iOS ignores a transparent / near-zero-alpha tint (falls
+              // back to the default gray spinner), so the tint MUST be opaque.
+              // The visible bg in the refresh zone is ScreenBg's near-white
+              // overlay (~#FBF9F6, sampled from the rendered screen) — lighter
+              // than the bare theme token — so match that in light mode; dark
+              // mode uses the flat theme bg.
+              tintColor={isDark ? sc.bg : '#FBF9F6'}
+              colors={[isDark ? sc.bg : '#FBF9F6']}
+              progressBackgroundColor={isDark ? sc.bg : '#FBF9F6'}
               style={{ opacity: 0 }}
             />
           }
