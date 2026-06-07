@@ -37,6 +37,9 @@ const PayoutsPage       = lazy(() => import('./pages/PayoutsPage').then(m => ({ 
 const DisputesPage      = lazy(() => import('./pages/DisputesPage').then(m => ({ default: m.DisputesPage })));
 const SettingsPage      = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LocalitiesPage    = lazy(() => import('./pages/LocalitiesPage').then(m => ({ default: m.LocalitiesPage })));
+const SduiPagesPage         = lazy(() => import('./pages/SduiPagesPage').then(m => ({ default: m.SduiPagesPage })));
+const SduiPageDetailPage    = lazy(() => import('./pages/SduiPageDetailPage').then(m => ({ default: m.SduiPageDetailPage })));
+const SduiAllowedActionsPage = lazy(() => import('./pages/SduiAllowedActionsPage').then(m => ({ default: m.SduiAllowedActionsPage })));
 
 // Top-level router. The auth store hydrates once on boot via
 // bootstrapAuth() — until then we show a full-screen skeleton instead of
@@ -75,6 +78,9 @@ export function App() {
           <Route path="/audit"       element={<AuditPage />} />
           <Route path="/settings"    element={<SettingsPage />} />
           <Route path="/localities"  element={<LocalitiesPage />} />
+          <Route path="/sdui"                 element={<SduiPagesPage />} />
+          <Route path="/sdui/allowed-actions" element={<SduiAllowedActionsPage />} />
+          <Route path="/sdui/:pageId"         element={<SduiPageDetailPage />} />
           <Route path="*"            element={<Navigate to="/" replace />} />
         </Route>
       ) : (

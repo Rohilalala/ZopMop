@@ -107,6 +107,11 @@ export const PERMISSIONS = {
   // audit
   'audit.read': 'admin',
 
+  // sdui (server-driven UI control panel)
+  'sdui.read': 'admin',
+  'sdui.write': 'admin',
+  'sdui.activate': 'admin',
+
   // growth — waitlist
   'waitlist.create': 'admin',
 

@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { useTheme } from '../../context/ThemeContext';
 import { PressFx } from '../ui/PressFx';
+import type { HeaderPromoData, SduiAction } from '../../sdui/types';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontSemi: TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -19,6 +20,8 @@ type Props = {
   /** Saved-address tag (e.g. "Home", "Office", "Mom's"). Falls back to a
    *  generic label when the user hasn't saved this place. */
   addressTag?: string | null;
+  promo?: HeaderPromoData;
+  onAction?: (a: SduiAction) => void;
 };
 
 function initialsOf(name?: string | null): string {
@@ -27,7 +30,7 @@ function initialsOf(name?: string | null): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || 'You';
 }
 
-export function HomeHeader({ locationName, onLocationPress, selectedAddressId, addressTag }: Props) {
+export function HomeHeader({ locationName, onLocationPress, selectedAddressId, addressTag, promo, onAction }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user } = useAuth();
   const { myGroup } = useRoomies();
@@ -107,23 +110,47 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
             <Text style={[fontBold, { fontSize: 11, color: householdTextColor }]}>Household</Text>
           </PressFx>
         )}
-        <PressFx
-          onPress={() => navigation.navigate('ReferralEarn')}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            height: 36,
-            paddingHorizontal: 12,
-            borderRadius: 18,
-            backgroundColor: earnBg,
-            borderWidth: 1,
-            borderColor: earnBorder,
-          }}
-        >
-          <Feather name="plus-circle" size={12} color={earnTextColor} />
-          <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>Earn ₹150</Text>
-        </PressFx>
+        {promo ? (
+          promo.visible === false ? null : (
+            <PressFx
+              onPress={() => onAction?.(promo.action)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                height: 36,
+                paddingHorizontal: 12,
+                borderRadius: 18,
+                backgroundColor: earnBg,
+                borderWidth: 1,
+                borderColor: earnBorder,
+              }}
+            >
+              <Feather name="plus-circle" size={12} color={earnTextColor} />
+              <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>
+                {promo.amount_label ? `${promo.label} ${promo.amount_label}` : promo.label}
+              </Text>
+            </PressFx>
+          )
+        ) : (
+          <PressFx
+            onPress={() => navigation.navigate('ReferralEarn')}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              height: 36,
+              paddingHorizontal: 12,
+              borderRadius: 18,
+              backgroundColor: earnBg,
+              borderWidth: 1,
+              borderColor: earnBorder,
+            }}
+          >
+            <Feather name="plus-circle" size={12} color={earnTextColor} />
+            <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>Earn ₹150</Text>
+          </PressFx>
+        )}
         <PressFx
           onPress={() => navigation.navigate('Profile')}
           style={{

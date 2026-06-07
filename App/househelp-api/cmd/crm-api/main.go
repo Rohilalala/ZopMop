@@ -119,6 +119,10 @@ func main() {
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 		BodyLimit:    8 * 1024 * 1024, // 8MB — banner uploads.
+		// Config versions are free-text (e.g. "testing again?") and arrive
+		// percent-encoded in the path. Decode :version/:page_id params so the
+		// handler sees "testing again?", not "testing%20again%3F".
+		UnescapePath: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			message := "internal server error"
@@ -431,6 +435,12 @@ func main() {
 	platformHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
 	zoneApprovalsHandler.RegisterRoutes(authed)
+
+	// SDUI (server-driven UI) admin surface — reuses internal/bff's admin
+	// handler verbatim so config lifecycle logic lives in one place. Mounted
+	// on the same authed group (JWT + per-admin limiter); a locals bridge maps
+	// the CRM admin identity onto the userID/role the bff handler reads.
+	registerSDUIAdmin(authed, dbPool, rdb)
 
 	// Module stub handler — gated behind ENABLE_STUB_ENUMERATOR=1
 	// (audit E2-4). The route exposed the CRM module taxonomy to anyone

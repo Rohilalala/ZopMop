@@ -257,7 +257,7 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 	if err != nil {
 		return nil, err
 	}
-	if current.Status != string(StatusDraft) {
+	if current.Status != string(StatusDraft) && current.Status != string(StatusArchived) {
 		return nil, ErrInvalidStatus
 	}
 	if ifMatch != "" && ifMatch != current.ETag {
@@ -293,7 +293,7 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 	args = append(args, pageID, version, env)
 	q := fmt.Sprintf(
 		`UPDATE sdui_page_configs SET %s
-		   WHERE page_id = $%d AND version = $%d AND env = $%d AND status = 'draft'
+		   WHERE page_id = $%d AND version = $%d AND env = $%d AND status IN ('draft', 'archived')
 		   RETURNING `+configSelectCols,
 		strings.Join(sets, ", "), argN, argN+1, argN+2,
 	)
@@ -312,7 +312,7 @@ func (r *Repository) DeleteDraft(ctx context.Context, pageID, version, env strin
 
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM sdui_page_configs
-		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status = 'draft'`,
+		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status IN ('draft', 'archived')`,
 		pageID, version, env,
 	)
 	if err != nil {
@@ -336,15 +336,16 @@ func (r *Repository) Stage(ctx context.Context, pageID, version, env, actor stri
 	row := r.db.QueryRow(ctx,
 		`UPDATE sdui_page_configs
 		    SET status = 'staged', staged_by = $4, staged_at = now()
-		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status = 'draft'
+		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status IN ('draft', 'archived')
 		   RETURNING `+configSelectCols,
 		pageID, version, env, actor,
 	)
 	out, err := scanConfig(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			// Disambiguate: maybe exists but not draft.
-			if rec, gerr := r.GetByVersion(ctx, pageID, version, env); gerr == nil && rec.Status != string(StatusDraft) {
+			// Disambiguate: exists but not re-stageable (active/staged already).
+			if rec, gerr := r.GetByVersion(ctx, pageID, version, env); gerr == nil &&
+				rec.Status != string(StatusDraft) && rec.Status != string(StatusArchived) {
 				return nil, ErrInvalidStatus
 			}
 			return nil, ErrNotFound

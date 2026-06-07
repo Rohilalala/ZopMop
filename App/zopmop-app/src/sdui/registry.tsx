@@ -52,10 +52,15 @@ function FooterEntry({ section, onAction }: RegistryProps) {
   return <FooterSection data={section.data} onAction={onAction} />;
 }
 
+function GreetingHeroEntry(_props: RegistryProps) { return null; } // extracted by HomeScreen; never rendered in-feed
+
 export const SECTION_REGISTRY: Record<SduiSectionType, SectionComponent> = {
-  hero_carousel: HeroEntry,
-  live_pill:     LivePillEntry,
-  usuals_row:    UsualsEntry,
-  service_grid:  ServiceGridEntry,
-  footer:        FooterEntry,
+  hero_carousel:    HeroEntry,
+  live_pill:        LivePillEntry,
+  usuals_row:       UsualsEntry,
+  service_grid:     ServiceGridEntry,
+  footer:           FooterEntry,
+  greeting_hero:    GreetingHeroEntry,
+  header_promo:     () => null,      // extracted by HomeScreen; never rendered in-feed
+  upcoming_booking: () => null,      // extracted by HomeScreen; never rendered in-feed
 };
