@@ -34,6 +34,12 @@ VALUES (
   "schema_version": 1,
   "sections": [
     {
+      "id": "header_promo",
+      "type": "header_promo",
+      "visible": true,
+      "data": { "label": "Earn ₹150", "action": { "trigger": "tap", "type": "navigate", "screen": "ReferralEarn" }, "visible": true }
+    },
+    {
       "id": "hero",
       "type": "greeting_hero",
       "visible": true,
