@@ -15,7 +15,7 @@ import { PressFx } from '../ui/PressFx';
 import { useTheme } from '../../context/ThemeContext';
 import type { ApiService } from '../../api/services';
 import type { MainStackParamList } from '../../types/navigation';
-import { serviceIcon } from './serviceIcon';
+import { serviceIcon, serviceIconScale } from './serviceIcon';
 
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -217,6 +217,7 @@ function PresetCard({
   onPress: () => void;
 }) {
   const src = serviceIcon({ id: service.id, name: service.name });
+  const iconScale = serviceIconScale({ id: service.id, name: service.name });
 
   // Fade card out as its center crosses the bolt icon's right edge moving left.
   // Uses static layout values (PIN_WIDTH_EXPANDED) — pin shrink slightly shifts
@@ -257,7 +258,7 @@ function PresetCard({
           <Image
             source={src}
             resizeMode="contain"
-            style={{ width: 76, height: 76, marginTop: 5, transform: [{ scale: 1.8 }] }}
+            style={{ width: 76, height: 76, marginTop: 5, transform: [{ scale: 1.8 * iconScale }] }}
           />
         ) : (
           <Feather name="package" size={38} color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.35)'} />

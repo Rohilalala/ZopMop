@@ -72,18 +72,34 @@ const NAME_ALIASES: Record<string, string> = {
   'party-cleanup': 'pre-post-party',
 };
 
+function resolveKey(opts: { id?: string; name?: string }): string | undefined {
+  if (opts.id && ID_TO_KEY[opts.id]) return ID_TO_KEY[opts.id];
+  if (opts.name) {
+    const s = slug(opts.name);
+    if (ASSETS[s]) return s;
+    const aliased = NAME_ALIASES[s];
+    if (aliased && ASSETS[aliased]) return aliased;
+  }
+  return undefined;
+}
+
 export function serviceIcon(opts: {
   id?: string;
   name?: string;
 }): ImageSourcePropType | undefined {
-  if (opts.id && ID_TO_KEY[opts.id]) {
-    return ASSETS[ID_TO_KEY[opts.id]];
-  }
-  if (opts.name) {
-    const s = slug(opts.name);
-    if (ASSETS[s]) return ASSETS[s];
-    const aliased = NAME_ALIASES[s];
-    if (aliased && ASSETS[aliased]) return ASSETS[aliased];
-  }
-  return undefined;
+  const key = resolveKey(opts);
+  return key ? ASSETS[key] : undefined;
+}
+
+// Most 3D renders carry generous padding; a few are near full-bleed (subject
+// fills the canvas) and read oversized at the same render box + scale. This
+// per-asset multiplier shrinks those outliers so icons share a consistent
+// visual weight. Default 1 (no change) for everything not listed.
+const ICON_SCALE: Record<string, number> = {
+  'mopping-and-sweeping': 0.72,
+};
+
+export function serviceIconScale(opts: { id?: string; name?: string }): number {
+  const key = resolveKey(opts);
+  return key ? (ICON_SCALE[key] ?? 1) : 1;
 }

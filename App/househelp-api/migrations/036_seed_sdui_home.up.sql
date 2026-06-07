@@ -65,8 +65,8 @@ VALUES (
             "display_order": 1
           },
           {
-            "id": "a1000000-0000-0000-0000-000000000002",
-            "name": "Deep clean",
+            "id": "a1000000-0000-0000-0000-000000000001",
+            "name": "Sweeping and Mopping",
             "emoji": "✨",
             "bg_color": "#F0FDFA",
             "base_price_cents": 59900,
@@ -110,7 +110,7 @@ VALUES (
             "display_order": 4
           },
           {
-            "id": "a1000000-0000-0000-0000-000000000004",
+            "id": "a1000000-0000-0000-0000-000000000002",
             "name": "Bathroom",
             "emoji": "🚿",
             "bg_color": "#F0FDF4",
