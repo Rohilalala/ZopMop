@@ -619,6 +619,11 @@ export default function HomeScreen() {
           data={sections}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
+          // Keep a separate recycle pool per section type. Without this, FlashList
+          // recycles a cell from one section type into a different one on a config
+          // swap, and the mismatched native view tree trips a Fabric mount
+          // assertion (RCTComponentViewRegistry) → SIGABRT on the first swap.
+          getItemType={(item) => (item as SduiSection).type}
           estimatedItemSize={200}
           ListHeaderComponent={Header}
           contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
