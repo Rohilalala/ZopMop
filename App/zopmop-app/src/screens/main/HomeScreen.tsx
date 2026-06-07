@@ -588,9 +588,10 @@ export default function HomeScreen() {
   // (fly matches the pulled card); on the return/rest it drops to the normal
   // un-pulled position. HERO_FLY_NUDGE is a small global lower (the "5px too up"
   // tweak). Both are single numbers to tune.
-  const HERO_FLY_NUDGE = 4;
-  const REFRESH_PULL = 28;
-  const flyDrop = HERO_FLY_NUDGE + (refreshing ? REFRESH_PULL : 0);
+  const HERO_FLY_NUDGE = 5;  // fly base nudge while refreshing
+  const REFRESH_PULL = 28;   // content held ~this much lower during refresh
+  const REST_NUDGE = 4;      // final landing position (1px higher than the fly base)
+  const flyDrop = refreshing ? HERO_FLY_NUDGE + REFRESH_PULL : REST_NUDGE;
   const heroFlyRest = heroRect
     ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + flyDrop }
     : { x: zopRestX, y: zopRestY + flyDrop };
