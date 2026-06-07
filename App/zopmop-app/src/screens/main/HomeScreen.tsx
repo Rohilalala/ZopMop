@@ -524,6 +524,8 @@ export default function HomeScreen() {
   const sections = part.feed;
   const heroData = part.greetingHero?.data;
   const headerPromo = part.headerPromo?.data;
+  // Default-on: render the indicator unless the section ships and sets visible=false.
+  const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
   const Header = (
     <HomeHero
@@ -613,7 +615,7 @@ export default function HomeScreen() {
       </View>
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
-      <UpcomingBookingIndicator />
+      {showUpcoming ? <UpcomingBookingIndicator /> : null}
       {locationModal}
     </SafeAreaView>
   );
