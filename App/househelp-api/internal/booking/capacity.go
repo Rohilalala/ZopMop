@@ -127,6 +127,60 @@ func (r *Repository) availableForSlot(ctx context.Context, q rowQuerier, localit
 	return avail, nil
 }
 
+// committedCountForWindow returns the number of committed bookings in the
+// locality whose [scheduled_time, scheduled_time + total_duration_minutes)
+// window overlaps an arbitrary [start, start + durationMin) window. Same
+// half-open overlap test as committedCountForSlot, but bounded by an explicit
+// job window rather than a time_slots row. The booking gate uses this with the
+// NEW booking's own window: a job can be longer than its slot (a 60-min job in
+// a 30-min slot), so counting overlaps against the slot window alone would miss
+// commitments that overlap the job but not the slot, and let the helper be
+// double-booked. start is an RFC3339 timestamp (the booking's scheduled_time).
+func (r *Repository) committedCountForWindow(ctx context.Context, q rowQuerier, locality, start string, durationMin int) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM bookings b
+		WHERE b.locality = $1
+		  AND b.status IN `+committedStatusList+`
+		  AND b.scheduled_time IS NOT NULL
+		  AND b.total_duration_minutes IS NOT NULL
+		  AND b.scheduled_time < ($2::timestamptz + make_interval(mins => $3))
+		  AND (b.scheduled_time + make_interval(mins => b.total_duration_minutes))
+		        > $2::timestamptz
+	`, locality, start, durationMin).Scan(&n)
+	return n, err
+}
+
+// availableForWindow is the live capacity over an arbitrary job window:
+//
+//	roster(locality) − onLeave(locality, date) − committed(locality, window)
+//
+// clamped at zero. This is the form the booking gate must use — it measures
+// the new booking's actual [scheduled_time, +durationMin) window so a job that
+// outruns its slot still contends for helpers across its whole duration. date
+// is the IST calendar date ("YYYY-MM-DD") the job starts on. Pass a tx as q to
+// compute under the advisory lock.
+func (r *Repository) availableForWindow(ctx context.Context, q rowQuerier, locality, date, start string, durationMin int) (int, error) {
+	roster, err := r.countActiveRosterHelpers(ctx, q, locality)
+	if err != nil {
+		return 0, fmt.Errorf("roster count: %w", err)
+	}
+	onLeave, err := r.countHelpersOnLeave(ctx, q, locality, date)
+	if err != nil {
+		return 0, fmt.Errorf("leave count: %w", err)
+	}
+	committed, err := r.committedCountForWindow(ctx, q, locality, start, durationMin)
+	if err != nil {
+		return 0, fmt.Errorf("committed window count: %w", err)
+	}
+	avail := roster - onLeave - committed
+	if avail < 0 {
+		avail = 0
+	}
+	return avail, nil
+}
+
 // resolveGateLocality maps an address to the locality used for capacity
 // gating. It reuses resolveLocality's fuzzy match and, on a miss or error,
 // defaults to PilotLocality so the gate always applies during the pilot.

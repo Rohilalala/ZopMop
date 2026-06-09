@@ -336,6 +336,49 @@ func TestSlotCapacity_ConcurrentLastSlot(t *testing.T) {
 	}
 }
 
+// Two bookings in DIFFERENT but time-overlapping slots draw on the same single
+// helper: a 60-min job at 09:00 (09:00–10:00) and a 60-min job at 09:30
+// (09:30–10:30) collide over 09:30–10:00. With one roster helper, exactly one
+// may win. The two slots have different ids, so a lock keyed on the slot id
+// lets both bookings past the gate concurrently (each re-counts before the
+// other's insert is visible) and double-books the helper. Guards the
+// (locality, date) lock domain, which serialises across overlapping slots.
+func TestSlotCapacity_ConcurrentOverlappingSlots(t *testing.T) {
+	f := newCapFixture(t, 1) // single helper → one seat across the overlap
+
+	cA, aA := f.newCustomer()
+	cB, aB := f.newCustomer()
+
+	// Pre-create both slots so the goroutines hit the cache. slotID mutates a
+	// shared map; creating the rows up front keeps the concurrent section
+	// race-free (matches TestSlotCapacity_ConcurrentLastSlot).
+	f.slotID("09:00")
+	f.slotID("09:30")
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); _, errs[0] = f.bookAs(cA, aA, "09:00", 60, true) }()
+	go func() { defer wg.Done(); _, errs[1] = f.bookAs(cB, aB, "09:30", 60, true) }()
+	wg.Wait()
+
+	var ok, full int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, ErrSlotUnavailable):
+			full++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != 1 || full != 1 {
+		t.Fatalf("concurrent overlapping slots: got %d success / %d slot_full, want 1/1 "+
+			"(a per-slot lock lets both overlapping bookings double-book the one helper)", ok, full)
+	}
+}
+
 // An approved full-day leave for one roster helper reduces capacity by one.
 func TestSlotCapacity_ApprovedLeaveReducesCapacity(t *testing.T) {
 	f := newCapFixture(t, 2)
