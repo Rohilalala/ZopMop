@@ -1,62 +1,51 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { useSharedValue, withTiming, Easing, type SharedValue } from 'react-native-reanimated';
 import { lightColors, darkColors } from '../theme/colors';
 
 type ColorScheme = typeof lightColors;
 
-export type ThemeTransition = {
-  origin: { x: number; y: number };
-  targetIsDark: boolean;
-} | null;
+// Shared timing so the AppSwitch and the screen-wide colour morph land together.
+export const THEME_ANIM = { duration: 340, easing: Easing.inOut(Easing.cubic) };
 
 interface ThemeContextValue {
   isDark: boolean;
   colors: ColorScheme;
-  toggleTheme: (origin?: { x: number; y: number }) => void;
-  transition: ThemeTransition;
-  clearTransition: () => void;
+  toggleTheme: () => void;
+  // Animated theme position: 0 = dark, 1 = light. Drives the seamless colour
+  // transition (interpolateColor) on screens that morph in place (Profile).
+  progress: SharedValue<number>;
 }
 
 const STORAGE_KEY = 'zopmop_dark_mode';
-const REVEAL_DELAY_MS = 650;
 
 const ThemeContext = createContext<ThemeContextValue>({
   isDark: true,
   colors: darkColors as unknown as ColorScheme,
   toggleTheme: () => {},
-  transition: null,
-  clearTransition: () => {},
+  progress: { value: 0 } as SharedValue<number>,
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [isDark, setIsDark] = useState(true);
-  const [transition, setTransition] = useState<ThemeTransition>(null);
-  const flipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 0 = dark, 1 = light. Kept in lock-step with isDark; animates on toggle.
+  const progress = useSharedValue(0);
 
   useEffect(() => {
     SecureStore.getItemAsync(STORAGE_KEY).then(val => {
-      if (val === 'false') setIsDark(false);
+      if (val === 'false') {
+        setIsDark(false);
+        progress.value = 1; // restore light instantly, no animation on launch
+      }
     });
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (flipTimer.current) clearTimeout(flipTimer.current);
-    };
-  }, []);
-
-  const toggleTheme = useCallback((origin?: { x: number; y: number }) => {
-    const next = !isDark;
-    if (origin) {
-      setTransition({ origin, targetIsDark: next });
-    }
+  const toggleTheme = useCallback(() => {
+    const next = !isDark; // next isDark
     setIsDark(next);
+    progress.value = withTiming(next ? 0 : 1, THEME_ANIM);
     SecureStore.setItemAsync(STORAGE_KEY, String(next));
   }, [isDark]);
-
-  const clearTransition = useCallback(() => {
-    setTransition(null);
-  }, []);
 
   return (
     <ThemeContext.Provider
@@ -64,8 +53,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         isDark,
         colors: (isDark ? darkColors : lightColors) as ColorScheme,
         toggleTheme,
-        transition,
-        clearTransition,
+        progress,
       }}
     >
       {children}
