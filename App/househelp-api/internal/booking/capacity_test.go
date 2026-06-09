@@ -204,6 +204,7 @@ func (f *capFixture) bookAs(customerID, addressID, hhmm string, durationMin int,
 		context.Background(), customerID, addressID, slotID,
 		sched, items, 100, 0, nil,
 		false, nil, &loc, enforce,
+		defaultServiceCloseMin,
 	)
 }
 

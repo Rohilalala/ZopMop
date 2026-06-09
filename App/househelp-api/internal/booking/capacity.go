@@ -3,23 +3,83 @@ package booking
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/slots"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
-// PilotLocality is the single society the slot-capacity pilot runs in.
-// resolveGateLocality falls back to it whenever an address can't be mapped to
-// a seeded locality, so the gate still applies instead of failing open.
+// Slot-capacity pilot values are admin-managed via config_manager
+// (scheduling.* keys) so the pilot society and service close aren't baked into
+// code. The const fallbacks below are used only when config is unreadable.
 //
-// PILOT-ONLY SHORTCUT: defaulting every unresolved address to one hardcoded
-// society is correct only while the pilot is single-society. A multi-society
-// rollout MUST replace the fallback in resolveGateLocality with real
-// address→locality resolution (geocode or explicit society selection) —
-// otherwise capacity from unrelated societies would be pooled together.
-const PilotLocality = "Orchid Island Gurugram"
+// PILOT-ONLY SHORTCUT: defaulting every unresolved address to a single society
+// is correct only while the pilot is single-society. A multi-society rollout
+// MUST replace the fallback in resolveGateLocality with real address→locality
+// resolution (geocode or explicit society selection), otherwise capacity from
+// unrelated societies would be pooled together. The admin can clear the config
+// to disable the fallback entirely.
+
+// defaultServiceCloseMin is the IST service close (20:30) in minutes-from-
+// midnight, used only when the admin-managed scheduling.service_close_min config
+// is unset or unreadable. A scheduled job must FINISH by the close: the last
+// 30-min slot is 20:00–20:30 and a longer cart pushes the last viable start
+// earlier (a 60-min job can't start after 19:30). Slot times are IST wall-clock
+// and no slot crosses midnight, so the gate and availability compare with plain
+// minute math — no timezone conversion needed.
+const defaultServiceCloseMin = 20*60 + 30
+
+// defaultPilotLocality is the fallback society used only when the admin-managed
+// scheduling.capacity_pilot_locality config is unreadable. Empty config (set
+// from the CRM) disables the fallback entirely.
+const defaultPilotLocality = "Orchid Island Gurugram"
+
+// serviceCloseMin reads the admin-managed IST service close (minutes-from-
+// midnight), falling back to defaultServiceCloseMin if config is unset/invalid.
+func (s *Service) serviceCloseMin(ctx context.Context) int {
+	v, err := s.configSvc.GetConfig(ctx, config_manager.ConfigSchedulingServiceCloseMin)
+	if err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultServiceCloseMin
+}
+
+// pilotLocality reads the admin-managed capacity-gating fallback locality. An
+// empty config value (admin-cleared) disables the fallback; only a config read
+// error falls back to defaultPilotLocality.
+func (s *Service) pilotLocality(ctx context.Context) string {
+	v, err := s.configSvc.GetConfig(ctx, config_manager.ConfigSchedulingCapacityPilotLocality)
+	if err != nil {
+		return defaultPilotLocality
+	}
+	return strings.TrimSpace(v)
+}
+
+// hhmmToMin parses "HH:MM" to minutes-from-midnight, or -1 on a malformed value
+// so callers fail closed (treat as overrunning close).
+func hhmmToMin(hhmm string) int {
+	var h, m int
+	if _, err := fmt.Sscanf(hhmm, "%d:%d", &h, &m); err != nil {
+		return -1
+	}
+	return h*60 + m
+}
+
+// overrunsServiceClose reports whether a job of durationMin starting at the IST
+// wall-clock slot start (HH:MM) would end after closeMin (the service close).
+func overrunsServiceClose(slotStart string, durationMin, closeMin int) bool {
+	startMin := hhmmToMin(slotStart)
+	if startMin < 0 {
+		return true // malformed slot start → fail closed
+	}
+	return startMin+durationMin > closeMin
+}
 
 // committedStatusList is the SQL tuple of booking statuses that hold (commit)
 // a helper for their scheduled window. Terminal states (completed, cancelled)
@@ -208,19 +268,19 @@ func (r *Repository) availableForWindow(ctx context.Context, q rowQuerier, local
 
 // resolveGateLocality maps an address to the locality used for capacity
 // gating. It reuses resolveLocality's fuzzy match and, on a miss or error,
-// defaults to PilotLocality so the gate always applies during the pilot.
-//
-// PILOT-ONLY: see PilotLocality — the unconditional default is safe only while
-// the pilot is single-society.
+// defaults to the admin-managed pilot locality so the gate still applies. An
+// admin-cleared pilot locality ("") means no fallback — the gate is skipped for
+// unresolved addresses (see the empty-locality guard in CreateScheduledBooking).
 func (s *Service) resolveGateLocality(ctx context.Context, addressID string) (string, error) {
 	loc, err := s.resolveLocality(ctx, addressID)
 	if err != nil {
-		log.Warn().Err(err).Str("address_id", addressID).
-			Msg("[booking] gate locality resolve failed; defaulting to pilot locality")
-		return PilotLocality, nil
+		fallback := s.pilotLocality(ctx)
+		log.Warn().Err(err).Str("address_id", addressID).Str("fallback", fallback).
+			Msg("[booking] gate locality resolve failed; using configured fallback locality")
+		return fallback, nil
 	}
 	if loc == nil || *loc == "" {
-		return PilotLocality, nil
+		return s.pilotLocality(ctx), nil
 	}
 	return *loc, nil
 }
@@ -299,6 +359,7 @@ func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date strin
 		return nil, fmt.Errorf("leave count: %w", err)
 	}
 	effective := roster - onLeave
+	closeMin := s.serviceCloseMin(ctx)
 
 	out := &AvailabilityResponse{Date: date, Periods: make([]AvailabilityPeriod, 0, len(periods))}
 	for _, p := range periods {
@@ -317,6 +378,19 @@ func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date strin
 			if avail < 0 {
 				avail = 0
 			}
+			// Service-close fit: a job placed here must finish by the close. With
+			// a cart duration, measure the job; without one, fall back to the
+			// slot's own end (so the 20:30–21:00 slot is hidden regardless). A
+			// slot that can't fit shows zero headroom and unavailable.
+			var overruns bool
+			if durationMin > 0 {
+				overruns = overrunsServiceClose(sl.StartTime, durationMin, closeMin)
+			} else {
+				overruns = hhmmToMin(sl.EndTime) > closeMin
+			}
+			if overruns {
+				avail = 0
+			}
 			ap.Slots = append(ap.Slots, AvailabilitySlot{
 				ID:                sl.ID,
 				SlotDate:          sl.SlotDate,
@@ -325,7 +399,7 @@ func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date strin
 				Period:            sl.Period,
 				MaxBookings:       sl.MaxBookings,
 				CurrentBookings:   sl.CurrentBookings,
-				IsAvailable:       sl.IsAvailable && avail > 0,
+				IsAvailable:       sl.IsAvailable && avail > 0 && !overruns,
 				AvailableCapacity: avail,
 			})
 		}

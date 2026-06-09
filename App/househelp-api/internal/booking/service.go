@@ -1063,13 +1063,13 @@ func (s *Service) CreateScheduledBooking(
 		}
 	}
 
-	// Capacity gating resolves to a concrete locality (pilot default on a
-	// miss) so the gate always applies. resolveGateLocality never returns a
-	// nil/empty locality; the err branch is defensive.
+	// Capacity gating resolves to a concrete locality (admin-managed fallback on
+	// a miss) so the gate applies. resolveGateLocality never returns an error;
+	// the branch is defensive and reuses the configured fallback locality.
 	gateLocality, locErr := s.resolveGateLocality(ctx, req.AddressID)
 	if locErr != nil {
 		log.Warn().Err(locErr).Str("address_id", req.AddressID).Msg("[booking] locality resolve failed")
-		gateLocality = PilotLocality
+		gateLocality = s.pilotLocality(ctx)
 	}
 	locality := &gateLocality
 
@@ -1111,7 +1111,8 @@ func (s *Service) CreateScheduledBooking(
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCode,
 		isStealth, fireAt, locality,
-		true, // enforce live slot-capacity gate for the scheduled flow
+		true,                     // enforce live slot-capacity gate for the scheduled flow
+		s.serviceCloseMin(ctx),   // admin-managed IST service close (job must finish by it)
 	)
 	if err != nil {
 		return nil, err
@@ -1256,7 +1257,8 @@ func (s *Service) CreateInstantBookingFromCart(
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCodePtr,
 		false, nil, locality,
-		false,
+		false, // instant/cart path: not slot-gated
+		0,     // serviceCloseMin unused when capacity is not enforced
 	)
 	if err != nil {
 		return nil, err

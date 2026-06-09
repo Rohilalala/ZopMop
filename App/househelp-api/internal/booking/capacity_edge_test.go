@@ -177,6 +177,41 @@ func TestSlotCapacityEdge_MultiHelperWindowSaturation(t *testing.T) {
 	}
 }
 
+// Service-close fit: a job must finish by 20:30 IST. The 20:30 slot is dead
+// (a 30-min job there ends 21:00), and a 60-min job can't start at 20:00.
+func TestSlotCapacityEdge_ServiceCloseFit(t *testing.T) {
+	f := newCapFixture(t, 1)
+	cA, aA := f.newCustomer()
+	cB, aB := f.newCustomer()
+	cC, aC := f.newCustomer()
+	// 60-min @20:00 ends 21:00 > 20:30 close → rejected.
+	if _, err := f.bookAs(cA, aA, "20:00", 60, true); !errors.Is(err, ErrSlotUnavailable) {
+		t.Fatalf("60-min @20:00: got %v, want ErrSlotUnavailable (overruns close)", err)
+	}
+	// 30-min @20:30 ends 21:00 > close → rejected (the dropped slot).
+	if _, err := f.bookAs(cB, aB, "20:30", 30, true); !errors.Is(err, ErrSlotUnavailable) {
+		t.Fatalf("30-min @20:30: got %v, want ErrSlotUnavailable (past close)", err)
+	}
+	// 30-min @20:00 ends exactly 20:30 == close → allowed.
+	if _, err := f.bookAs(cC, aC, "20:00", 30, true); err != nil {
+		t.Fatalf("30-min @20:00 should fit (ends at close): %v", err)
+	}
+}
+
+// The last viable start moves earlier as the cart grows: a 90-min job fits at
+// 19:00 (ends 20:30) but not at 19:30 (ends 21:00).
+func TestSlotCapacityEdge_ServiceCloseScalesWithDuration(t *testing.T) {
+	f := newCapFixture(t, 1)
+	cA, aA := f.newCustomer()
+	cB, aB := f.newCustomer()
+	if _, err := f.bookAs(cA, aA, "19:30", 90, true); !errors.Is(err, ErrSlotUnavailable) {
+		t.Fatalf("90-min @19:30: got %v, want ErrSlotUnavailable (overruns close)", err)
+	}
+	if _, err := f.bookAs(cB, aB, "19:00", 90, true); err != nil {
+		t.Fatalf("90-min @19:00 should fit (ends at close): %v", err)
+	}
+}
+
 func (f *capFixture) committedJob(hhmm string, durationMin int) int {
 	n, err := f.repo.committedCountForSlotJob(context.Background(), f.pool, f.locality, f.slotID(hhmm), durationMin)
 	if err != nil {
@@ -252,6 +287,7 @@ func TestSlotCapacityEdge_MultiItemCartDuration(t *testing.T) {
 	if _, err := f.repo.CreateScheduledBooking(
 		context.Background(), f.customer, f.addressID, slotID,
 		sched, items, 200, 0, nil, false, nil, &loc, true,
+		defaultServiceCloseMin,
 	); err != nil {
 		t.Fatalf("multi-item booking failed: %v", err)
 	}

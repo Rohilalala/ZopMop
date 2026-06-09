@@ -670,6 +670,7 @@ func (r *Repository) CreateScheduledBooking(
 	fireAt *time.Time,
 	locality *string,
 	enforceCapacity bool,
+	serviceCloseMin int,
 ) (*ScheduledBooking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -694,14 +695,14 @@ func (r *Repository) CreateScheduledBooking(
 	// Other localities/dates are unaffected and the lock auto-releases on
 	// commit/rollback. Capacity is enforced only for the scheduled flow
 	// (enforceCapacity); the instant/cart path passes false.
-	var slotDate string
+	var slotDate, slotStart string
 	var isActive bool
 	err = tx.QueryRow(queryCtx,
-		`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active
+		`SELECT to_char(slot_date, 'YYYY-MM-DD'), to_char(start_time, 'HH24:MI'), is_active
 		 FROM time_slots
 		 WHERE id = $1`,
 		timeSlotID,
-	).Scan(&slotDate, &isActive)
+	).Scan(&slotDate, &slotStart, &isActive)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrSlotUnavailable
@@ -718,6 +719,20 @@ func (r *Repository) CreateScheduledBooking(
 	totalDuration := 0
 	for _, item := range items {
 		totalDuration += item.DurationMinutes
+	}
+
+	if enforceCapacity {
+		// Service-close fit (scheduled flow). The job must finish by the IST
+		// service close (serviceCloseMin, admin-managed; 20:30 default) on its
+		// slot date. A booking
+		// that would overrun close is rejected — this also makes the
+		// 20:30–21:00 slot unbookable (a 30-min job there ends 21:00 > close)
+		// and shrinks the last viable start as the cart gets longer. Slot times
+		// are IST wall-clock, so plain minute math is correct (no slot crosses
+		// midnight).
+		if overrunsServiceClose(slotStart, totalDuration, serviceCloseMin) {
+			return nil, ErrSlotUnavailable
+		}
 	}
 
 	if enforceCapacity && locality != nil && *locality != "" {
