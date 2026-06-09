@@ -177,6 +177,38 @@ func TestSlotCapacityEdge_MultiHelperWindowSaturation(t *testing.T) {
 	}
 }
 
+func (f *capFixture) committedJob(hhmm string, durationMin int) int {
+	n, err := f.repo.committedCountForSlotJob(context.Background(), f.pool, f.locality, f.slotID(hhmm), durationMin)
+	if err != nil {
+		f.t.Fatalf("committedCountForSlotJob %s/%d: %v", hhmm, durationMin, err)
+	}
+	return n
+}
+
+// With the customer's cart duration, the availability count closes the
+// duration-blind gap: the same 10:00 job that the slot-window count misses for
+// the 09:30 slot IS seen once the 60-min job window is used, so display now
+// agrees with the gate (slot shown unavailable).
+func TestSlotCapacityEdge_DurationAwareDisplayClosesGap(t *testing.T) {
+	f := newCapFixture(t, 1)
+	cA, aA := f.newCustomer()
+	if _, err := f.bookAs(cA, aA, "10:00", 30, true); err != nil {
+		t.Fatalf("seed 10:00 booking failed: %v", err)
+	}
+	// Slot-window count (duration-agnostic) misses the 10:00 job for 09:30.
+	if got := f.committed("09:30"); got != 0 {
+		t.Fatalf("slot-window committed(09:30) = %d, want 0", got)
+	}
+	// Job-window count for a 60-min cart catches it.
+	if got := f.committedJob("09:30", 60); got != 1 {
+		t.Fatalf("job-window committed(09:30,60) = %d, want 1", got)
+	}
+	// A 30-min cart's window does NOT reach the 10:00 job (equals slot-window).
+	if got := f.committedJob("09:30", 30); got != 0 {
+		t.Fatalf("job-window committed(09:30,30) = %d, want 0 (no overlap)", got)
+	}
+}
+
 // DURATION-BLIND DISPLAY GAP (documents current behaviour, not a pass/fail of
 // the fix). availableForSlot — the value the /bookings/availability endpoint
 // shows per slot — counts overlaps against the 30-min SLOT window only. A job

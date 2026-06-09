@@ -350,7 +350,15 @@ func (h *Handler) GetSlotAvailability(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
 	}
 
-	resp, err := h.service.GetSlotAvailability(c.UserContext(), addressID, date)
+	// Optional cart duration. When present, availability is computed over each
+	// slot's job window so a slot a long job can't book isn't shown available.
+	// Absent/zero/negative → duration-agnostic per-slot display.
+	durationMin := c.QueryInt("duration_minutes", 0)
+	if durationMin < 0 {
+		durationMin = 0
+	}
+
+	resp, err := h.service.GetSlotAvailability(c.UserContext(), addressID, date, durationMin)
 	if err != nil {
 		log.Error().Err(err).Str("address_id", addressID).Str("date", date).Msg("[booking] failed to compute slot availability")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to compute slot availability"})

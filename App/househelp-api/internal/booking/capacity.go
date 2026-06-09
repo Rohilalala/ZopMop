@@ -101,6 +101,31 @@ func (r *Repository) committedCountForSlot(ctx context.Context, q rowQuerier, lo
 	return n, err
 }
 
+// committedCountForSlotJob is committedCountForSlot for a job that may be LONGER
+// than the slot: it counts committed bookings overlapping
+// [slot.start, slot.start + durationMin) instead of the slot's own
+// [start, end). The availability endpoint uses this with the customer's cart
+// duration so a slot isn't shown bookable when a job placed there would overrun
+// into committed time and then be rejected by the gate (availableForWindow).
+// With durationMin equal to the slot length it equals committedCountForSlot.
+func (r *Repository) committedCountForSlotJob(ctx context.Context, q rowQuerier, locality, slotID string, durationMin int) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM bookings b, time_slots ts
+		WHERE ts.id = $2
+		  AND b.locality = $1
+		  AND b.status IN `+committedStatusList+`
+		  AND b.scheduled_time IS NOT NULL
+		  AND b.total_duration_minutes IS NOT NULL
+		  AND b.scheduled_time
+		        < ((ts.slot_date + ts.start_time) AT TIME ZONE 'Asia/Kolkata' + make_interval(mins => $3))
+		  AND (b.scheduled_time + make_interval(mins => b.total_duration_minutes))
+		        > ((ts.slot_date + ts.start_time) AT TIME ZONE 'Asia/Kolkata')
+	`, locality, slotID, durationMin).Scan(&n)
+	return n, err
+}
+
 // availableForSlot is the live capacity for a single slot:
 //
 //	roster(locality) − onLeave(locality, date) − committed(locality, slot)
@@ -245,7 +270,13 @@ type AvailabilityResponse struct {
 // bucketing as GET /slots) with is_available recomputed from live capacity in
 // the address's locality. roster and on-leave counts are locality/date-wide,
 // so they're computed once; only the committed-overlap count varies per slot.
-func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date string) (*AvailabilityResponse, error) {
+//
+// durationMin is the customer's prospective job length (cart total). When > 0,
+// availability is computed over each slot's [start, start+durationMin) job
+// window, matching the booking gate (availableForWindow) — so a slot that a
+// long job can't actually book is not shown as available. When <= 0 it falls
+// back to the slot's own window (duration-agnostic display).
+func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date string, durationMin int) (*AvailabilityResponse, error) {
 	locality, err := s.resolveGateLocality(ctx, addressID)
 	if err != nil {
 		return nil, err
@@ -273,7 +304,12 @@ func (s *Service) GetSlotAvailability(ctx context.Context, addressID, date strin
 	for _, p := range periods {
 		ap := AvailabilityPeriod{Label: p.Label, Slots: make([]AvailabilitySlot, 0, len(p.Slots))}
 		for _, sl := range p.Slots {
-			committed, err := s.repo.committedCountForSlot(ctx, s.db, locality, sl.ID)
+			var committed int
+			if durationMin > 0 {
+				committed, err = s.repo.committedCountForSlotJob(ctx, s.db, locality, sl.ID, durationMin)
+			} else {
+				committed, err = s.repo.committedCountForSlot(ctx, s.db, locality, sl.ID)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("committed count for slot %s: %w", sl.ID, err)
 			}
