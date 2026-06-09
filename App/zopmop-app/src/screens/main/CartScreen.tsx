@@ -648,6 +648,8 @@ export default function CartScreen() {
       <SchedulingModal
         visible={schedulingVisible}
         token={token ?? ''}
+        addressId={selectedAddress?.id}
+        durationMinutes={items.reduce((sum, it) => sum + (it.duration_minutes ?? 0), 0)}
         onClose={() => setSchedulingVisible(false)}
         onConfirm={(slotId, label) => {
           setSelectedSlotId(slotId);
@@ -660,7 +662,7 @@ export default function CartScreen() {
         visible={addressPickerVisible}
         onClose={() => setAddressPickerVisible(false)}
         mode={{ kind: 'select', initialAddressId: selectedAddress?.id }}
-        theme={isDark ? 'light' : 'light'}
+        theme={isDark ? 'dark' : 'light'}
         onLocationSelect={(_name, _lat, _lon, _addrId, address) => {
           if (address) {
             setSelectedAddress(address);

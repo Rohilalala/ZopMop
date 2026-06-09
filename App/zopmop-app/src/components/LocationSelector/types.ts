@@ -5,6 +5,7 @@ export type LocationSelectorTheme = 'dark' | 'light' | 'auto';
 export type Mode =
   | { kind: 'select'; initialAddressId?: string }
   | { kind: 'change-location' }
+  | { kind: 'add-new' } // open straight into the add-a-new-address flow (pin step)
   | { kind: 'manage'; editAddress?: ApiAddress };
 
 export interface LocationSelectorProps {

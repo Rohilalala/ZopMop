@@ -7,9 +7,9 @@ export interface ServiceArea {
 // TODO(crm): replace static config with GET /v1/admin/service-areas
 export const SERVICE_AREAS: ServiceArea[] = [
   {
-    id: 'orchid-island-gurugram',
-    name: 'Orchid Island, Gurugram',
-    bbox: { minLat: 28.40, maxLat: 28.43, minLon: 77.07, maxLon: 77.10 },
+    id: 'gurugram',
+    name: 'Gurugram',
+    bbox: { minLat: 28.35, maxLat: 28.56, minLon: 76.95, maxLon: 77.15 },
   },
 ];
 

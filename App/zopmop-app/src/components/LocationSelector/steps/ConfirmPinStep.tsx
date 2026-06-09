@@ -120,15 +120,15 @@ export function ConfirmPinStep({
           }}
           onRegionChangeComplete={handleRegionChange}
         />
-        {/* Center pin overlay */}
+        {/* Fixed center dot — the map pans under it, so its center is the
+            picked location. Plain circle (Google-style), no teardrop pin. */}
         <View style={s.pinContainer} pointerEvents="none">
-          <View style={[s.pinHead, { borderColor: t.ink }]} />
-          <View style={s.pinTail} />
+          <View style={s.centerDot} />
         </View>
       </View>
 
       <Text style={[s.mapHint, { color: t.textMuted }]}>
-        Drag the pin to fine-tune your exact location.
+        Move the map to fine-tune your exact location.
       </Text>
 
       <View style={s.detectedRow}>
@@ -216,32 +216,21 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: '50%',
     left: '50%',
-    marginLeft: -13,
-    marginTop: -38,
-    alignItems: 'center',
+    marginLeft: -11,
+    marginTop: -11,
   },
-  pinHead: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  centerDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#F5A300',
-    borderWidth: 2.5,
-    shadowColor: '#F5A300',
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  pinTail: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderTopWidth: 18,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: '#F5A300',
-    marginTop: -2,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 5,
   },
 
   mapHint: {

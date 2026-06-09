@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Switch,
   StyleSheet,
   Platform,
   KeyboardAvoidingView,
@@ -13,6 +12,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { FontFamily } from '../../../theme';
 import { LoadingBars } from '../../ui/LoadingBars';
+import { AppSwitch } from '../../ui/AppSwitch';
 import type { LSThemeTokens } from '../utils/theme';
 import type { SelectedPlace, FormValues, AddressTag } from '../types';
 import { INDIAN_PHONE_REGEX } from '../types';
@@ -241,11 +241,7 @@ export function AddressFormStep({
               ]}
             >
               <View style={[s.ccSel, { borderRightColor: t.border }]}>
-                <View style={s.flag}>
-                  <View style={[s.flagBand, { backgroundColor: '#FF9933' }]} />
-                  <View style={[s.flagBand, { backgroundColor: '#FFFFFF' }]} />
-                  <View style={[s.flagBand, { backgroundColor: '#138808' }]} />
-                </View>
+                <Text style={s.flagEmoji}>🇮🇳</Text>
                 <Text style={[s.ccText, { color: t.text }]}>+91</Text>
               </View>
               <TextInput
@@ -273,11 +269,9 @@ export function AddressFormStep({
               <Text style={[s.drTitle, { color: t.text }]}>Set as default address</Text>
               <Text style={[s.drSub, { color: t.textMuted }]}>Use this for new bookings</Text>
             </View>
-            <Switch
+            <AppSwitch
               value={form.setAsDefault}
               onValueChange={(v) => onFormChange({ setAsDefault: v })}
-              trackColor={{ false: t.toggleOff, true: '#F5A300' }}
-              thumbColor="#FFFFFF"
             />
           </View>
 
@@ -554,13 +548,7 @@ const s = StyleSheet.create({
     gap: 6,
     borderRightWidth: 1,
   },
-  flag: {
-    width: 20,
-    height: 14,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  flagBand: { flex: 1 },
+  flagEmoji: { fontSize: 18 },
   ccText: {
     fontFamily: FontFamily.bold,
     fontSize: 14,
