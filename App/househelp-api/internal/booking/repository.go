@@ -782,15 +782,19 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 	// the PAYMENT_SUCCESS webhook flips payment_status='paid'. Wallet-pay
 	// (payment_method='wallet', stamped paid inline) and legacy COD/null
 	// bookings continue to surface as before.
+	// Columns MUST be b.-qualified: the query below joins booking_services /
+	// service_categories / user_addresses, and a bare `status` is ambiguous
+	// once any joined table also carries one (SQLSTATE 42702 — every
+	// "upcoming" fetch 500'd).
 	const hidePendingUnpaidCashfree = `
-		(payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+		(b.payment_method IS DISTINCT FROM 'cashfree' OR b.payment_status = 'paid')
 	`
 	var statusFilter string
 	switch status {
 	case "upcoming":
-		statusFilter = `status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
+		statusFilter = `b.status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
 	case "past":
-		statusFilter = `status IN ('completed', 'cancelled')`
+		statusFilter = `b.status IN ('completed', 'cancelled')`
 	default:
 		statusFilter = `true`
 	}

@@ -324,6 +324,9 @@ func (r *Resolver) resolveRef(node map[string]any, refKey string, hydrated map[s
 			// No default → return nil; visibility/required gating handles the rest.
 			return nil, nil
 		}
+		if rawIDs, hasIDs := node["$ids"]; hasIDs {
+			return filterByIDs(val, rawIDs), nil
+		}
 		return val, nil
 	}
 
@@ -337,6 +340,44 @@ func (r *Resolver) resolveRef(node map[string]any, refKey string, hydrated map[s
 	// Non-required, no default — caller decides (typically: section becomes
 	// invisible). Return nil so downstream JSON renders as null.
 	return nil, fmt.Errorf("resolver: $ref %q missing and no $default", refKey)
+}
+
+// filterByIDs narrows a slice-valued $ref to the elements whose "id" field
+// appears in $ids, returned in $ids order. Lets a config pin which items a
+// list source renders (membership + order) while the values stay live — e.g.
+// {"$ref": "services.popular", "$ids": [...]} shows only the configured
+// services at current catalog prices. IDs absent from the source are dropped
+// (a deactivated service silently disappears from the page). Non-slice values
+// and malformed $ids pass through unchanged.
+func filterByIDs(val any, rawIDs any) any {
+	ids, ok := rawIDs.([]any)
+	if !ok || len(ids) == 0 {
+		return val
+	}
+	// Normalize through JSON so typed slices from in-process fetchers (e.g.
+	// []services.Service) and []any from cache are handled uniformly.
+	raw, err := json.Marshal(val)
+	if err != nil {
+		return val
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return val
+	}
+	byID := make(map[string]map[string]any, len(items))
+	for _, item := range items {
+		if id, _ := item["id"].(string); id != "" {
+			byID[id] = item
+		}
+	}
+	out := make([]any, 0, len(ids))
+	for _, rawID := range ids {
+		id, _ := rawID.(string)
+		if item, ok := byID[id]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // resolveVisibility resolves the section.visible field. Defaults to false on
