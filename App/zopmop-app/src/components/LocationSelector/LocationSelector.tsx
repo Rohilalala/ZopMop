@@ -78,6 +78,11 @@ export function LocationSelector({
       fetchAddresses();
       if (mode.kind === 'manage' && mode.editAddress) {
         openEditMode(mode.editAddress);
+      } else if (mode.kind === 'add-new') {
+        // Jump straight into adding a new address: drop the user on the pin
+        // step using their current location (same as tapping "Add new address"
+        // → use current location). Falls back to the search step if GPS denied.
+        handleGps();
       }
     } else {
       translateY.value = withTiming(SHEET_H, {

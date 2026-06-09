@@ -16,8 +16,11 @@ import {
   Easing,
   StatusBar,
 } from 'react-native';
+import Reanimated, { useAnimatedStyle, interpolateColor } from 'react-native-reanimated';
 import Constants from 'expo-constants';
 import { LoadingBars } from '../../components/ui/LoadingBars';
+import { useAnimatedColor } from '../../theme/useAnimatedTheme';
+import { AppSwitch } from '../../components/ui/AppSwitch';
 import { SkeletonBox } from '../../components/SkeletonBox';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -84,8 +87,16 @@ export default function ProfileScreen() {
   const { myGroup } = useRoomies();
   const [editVisible, setEditVisible] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
-  const { isDark, toggleTheme } = useTheme();
+  const { isDark, toggleTheme, progress } = useTheme();
   const c = useC();
+  const rootBg = useAnimatedColor('backgroundColor', 'bg');
+  const iconBtnStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      backgroundColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.06)', '#FFFFFF']),
+      borderColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.08)', 'rgba(13,13,15,0.06)']),
+    };
+  });
   const darkOn = isDark;
   const [remindersOn, setRemindersOn] = useState(true);
 
@@ -196,23 +207,23 @@ export default function ProfileScreen() {
   };
 
   return (
-    <View style={[s.root, { backgroundColor: c.bg }]}>
+    <Reanimated.View style={[s.root, rootBg]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topbar}>
-          <TouchableOpacity style={[s.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)' }]} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
+          <ARowTouchable style={[s.iconBtn, iconBtnStyle]} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
             <Feather name="chevron-left" size={18} color={c.text} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)' }]}
+          </ARowTouchable>
+          <ARowTouchable
+            style={[s.iconBtn, iconBtnStyle]}
             onPress={() => navigation.navigate('HelpSupport')}
             activeOpacity={0.75}
             hitSlop={10}
           >
             <Feather name="help-circle" size={16} color={c.text} />
-          </TouchableOpacity>
+          </ARowTouchable>
         </View>
 
         <ScrollView
@@ -238,14 +249,14 @@ export default function ProfileScreen() {
               icon={<Feather name="moon" size={17} color={C.amber} />}
               label="Appearance"
               meta={darkOn ? 'Dark mode' : 'Light mode'}
-              right={<Toggle on={darkOn} onChange={() => toggleTheme()} />}
+              right={<AppSwitch value={darkOn} onValueChange={() => toggleTheme()} />}
             />
             {/* Reminder timing is locally toggled today; meta hidden until
                 backend exposes a reminder-prefs endpoint (S8). */}
             <Row
               icon={<Feather name="bell" size={17} color={C.amber} />}
               label="Reminders"
-              right={<Toggle on={remindersOn} onChange={() => setRemindersOn(v => !v)} />}
+              right={<AppSwitch value={remindersOn} onValueChange={setRemindersOn} />}
               last
             />
           </Card>
@@ -337,7 +348,7 @@ export default function ProfileScreen() {
         onClose={() => setEditVisible(false)}
         onSaved={(u) => { updateUser(u); setEditVisible(false); }}
       />
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -427,7 +438,18 @@ function HeroCard({
 
 function ActionRail({ navigation }: { navigation: Nav }) {
   const c = useC();
-  const { isDark } = useTheme();
+  const { progress } = useTheme();
+  const bubbleStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      backgroundColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.05)', '#FFFFFF']),
+      borderColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.07)', 'rgba(13,13,15,0.04)']),
+    };
+  });
+  const railLabelStyle = useAnimatedStyle(() => {
+    'worklet';
+    return { color: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.85)', '#0D0D0F']) };
+  });
   const items: Array<{
     id: string;
     label: string;
@@ -465,15 +487,15 @@ function ActionRail({ navigation }: { navigation: Nav }) {
     <View style={s.rail}>
       {items.map((it) => (
         <TouchableOpacity key={it.id} onPress={it.go} activeOpacity={0.75} style={s.railItem}>
-          <View style={[s.railBubble, isDark ? {} : { backgroundColor: '#fff', borderColor: 'rgba(13,13,15,0.04)', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 }]}>
+          <Reanimated.View style={[s.railBubble, bubbleStyle]}>
             {it.icon}
             {it.pip != null && (
               <View style={[s.pip, { borderColor: c.bg }]}>
                 <Text style={s.pipText}>{it.pip}</Text>
               </View>
             )}
-          </View>
-          <Text style={[s.railLabel, { color: isDark ? 'rgba(255,255,255,0.85)' : c.text }]} numberOfLines={1}>{it.label}</Text>
+          </Reanimated.View>
+          <Reanimated.Text style={[s.railLabel, railLabelStyle]} numberOfLines={1}>{it.label}</Reanimated.Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -514,24 +536,23 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
-  const c = useC();
-  return <Text style={[s.sectionHeader, { color: c.textMuted }]}>{children}</Text>;
+  const anim = useAnimatedColor('color', 'textMuted');
+  return <Reanimated.Text style={[s.sectionHeader, anim]}>{children}</Reanimated.Text>;
 }
 
+const ARowTouchable = Reanimated.createAnimatedComponent(TouchableOpacity);
+
 function Card({ children }: { children: React.ReactNode }) {
-  const { isDark } = useTheme();
-  return (
-    <View style={[
-      s.card,
-      isDark
-        ? { backgroundColor: c_glass_dark, borderColor: 'rgba(255,255,255,0.07)' }
-        : { backgroundColor: '#fff', borderColor: 'rgba(13,13,15,0.06)', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
-    ]}>
-      {children}
-    </View>
-  );
+  const { progress } = useTheme();
+  const style = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      backgroundColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.045)', '#FFFFFF']),
+      borderColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.07)', 'rgba(13,13,15,0.06)']),
+    };
+  });
+  return <Reanimated.View style={[s.card, style]}>{children}</Reanimated.View>;
 }
-const c_glass_dark = 'rgba(255,255,255,0.045)';
 
 function Row({
   icon, label, meta, right, chev, onPress, muted, last,
@@ -545,69 +566,42 @@ function Row({
   muted?: boolean;
   last?: boolean;
 }) {
-  const c = useC();
-  const { isDark } = useTheme();
-  const Comp: any = onPress ? TouchableOpacity : View;
+  const { progress, isDark } = useTheme();
+  const Comp: any = onPress ? ARowTouchable : Reanimated.View;
+  const border = useAnimatedStyle(() => {
+    'worklet';
+    return { borderBottomColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.04)', 'rgba(13,13,15,0.05)']) };
+  });
+  const iconBg = useAnimatedStyle(() => {
+    'worklet';
+    return { backgroundColor: interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.06)', 'rgba(13,13,15,0.05)']) };
+  });
+  const labelColor = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      color: muted
+        ? interpolateColor(progress.value, [0, 1], ['rgba(255,255,255,0.65)', 'rgba(13,13,15,0.65)'])
+        : interpolateColor(progress.value, [0, 1], ['#FFFFFF', '#0D0D0F']),
+    };
+  });
+  const metaColor = useAnimatedColor('color', 'textMuted');
   return (
     <Comp
-      style={[s.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(13,13,15,0.05)' }]}
+      style={[s.row, !last && { borderBottomWidth: StyleSheet.hairlineWidth }, !last && border]}
       activeOpacity={0.7}
       onPress={onPress}
     >
-      <View style={[s.rowIcon, muted && { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)' }]}>{icon}</View>
+      <Reanimated.View style={[s.rowIcon, muted && iconBg]}>{icon}</Reanimated.View>
       <View style={s.rowText}>
-        <Text style={[s.rowLabel, { color: muted ? c.textSecondary : c.text }]} numberOfLines={1}>{label}</Text>
-        {!!meta && <Text style={[s.rowMeta, { color: c.textMuted }]} numberOfLines={1}>{meta}</Text>}
+        <Reanimated.Text style={[s.rowLabel, labelColor]} numberOfLines={1}>{label}</Reanimated.Text>
+        {!!meta && <Reanimated.Text style={[s.rowMeta, metaColor]} numberOfLines={1}>{meta}</Reanimated.Text>}
       </View>
       {right}
-      {chev && <Feather name="chevron-right" size={14} color={c.textMuted} />}
+      {chev && <Feather name="chevron-right" size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.50)'} />}
     </Comp>
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (origin?: { x: number; y: number }) => void }) {
-  const { isDark } = useTheme();
-  const anim = useRef(new Animated.Value(on ? 1 : 0)).current;
-  const trackRef = useRef<View>(null);
-
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: on ? 1 : 0,
-      duration: 220,
-      easing: Easing.bezier(0.37, 1.95, 0.66, 0.56),
-      useNativeDriver: false,
-    }).start();
-  }, [on]);
-
-  const left = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 20] });
-
-  const handlePress = () => {
-    trackRef.current?.measureInWindow((px, py, w, h) => {
-      onChange({ x: px + w / 2, y: py + h / 2 });
-    });
-  };
-
-  return (
-    <TouchableOpacity activeOpacity={0.85} onPress={handlePress} style={s.toggleHit}>
-      <View ref={trackRef} style={[s.toggleTrack, on ? s.toggleOn : { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
-        {on && (
-          <View style={StyleSheet.absoluteFill}>
-            <Svg width="46" height="28">
-              <Defs>
-                <SvgLinearGradient id="togGrad" x1="0" y1="0" x2="0" y2="1">
-                  <Stop offset="0%" stopColor="#FFC042" />
-                  <Stop offset="100%" stopColor="#F5A300" />
-                </SvgLinearGradient>
-              </Defs>
-              <Rect width="46" height="28" rx="14" fill="url(#togGrad)" />
-            </Svg>
-          </View>
-        )}
-        <Animated.View style={[s.toggleThumb, { left }]} />
-      </View>
-    </TouchableOpacity>
-  );
-}
 
 function EditProfileModal({
   visible, currentName, phone, token, onClose, onSaved,
@@ -982,23 +976,6 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Toggle
-  toggleHit: { padding: 2 },
-  toggleTrack: {
-    width: 46, height: 28, borderRadius: 14,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  toggleOff: { backgroundColor: 'rgba(255,255,255,0.08)' },
-  toggleOn: {},
-  toggleThumb: {
-    position: 'absolute',
-    top: 2,
-    width: 24, height: 24, borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-    zIndex: 1,
-  },
 
   // Danger
   danger: { marginHorizontal: H_PAD, marginTop: 24, gap: 8 },

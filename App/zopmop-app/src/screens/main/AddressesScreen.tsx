@@ -138,7 +138,7 @@ export default function AddressesScreen({ navigation }: Props) {
         visible={editTarget !== null}
         onClose={() => setEditTarget(null)}
         mode={{ kind: 'manage', editAddress: editTarget ?? undefined }}
-        theme="dark"
+        theme={isDark ? 'dark' : 'light'}
         onLocationSelect={() => {
           setEditTarget(null);
           if (!token || token === '__guest__') return;

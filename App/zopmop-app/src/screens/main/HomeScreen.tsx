@@ -126,6 +126,10 @@ export default function HomeScreen() {
   const [locationName, setLocationName] = useState('Detecting location…');
   const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>();
   const [addressTag, setAddressTag] = useState<string | undefined>();
+  // True when the user has no saved address — the header then prompts
+  // "Add a new address" and its tap opens the add-new flow directly instead of
+  // showing a reverse-geocoded GPS location.
+  const [noSavedAddress, setNoSavedAddress] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(prefetched?.coords ?? null);
   const [serviceable, setServiceable] = useState(true);
   const [bootstrapping, setBootstrapping] = useState(prefetched?.page == null);
@@ -404,7 +408,7 @@ export default function HomeScreen() {
 
       // If we have prefetched addresses, resolve name from them now so the
       // header shows a real address on first paint.
-      const savedAddresses = prefetched?.addresses ?? null;
+      let savedAddresses = prefetched?.addresses ?? null;
       const fromPrefetch = resolveNameFromAddresses(lat, lon, savedAddresses);
       if (fromPrefetch) name = fromPrefetch;
 
@@ -412,6 +416,20 @@ export default function HomeScreen() {
         setLocationName(name);
         setCoords({ lat, lon });
         setBootstrapping(false);
+      }
+
+      // Prefetch may omit the address list this session. Fetch the definitive
+      // list so the "Add a new address" prompt only appears when the user truly
+      // has none — otherwise we'd show it despite a saved address existing.
+      if (!savedAddresses && token && token !== '__guest__') {
+        savedAddresses = await listAddresses(token).catch(() => null);
+        if (!cancelled && savedAddresses) {
+          const resolved = resolveNameFromAddresses(lat, lon, savedAddresses);
+          if (resolved) { name = resolved; setLocationName(resolved); }
+        }
+      }
+      if (!cancelled && savedAddresses) {
+        setNoSavedAddress(savedAddresses.length === 0);
       }
 
       // ── Phase 2: upgrade location in the background ───────────────────────
@@ -435,20 +453,13 @@ export default function HomeScreen() {
             if (savedAddresses && savedAddresses.length > 0) {
               const upgraded = resolveNameFromAddresses(lat, lon, savedAddresses);
               if (upgraded) name = upgraded;
+              if (!cancelled) setNoSavedAddress(false);
             } else if (token && token !== '__guest__') {
-              try {
-                const [place] = await Location.reverseGeocodeAsync({
-                  latitude: lat,
-                  longitude: lon,
-                });
-                if (place) {
-                  const parts = [
-                    place.name,
-                    place.district ?? place.subregion ?? place.city,
-                  ].filter(Boolean);
-                  if (parts.length > 0) name = parts.join(', ');
-                }
-              } catch {}
+              // No saved address: prompt the user to add one instead of showing
+              // a reverse-geocoded GPS location they never chose. Coords are
+              // still kept for the serviceability check below.
+              if (!cancelled) setNoSavedAddress(true);
+              name = 'Add a new address';
             }
           }
         }
@@ -474,6 +485,7 @@ export default function HomeScreen() {
       const shortName = name.split(',').slice(0, 2).join(',').trim();
       setLocationName(shortName);
       setSelectedAddressId(addressId);
+      if (addressId) setNoSavedAddress(false);
       // Resolve tag for the picked address. If the user picked a saved one,
       // look it up in their list; otherwise clear so the header falls back
       // to "Current location".
@@ -551,7 +563,7 @@ export default function HomeScreen() {
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
       onLocationSelect={handleLocationSelect}
-      mode={{ kind: 'change-location' }}
+      mode={noSavedAddress ? { kind: 'add-new' } : { kind: 'change-location' }}
       theme={isDark ? 'dark' : 'light'}
     />
   );
