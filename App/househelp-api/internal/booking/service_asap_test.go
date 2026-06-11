@@ -191,6 +191,59 @@ func TestASAP_NoPro(t *testing.T) {
 	}
 }
 
+// TestASAP_LegacyCashfreeDoesNotDispatchBeforePayment: the legacy single-service
+// CreateBooking path (POST /bookings) with the default/direct payment source
+// stamps payment_method='cashfree' (unpaid). A pro MUST NOT be force-assigned
+// before the customer completes the Cashfree SDK sheet — otherwise an abandoned
+// payment strands a dispatched pro. The result must be Assigned=false, the
+// assigner must never be called, and the row must stay pending+cashfree so the
+// 60s cron (ClaimDue, which keeps the payment gate) places it post-webhook.
+func TestASAP_LegacyCashfreeDoesNotDispatchBeforePayment(t *testing.T) {
+	f := newCapFixture(t, 1)
+	// A live result would mean a dispatch — calledOnce must stay false anyway.
+	fa := &fakeAssigner{result: &matching.AssignResult{HelperID: f.helperIDs[0], HelperName: "Asha", EtaMin: 8}}
+	s := asapService(t, f, fa)
+
+	res, err := s.CreateBooking(context.Background(), &CreateBookingRequest{
+		ServiceCategoryID: f.serviceID,
+		Address:           "Test Address, " + f.locality,
+		Lat:               28.45,
+		Lng:               77.05,
+		PaymentSource:     "direct",
+	}, f.customer)
+	if err != nil {
+		t.Fatalf("CreateBooking (direct): %v", err)
+	}
+	if res.Assigned {
+		t.Fatal("res.Assigned = true, want false — unpaid Cashfree must not dispatch before payment")
+	}
+	if fa.calledOnce {
+		t.Fatal("assigner was called for an unpaid Cashfree booking — a pro was dispatched before payment")
+	}
+
+	bk, ok := res.Booking.(*Booking)
+	if !ok {
+		t.Fatalf("res.Booking is %T, want *Booking", res.Booking)
+	}
+	var status string
+	var paymentMethod, paymentStatus *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT status, payment_method, payment_status FROM bookings WHERE id = $1::uuid`,
+		bk.ID,
+	).Scan(&status, &paymentMethod, &paymentStatus); err != nil {
+		t.Fatalf("load booking: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("booking status = %q, want pending (cron places it post-payment)", status)
+	}
+	if paymentMethod == nil || *paymentMethod != "cashfree" {
+		t.Fatalf("payment_method = %v, want cashfree", paymentMethod)
+	}
+	if paymentStatus != nil && *paymentStatus == "paid" {
+		t.Fatal("payment_status = paid before the webhook ran")
+	}
+}
+
 // TestASAP_NilAssigner: an unconfigured assigner is treated as no-pro — the
 // synchronous answer is honest (ErrNoProsAvailable) rather than a 500.
 func TestASAP_NilAssigner(t *testing.T) {

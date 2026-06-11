@@ -1686,9 +1686,6 @@ var zopTools = []openRouterTool{
 func BuildSystemPrompt(now time.Time, firstName string) (string, string) {
 	staticPrefix := chatSystemPrompt
 
-	hour := now.Hour()
-	instantOpen := hour >= 6 && hour < 20
-
 	tomorrow := now.AddDate(0, 0, 1)
 	daysUntil := func(target time.Weekday) int {
 		d := int(target) - int(now.Weekday())
@@ -1723,22 +1720,10 @@ Tomorrow's YYYY-MM-DD; "saturday" → Saturday's YYYY-MM-DD; etc.`,
 		nextMonday.Format("2 January 2006"),        nextMonday.Format("2006-01-02"),
 	)
 
-	var instantStatusBlock string
-	if instantOpen {
-		instantStatusBlock = "INSTANT BOOKING: currently AVAILABLE (open 6 AM – 8 PM IST). You can call create_instant_booking."
-	} else {
-		var nextOpen time.Time
-		if hour < 6 {
-			nextOpen = time.Date(now.Year(), now.Month(), now.Day(), 6, 0, 0, 0, now.Location())
-		} else {
-			nextOpen = time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 6, 0, 0, 0, now.Location())
-		}
-		instantStatusBlock = fmt.Sprintf(
-			`INSTANT BOOKING: currently UNAVAILABLE. Open hours are 6 AM – 8 PM IST. Right now it is %s. Instant opens again at %s. Do NOT call create_instant_booking — it will fail. Offer scheduled booking instead. Let the user know when instant becomes available again.`,
-			now.Format("15:04 IST"),
-			nextOpen.Format("Monday 15:04 IST"),
-		)
-	}
+	// ASAP is always available — there is no time-of-day blackout. A call may
+	// still return no_pros_available (no pro free right now) carrying an
+	// earliest_slot; offer that slot via create_scheduled_booking instead.
+	const instantStatusBlock = "INSTANT BOOKING: always available (24/7). You can call create_instant_booking any time. If no pro is free right now it returns no_pros_available with an earliest_slot — offer that slot via create_scheduled_booking instead."
 
 	dynamicSuffix := dateHeader + "\n\n" + instantStatusBlock
 	if firstName != "" {

@@ -670,6 +670,15 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 
 	netPaise := totalPriceCents - discountCents
 
+	// unpaidCashfree: true when this row is tagged payment_method='cashfree' but
+	// not yet paid. Such a row MUST NOT be synchronously force-assigned — a pro
+	// would be dispatched before the customer completes the Cashfree SDK sheet
+	// (and would be stranded if they abandon payment). The 60s assigner cron
+	// (ClaimDue) keeps the payment gate and places the row once the webhook
+	// stamps payment_status='paid' (assigner.go:171). The wallet path debits
+	// synchronously, so it stays paid and assigns inline.
+	unpaidCashfree := false
+
 	if req.PaymentSource == "wallet" {
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
 			// Roll back the booking on wallet-debit failure so we don't
@@ -693,6 +702,7 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		// legacy ledger row (gateway='cod' placeholder, harmless).
 		s.stampBookingDirectPay(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+		unpaidCashfree = true
 	}
 
 	s.fireWebhook(ctx, webhooks.EventOrderCreated, webhooks.OrderEvent{
@@ -704,10 +714,18 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		OccurredAt:        time.Now().UTC(),
 	})
 
-	// Track demand for the heatmap, then synchronously force-assign. The batch
-	// matcher is gone (spec §9) — the assignment attempt itself is the gate.
 	matching.TrackDemand(ctx, s.rdb, req.Lat, req.Lng)
 
+	// Cashfree-pending: do NOT dispatch a pro before payment. Return a
+	// not-yet-assigned result; the post-payment cron (ClaimDue, which keeps the
+	// payment gate) places this row once the webhook stamps it paid.
+	if unpaidCashfree {
+		return &ASAPResult{Booking: booking, Assigned: false}, nil
+	}
+
+	// Paid (wallet) → synchronously force-assign. The batch matcher is gone
+	// (spec §9) — the assignment attempt itself is the gate.
+	//
 	// Legacy single-service path has no saved-address UUID, so the no-pro
 	// earliest-slot suggestion can't be locality-resolved (empty addressID →
 	// nil suggestion); the cart ASAP path carries one.
