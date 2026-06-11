@@ -1,4 +1,6 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { ApiService } from '../api/services';
+import type { ProTabParamList } from '../navigation/ProNavigator';
 
 export type AuthStackParamList = {
   ZopIntro: undefined;
@@ -63,8 +65,11 @@ export type MainStackParamList = {
     helperLng?: number;
     etaMinutes: number;
   };
-  /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile). */
-  Pro: undefined;
+  /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile).
+   *  Accepts a nested `{ screen }` param so callers can jump to a specific
+   *  pro tab (e.g. `navigate('Pro', { screen: 'ProHome' })`) while keeping
+   *  the tab bar mounted. */
+  Pro: NavigatorScreenParams<ProTabParamList> | undefined;
   /** Legacy single-screen routes kept for back-compat with anything that
    *  still calls navigation.navigate('ProDashboard', ...). They point at
    *  the same components but live on the parent stack so the tab bar

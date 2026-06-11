@@ -19,6 +19,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useTheme } from '../../context/ThemeContext';
+import { liquidGlass, GlassView } from '../ui/LiquidGlass';
 
 const fontMed: TextStyle  = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -88,6 +89,63 @@ function shellStyle(dark: boolean) {
   } as const;
 }
 
+// Shared shell: native Liquid Glass pill on iOS 26+ — the SAME plain
+// glassEffectStyle="regular" surface + drop shadow as GlassCard, so the pill
+// reads identical to the hero card. The hand-built translucent shell is the
+// fallback everywhere else.
+//
+// IMPORTANT: the glass lives on a NEVER-OPACITY-ANIMATED view. UIVisualEffectView
+// inside an alpha-animated ancestor renders empty (UIKit limitation) — putting
+// `entering={FadeIn}` on the shell was why the pill "vanished". Only the
+// content row fades in.
+function LiveShell({ dark, animated, children }: {
+  dark: boolean;
+  animated?: boolean;
+  children: React.ReactNode;
+}) {
+  if (liquidGlass) {
+    const { marginHorizontal, marginTop, borderRadius, ...content } = SHELL_BASE;
+    const ContentWrap: React.ComponentType<any> = animated ? Animated.View : View;
+    return (
+      <View
+        style={{
+          marginHorizontal,
+          marginTop,
+          borderRadius,
+          // GlassCard's non-hero shadow — keeps the pill's elevation language
+          // identical to the cards.
+          shadowColor: dark ? '#000' : 'rgba(100,60,0,1)',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: dark ? 0.25 : 0.10,
+          shadowRadius: 18,
+          elevation: 8,
+        }}
+      >
+        <GlassView
+          glassEffectStyle="regular"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            borderRadius,
+          }}
+        />
+        <ContentWrap
+          {...(animated ? { entering: FadeIn.duration(420) } : {})}
+          style={{ ...content, borderWidth: 0 }}
+        >
+          {children}
+        </ContentWrap>
+      </View>
+    );
+  }
+  const Wrap: React.ComponentType<any> = animated ? Animated.View : View;
+  return (
+    <Wrap {...(animated ? { entering: FadeIn.duration(420) } : {})} style={shellStyle(dark)}>
+      {children}
+    </Wrap>
+  );
+}
+
 function PulseDot({ color }: { color: string }) {
   const op = useSharedValue(1);
   useEffect(() => {
@@ -119,7 +177,6 @@ function PulseDot({ color }: { color: string }) {
 
 export function LivePill({ stats, loading }: Props) {
   const { isDark } = useTheme();
-  const shell = shellStyle(isDark);
 
   const mutedTextColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.45)';
   const secondaryTextColor = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.6)';
@@ -129,19 +186,19 @@ export function LivePill({ stats, loading }: Props) {
 
   if (loading || !stats) {
     return (
-      <View style={shell}>
+      <LiveShell dark={isDark}>
         <LoadingBars size="small" color="#F5A300" />
         <Text style={[fontMed, { fontSize: 12, color: mutedTextColor }]}>
           Checking nearby pros…
         </Text>
-      </View>
+      </LiveShell>
     );
   }
 
   // Night mode wins regardless of supply count — instant booking is closed.
   if (isNightTime()) {
     return (
-      <Animated.View entering={FadeIn.duration(420)} style={shell}>
+      <LiveShell dark={isDark} animated>
         <View
           style={{
             width: 7,
@@ -156,14 +213,14 @@ export function LivePill({ stats, loading }: Props) {
         >
           {nightMessage()}
         </Text>
-      </Animated.View>
+      </LiveShell>
     );
   }
 
   // Daytime, no supply.
   if (stats.nearby_count === 0) {
     return (
-      <Animated.View entering={FadeIn.duration(420)} style={shell}>
+      <LiveShell dark={isDark} animated>
         <View
           style={{
             width: 7,
@@ -178,13 +235,13 @@ export function LivePill({ stats, loading }: Props) {
         >
           All our pros are busy right now
         </Text>
-      </Animated.View>
+      </LiveShell>
     );
   }
 
   // Daytime + supply available.
   return (
-    <Animated.View entering={FadeIn.duration(420)} style={shell}>
+    <LiveShell dark={isDark} animated>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <PulseDot color="#22C55E" />
         <Text style={[fontMed, { fontSize: 12, color: statsTextColor }]}>
@@ -202,6 +259,6 @@ export function LivePill({ stats, loading }: Props) {
       <Text style={[fontMed, { fontSize: 12, color: statsTextColor }]}>
         ~<Text style={fontBold}>{Math.max(1, Math.round(stats.avg_eta_min))} min</Text> arrival
       </Text>
-    </Animated.View>
+    </LiveShell>
   );
 }
