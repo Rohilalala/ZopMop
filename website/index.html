@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ZopMop — Spotless, on schedule</title>
-  <meta name="description" content="Premium on-demand home cleaning in Gurugram. Trained, salaried, background-verified pros at your door in 30 minutes." />
-  <meta property="og:title" content="ZopMop — Spotless, on schedule" />
-  <meta property="og:description" content="Premium on-demand home cleaning. Salaried pros, 30-minute slots, hotel-grade shine." />
+  <title>ZopMop · Home, handled.</title>
+  <meta name="description" content="On-demand home cleaning in minutes — bathroom, sweeping, mopping, dishes, kitchen, windows, balcony, plants, car. Verified pros, transparent pricing, real-time tracking. Launching in Gurugram." />
+  <meta property="og:title" content="ZopMop · Home, handled." />
+  <meta property="og:description" content="On-demand home services in minutes. Coming soon to Gurugram." />
   <meta property="og:type" content="website" />
   <meta name="theme-color" content="#0A0A0A" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
@@ -23,7 +23,8 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Fragment+Mono&display=swap" rel="stylesheet" />
+  <!-- Plus Jakarta Sans — the app's only typeface (App.tsx useFonts: 400/500/600/700/800) -->
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400..800;1,400..800&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="css/style.css" />
   <script>document.documentElement.classList.remove('no-js');</script>
@@ -50,15 +51,15 @@
     <a class="nav__logo" href="#top" data-cursor>Zop<em>Mop</em><span class="nav__spark">✦</span></a>
     <nav class="nav__links" aria-label="Primary">
       <a href="#services" data-cursor>Services</a>
-      <a href="#why" data-cursor>Why ZopMop</a>
       <a href="#how" data-cursor>How it works</a>
+      <a href="#why" data-cursor>Why ZopMop</a>
     </nav>
     <div class="nav__right">
       <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode" data-cursor>
         <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg>
         <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 14.2A8.5 8.5 0 0 1 9.8 3.6a8.5 8.5 0 1 0 10.6 10.6Z"/></svg>
       </button>
-      <a href="#get-app" class="btn btn--small nav__cta" data-cursor data-magnetic>Book a clean</a>
+      <a href="#get-app" class="btn btn--small nav__cta" data-cursor data-magnetic>Join the Waitlist</a>
     </div>
   </header>
 
@@ -71,20 +72,20 @@
       <canvas class="hero__canvas" id="bubble-canvas" aria-hidden="true"></canvas>
 
       <div class="hero__content">
-        <p class="hero__kicker reveal-up"><span class="dot"></span>Now serving Orchid Island, Gurugram</p>
+        <p class="hero__kicker reveal-up"><span class="dot"></span>Coming Soon · Gurugram first</p>
         <h1 class="hero__title">
-          <span class="h-line"><span class="h-line__inner">Spotless,</span></span>
-          <span class="h-line"><span class="h-line__inner"><em>on schedule.</em></span></span>
+          <span class="h-line"><span class="h-line__inner">Home,</span></span>
+          <span class="h-line"><span class="h-line__inner"><em>handled.</em></span></span>
         </h1>
-        <p class="hero__sub reveal-up">Trained, salaried cleaning professionals — at your door in a 30-minute window, gone in an hour, leaving nothing behind but shine.</p>
+        <p class="hero__sub reveal-up">On-demand sweeping &amp; mopping, dishes, kitchen prep, bathroom cleaning, window cleaning, balcony, plant care and more, booked in 60 seconds, tracked in real time, billed transparently. The household app you'll actually open every day.</p>
         <div class="hero__actions reveal-up">
-          <a href="#get-app" class="btn btn--primary" data-cursor data-magnetic>Book a clean <span class="btn__arrow">→</span></a>
-          <a href="#services" class="btn btn--ghost" data-cursor data-magnetic>Explore services</a>
+          <a href="#get-app" class="btn btn--primary" data-cursor data-magnetic>Join the Waitlist <span class="btn__arrow">→</span></a>
+          <a href="#how" class="btn btn--ghost" data-cursor data-magnetic>See how it works</a>
         </div>
       </div>
 
       <div class="hero__scroll-hint reveal-up" aria-hidden="true">
-        <span>Scroll</span>
+        <span>Launching soon</span>
         <span class="hero__scroll-line"></span>
       </div>
     </section>
@@ -92,99 +93,129 @@
     <!-- ============ MARQUEE ============ -->
     <div class="marquee" aria-hidden="true">
       <div class="marquee__track">
-        <span>Salaried pros ✦ 30-minute slots ✦ Background-verified ✦ Transparent pricing ✦ Hotel-grade shine ✦&nbsp;</span><span>Salaried pros ✦ 30-minute slots ✦ Background-verified ✦ Transparent pricing ✦ Hotel-grade shine ✦&nbsp;</span>
+        <span>60 sec avg booking ✦ under 15 min ✦ 100% satisfaction or re-clean free ✦ 10+ categories ✦ No surge pricing ✦ Gurugram first ✦&nbsp;</span><span>60 sec avg booking ✦ under 15 min ✦ 100% satisfaction or re-clean free ✦ 10+ categories ✦ No surge pricing ✦ Gurugram first ✦&nbsp;</span>
       </div>
     </div>
 
     <!-- ============ MANIFESTO ============ -->
     <section class="manifesto" id="why">
       <p class="manifesto__label mono">Why ZopMop</p>
-      <p class="manifesto__text" id="manifesto-text">Gig apps send strangers. We send staff — trained for hundreds of hours, salaried, background-verified, and proud of the work. That's why your bathroom ends up looking like a hotel's.</p>
+      <p class="manifesto__text" id="manifesto-text">Everything you need, nothing you don't. A household app that respects your time, your wallet and your home. Verified pros, locked pricing, live tracking — and you pay only after the job's done.</p>
     </section>
 
     <!-- ============ SERVICES ============ -->
     <section class="services" id="services">
       <div class="services__head">
-        <p class="mono services__label">The menu</p>
-        <h2 class="services__title">Pick your shine.</h2>
+        <p class="mono services__label">Our offerings</p>
+        <h2 class="services__title">Pick your first job.</h2>
+        <p class="services__sub">Scroll right to see what Zop handles on day one. Pricing is shown up-front. No haggling, ever.</p>
       </div>
       <div class="services__viewport">
         <div class="services__track" id="services-track">
 
           <article class="card" data-cursor>
             <span class="card__index">01</span>
-            <h3 class="card__name">Deep Home<br/>Reset</h3>
-            <p class="card__desc">Every room, every corner. The clean you photograph.</p>
-            <span class="card__chip">90 min</span>
+            <h3 class="card__name">Sweeping &amp;<br/>Mopping</h3>
+            <p class="card__desc">Professional sweeping and mopping for Indian homes. Trusted, verified pros, in-and-out in 45 minutes.</p>
+            <p class="card__price">₹129 <s>₹249</s></p>
+            <span class="card__chip">45 min</span>
           </article>
 
           <article class="card" data-cursor>
             <span class="card__index">02</span>
-            <h3 class="card__name">Bathroom<br/>Revival</h3>
-            <p class="card__desc">Tiles, taps and grout brought back to showroom white.</p>
+            <h3 class="card__name">Utensils /<br/>Dishes</h3>
+            <p class="card__desc">Daily kitchen utensils and dishwashing service by background-checked pros.</p>
+            <p class="card__price">₹99 <s>₹199</s></p>
             <span class="card__chip">30 min</span>
           </article>
 
           <article class="card" data-cursor>
             <span class="card__index">03</span>
-            <h3 class="card__name">Kitchen<br/>Degrease</h3>
-            <p class="card__desc">Hob, chimney, counters — oil doesn't stand a chance.</p>
+            <h3 class="card__name">Kitchen<br/>Prep</h3>
+            <p class="card__desc">Kitchen surface cleaning and prep — countertops, stovetop, sink, splashback.</p>
+            <p class="card__price">₹149 <s>₹299</s></p>
             <span class="card__chip">60 min</span>
           </article>
 
-          <article class="card card--amber" data-cursor>
+          <article class="card" data-cursor>
             <span class="card__index">04</span>
-            <h3 class="card__name">Sofa &amp;<br/>Upholstery</h3>
-            <p class="card__desc">Fabric-safe deep extraction. Like new, minus the smell.</p>
-            <span class="card__chip">60 min</span>
+            <h3 class="card__name">Bathroom<br/>Cleaning</h3>
+            <p class="card__desc">Deep bathroom cleaning — tiles, fixtures, drains, mirrors. 30-minute service.</p>
+            <p class="card__price">₹129 <s>₹249</s></p>
+            <span class="card__chip">30 min</span>
           </article>
 
           <article class="card" data-cursor>
             <span class="card__index">05</span>
-            <h3 class="card__name">Dish &amp; Sink<br/>Rescue</h3>
-            <p class="card__desc">The post-party miracle. Sparkling sink, empty rack.</p>
-            <span class="card__chip">30 min</span>
+            <h3 class="card__name">Window<br/>Cleaning</h3>
+            <p class="card__desc">Streak-free window cleaning, inside and balcony-side glass.</p>
+            <p class="card__price">₹129 <s>₹259</s></p>
+            <span class="card__chip">45 min</span>
           </article>
 
           <article class="card" data-cursor>
             <span class="card__index">06</span>
-            <h3 class="card__name">Daily<br/>Shine</h3>
-            <p class="card__desc">Mop, dust, reset. Your everyday baseline of clean.</p>
-            <span class="card__chip">30 min</span>
+            <h3 class="card__name">Dusting &amp;<br/>Wiping</h3>
+            <p class="card__desc">Furniture dusting, surface wiping, and high-touch cleaning.</p>
+            <p class="card__price">₹99 <s>₹199</s></p>
+            <span class="card__chip">40 min</span>
+          </article>
+
+          <article class="card" data-cursor>
+            <span class="card__index">07</span>
+            <h3 class="card__name">Car<br/>Cleaning</h3>
+            <p class="card__desc">Doorstep car interior + exterior cleaning at your apartment parking.</p>
+            <p class="card__price">₹149 <s>₹299</s></p>
+            <span class="card__chip">60 min</span>
+          </article>
+
+          <article class="card" data-cursor>
+            <span class="card__index">08</span>
+            <h3 class="card__name">Balcony<br/>Cleaning</h3>
+            <p class="card__desc">Balcony floors, railings, and walls cleaned by trained professionals.</p>
+            <p class="card__price">₹99 <s>₹199</s></p>
+            <span class="card__chip">35 min</span>
+          </article>
+
+          <article class="card card--amber" data-cursor>
+            <span class="card__index">✦</span>
+            <h3 class="card__name">All 10+<br/>services</h3>
+            <p class="card__desc">Get early access. Book all of these and more.</p>
+            <span class="card__chip">Waitlist</span>
           </article>
 
         </div>
       </div>
-      <p class="services__note mono">Transparent pricing, always in the app. No surge. No haggling.</p>
+      <p class="services__note mono">Locked pricing · No hidden fees · No surge · Pay after the job's done</p>
     </section>
 
     <!-- ============ HOW IT WORKS ============ -->
     <section class="steps" id="how">
       <div class="steps__head">
         <p class="mono steps__label">How it works</p>
-        <h2 class="steps__title">Three taps to spotless.</h2>
+        <h2 class="steps__title">Two taps. Done.</h2>
       </div>
 
       <div class="steps__stack">
         <div class="step glass-surface">
           <span class="step__num">01</span>
           <div class="step__body">
-            <h3>Pick your slot</h3>
-            <p>30-minute windows, today or this week. Real capacity, no overbooking — what you see is who shows up.</p>
+            <h3>Pick a service</h3>
+            <p>Browse bathroom, sweeping, dishes, kitchen, windows, plants, balcony, car. Filter by time, budget and rating.</p>
           </div>
         </div>
         <div class="step step--amber glass-surface">
           <span class="step__num">02</span>
           <div class="step__body">
-            <h3>Your pro arrives</h3>
-            <p>Uniformed, verified and on time. Track them live from dispatch to your doorbell.</p>
+            <h3>Pick your slot</h3>
+            <p>Now, within 15 mins, or up to 2 days ahead. We auto-match the nearest pro and lock the price.</p>
           </div>
         </div>
         <div class="step glass-surface">
-          <span class="step__num">03</span>
+          <span class="step__num">✦</span>
           <div class="step__body">
-            <h3>Walk into shine</h3>
-            <p>Rate the clean, rebook in two taps. Same pro again, if you loved them.</p>
+            <h3>Booking confirmed.</h3>
+            <p>That's how fast ZopMop works. Pro on the way, price locked, payment after.</p>
           </div>
         </div>
       </div>
@@ -193,48 +224,49 @@
     <!-- ============ STATS ============ -->
     <section class="stats glass-surface">
       <div class="stat">
-        <span class="stat__num"><span data-count="100">0</span>%</span>
-        <span class="stat__label">salaried pros</span>
+        <span class="stat__num"><span data-count="10">0</span><small>+</small></span>
+        <span class="stat__label">service categories</span>
       </div>
       <div class="stat">
-        <span class="stat__num"><span data-count="30">0</span><small>min</small></span>
-        <span class="stat__label">slot precision</span>
+        <span class="stat__num"><span data-count="100">0</span><small>%</small></span>
+        <span class="stat__label">verified pros</span>
       </div>
       <div class="stat">
-        <span class="stat__num"><span data-count="60">0</span><small>min</small></span>
-        <span class="stat__label">average clean</span>
+        <span class="stat__num"><span data-count="60">0</span><small>s</small></span>
+        <span class="stat__label">avg booking time</span>
       </div>
       <div class="stat">
-        <span class="stat__num"><span data-count="0">0</span></span>
-        <span class="stat__label">gig workers. ever.</span>
+        <span class="stat__num"><span data-count="15">0</span><small>m</small></span>
+        <span class="stat__label">next pro at your door</span>
       </div>
     </section>
 
-    <!-- ============ QUOTE ============ -->
+    <!-- ============ QUOTE / MASCOT ============ -->
     <section class="quote">
       <p class="quote__mark" aria-hidden="true">“</p>
-      <blockquote class="quote__text">We built ZopMop because a great clean shouldn't depend on luck — it should arrive on a schedule.</blockquote>
-      <cite class="quote__cite mono">— the founders, Gurugram</cite>
+      <blockquote class="quote__text">Home's a mess? Zop's obsessed.</blockquote>
+      <cite class="quote__cite mono">Meet Zop — he lives for the job. Yours, specifically.</cite>
     </section>
 
     <!-- ============ CTA ============ -->
     <section class="cta" id="get-app">
       <h2 class="cta__title">
-        <span class="h-line"><span class="h-line__inner">Your home,</span></span>
-        <span class="h-line"><span class="h-line__inner"><em>handled.</em></span></span>
+        <span class="h-line"><span class="h-line__inner">Get early</span></span>
+        <span class="h-line"><span class="h-line__inner"><em>access.</em></span></span>
       </h2>
-      <p class="cta__sub">Live now at Orchid Island, Gurugram. Your society could be next.</p>
+      <p class="cta__sub">ZopMop is rolling out soon. Join the waitlist and be first to book when we launch in your city. Sectors 51 &amp; 57 first.</p>
       <div class="cta__actions">
-        <a href="#" class="btn btn--ink" data-cursor data-magnetic>Get the app <span class="btn__arrow">→</span></a>
-        <a href="#" class="btn btn--ghost-ink" data-cursor data-magnetic>Talk to us</a>
+        <a href="https://zopmop.com/#waitlist" class="btn btn--ink" data-cursor data-magnetic>Join the Waitlist <span class="btn__arrow">→</span></a>
+        <a href="mailto:hello@zopmop.com" class="btn btn--ghost-ink" data-cursor data-magnetic>hello@zopmop.com</a>
       </div>
+      <p class="cta__note mono">No spam. No sharing. Just a heads-up when we're live.</p>
     </section>
 
   </main>
 
   <footer class="footer">
     <span class="footer__logo">Zop<em>Mop</em> ✦</span>
-    <span class="footer__copy mono">© 2026 ZopMop · Gurugram, India</span>
+    <span class="footer__copy mono">© 2025 ZopMop. All rights reserved. · Gurugram, India</span>
     <a href="#top" class="footer__top mono" data-cursor>Back to top ↑</a>
   </footer>
 
