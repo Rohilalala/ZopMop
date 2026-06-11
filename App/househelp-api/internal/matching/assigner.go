@@ -436,11 +436,18 @@ func (a *Assigner) proPosition(ctx context.Context, proID string) (lat, lng floa
 // ── Assign ──────────────────────────────────────────────────────────────────
 
 // Assign atomically claims the booking for proID and fans out notifications.
-// The UPDATE guard (helper_id IS NULL AND status='pending') is the real
-// concurrency gate — only one writer wins. A per-pro advisory xact lock
-// serialises concurrent assigns of different bookings to the same pro on the
-// synchronous ASAP path. Returns ErrAlreadyClaimed (via sql.ErrNoRows) when
-// another writer beat us.
+// Two concurrency gates guard it:
+//
+//   - The UPDATE guard (helper_id IS NULL AND status='pending') stops two writers
+//     racing for the SAME booking — only one wins; the loser gets ErrAlreadyClaimed.
+//   - A per-pro advisory xact lock plus an in-lock padded-window clash re-check
+//     stop one pro being grabbed by two DIFFERENT overlapping bookings (the
+//     synchronous ASAP race). The lock serialises the two assigns; the re-check
+//     lets the second see the first's committed job and bow out with ErrProBusy.
+//
+// The booking-row guard alone cannot cover the second case: EligibleCandidates
+// runs before either booking commits, so each booking's own row guard passes
+// independently.
 //
 // On success: pro alert push (booking_assigned), customer accepted push, and a
 // booking.accepted outbox row (mirrors booking/repository.go:449) — all
@@ -458,6 +465,40 @@ func (a *Assigner) Assign(ctx context.Context, b *assignerBooking, proID string)
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, proID); err != nil {
 		return "", fmt.Errorf("assigner advisory lock: %w", err)
+	}
+
+	// Re-verify the padded-window clash INSIDE the lock. EligibleCandidates ran
+	// while both racing bookings were still pending (neither committed), so the
+	// booking-row guard below passes independently for each — it stops two writers
+	// on the SAME booking, not one pro grabbing two overlapping bookings. The
+	// advisory lock serialises the two assigns; this probe (identical &&/tstzrange
+	// form to EligibleCandidates) lets the second one see the first's now-committed
+	// row and bow out with ErrProBusy so AssignOne tries the next candidate.
+	pad := a.cfg(ctx).TravelBufferMin
+	var clash bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bookings ob
+			WHERE ob.helper_id      = $1::uuid
+			  AND ob.id             <> $2::uuid
+			  AND ob.status         IN ('accepted','in_progress','arrived')
+			  AND ob.scheduled_time IS NOT NULL
+			  AND tstzrange(
+			          ob.scheduled_time,
+			          (ob.scheduled_time AT TIME ZONE 'UTC'
+			             + make_interval(mins => COALESCE(ob.total_duration_minutes, 60) + $5::int))
+			            AT TIME ZONE 'UTC'
+			      ) && tstzrange(
+			          $3::timestamptz,
+			          ($3::timestamptz AT TIME ZONE 'UTC'
+			             + make_interval(mins => $4::int + $5::int)) AT TIME ZONE 'UTC'
+			      )
+		)
+	`, proID, b.ID, b.ScheduledTime, b.DurationMinutes, pad).Scan(&clash); err != nil {
+		return "", fmt.Errorf("assign clash recheck: %w", err)
+	}
+	if clash {
+		return "", ErrProBusy
 	}
 
 	var customerID string
@@ -500,6 +541,12 @@ func (a *Assigner) Assign(ctx context.Context, b *assignerBooking, proID string)
 // ASAP attempt) won the booking first. AssignOne treats it as "try the next
 // candidate" rather than a hard failure.
 var ErrAlreadyClaimed = errors.New("booking already claimed by another pro")
+
+// ErrProBusy signals that the pro picked up an overlapping job between
+// EligibleCandidates and the in-lock clash re-check (a racing assign of a
+// different booking to the same pro). AssignOne treats it as "try the next
+// candidate"; the booking itself is untouched.
+var ErrProBusy = errors.New("pro became busy on an overlapping job")
 
 // notifyAssigned fires the post-assignment pushes (best-effort) and returns the
 // assigned helper's display name (looked up once here, reused by the caller).
@@ -566,6 +613,11 @@ func (a *Assigner) AssignOne(ctx context.Context, bookingID, excludeProID string
 			if errors.Is(err, ErrAlreadyClaimed) {
 				// Booking taken between candidates — nothing more to do.
 				return nil, ErrAlreadyClaimed
+			}
+			if errors.Is(err, ErrProBusy) {
+				// This pro grabbed an overlapping job in a racing assign — skip
+				// it and try the next candidate.
+				continue
 			}
 			return nil, err
 		}

@@ -512,6 +512,57 @@ func TestAssigner_AssignOne_ConcurrentSingleWinner(t *testing.T) {
 	}
 }
 
+// Two DISTINCT overlapping bookings, ONE pro, concurrent direct Assign calls:
+// exactly one wins. EligibleCandidates runs before either commits, so the
+// booking-row guard alone can't stop it — both rows are still pending/unassigned
+// and each UPDATE guard passes independently. The per-pro advisory lock plus an
+// in-lock padded-window clash re-check is what serialises them and rejects the
+// loser with ErrProBusy, so the pro is never double-booked.
+func TestAssigner_Assign_ConcurrentDistinctBookingsOnePro(t *testing.T) {
+	f := newAsgFixture(t)
+	pro := f.addPro(5 * time.Hour)
+	// Two overlapping ASAP bookings (same start, 60 min each → padded windows
+	// overlap heavily). Both have `pro` as their sole eligible candidate.
+	at := time.Now().Add(2 * time.Minute)
+	bk1 := f.makeBooking(at, 60)
+	bk2 := f.makeBooking(at, 60)
+	b1 := f.loadFor(bk1)
+	b2 := f.loadFor(bk2)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); _, errs[0] = f.asg.Assign(context.Background(), b1, pro) }()
+	go func() { defer wg.Done(); _, errs[1] = f.asg.Assign(context.Background(), b2, pro) }()
+	wg.Wait()
+
+	var won, busy int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case errors.Is(err, ErrProBusy):
+			busy++
+		default:
+			t.Fatalf("unexpected Assign error: %v", err)
+		}
+	}
+	if won != 1 || busy != 1 {
+		t.Fatalf("distinct-bookings race: won=%d busy=%d, want exactly 1 winner + 1 ErrProBusy", won, busy)
+	}
+	// The pro must end up assigned to exactly ONE of the two bookings.
+	var assigned int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM bookings WHERE id IN ($1::uuid, $2::uuid) AND helper_id = $3::uuid AND status='accepted'`,
+		bk1, bk2, pro,
+	).Scan(&assigned); err != nil {
+		t.Fatal(err)
+	}
+	if assigned != 1 {
+		t.Fatalf("pro assigned to %d of the two overlapping bookings, want exactly 1", assigned)
+	}
+}
+
 // ── ClaimDue window ─────────────────────────────────────────────────────────
 
 func TestAssigner_ClaimDue_RespectsLead(t *testing.T) {
