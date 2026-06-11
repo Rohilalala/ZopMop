@@ -294,14 +294,21 @@ function initZop(lenis) {
   const dockX = () => window.innerWidth - BOX - (isMobile() ? 12 : 28);
   const dockY = () => window.innerHeight - BOX - (isMobile() ? 16 : 28);
   const dockScale = () => (isMobile() ? 0.84 : 1);
+  const heroScale = () => (isMobile() ? 1.0 : 1.6);
+  /* perch ABOVE-RIGHT of the "handled." full stop — never on the glyphs
+     (the idle float is ±9px, so keep ~0.75 of his size of clearance) */
   const heroXY = () => {
     const r = anchor.getBoundingClientRect();
-    return {
-      x: r.left + window.scrollX + r.width / 2 - BOX / 2,
-      y: r.top + window.scrollY + r.height / 2 - BOX / 2,
-    };
+    const s = BOX * heroScale();
+    const cx = r.left + window.scrollX + r.width / 2;
+    const cy = r.top + window.scrollY + r.height / 2;
+    let vcx = cx + s * 0.45;
+    /* mobile: the right edge clamps him inward, so go higher — into the
+       empty space right of the shorter "Home," line */
+    const vcy = cy - s * (isMobile() ? 1.1 : 0.75);
+    vcx = Math.min(vcx, window.scrollX + window.innerWidth - s / 2 - 12);
+    return { x: vcx - BOX / 2, y: vcy - BOX / 2 };
   };
-  const heroScale = () => (isMobile() ? 1.0 : 1.6);
 
   /* ---- star bursts + sparkle trail ---- */
   function spawnStars(cx, cy, n, opts = {}) {
@@ -365,6 +372,9 @@ function initZop(lenis) {
       invalidateOnRefresh: true,
       onUpdate: (self) => {
         zop.classList.toggle('zop--hero-side', self.progress < 0.4);
+        /* the bubble + zzz live inside the rotating container — keep them level */
+        const rot = Number(gsap.getProperty(zop, 'rotation')) || 0;
+        gsap.set([bubble, zzz], { rotation: -rot });
         const wasDocked = docked;
         docked = self.progress > 0.96;
         if (docked && !wasDocked) {

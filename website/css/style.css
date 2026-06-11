@@ -763,10 +763,11 @@ html[data-theme="dark"] .footer { border-top: 1px solid var(--divider); color: v
 .footer__top:hover { opacity: 1; color: var(--amber-hi); }
 
 /* ---------- Zop — the mascot that runs this page ---------- */
+/* zero-width position marker at the end of "handled." — Zop perches
+   relative to it but takes no layout space (keeps the line centered) */
 .zop-anchor {
   display: inline-block;
-  width: 0.62em; height: 0.62em;
-  margin-left: 0.12em;
+  width: 0; height: 1em;
   vertical-align: baseline;
 }
 .zop {
@@ -844,12 +845,14 @@ html[data-theme="light"] .zop__svg {
 
 @media (max-width: 720px) {
   .zop__bubble { max-width: 160px; font-size: 0.62rem; }
-  /* hero Zop sits at the headline's right edge — open the bubble leftward */
+  /* hero Zop hugs the right edge — speak ABOVE him, clear of the headline */
   .zop--hero-side .zop__bubble {
     left: auto;
-    right: calc(100% + 10px);
+    right: 0;
+    top: auto;
+    bottom: calc(100% + 10px);
     border-radius: 16px 16px 4px 16px;
-    transform-origin: 100% 90%;
+    transform-origin: 90% 100%;
     text-align: right;
   }
 }
