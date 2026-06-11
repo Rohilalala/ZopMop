@@ -107,6 +107,31 @@ func (r *Repository) committedCountForSlot(ctx context.Context, q rowQuerier, lo
 	return n, err
 }
 
+// committedCountForSlotExcluding is committedCountForSlot with one booking left
+// out of the count. The reschedule gate (RescheduleBooking) uses it so the
+// booking being moved does not count against the new slot via its own, not-yet-
+// moved old window — a single-seat locality must still be able to shuffle a
+// booking into an adjacent (overlapping) slot. excludeBookingID is the row being
+// rescheduled.
+func (r *Repository) committedCountForSlotExcluding(ctx context.Context, q rowQuerier, locality, slotID, excludeBookingID string) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM bookings b, time_slots ts
+		WHERE ts.id = $2
+		  AND b.locality = $1
+		  AND b.id <> $3::uuid
+		  AND b.status IN %s
+		  AND b.scheduled_time IS NOT NULL
+		  AND b.total_duration_minutes IS NOT NULL
+		  AND b.scheduled_time
+		        < ((ts.slot_date + ts.end_time)   AT TIME ZONE 'Asia/Kolkata')
+		  AND (b.scheduled_time + make_interval(mins => b.total_duration_minutes + %d))
+		        > ((ts.slot_date + ts.start_time) AT TIME ZONE 'Asia/Kolkata')
+	`, committedStatusList, capacityTravelPadMin), locality, slotID, excludeBookingID).Scan(&n)
+	return n, err
+}
+
 // availableForSlot is the live capacity for a single slot:
 //
 //	roster(locality) − onLeave(locality, date) − committed(locality, slot)
@@ -123,6 +148,30 @@ func (r *Repository) availableForSlot(ctx context.Context, q rowQuerier, localit
 		return 0, fmt.Errorf("leave count: %w", err)
 	}
 	committed, err := r.committedCountForSlot(ctx, q, locality, slotID)
+	if err != nil {
+		return 0, fmt.Errorf("committed count: %w", err)
+	}
+	avail := roster - onLeave - committed
+	if avail < 0 {
+		avail = 0
+	}
+	return avail, nil
+}
+
+// availableForSlotExcluding is availableForSlot with one booking excluded from
+// the committed re-count (see committedCountForSlotExcluding). Used by the
+// reschedule gate so a booking never blocks its own move into an overlapping
+// slot.
+func (r *Repository) availableForSlotExcluding(ctx context.Context, q rowQuerier, locality, slotID, date, excludeBookingID string) (int, error) {
+	roster, err := r.countActiveRosterHelpers(ctx, q, locality)
+	if err != nil {
+		return 0, fmt.Errorf("roster count: %w", err)
+	}
+	onLeave, err := r.countHelpersOnLeave(ctx, q, locality, date)
+	if err != nil {
+		return 0, fmt.Errorf("leave count: %w", err)
+	}
+	committed, err := r.committedCountForSlotExcluding(ctx, q, locality, slotID, excludeBookingID)
 	if err != nil {
 		return 0, fmt.Errorf("committed count: %w", err)
 	}

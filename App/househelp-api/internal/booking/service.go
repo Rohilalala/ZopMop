@@ -1866,8 +1866,13 @@ func (s *Service) GetCustomerBookings(ctx context.Context, customerID string, pa
 }
 
 // RescheduleBooking moves a booking to a new time slot. Capacity on the new
-// slot is enforced via FOR UPDATE inside a single transaction; the old slot's
-// counter is decremented in the same tx so the swap is atomic.
+// slot is enforced via the live window-recount gate (availableForSlot) under a
+// (locality, date) advisory xact lock — the same gate CreateScheduledBooking
+// runs — so a reschedule can't slip past the last seat. There is no counter to
+// decrement: the old window is released implicitly the moment scheduled_time
+// moves and the booking drops out of the live committed re-count. If the
+// booking was already assigned, it is reset to pending/unassigned so the
+// assigner re-places it for the new time (spec §7).
 //
 // Returns 404-style error for missing bookings, 403-style for IDOR, 400 for
 // terminal-state bookings, and ErrSlotUnavailable when the requested slot is
@@ -1898,70 +1903,79 @@ func (s *Service) RescheduleBooking(
 	}
 	defer tx.Rollback(queryCtx)
 
-	// Look up old slot ID from the booking row inside the tx so we have a
-	// consistent view. nil/empty is allowed — booking may pre-date the
-	// scheduled-flow.
-	var oldSlotID *string
+	// Load the booking row inside the tx for a consistent view: its persisted
+	// locality drives the capacity gate, and helper_id tells us whether the
+	// booking was already assigned (so the move must release the pro for
+	// re-dispatch at the new time). The time_slots counters are retired — the
+	// gate is the live window-recount (availableForSlot), identical to
+	// CreateScheduledBooking.
+	var bookingLocality *string
+	var assignedHelperID *string
 	if err := tx.QueryRow(queryCtx,
-		`SELECT time_slot_id FROM bookings WHERE id = $1 FOR UPDATE`,
+		`SELECT locality, helper_id FROM bookings WHERE id = $1 FOR UPDATE`,
 		bookingID,
-	).Scan(&oldSlotID); err != nil {
+	).Scan(&bookingLocality, &assignedHelperID); err != nil {
 		return nil, fmt.Errorf("failed to load booking row: %w", err)
 	}
 
-	// Lock slot rows in deterministic order (string-sort by ID) so two
-	// concurrent reschedules swapping the same pair of slots can't deadlock.
-	lockOrder := []string{newTimeSlotID}
-	if oldSlotID != nil && *oldSlotID != "" && *oldSlotID != newTimeSlotID {
-		lockOrder = append(lockOrder, *oldSlotID)
-	}
-	if len(lockOrder) == 2 && lockOrder[0] > lockOrder[1] {
-		lockOrder[0], lockOrder[1] = lockOrder[1], lockOrder[0]
-	}
-	for _, sid := range lockOrder {
-		if _, err := tx.Exec(queryCtx,
-			`SELECT 1 FROM time_slots WHERE id = $1 FOR UPDATE`, sid,
-		); err != nil {
-			return nil, fmt.Errorf("failed to lock time slot: %w", err)
-		}
-	}
-
-	// Capacity check on the new slot.
-	var currentBookings, maxBookings int
+	// Resolve the new slot's IST date (used for both the advisory-lock key and
+	// the leave count) and confirm it's bookable at all.
+	var slotDate string
 	var isActive bool
 	err = tx.QueryRow(queryCtx,
-		`SELECT current_bookings, max_bookings, is_active FROM time_slots WHERE id = $1`,
+		`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active FROM time_slots WHERE id = $1`,
 		newTimeSlotID,
-	).Scan(&currentBookings, &maxBookings, &isActive)
+	).Scan(&slotDate, &isActive)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrSlotUnavailable
 		}
 		return nil, fmt.Errorf("failed to load new time slot: %w", err)
 	}
-	if !isActive || currentBookings >= maxBookings {
-		return nil, fmt.Errorf("requested slot is fully booked")
+	if !isActive {
+		return nil, ErrSlotUnavailable
 	}
 
-	// Decrement old slot only if it differs from the new one — moving a
-	// booking onto its existing slot would otherwise net to zero anyway, but
-	// it'd be wasted writes.
-	if oldSlotID != nil && *oldSlotID != "" && *oldSlotID != newTimeSlotID {
+	// Capacity gate on the NEW window: advisory xact lock keyed by
+	// (locality, date) — the SAME key CreateScheduledBooking uses, so a
+	// reschedule and a fresh booking into the same locality+date serialise
+	// against each other and can't both slip past the last seat (the slot id is
+	// deliberately excluded; overlapping windows cross slot boundaries — audit
+	// fix b939794). No old-slot release is needed: the old booking drops out of
+	// the live committed re-count the instant its scheduled_time moves.
+	if bookingLocality != nil && *bookingLocality != "" {
+		lockKey := *bookingLocality + "|" + slotDate
 		if _, err := tx.Exec(queryCtx,
-			`UPDATE time_slots SET current_bookings = GREATEST(current_bookings - 1, 0) WHERE id = $1`,
-			*oldSlotID,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			lockKey,
 		); err != nil {
-			return nil, fmt.Errorf("failed to release old slot: %w", err)
+			return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
 		}
-		if _, err := tx.Exec(queryCtx,
-			`UPDATE time_slots SET current_bookings = current_bookings + 1 WHERE id = $1`,
-			newTimeSlotID,
-		); err != nil {
-			return nil, fmt.Errorf("failed to reserve new slot: %w", err)
+		// Exclude this booking from the recount so its own not-yet-moved old
+		// window can't block a move into an overlapping (e.g. adjacent) slot.
+		avail, err := s.repo.availableForSlotExcluding(queryCtx, tx, *bookingLocality, newTimeSlotID, slotDate, bookingID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
+		}
+		if avail <= 0 {
+			return nil, ErrSlotUnavailable
 		}
 	}
 
-	if _, err := tx.Exec(queryCtx,
+	// Move the booking. If it was already assigned, release the pro and reset to
+	// pending/unassigned so the assigner re-places it for the new time (spec §7).
+	if assignedHelperID != nil {
+		if _, err := tx.Exec(queryCtx,
+			`UPDATE bookings
+			   SET time_slot_id = $1, scheduled_time = $2,
+			       helper_id = NULL, status = 'pending', matched_at = NULL,
+			       updated_at = NOW()
+			 WHERE id = $3`,
+			newTimeSlotID, newScheduled, bookingID,
+		); err != nil {
+			return nil, fmt.Errorf("failed to update booking: %w", err)
+		}
+	} else if _, err := tx.Exec(queryCtx,
 		`UPDATE bookings
 		   SET time_slot_id = $1, scheduled_time = $2, updated_at = NOW()
 		 WHERE id = $3`,
