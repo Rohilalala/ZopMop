@@ -355,8 +355,10 @@ func TestSlotCapacity_ApprovedLeaveReducesCapacity(t *testing.T) {
 	}
 }
 
-// A 60-minute job at 09:00 spans 09:00–10:00, so it also occupies 09:30 and
-// blocks it when it takes the last helper. A 30-minute job at 09:00 does not.
+// A 60-minute job at 09:00 spans 09:00–10:00, so it occupies 09:30. A 30-minute
+// job at 09:00 ends at 09:30, but the 15-min travel pad (spec §3.3) extends its
+// window to 09:45, so it ALSO holds the 09:30 slot — the pro can't finish at
+// 09:30 and start a fresh 09:30 job with no travel time.
 func TestSlotCapacity_LongJobBlocksNextSlot(t *testing.T) {
 	t.Run("60-minute job blocks 09:30", func(t *testing.T) {
 		f := newCapFixture(t, 1)
@@ -374,16 +376,41 @@ func TestSlotCapacity_LongJobBlocksNextSlot(t *testing.T) {
 		}
 	})
 
-	t.Run("30-minute job does not block 09:30", func(t *testing.T) {
+	t.Run("30-minute job blocks 09:30 via travel pad", func(t *testing.T) {
 		f := newCapFixture(t, 1)
 		if _, err := f.book("09:00", 30, true); err != nil {
 			t.Fatalf("30-min booking at 09:00 failed: %v", err)
 		}
-		if got := f.committed("09:30"); got != 0 {
-			t.Fatalf("committed overlapping 09:30 = %d, want 0 (no overlap)", got)
+		// Raw window [09:00, 09:30) just touches the 09:30 slot start; with the
+		// 15-min travel pad the window is [09:00, 09:45), which overlaps it.
+		if got := f.committed("09:30"); got != 1 {
+			t.Fatalf("committed overlapping 09:30 = %d, want 1 (travel pad)", got)
 		}
-		if got := f.available("09:30"); got != 1 {
-			t.Fatalf("09:30 availability after 30-min job = %d, want 1 (still open)", got)
+		if got := f.available("09:30"); got != 0 {
+			t.Fatalf("09:30 availability after 30-min job = %d, want 0 (held by pad)", got)
 		}
 	})
+}
+
+// A 60-minute job at 09:00 ends at exactly 10:00 — the start of the 10:00 slot.
+// On a raw half-open window [09:00, 10:00) vs the slot's [10:00, 10:30), the
+// booking's end touches but never crosses the slot start, so the standard
+// overlap test (b.end > slot.start) is 10:00 > 10:00 = false → committed = 0,
+// and the pro would be double-booked: handed a fresh 10:00 job with no time to
+// travel from the one they just finished. The travelBufferMin pad (spec §3.3)
+// extends the job to [09:00, 10:15), which overlaps the 10:00 slot, so the seat
+// is correctly still held → committed = 1.
+func TestSlotCapacity_TravelPadHoldsAdjacentSlot(t *testing.T) {
+	f := newCapFixture(t, 1)
+	if _, err := f.book("09:00", 60, true); err != nil {
+		t.Fatalf("60-min booking at 09:00 failed: %v", err)
+	}
+	// Without the travel pad this is 0 (booking ends exactly at the slot start);
+	// with the 15-min pad the seat is still held against the 10:00 slot.
+	if got := f.committed("10:00"); got != 1 {
+		t.Fatalf("committed against 10:00 slot = %d, want 1 (15-min travel pad)", got)
+	}
+	if got := f.available("10:00"); got != 0 {
+		t.Fatalf("10:00 availability after adjacent 60-min job = %d, want 0 (blocked by pad)", got)
+	}
 }

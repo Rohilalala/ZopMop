@@ -28,6 +28,11 @@ const PilotLocality = "Orchid Island Gurugram"
 // partial index in migration 131_slot_capacity_gating.
 const committedStatusList = `('pending', 'searching', 'accepted', 'arrived', 'in_progress')`
 
+// capacityTravelPadMin extends each committed booking's window by a flat travel
+// allowance so a pro finishing one job is not handed an immediately-adjacent job
+// with no time to get there. Mirrors travelBufferMin (spec §2) for window math.
+const capacityTravelPadMin = 15
+
 // rowQuerier is the read surface shared by *pgxpool.Pool and pgx.Tx, so the
 // capacity helpers can run either on the connection pool (availability reads)
 // or inside the booking-creation transaction (the gated re-count).
@@ -77,27 +82,28 @@ func (r *Repository) countHelpersOnLeave(ctx context.Context, q rowQuerier, loca
 }
 
 // committedCountForSlot returns the number of committed bookings in the
-// locality whose [scheduled_time, scheduled_time + total_duration_minutes)
-// window overlaps the slot's [start, end) window. Each such booking holds one
-// helper for the slot. Overlap is the standard half-open test
-// (a.start < b.end AND a.end > b.start); all slot/booking arithmetic is
-// anchored in Asia/Kolkata. A 60-minute job at 09:00 therefore also counts
-// against the 09:30 slot.
+// locality whose [scheduled_time, scheduled_time + total_duration_minutes +
+// capacityTravelPadMin) window overlaps the slot's [start, end) window. Each
+// such booking holds one helper for the slot. Overlap is the standard half-open
+// test (a.start < b.end AND a.end > b.start); all slot/booking arithmetic is
+// anchored in Asia/Kolkata. The travel pad means a job ending exactly at a
+// slot's start still holds a seat there (the pro needs time to travel), so a
+// 60-minute job at 09:00 counts against both the 09:30 and the 10:00 slots.
 func (r *Repository) committedCountForSlot(ctx context.Context, q rowQuerier, locality, slotID string) (int, error) {
 	var n int
-	err := q.QueryRow(ctx, `
+	err := q.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM bookings b, time_slots ts
 		WHERE ts.id = $2
 		  AND b.locality = $1
-		  AND b.status IN `+committedStatusList+`
+		  AND b.status IN %s
 		  AND b.scheduled_time IS NOT NULL
 		  AND b.total_duration_minutes IS NOT NULL
 		  AND b.scheduled_time
 		        < ((ts.slot_date + ts.end_time)   AT TIME ZONE 'Asia/Kolkata')
-		  AND (b.scheduled_time + make_interval(mins => b.total_duration_minutes))
+		  AND (b.scheduled_time + make_interval(mins => b.total_duration_minutes + %d))
 		        > ((ts.slot_date + ts.start_time) AT TIME ZONE 'Asia/Kolkata')
-	`, locality, slotID).Scan(&n)
+	`, committedStatusList, capacityTravelPadMin), locality, slotID).Scan(&n)
 	return n, err
 }
 
