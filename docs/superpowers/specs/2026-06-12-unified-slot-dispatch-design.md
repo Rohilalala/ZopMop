@@ -163,8 +163,36 @@ pending ──(assigner)──→ accepted ──→ in_progress ──→ compl
 - "Later today" unassigned-jobs teaser in the pro app.
 - Driving-mode ETAs (walking only, matching pilot reality).
 
-## 14. Testing
+## 14. CRM integration (ships together with dispatch, same release)
+
+The CRM currently has zero dispatch visibility (its only "dispatcher" is the webhook dispatcher; no manual trigger, no slot/capacity admin). Force-assign removes all human negotiation from dispatch, so ops tooling is part of this design — not a follow-up.
+
+### 14.1 Dispatch monitoring (new)
+- **Dashboard KPI "Bookings at risk":** count of bookings `pending`, unassigned, with `now ≥ scheduled_time − dispatchLeadMin` (the assigner is actively failing to place them). Extend `GET /admin/dashboard/kpis`.
+- **No-pros-found feed:** OrdersPage filter for `cancelled_by='no_pros_found'` (last 48 h) so ops sees every unfilled booking same-day.
+- **Order detail:** show assignment metadata — assigned pro, `matched_at`. Per-candidate skip reasons are server logs only in v1 (no attempt-audit table).
+
+### 14.2 Capacity visibility (new)
+- Expose the window-recount to CRM: `GET /admin/capacity?locality=&date=` → rows `{window, roster, on_leave, committed, free}`.
+- UI: read-only capacity grid, drill-down from LocalitiesPage by date.
+
+### 14.3 Manual override (existing, verified compatible)
+- OrderDetail assign/reassign modal remains the ops escalation path. Admin assign vs JIT-cron races are safe via the `helper_id IS NULL` claim guard — covered by an explicit test (§15).
+- Admin reassign of an assigned booking keeps notifying old pro / new pro / customer (already wired).
+
+### 14.4 Cleanups
+- OrdersPage status filter: drop `searching` (never produced again).
+- PushPage: `booking_offer` type stops flowing — display-only, no change needed.
+
+### 14.5 Config
+- §2 constants live in `config_manager`, seeded via migration/env. A CRM editing UI for them is deferred together with the Feature-Flags-bridge item; pilot tuning happens via config seeds.
+
+### 14.6 Explicitly unchanged
+- Customer-app UI beyond the slot picker (§3.1); LiveMapPage; workers/leaves/payouts CRM surfaces.
+
+## 15. Testing
 
 - Unit: capacity window math (adopt slotcap's 389-line test file, extend for the travel pad); eligibility matrix per §5.3 row; promise computation incl. fallbacks.
-- Integration: ASAP happy path (create→assign→push), ASAP no-pro path, slot T−30 assignment, no-pro-at-slot-start refund path, re-dispatch after pro cancel, race: two ASAP vs one pro.
-- Manual pilot checklist: noon booking for 2:30 PM lands in a pro's roster at 2:00 PM with correct ETA promise; TrackLive shows raw live ETA.
+- Integration: ASAP happy path (create→assign→push), ASAP no-pro path, slot T−30 assignment, no-pro-at-slot-start refund path, re-dispatch after pro cancel, race: two ASAP vs one pro, race: admin manual assign vs JIT cron claim.
+- CRM: bookings-at-risk KPI counts only in-window unassigned; capacity endpoint rows reconcile with the booking-creation gate; no-pros-found filter returns the §5.5 cancellations.
+- Manual pilot checklist: noon booking for 2:30 PM lands in a pro's roster at 2:00 PM with correct ETA promise; TrackLive shows raw live ETA; CRM shows the assignment and the capacity grid reflects the held window.
