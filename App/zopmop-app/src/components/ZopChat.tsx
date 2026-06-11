@@ -419,9 +419,10 @@ export default function ZopChat({ visible, onClose }: ZopChatProps) {
         <View style={[
           styles.glass,
           !isDark && {
-            // Light values extrapolated from BottomTabBar — no direct spec available.
-            backgroundColor: 'rgba(255,255,255,0.75)',
-            borderColor: 'rgba(13,13,15,0.06)',
+            // Near-solid so chat text stays readable over busy content (0.75
+            // let the home screen bleed through too much).
+            backgroundColor: 'rgba(255,255,255,0.985)',
+            borderColor: 'rgba(13,13,15,0.08)',
           },
         ]}>
             {/* Glass background — base gradient (dark only; light uses solid bg) */}

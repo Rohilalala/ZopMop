@@ -6,6 +6,7 @@ import { registerSignOutCallback, registerTokenAccessors, apiFetch } from '../ap
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { BASE_URL } from '../api/config';
 import { promoStore } from '../utils/promoStore';
+import { setNeedsRoleSelection } from '../utils/pendingAuthStore';
 import { posthog } from '../config/posthog';
 import { setUser as sentrySetUser } from '../config/sentry';
 import { logout as logoutHTTP, refreshAccessToken, type AuthUser as ServiceAuthUser } from '../services/auth';
@@ -128,6 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY).catch(() => {});
     SecureStore.deleteItemAsync(SIGNUP_COMPLETED_KEY).catch(() => {});
     promoStore.clear();
+    setNeedsRoleSelection(false);
     AsyncStorage.multiRemove(['pendingReferralCode', 'pendingReferralCodeAt']).catch(() => {});
   }, []);
 
@@ -178,30 +180,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Hydrate state before the /me probe so the UI can render
-        // cached user info if the network is slow.
+        // cached user info if the network is slow. The refs must be
+        // primed synchronously too: the /me probe below runs before
+        // React re-renders, and apiFetch reads tokens through the refs
+        // — leaving them null sent /me with no Bearer header, whose
+        // guaranteed 401 + null-refresh "auth failure" wiped the
+        // session on every single launch/reload.
         setToken(access);
-        if (storedRefresh) setRefreshToken(storedRefresh);
+        tokenRef.current = access;
+        if (storedRefresh) {
+          setRefreshToken(storedRefresh);
+          refreshTokenRef.current = storedRefresh;
+        }
 
-        // Prefer the JWT's role over the cached user object. The JWT
-        // is rewritten atomically on every login/refresh, so it can't
-        // drift from the latest server-confirmed role. The cached
-        // user JSON, by contrast, has historically gone stale (older
-        // signups that never re-touched updateUser kept a customer
-        // role even after a server-side promotion to pro), causing
-        // MainNavigator to mount the wrong tree on relaunch.
+        // The cached /me user object is the source of truth for the
+        // role — it is rewritten with the live DB role on every /me
+        // (launch probe + profile fetch). The access-token claim, by
+        // contrast, can lag by up to its full TTL: right after a CRM
+        // promotion to pro the cached user is already 'pro' while the
+        // stored JWT still claims 'customer' until the next rotation.
+        // So we must NOT let the JWT role override (and never persist)
+        // the cached role here — doing so demoted freshly-promoted pros
+        // back into the customer tree on relaunch. The launch /me probe
+        // below reconciles the role authoritatively.
         const jwtClaims = decodeJWTClaims(access);
         const jwtRole = typeof jwtClaims?.role === 'string' ? jwtClaims.role : null;
 
         if (storedUser) {
           try {
             const parsed = JSON.parse(storedUser) as AuthUser;
-            // If the JWT carries a fresher role, override the cached
-            // copy so routing reflects current truth on first render.
-            if (jwtRole && parsed.role !== jwtRole) {
-              parsed.role = jwtRole;
-              parsed.type = jwtRole === 'pro' || jwtRole === 'helper' ? 'pro' : 'customer';
-              SecureStore.setItemAsync(USER_KEY, JSON.stringify(parsed)).catch(() => {});
-            }
             setUser(parsed);
           } catch { /* ignore corrupted */ }
         } else if (jwtClaims) {
@@ -221,10 +228,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // refresh token, apiFetch will rotate transparently.
         try {
           const res = await apiFetch(`${BASE_URL}/me`, { method: 'GET' });
-          if (res.status === 401 || res.status === 403 || res.status === 404) {
+          if (res.status === 401) {
             // apiFetch already attempted /refresh internally; a 401
-            // here means refresh failed too. signOut was already
-            // invoked by the 401 interceptor.
+            // here means refresh failed too and the 401 interceptor
+            // already signed out.
+            return;
+          }
+          if (res.status === 403 || res.status === 404) {
+            // Suspended (403 ACCOUNT_SUSPENDED) or deleted (404) user.
+            // apiFetch only signs out on 401, so without this the cached
+            // session stays mounted as a zombie until the next
+            // foreground re-validation. Sign out explicitly.
+            console.warn('[Auth] launch re-validation rejected (403/404) — signing out');
+            signOutRef.current();
             return;
           }
           if (res.ok) {
@@ -232,6 +248,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(fresh);
             SecureStore.setItemAsync(USER_KEY, JSON.stringify(fresh)).catch(() => {});
             SecureStore.setItemAsync(SIGNUP_COMPLETED_KEY, '1').catch(() => {});
+            // If the live role from /me disagrees with the stored access
+            // token's role claim (CRM promoted/demoted this user since the
+            // token was minted), proactively rotate the token. Otherwise
+            // every pro route 403s for up to the JWT TTL — apiFetch only
+            // refreshes on 401, never on 403 — leaving a promoted pro on a
+            // permanently empty dashboard until the token expires.
+            if (jwtRole && fresh.role && fresh.role !== jwtRole && refreshTokenRef.current) {
+              try {
+                const rotated = await refreshAccessToken(refreshTokenRef.current);
+                setToken(rotated.access_token);
+                setRefreshToken(rotated.refresh_token);
+                persistTokens(rotated.access_token, rotated.refresh_token);
+              } catch { /* keep current token; next 401 will rotate */ }
+            }
           }
         } catch {
           // Offline — keep cached state.
@@ -253,16 +283,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const currentToken = tokenRef.current;
       if (nextState !== 'active' || !currentToken || currentToken === '__guest__') return;
       apiFetch(`${BASE_URL}/me`, { method: 'GET' })
-        .then((res) => {
+        .then(async (res) => {
           if (res.status === 403 || res.status === 404) {
             console.warn('[Auth] foreground re-validation failed — signing out');
             signOutRef.current();
+            return;
+          }
+          if (res.ok) {
+            // Apply the fresh user so a mid-session role change (CRM
+            // approves a pro application, or demotes/suspends a pro)
+            // remounts the correct navigator tree — App.tsx keys
+            // MainNavigator on user.role. Previously the body was
+            // discarded, so a role change only took effect on a cold
+            // relaunch.
+            const fresh = await res.json() as AuthUser;
+            setUser(fresh);
+            SecureStore.setItemAsync(USER_KEY, JSON.stringify(fresh)).catch(() => {});
+            const jwtRole = decodeJWTClaims(currentToken)?.role;
+            if (typeof jwtRole === 'string' && fresh.role && fresh.role !== jwtRole && refreshTokenRef.current) {
+              try {
+                const rotated = await refreshAccessToken(refreshTokenRef.current);
+                setToken(rotated.access_token);
+                setRefreshToken(rotated.refresh_token);
+                persistTokens(rotated.access_token, rotated.refresh_token);
+              } catch { /* keep current token; next 401 will rotate */ }
+            }
           }
         })
         .catch(() => {}); // offline — keep session
     });
     return () => sub.remove();
-  }, []);
+  }, [persistTokens]);
 
   function signIn(access: string, refresh: string, authUser: AuthUser) {
     if (!access || access === '__guest__') {
@@ -288,11 +339,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(updatedUser);
     SecureStore.setItemAsync(USER_KEY, JSON.stringify(updatedUser)).catch(() => {});
   }
-
-  // Suppress the unused-import warning for refreshAccessToken — it's
-  // re-exported below so the legacy paths can still call it directly
-  // if needed during the migration. Tree-shaken in prod builds.
-  void refreshAccessToken;
 
   return (
     <AuthContext.Provider value={{

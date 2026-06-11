@@ -77,3 +77,21 @@ func (a *CustomerNotifierAdapter) NotifyBookingCancelledNoCoverage(ctx context.C
 	}
 	return a.Sender.NotifyCustomerBookingCancelledNoCoverage(ctx, customerID, bookingID, when, strings.Join(alts, " · "))
 }
+
+// proNotificationSender is the minimal pro-push surface this package needs.
+type proNotificationSender interface {
+	NotifyProBookingAssigned(ctx context.Context, proID, bookingID, serviceType string) error
+}
+
+// ProNotifierAdapter exposes the leave.ProNotifier interface over a sender
+// that satisfies proNotificationSender (notification.Service).
+type ProNotifierAdapter struct {
+	Sender proNotificationSender
+}
+
+func (a *ProNotifierAdapter) NotifyProBookingAssigned(ctx context.Context, proID, bookingID, serviceType string) error {
+	if a == nil || a.Sender == nil {
+		return nil
+	}
+	return a.Sender.NotifyProBookingAssigned(ctx, proID, bookingID, serviceType)
+}

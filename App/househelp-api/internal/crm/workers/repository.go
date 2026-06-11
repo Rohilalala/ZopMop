@@ -71,7 +71,11 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		add(fmt.Sprintf("$%d = ANY(h.services)", len(args)+1), f.Category)
 	}
 	if f.OnlyOnline {
-		conds = append(conds, "h.is_available = TRUE")
+		// Mirror the is_online column (lines below): available AND a
+		// location ping within 90s. is_available alone returned pros who
+		// toggled available then killed the app — rendered with a grey
+		// (offline) dot, contradicting the "Online only" filter.
+		conds = append(conds, "h.is_available = TRUE AND h.last_location_at IS NOT NULL AND h.last_location_at > NOW() - INTERVAL '90 seconds'")
 	}
 
 	sortColMap := map[string]string{
@@ -209,7 +213,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days') AS completed_30d,
-		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
+		    COALESCE(SUM(COALESCE(b.pro_earnings_paise, 0)) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
 		    CASE
 		      WHEN COUNT(*) = 0 THEN 0
 		      ELSE COUNT(*) FILTER (WHERE b.status = 'cancelled')::float / COUNT(*)
@@ -290,13 +294,13 @@ func (r *Repository) Jobs(ctx context.Context, workerID string, limit int) ([]Jo
 func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 	rows, err := r.read.Query(ctx, `
 		SELECT u.id::text, u.name, u.phone, h.current_lat::float8, h.current_lng::float8, h.rating::float8,
-		       active.id::text, active.status
+		       active.id::text, active.status, (active.en_route_at IS NOT NULL) AS en_route
 		FROM helpers h
 		JOIN users u ON u.id = h.id
 		LEFT JOIN LATERAL (
-		  SELECT id, status FROM bookings
+		  SELECT id, status, en_route_at FROM bookings
 		  WHERE helper_id = u.id
-		    AND status IN ('assigned','en_route','in_progress','arrived')
+		    AND status IN ('accepted','arrived','in_progress')
 		  ORDER BY created_at DESC
 		  LIMIT 1
 		) active ON TRUE
@@ -323,8 +327,9 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 			p            LivePin
 			activeID     *string
 			activeStatus *string
+			enRoute      bool
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Phone, &p.Lat, &p.Lng, &p.Rating, &activeID, &activeStatus); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Phone, &p.Lat, &p.Lng, &p.Rating, &activeID, &activeStatus, &enRoute); err != nil {
 			return nil, err
 		}
 		switch {
@@ -333,8 +338,11 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 		case activeStatus != nil && *activeStatus == "in_progress":
 			p.JobStatus = "on_job"
 			p.ActiveBookingID = activeID
-		default: // assigned / en_route / arrived
+		case enRoute:
 			p.JobStatus = "en_route"
+			p.ActiveBookingID = activeID
+		default: // accepted (not yet en route) / arrived
+			p.JobStatus = "on_job"
 			p.ActiveBookingID = activeID
 		}
 		out = append(out, p)
@@ -349,7 +357,7 @@ func (r *Repository) HasActiveJob(ctx context.Context, workerID string) (bool, *
 	err := r.read.QueryRow(ctx, `
 		SELECT id::text FROM bookings
 		WHERE helper_id = $1::uuid
-		  AND status IN ('assigned','en_route','in_progress','arrived')
+		  AND status IN ('accepted','arrived','in_progress')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, workerID).Scan(&bookingID)

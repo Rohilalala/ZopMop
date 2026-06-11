@@ -379,8 +379,10 @@ func (s *Service) ListAudit(ctx context.Context, module, action, adminEmail stri
 		conds = append(conds, fmt.Sprintf("module = $%d", len(args)))
 	}
 	if action != "" {
-		args = append(args, action)
-		conds = append(conds, fmt.Sprintf("action = $%d", len(args)))
+		// Substring match — the UI prompts admins to type a bare verb
+		// (e.g. "cancel"), not the full dotted action string.
+		args = append(args, "%"+action+"%")
+		conds = append(conds, fmt.Sprintf("action ILIKE $%d", len(args)))
 	}
 	if adminEmail != "" {
 		args = append(args, adminEmail)

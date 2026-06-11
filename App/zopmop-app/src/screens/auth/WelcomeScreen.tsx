@@ -5,7 +5,7 @@ import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 
@@ -19,7 +19,7 @@ const AUTO_ADVANCE_MS = 2600;
 export default function WelcomeScreen({ navigation, route }: Props) {
   const { phone } = route.params;
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const { user } = useAuth();

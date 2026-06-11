@@ -115,15 +115,33 @@ func (r *Repository) ResetFailedLogin(ctx context.Context, adminID string) error
 }
 
 // SetTOTPSecret persists a freshly-generated TOTP secret for the admin.
-// Called once at initial enrolment, not for re-validation.
+// Does NOT mark the admin enrolled — enrolment is only confirmed once the
+// admin proves possession via a successful verify (see MarkTOTPEnrolled).
+// Persisting totp_enrolled_at here previously bricked accounts that abandoned
+// the first-login QR step: the secret existed, so enrolled looked complete,
+// so otpauth_url was never shown again.
 func (r *Repository) SetTOTPSecret(ctx context.Context, adminID, secret string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE crm_admins
-		SET totp_secret = $2, totp_enrolled_at = now(), updated_at = now()
+		SET totp_secret = $2, updated_at = now()
 		WHERE id = $1
 	`, adminID, secret)
 	if err != nil {
 		return fmt.Errorf("set totp secret: %w", err)
+	}
+	return nil
+}
+
+// MarkTOTPEnrolled stamps totp_enrolled_at on the first successful TOTP
+// verification, completing enrolment. Idempotent: only sets it once.
+func (r *Repository) MarkTOTPEnrolled(ctx context.Context, adminID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE crm_admins
+		SET totp_enrolled_at = now(), updated_at = now()
+		WHERE id = $1 AND totp_enrolled_at IS NULL
+	`, adminID)
+	if err != nil {
+		return fmt.Errorf("mark totp enrolled: %w", err)
 	}
 	return nil
 }
@@ -323,14 +341,18 @@ func (r *Repository) RevokeSession(ctx context.Context, sessionID string) error 
 	return nil
 }
 
-// ListSessions lists active (not revoked, not expired) sessions for an admin.
+// ListSessions lists active (not revoked, not expired, not rotated) sessions
+// for an admin. Rotated legs (rotated_at IS NOT NULL) are superseded refresh
+// tokens — listing them floods the page with dead duplicates and makes the
+// "Revoke" control useless (revoking a rotated leg is a no-op against the
+// device's live leg), so they are excluded.
 func (r *Repository) ListSessions(ctx context.Context, adminID string) ([]Session, error) {
 	const q = `
 		SELECT id, admin_id, refresh_token_hash, user_agent,
 		       host(ip_address)::text, issued_at, last_used_at,
 		       expires_at, revoked_at
 		FROM crm_admin_sessions
-		WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		WHERE admin_id = $1 AND revoked_at IS NULL AND rotated_at IS NULL AND expires_at > now()
 		ORDER BY last_used_at DESC
 	`
 	rows, err := r.db.Query(ctx, q, adminID)

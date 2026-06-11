@@ -80,6 +80,9 @@ function LoyaltyTab() {
       is_enabled: enabled ?? q.data!.is_enabled,
       points_per_100_inr: per100 ?? q.data!.points_per_100_inr,
       points_per_redeem_inr: redeem ?? q.data!.points_per_redeem_inr,
+      // The form has no editor for bonus_rules; the backend defaults an absent
+      // value to [], so echo the existing rules back to avoid wiping them.
+      bonus_rules: q.data!.bonus_rules,
     }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Loyalty saved.' }); qc.invalidateQueries({ queryKey: ['loyalty'] }); setConfirm(false); },
   });

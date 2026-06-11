@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zopnew/zop-happy.svg — beaming: arc eyes + open grin with tongue + blush -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395.32 395.32" fill="none">
+  <path d="M178.1,26.44c1.39-5.53,10.07-5.53,11.46,0,24.18,96.14,68.9,141.13,165.61,165.5,5.53,1.39,5.53,10.05,0,11.44-96.73,24.37-141.45,69.36-165.61,165.5-1.39,5.53-10.07,5.53-11.46,0-24.18-96.14-68.9-141.15-165.59-165.5-5.53-1.39-5.53-10.05,0-11.44,96.72-24.37,141.44-69.36,165.6-165.5h-.01Z" fill="#FFBA03"/>
+  <path d="M141 154 Q 162 128 183 154" stroke="#1F1F1F" stroke-width="13" stroke-linecap="round" fill="none"/><path d="M213 154 Q 234 128 255 154" stroke="#1F1F1F" stroke-width="13" stroke-linecap="round" fill="none"/><path d="M146 228 Q 198 272 250 228 Q 198 242 146 228 Z" fill="#1F1F1F"/><path d="M169.4 246.48 Q 198 269.8 226.6 246.48 Q 198 250.88 169.4 246.48 Z" fill="#FF6B7A"/><g opacity="1"><ellipse cx="128" cy="188" rx="16" ry="9" fill="rgba(232,116,34,0.5)" transform="rotate(-8 128 188)"/><ellipse cx="268" cy="188" rx="16" ry="9" fill="rgba(232,116,34,0.5)" transform="rotate(8 268 188)"/></g>
+</svg>

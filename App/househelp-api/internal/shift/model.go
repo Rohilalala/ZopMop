@@ -38,6 +38,11 @@ var (
 	// ErrAlreadyReviewed — DecideZoneApproval matched 0 rows because the
 	// request was already approved/rejected (admin race). Handler maps to 409.
 	ErrAlreadyReviewed = errors.New("zone approval already reviewed")
+	// ErrBookingNotCancellable — the cancel UPDATE matched 0 rows because
+	// the booking was no longer in a cancellable ('accepted') state: a
+	// double-tap, a timeout-retry, or a job already completed/cancelled.
+	// Handler maps to 409. This is the status-guard + idempotency gate.
+	ErrBookingNotCancellable = errors.New("booking is not in a cancellable state")
 )
 
 // Commitment is the public view of one shift_commitments row.
@@ -86,6 +91,11 @@ type GoOnlineResult struct {
 	LocationOK             bool    `json:"location_ok"`
 	RequiresManualApproval bool    `json:"requires_manual_approval"`
 	DistanceMeters         float64 `json:"distance_meters,omitempty"`
+	// ApprovalPending is true when a zone-approval request for this
+	// commitment is already queued — the app should route to the
+	// "waiting for approval" state, not ask the pro to upload a selfie
+	// again (a resubmit would 409 ErrApprovalPending).
+	ApprovalPending bool `json:"approval_pending,omitempty"`
 }
 
 // ZoneApprovalRequestBody — POST /pro/shifts/:id/zone-approval-request.

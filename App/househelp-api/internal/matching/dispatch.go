@@ -28,7 +28,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -86,6 +85,7 @@ type expertsLookup interface {
 // interface for testability.
 type notifier interface {
 	SendData(ctx context.Context, userID string, data map[string]string) error
+	SendDataAlert(ctx context.Context, userID, title, body string, data map[string]string) error
 }
 
 // Dispatcher bundles the shared dependencies of both cron drivers.
@@ -398,8 +398,12 @@ func (d *Dispatcher) inviteSinglePro(ctx context.Context, b *scheduledBookingRow
 		} else {
 			log.Warn().Err(err).Str("booking_id", b.ID).Msg("[dispatch] offer enrichment failed (continuing)")
 		}
-		if perr := d.notifications.SendData(ctx, helperID, dat); perr != nil {
-			log.Warn().Err(perr).Str("helper_id", helperID).Str("booking_id", b.ID).Msg("[dispatch] data push failed")
+		// Use the alert variant: a job offer is time-sensitive and a
+		// silent data-only background push never reaches a locked phone.
+		// The tray alert wakes the device; the data fields still route the
+		// foreground/background handler to the JobOffer screen.
+		if perr := d.notifications.SendDataAlert(ctx, helperID, "New job offer", "Tap to view and accept", dat); perr != nil {
+			log.Warn().Err(perr).Str("helper_id", helperID).Str("booking_id", b.ID).Msg("[dispatch] offer push failed")
 		}
 	}
 
@@ -673,9 +677,10 @@ func (d *Dispatcher) fetchOfferEnrichment(ctx context.Context, bookingID, custom
 	}
 
 	// Earnings preview: base rate × duration, no surcharges at offer
-	// time. Mirrors booking.ComputeBookingEarnings base path.
+	// time. Mirrors booking.ComputeBookingEarnings base path — integer
+	// multiply-first / truncate-once so the preview ties to the snapshot.
 	const baseRatePaisePerHour = 8000
-	estEarnings := int64(math.Round(float64(durationMin) / 60.0 * baseRatePaisePerHour))
+	estEarnings := int64(durationMin) * baseRatePaisePerHour / 60
 	out["estimated_earnings_paise"] = fmt.Sprintf("%d", estEarnings)
 	out["estimated_duration_minutes"] = fmt.Sprintf("%d", durationMin)
 

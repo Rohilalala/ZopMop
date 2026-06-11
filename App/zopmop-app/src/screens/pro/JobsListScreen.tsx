@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 
@@ -20,6 +20,7 @@ import { useAuth } from '../../context/AuthContext';
 import { listActiveJobs, listPendingOffers } from '../../api/jobs';
 import { getHelperToday, type HelperBooking } from '../../api/pro';
 import { onShiftEvent, type OfferPayload } from '../../utils/shiftEvents';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { t } from '../../i18n';
 
 const ACTIVE_STATUSES = new Set(['accepted', 'arrived', 'in_progress']);
@@ -30,6 +31,7 @@ interface OfferState extends OfferPayload {
 }
 
 export default function JobsListScreen() {
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
   const c = useColors();
@@ -40,6 +42,7 @@ export default function JobsListScreen() {
   const [completed, setCompleted] = useState<HelperBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [, forceTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -54,16 +57,40 @@ export default function JobsListScreen() {
     if (todayRes.status === 'fulfilled') {
       setCompleted(todayRes.value.filter((b) => b.status === 'completed'));
     }
+    // Surface a real fetch failure as an error/retry state instead of the
+    // 'No jobs' empty state. If every request failed (offline / backend
+    // down) we have no trustworthy data to render.
+    setLoadError(
+      activeRes.status === 'rejected' &&
+      pendingRes.status === 'rejected' &&
+      todayRes.status === 'rejected',
+    );
     // For pending offers we only have IDs from the server; rich offer
     // metadata comes via FCM push (booking_offer event). Prune stale
     // local cache entries whose IDs are no longer in the pending set
     // — handles server-side auto-decline cleanly.
     if (pendingRes.status === 'fulfilled') {
       const liveIds = new Set(pendingRes.value);
+      const nowMs = Date.now();
       setOffers((prev) => {
         const next: Record<string, OfferState> = {};
+        // Keep cached (push-enriched) offers still live on the server.
         for (const id of Object.keys(prev)) {
           if (liveIds.has(id)) next[id] = prev[id];
+        }
+        // Add a minimal row for any server-live offer we have no cached
+        // payload for (cold-start / relaunch mid-invite, where the FCM
+        // push fired before the app subscribed). Without this the Jobs
+        // screen showed empty while the offer was still acceptable.
+        for (const id of liveIds) {
+          if (!next[id]) {
+            next[id] = {
+              booking_id: id,
+              received_at_ms: nowMs,
+              time_remaining_sec: 25,
+              expiresAtMs: nowMs + 25 * 1000,
+            };
+          }
         }
         return next;
       });
@@ -72,6 +99,11 @@ export default function JobsListScreen() {
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Refetch whenever the tab regains focus — the pro's own
+  // accept/start/complete happens on the JobDetail stack screen, and
+  // returning here without a refetch left the Active/Today sections stale.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   // Subscribe to push events: append new offers, refresh on status change.
   useEffect(() => {
@@ -119,7 +151,7 @@ export default function JobsListScreen() {
 
   const offerList = Object.values(offers);
 
-  const isEmpty = !loading && offerList.length === 0 && active.length === 0 && completed.length === 0;
+  const isEmpty = !loading && !loadError && offerList.length === 0 && active.length === 0 && completed.length === 0;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.background }]} edges={['top']}>
@@ -173,6 +205,19 @@ export default function JobsListScreen() {
                 onPress={() => navigation.navigate('JobDetail', { booking_id: b.id })}
               />
             ))}
+          </View>
+        )}
+
+        {!loading && loadError && (
+          <View style={styles.emptyWrap}>
+            <View style={styles.emptyIconRing}>
+              <Feather name="wifi-off" size={32} color={c.danger} />
+            </View>
+            <Text style={styles.emptyTitle}>{t('common.error')}</Text>
+            <Text style={styles.emptySub}>{t('jobs.loadErrorBody')}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={onRefresh}>
+              <Text style={styles.retryText}>{t('common.retry')}</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -258,7 +303,7 @@ function CompletedRow({
           {booking.address}
         </Text>
         <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.base, color: colors.text }}>
-          ₹{Math.round(booking.price_paise / 100)}
+          ₹{Math.round((booking.pro_earnings_paise ?? 0) / 100)}
         </Text>
       </View>
     </TouchableOpacity>
@@ -296,5 +341,10 @@ function createStyles(c: ReturnType<typeof useColors>) {
     },
     emptyTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: c.text },
     emptySub: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center', paddingHorizontal: Spacing.lg },
+    retryBtn: {
+      marginTop: Spacing.base, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
+      borderRadius: Radius.full, borderWidth: 1, borderColor: c.accent,
+    },
+    retryText: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.accent },
   });
 }

@@ -87,9 +87,12 @@ export const ordersApi = {
   cancel: (id: string, reason: string) => api.post(`/admin/orders/${id}/cancel`, { reason }),
   complete: (id: string) => api.post(`/admin/orders/${id}/complete`),
   availableWorkers: (id: string, radiusKm?: number) =>
-    api.get<AvailableWorker[]>(`/admin/orders/${id}/available-workers`, {
+    // Backend wraps the list: {items: AvailableWorker[], radius_km: number}
+    // (orders.go:830). Typing it as a bare array made OrderDetailPage call
+    // .filter on a plain object and white-screen the CRM.
+    api.get<{ items: AvailableWorker[]; radius_km: number }>(`/admin/orders/${id}/available-workers`, {
       params: radiusKm ? { radius_km: radiusKm } : undefined,
-    }).then(r => r.data),
+    }).then(r => r.data.items ?? []),
   reassign: (id: string, body: { new_worker_id: string; reason: string }) => api.post(`/admin/orders/${id}/reassign`, body),
   listNotes: (id: string) =>
     api.get<{ items: OrderNote[] }>(`/admin/orders/${id}/notes`).then(r => r.data.items ?? []),
@@ -295,12 +298,12 @@ export const zonesApi = {
 // ── Payouts ────────────────────────────────────────────────────────────
 export type Payout = {
   id: string; worker_id: string; worker_name?: string | null; worker_phone: string;
-  period_start: string; period_end: string; amount_cents: number; status: string;
+  period_start: string; period_end: string; amount_paise: number; status: string;
   paid_at?: string | null; external_ref?: string | null; notes?: string | null; created_at: string;
 };
 export const payoutsApi = {
   list: (p: Record<string, string | number>) => api.get<{ items: Payout[]; total_count: number }>('/admin/payouts', { params: p }).then(r => r.data),
-  create: (body: { worker_id: string; period_start: string; period_end: string; amount_cents: number; notes?: string }) => api.post('/admin/payouts', body),
+  create: (body: { worker_id: string; period_start: string; period_end: string; amount_paise: number; notes?: string }) => api.post('/admin/payouts', body),
   paid: (id: string, externalRef: string) => api.post(`/admin/payouts/${id}/paid`, { external_ref: externalRef }),
   failed: (id: string, notes: string) => api.post(`/admin/payouts/${id}/failed`, { notes }),
 };
@@ -323,6 +326,7 @@ export const tsApi = {
   listDisputes: (status?: string) => api.get<{ items: Dispute[] }>('/admin/disputes', { params: status ? { status } : {} }).then(r => r.data.items),
   createDispute: (body: Partial<Dispute> & { description: string }) => api.post('/admin/disputes', body),
   resolveDispute: (id: string, resolution: string) => api.post(`/admin/disputes/${id}/resolve`, { resolution }),
+  setDisputeStatus: (id: string, status: 'in_progress' | 'escalated') => api.post(`/admin/disputes/${id}/status`, { status }),
 
   listFraud: (status?: string) => api.get<{ items: Fraud[] }>('/admin/fraud', { params: status ? { status } : {} }).then(r => r.data.items),
   reviewFraud: (id: string, status: string) => api.post(`/admin/fraud/${id}/review`, { status }),

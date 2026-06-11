@@ -207,6 +207,14 @@ export default function ProDashboardScreen() {
       if (ev.type === 'zone_approval_granted') {
         approvalPendingRef.current = null;
         refresh();
+      } else if (ev.type === 'zone_approval_rejected') {
+        // Admin rejected the out-of-zone request. Clear the pending flag
+        // so the pro leaves the "Waiting for approval" state, surface the
+        // reason, and refetch. Previously this push had no handler and the
+        // pro sat on the waiting screen the whole shift.
+        approvalPendingRef.current = null;
+        showError(ev.reason || t('zoneApproval.rejected'));
+        refresh();
       }
     });
     return unsub;
@@ -224,6 +232,13 @@ export default function ProDashboardScreen() {
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const result: GoOnlineResult = await goOnline(commitment.id, pos.coords.latitude, pos.coords.longitude);
       if (!result.location_ok && result.requires_manual_approval) {
+        // A request is already queued — go straight to the waiting state
+        // rather than re-prompting for a selfie (the resubmit 409s).
+        if (result.approval_pending) {
+          approvalPendingRef.current = commitment.id;
+          await refresh();
+          return;
+        }
         navigation.navigate('ZoneApprovalRequest', {
           commitment_id: commitment.id,
           current_lat: pos.coords.latitude,
@@ -357,11 +372,16 @@ export default function ProDashboardScreen() {
           <View style={[styles.cardGlass, styles.jobCard]}>
             <Text style={styles.jobHeader}>{t('dashboard.activeJob')}</Text>
             <Text style={styles.jobAddress}>{b.address}</Text>
-            <Text style={styles.jobMeta}>₹{Math.round(b.price_paise / 100)}</Text>
+            {/* Pro earnings, never the customer gross (price_paise is
+                4–6× higher). Earnings are snapshotted at completion, so
+                an in-flight job has none yet — omit rather than mislead. */}
+            {(b.pro_earnings_paise ?? 0) > 0 && (
+              <Text style={styles.jobMeta}>₹{Math.round((b.pro_earnings_paise ?? 0) / 100)}</Text>
+            )}
           </View>
           <TouchableOpacity
             style={styles.primaryBtn}
-            onPress={() => showError(t('dashboard.comingSoon'))}
+            onPress={() => navigation.navigate('JobDetail', { booking_id: b.id })}
           >
             <Text style={styles.primaryBtnText}>{t('dashboard.completeJob')}</Text>
           </TouchableOpacity>

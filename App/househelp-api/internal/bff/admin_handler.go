@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -50,29 +49,48 @@ func NewAdminHandler(
 }
 
 // RegisterRoutes mounts the admin SDUI routes.
-func (a *AdminHandler) RegisterRoutes(g fiber.Router) {
-	g.Get("/pages", a.listPages)
-	g.Get("/pages/:page_id/configs", a.listConfigs)
-	g.Post("/pages/:page_id/configs", a.createDraft)
-	g.Get("/pages/:page_id/configs/:version", a.getConfig)
-	g.Patch("/pages/:page_id/configs/:version", a.patchDraft)
-	g.Delete("/pages/:page_id/configs/:version", a.deleteDraft)
-	g.Put("/pages/:page_id/configs/:version/stage", a.stage)
-	g.Put("/pages/:page_id/configs/:version/activate", a.activate)
-	g.Put("/pages/:page_id/configs/:version/rollback", a.rollback)
-	g.Get("/pages/:page_id/configs/:version/preview", a.preview)
-	g.Get("/pages/:page_id/audit-log", a.auditLog)
+//
+// An optional per-level permission middleware factory may be passed. When
+// provided, each route is wrapped with perm("read"|"write"|"activate") so the
+// caller (crm-api) can enforce RBAC — viewer/support admins must not be able to
+// push or blank production layouts or widen the action allowlist. cmd/api,
+// which fronts these routes with SduiAdminAuth instead, passes nothing and
+// keeps the unwrapped behaviour.
+func (a *AdminHandler) RegisterRoutes(g fiber.Router, perm ...func(level string) fiber.Handler) {
+	// gate returns the middleware chain for the given access level, or an
+	// empty slice when no permission factory was supplied.
+	gate := func(level string) []fiber.Handler {
+		if len(perm) == 0 || perm[0] == nil {
+			return nil
+		}
+		return []fiber.Handler{perm[0](level)}
+	}
+	read := func(h fiber.Handler) []fiber.Handler { return append(gate("read"), h) }
+	write := func(h fiber.Handler) []fiber.Handler { return append(gate("write"), h) }
+	activate := func(h fiber.Handler) []fiber.Handler { return append(gate("activate"), h) }
 
-	g.Post("/pages/:page_id/kill-switch", a.killOn)
-	g.Delete("/pages/:page_id/kill-switch", a.killOff)
-	g.Get("/pages/:page_id/kill-switch", a.killStatus)
+	g.Get("/pages", read(a.listPages)...)
+	g.Get("/pages/:page_id/configs", read(a.listConfigs)...)
+	g.Post("/pages/:page_id/configs", write(a.createDraft)...)
+	g.Get("/pages/:page_id/configs/:version", read(a.getConfig)...)
+	g.Patch("/pages/:page_id/configs/:version", write(a.patchDraft)...)
+	g.Delete("/pages/:page_id/configs/:version", write(a.deleteDraft)...)
+	g.Put("/pages/:page_id/configs/:version/stage", write(a.stage)...)
+	g.Put("/pages/:page_id/configs/:version/activate", activate(a.activate)...)
+	g.Put("/pages/:page_id/configs/:version/rollback", activate(a.rollback)...)
+	g.Get("/pages/:page_id/configs/:version/preview", read(a.preview)...)
+	g.Get("/pages/:page_id/audit-log", read(a.auditLog)...)
 
-	g.Post("/experiments/:exp_id/kill-switch", a.expKillOn)
-	g.Delete("/experiments/:exp_id/kill-switch", a.expKillOff)
+	g.Post("/pages/:page_id/kill-switch", activate(a.killOn)...)
+	g.Delete("/pages/:page_id/kill-switch", activate(a.killOff)...)
+	g.Get("/pages/:page_id/kill-switch", read(a.killStatus)...)
 
-	g.Get("/allowed-actions", a.listAllowed)
-	g.Post("/allowed-actions", a.createAllowed)
-	g.Delete("/allowed-actions/:id", a.deleteAllowed)
+	g.Post("/experiments/:exp_id/kill-switch", activate(a.expKillOn)...)
+	g.Delete("/experiments/:exp_id/kill-switch", activate(a.expKillOff)...)
+
+	g.Get("/allowed-actions", read(a.listAllowed)...)
+	g.Post("/allowed-actions", activate(a.createAllowed)...)
+	g.Delete("/allowed-actions/:id", activate(a.deleteAllowed)...)
 }
 
 func (a *AdminHandler) actor(c *fiber.Ctx) string {
@@ -382,7 +400,10 @@ func (a *AdminHandler) killOn(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Set(c.UserContext(), "sdui:kill:"+pageID, "1", 24*time.Hour).Err(); err != nil {
+	// No TTL — the kill stays armed until an admin explicitly disables it.
+	// A 24h auto-disarm silently re-exposed a broken page while the UI still
+	// showed the switch as "on".
+	if err := a.rdb.Set(c.UserContext(), "sdui:kill:"+pageID, "1", 0).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, nil, "kill_switch", a.actor(c), "enabled", nil)
@@ -415,7 +436,8 @@ func (a *AdminHandler) expKillOn(c *fiber.Ctx) error {
 	if a.rdb == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "redis unavailable"})
 	}
-	if err := a.rdb.Set(c.UserContext(), "sdui:kill:exp:"+expID, "1", 24*time.Hour).Err(); err != nil {
+	// No TTL — see killOn. Persist until explicitly disabled.
+	if err := a.rdb.Set(c.UserContext(), "sdui:kill:exp:"+expID, "1", 0).Err(); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	_ = a.repo.AppendAuditLog(c.UserContext(), "_experiment", nil, "kill_switch", a.actor(c), "exp:"+expID+" enabled", nil)
@@ -462,6 +484,9 @@ func (a *AdminHandler) createAllowed(c *fiber.Ctx) error {
 	}
 	out, err := a.repo.InsertAllowedAction(c.UserContext(), req.Endpoint, req.Methods, a.actor(c))
 	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			return c.Status(409).JSON(fiber.Map{"error": "an allowed action for this endpoint already exists"})
+		}
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	a.whitelist.Invalidate(c.UserContext())

@@ -5,7 +5,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { listWorkers, type ListParams, type Status, type WorkerListItem } from '@/api/workers';
 import { Can } from '@/auth/Can';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { WorkerDrawer } from './WorkerDrawer';
 
 // UUID v4-ish guard. Audit/order/email links may pass anything in ?id= —
@@ -144,6 +144,8 @@ export function WorkersPage() {
           <tbody>
             {q.isLoading ? (
               <RowSkeletons />
+            ) : q.isError ? (
+              <tr><td colSpan={7}><ErrorState title="Could not load workers" onRetry={() => q.refetch()} /></td></tr>
             ) : (q.data?.items.length ?? 0) === 0 ? (
               <tr><td colSpan={7}>
                 <EmptyState

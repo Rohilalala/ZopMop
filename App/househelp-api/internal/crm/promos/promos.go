@@ -29,10 +29,10 @@ type Promo struct {
 	Code            string     `json:"code"`
 	Name            *string    `json:"name,omitempty"`
 	Description     *string    `json:"description,omitempty"`
-	DiscountType    string     `json:"discount_type"`     // "percent" | "fixed"
+	DiscountType    string     `json:"discount_type"` // "percent" | "fixed"
 	DiscountValue   int        `json:"discount_value"`
 	MinOrderCents   int        `json:"min_order_paise"`
-	MaxUses         int        `json:"max_uses"`          // 0 = unlimited
+	MaxUses         int        `json:"max_uses"` // 0 = unlimited
 	UsesCount       int        `json:"uses_count"`
 	MaxPerUser      int        `json:"max_per_user"`
 	IsActive        bool       `json:"is_active"`
@@ -64,11 +64,16 @@ type CreateRequest struct {
 
 type Repository struct{ read, write *pgxpool.Pool }
 
-func NewRepository(read, write *pgxpool.Pool) *Repository { return &Repository{read: read, write: write} }
+func NewRepository(read, write *pgxpool.Pool) *Repository {
+	return &Repository{read: read, write: write}
+}
 
 func (r *Repository) List(ctx context.Context, search, status string, limit, offset int) ([]Promo, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	args := []any{}
 	conds := []string{"1=1"}
@@ -262,10 +267,10 @@ func (r *Repository) SetActive(ctx context.Context, id string, active bool) erro
 
 // Stats returns the redemption stats for one promo.
 type Stats struct {
-	Redemptions    int   `json:"redemptions"`
-	UniqueUsers    int   `json:"unique_users"`
-	DiscountCents  int64 `json:"discount_paise"`
-	RevenueCents   int64 `json:"revenue_paise"`
+	Redemptions   int   `json:"redemptions"`
+	UniqueUsers   int   `json:"unique_users"`
+	DiscountCents int64 `json:"discount_paise"`
+	RevenueCents  int64 `json:"revenue_paise"`
 }
 
 func (r *Repository) Stats(ctx context.Context, code string) (*Stats, error) {
@@ -332,14 +337,14 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/promos")
 	read := middleware.RequirePermission("promos.read")
-	g.Get("/",                 read, h.List)
-	g.Get("/generate-code",    read, h.GenerateCode)
-	g.Post("/",                middleware.RequirePermission("promos.create"), h.Create)
-	g.Get("/:id",              read, h.Get)
-	g.Get("/:id/stats",        read, h.Stats)
-	g.Put("/:id",              middleware.RequirePermission("promos.update"), h.Update)
-	g.Post("/:id/deactivate",  middleware.RequirePermission("promos.toggle"), h.Deactivate)
-	g.Post("/:id/activate",    middleware.RequirePermission("promos.toggle"), h.Activate)
+	g.Get("/", read, h.List)
+	g.Get("/generate-code", read, h.GenerateCode)
+	g.Post("/", middleware.RequirePermission("promos.create"), h.Create)
+	g.Get("/:id", read, h.Get)
+	g.Get("/:id/stats", read, h.Stats)
+	g.Put("/:id", middleware.RequirePermission("promos.update"), h.Update)
+	g.Post("/:id/deactivate", middleware.RequirePermission("promos.toggle"), h.Deactivate)
+	g.Post("/:id/activate", middleware.RequirePermission("promos.toggle"), h.Activate)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {

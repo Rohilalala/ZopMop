@@ -77,6 +77,7 @@ export function ConfirmModal({
   confirmLabel = 'Confirm',
   destructive = false,
   requirePhrase,
+  confirmDisabled = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -86,6 +87,7 @@ export function ConfirmModal({
   confirmLabel?: string;
   destructive?: boolean;
   requirePhrase?: string;
+  confirmDisabled?: boolean;
 }) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
@@ -136,7 +138,7 @@ export function ConfirmModal({
         <button
           className={confirmCls}
           onClick={go}
-          disabled={!phraseOk || busy}
+          disabled={!phraseOk || busy || confirmDisabled}
         >
           {busy ? 'Working…' : confirmLabel}
         </button>

@@ -765,7 +765,7 @@ function PerformanceTab({
     <div className="space-y-5">
       {activeQ.data?.has_active && activeQ.data.booking_id && (
         <button
-          onClick={() => navigate(`/orders?id=${activeQ.data!.booking_id}`)}
+          onClick={() => navigate(`/orders/${activeQ.data!.booking_id}`)}
           className="w-full text-left rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-sm text-success/90 hover:bg-success/15 transition"
         >
           Currently working — view active order →
@@ -831,7 +831,7 @@ function PerformanceTab({
                 {jobs.map((j) => (
                   <tr
                     key={j.id}
-                    onClick={() => navigate(`/orders?id=${j.id}`)}
+                    onClick={() => navigate(`/orders/${j.id}`)}
                     className="border-t border-border cursor-pointer hover:bg-surface-elevated"
                   >
                     <td className="py-2 pr-3 font-mono">{shortId(j.id)}</td>

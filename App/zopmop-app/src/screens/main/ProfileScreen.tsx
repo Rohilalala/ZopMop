@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -16,14 +15,25 @@ import {
   Easing,
   StatusBar,
 } from 'react-native';
-import Reanimated, { useAnimatedStyle, interpolateColor } from 'react-native-reanimated';
+import Reanimated, {
+  useAnimatedStyle,
+  interpolateColor,
+  useSharedValue,
+  useAnimatedScrollHandler,
+  interpolate,
+  Extrapolation,
+  withRepeat,
+  withTiming,
+  Easing as REasing,
+  type SharedValue,
+} from 'react-native-reanimated';
 import Constants from 'expo-constants';
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { useAnimatedColor } from '../../theme/useAnimatedTheme';
 import { AppSwitch } from '../../components/ui/AppSwitch';
 import { SkeletonBox } from '../../components/SkeletonBox';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { AppIcon } from '../../components/ui/AppIcon';
 import Svg, {
   Defs,
   LinearGradient as SvgLinearGradient,
@@ -44,6 +54,8 @@ import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
+import { ZopFlyer } from '../../components/home/ZopFlyer';
 import { useTheme } from '../../context/ThemeContext';
 import { useC, C } from '../../theme/screen';
 
@@ -99,6 +111,12 @@ export default function ProfileScreen() {
   });
   const darkOn = isDark;
   const [remindersOn, setRemindersOn] = useState(true);
+
+  // Scroll position drives the hero card's amber glow (subtle parallax).
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+  });
 
   // Real meta wired to the existing per-user endpoints. We only render meta
   // strings once a value resolves — undefined collapses the row's subtitle.
@@ -214,7 +232,7 @@ export default function ProfileScreen() {
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topbar}>
           <ARowTouchable style={[s.iconBtn, iconBtnStyle]} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
-            <Feather name="chevron-left" size={18} color={c.text} />
+            <AppIcon name="chevron-left" size={18} color={c.text} />
           </ARowTouchable>
           <ARowTouchable
             style={[s.iconBtn, iconBtnStyle]}
@@ -222,14 +240,16 @@ export default function ProfileScreen() {
             activeOpacity={0.75}
             hitSlop={10}
           >
-            <Feather name="help-circle" size={16} color={c.text} />
+            <AppIcon name="help-circle" size={16} color={c.text} />
           </ARowTouchable>
         </View>
 
-        <ScrollView
+        <Reanimated.ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 110 + insets.bottom }}
           showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
         >
           <HeroCard
             name={user?.name}
@@ -237,6 +257,7 @@ export default function ProfileScreen() {
             role={user?.role}
             loading={fetchingProfile && !user?.phone}
             onEdit={() => setEditVisible(true)}
+            scrollY={scrollY}
           />
 
           <ActionRail navigation={navigation} />
@@ -246,7 +267,7 @@ export default function ProfileScreen() {
           <SectionHeader>Preferences</SectionHeader>
           <Card>
             <Row
-              icon={<Feather name="moon" size={17} color={C.amber} />}
+              icon={<AppIcon name="moon" size={17} color={C.amber} />}
               label="Appearance"
               meta={darkOn ? 'Dark mode' : 'Light mode'}
               right={<AppSwitch value={darkOn} onValueChange={() => toggleTheme()} />}
@@ -254,7 +275,7 @@ export default function ProfileScreen() {
             {/* Reminder timing is locally toggled today; meta hidden until
                 backend exposes a reminder-prefs endpoint (S8). */}
             <Row
-              icon={<Feather name="bell" size={17} color={C.amber} />}
+              icon={<AppIcon name="bell" size={17} color={C.amber} />}
               label="Reminders"
               right={<AppSwitch value={remindersOn} onValueChange={setRemindersOn} />}
               last
@@ -264,21 +285,21 @@ export default function ProfileScreen() {
           <SectionHeader>Account</SectionHeader>
           <Card>
             <Row
-              icon={<Feather name="map-pin" size={17} color={C.amber} />}
+              icon={<AppIcon name="map-pin" size={17} color={C.amber} />}
               label="Saved Addresses"
               meta={addressMeta}
               chev
               onPress={() => navigation.navigate('Addresses')}
             />
             <Row
-              icon={<Feather name="home" size={17} color={C.amber} />}
+              icon={<AppIcon name="home" size={17} color={C.amber} />}
               label="Roomies"
               meta={roomiesMeta}
               chev
               onPress={() => navigation.navigate('RoomiesSetup')}
             />
             <Row
-              icon={<Feather name="users" size={17} color={C.amber} />}
+              icon={<AppIcon name="users" size={17} color={C.amber} />}
               label="Your Experts"
               meta={expertsMeta}
               chev
@@ -286,7 +307,7 @@ export default function ProfileScreen() {
             />
             {/* Notifications meta hidden until /me/notification-prefs ships (S7). */}
             <Row
-              icon={<Feather name="bell" size={17} color={C.amber} />}
+              icon={<AppIcon name="bell" size={17} color={C.amber} />}
               label="Notifications"
               chev
               onPress={() => showInfo("We'll let you know when channel preferences are configurable.", { title: 'Notifications' })}
@@ -298,21 +319,21 @@ export default function ProfileScreen() {
           <Card>
             <Row
               muted
-              icon={<Feather name="info" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="info" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="About ZopMop"
               chev
               onPress={() => showInfo(`ZopMop · v${APP_VERSION}\nHome, handled.`, { title: 'About ZopMop' })}
             />
             <Row
               muted
-              icon={<Feather name="file-text" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="file-text" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Terms of Service"
               chev
               onPress={() => Linking.openURL(TERMS_URL).catch(() => showError('Could not open Terms of Service.', { title: 'Terms' }))}
             />
             <Row
               muted
-              icon={<Feather name="shield" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="shield" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Privacy Policy"
               chev
               onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => showError('Could not open Privacy Policy.', { title: 'Privacy' }))}
@@ -322,7 +343,7 @@ export default function ProfileScreen() {
 
           <View style={s.danger}>
             <TouchableOpacity style={s.logoutBtn} activeOpacity={0.85} onPress={handleLogout}>
-              <Feather name="log-out" size={16} color={C.danger} />
+              <AppIcon name="log-out" size={16} color={C.danger} />
               <Text style={s.logoutText}>Log out</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.deleteBtn} activeOpacity={0.7} onPress={handleDelete}>
@@ -337,7 +358,7 @@ export default function ProfileScreen() {
               <ZopFace width={32} height={32} opacity={0.4} />
             </View>
           </View>
-        </ScrollView>
+        </Reanimated.ScrollView>
       </SafeAreaView>
 
       <EditProfileModal
@@ -355,10 +376,12 @@ export default function ProfileScreen() {
 // Background glow now sourced from the canonical home primitive (Bloom).
 
 function HeroCard({
-  name, phone, role, loading, onEdit,
+  name, phone, role, loading, onEdit, scrollY,
 }: {
   name?: string | null; phone?: string; role?: string; loading?: boolean; onEdit: () => void;
+  scrollY: SharedValue<number>;
 }) {
+  const { isDark } = useTheme();
   const initials = getInitials(name);
   const displayName = name ?? 'Add your name';
   const displayPhone = formatPhone(phone);
@@ -366,35 +389,62 @@ function HeroCard({
   // exposes membership tier + completed_bookings_count on the user record.
   // Falling back to fabricated values would mislead fresh accounts.
 
+  // Amber glow drifts/fades with scroll. Glow layer is oversized so the
+  // translation never reveals its edges inside the clipped card.
+  const glowStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: interpolate(scrollY.value, [-120, 0, 220], [1, 1, 0.35], Extrapolation.CLAMP),
+      transform: [
+        { translateX: interpolate(scrollY.value, [-120, 0, 220], [28, 0, -44], Extrapolation.CLAMP) },
+        { translateY: interpolate(scrollY.value, [-120, 0, 220], [-14, 0, 26], Extrapolation.CLAMP) },
+      ],
+    };
+  });
+
+  // Idle bob for the peeking Zop — same cadence as the home hero.
+  const float = useSharedValue(0);
+  useEffect(() => {
+    float.value = withRepeat(
+      withTiming(1, { duration: 3000, easing: REasing.inOut(REasing.sin) }),
+      -1,
+      true,
+    );
+  }, []);
+  const mascotStyle = useAnimatedStyle(() => {
+    'worklet';
+    return { transform: [{ translateY: -float.value * 6 }, { rotate: '-12deg' }] };
+  });
+  const eyeOpen = useSharedValue(1);
+  const noWink = useSharedValue(0);
+
   return (
     <View style={s.heroWrap}>
-      <View style={s.hero}>
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <Svg width="100%" height="100%">
-            <Defs>
-              <SvgLinearGradient id="heroBg" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor="#1A1A1C" />
-                <Stop offset="100%" stopColor="#0D0D0F" />
-              </SvgLinearGradient>
-              <SvgRadialGradient id="heroGlow" cx="80%" cy="30%" rx="100%" ry="80%">
-                <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.4" />
-                <Stop offset="50%" stopColor="#F5A300" stopOpacity="0" />
-              </SvgRadialGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#heroBg)" />
-            <Rect width="100%" height="100%" fill="url(#heroGlow)" />
-          </Svg>
+      <GlassCard radius={28} hero style={s.hero}>
+        {/* scroll-linked amber glow, clipped to the glass radius */}
+        <View style={s.heroGlowClip} pointerEvents="none">
+          <Reanimated.View style={[s.heroGlowLayer, glowStyle]}>
+            <Svg width="100%" height="100%">
+              <Defs>
+                <SvgRadialGradient id="heroGlow" cx="72%" cy="32%" rx="70%" ry="60%">
+                  <Stop offset="0%" stopColor="#F5A300" stopOpacity={isDark ? 0.38 : 0.22} />
+                  <Stop offset="60%" stopColor="#F5A300" stopOpacity="0" />
+                </SvgRadialGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#heroGlow)" />
+            </Svg>
+          </Reanimated.View>
         </View>
 
-        <View style={s.heroAmberLine} pointerEvents="none" />
+        {/* Zop mascot peeking from the top-right, as on the home hero */}
+        <Reanimated.View pointerEvents="none" style={[s.heroZop, mascotStyle]}>
+          <ZopFlyer size={104} eyeOpacity={eyeOpen} winkProgress={noWink} />
+        </Reanimated.View>
 
         <View style={s.heroTop}>
           <Text style={s.heroEyebrow} numberOfLines={1}>
             ZopMop · {roleLabel(role)}
           </Text>
-          <TouchableOpacity onPress={onEdit} activeOpacity={0.75} hitSlop={12} style={s.heroEdit}>
-            <Feather name="edit-2" size={13} color={C.white} />
-          </TouchableOpacity>
         </View>
 
         <View style={s.heroBody}>
@@ -419,19 +469,40 @@ function HeroCard({
               </View>
             ) : (
               <>
-                <Text style={[s.heroName, !name && { opacity: 0.6 }]} numberOfLines={1}>
+                <Text
+                  style={[s.heroName, { color: isDark ? C.white : '#0D0D0F' }, !name && { opacity: 0.6 }]}
+                  numberOfLines={1}
+                >
                   {displayName}
                 </Text>
                 {!!displayPhone && (
-                  <Text style={s.heroPhone} numberOfLines={1}>
+                  <Text
+                    style={[s.heroPhone, { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.5)' }]}
+                    numberOfLines={1}
+                  >
                     {displayPhone}
                   </Text>
                 )}
               </>
             )}
           </View>
+
+          <TouchableOpacity
+            onPress={onEdit}
+            activeOpacity={0.75}
+            hitSlop={12}
+            style={[
+              s.heroEdit,
+              {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.05)',
+                borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.08)',
+              },
+            ]}
+          >
+            <AppIcon name="edit-2" size={13} color={isDark ? C.white : '#0D0D0F'} />
+          </TouchableOpacity>
         </View>
-      </View>
+      </GlassCard>
     </View>
   );
 }
@@ -460,25 +531,25 @@ function ActionRail({ navigation }: { navigation: Nav }) {
     {
       id: 'bookings',
       label: 'Bookings',
-      icon: <Feather name="calendar" size={22} color={C.amber} />,
+      icon: <AppIcon name="calendar" size={22} color={C.amber} />,
       go: () => navigation.navigate('Bookings'),
     },
     {
       id: 'wallet',
       label: 'Wallet',
-      icon: <Feather name="credit-card" size={22} color={C.amber} />,
+      icon: <AppIcon name="credit-card" size={22} color={C.amber} />,
       go: () => navigation.navigate('Wallet'),
     },
     {
       id: 'offers',
       label: 'Offers',
-      icon: <Feather name="tag" size={22} color={C.amber} />,
+      icon: <AppIcon name="tag" size={22} color={C.amber} />,
       go: () => navigation.navigate('Offers'),
     },
     {
       id: 'help',
       label: 'Help',
-      icon: <Feather name="help-circle" size={22} color={C.amber} />,
+      icon: <AppIcon name="help-circle" size={22} color={C.amber} />,
       go: () => navigation.navigate('HelpSupport'),
     },
   ];
@@ -527,7 +598,7 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
       <View style={s.ticketDash} />
       <View style={s.ticketRight}>
         <View style={s.ticketCta}>
-          <Feather name="gift" size={20} color={C.amberHi} />
+          <AppIcon name="gift" size={20} color={C.amberHi} />
         </View>
         <Text style={s.ticketCtaLabel}>SHARE</Text>
       </View>
@@ -597,7 +668,7 @@ function Row({
         {!!meta && <Reanimated.Text style={[s.rowMeta, metaColor]} numberOfLines={1}>{meta}</Reanimated.Text>}
       </View>
       {right}
-      {chev && <Feather name="chevron-right" size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.50)'} />}
+      {chev && <AppIcon name="chevron-right" size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.50)'} />}
     </Comp>
   );
 }
@@ -657,7 +728,7 @@ function EditProfileModal({
           <View style={s.sheetHeader}>
             <Text style={s.sheetTitle}>Edit profile</Text>
             <TouchableOpacity style={s.sheetClose} onPress={onClose} hitSlop={10} activeOpacity={0.7}>
-              <Feather name="x" size={18} color="rgba(255,255,255,0.6)" />
+              <AppIcon name="x" size={18} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
           </View>
 
@@ -669,7 +740,7 @@ function EditProfileModal({
                 activeOpacity={1}
                 onPress={() => nameRef.current?.focus()}
               >
-                <Feather name="user" size={18} color="rgba(255,255,255,0.5)" />
+                <AppIcon name="user" size={18} color="rgba(255,255,255,0.5)" />
                 <TextInput
                   ref={nameRef}
                   style={s.fieldInput}
@@ -684,7 +755,7 @@ function EditProfileModal({
                 />
                 {name.length > 0 && (
                   <TouchableOpacity onPress={() => setName('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Feather name="x-circle" size={18} color="rgba(255,255,255,0.5)" />
+                    <AppIcon name="x-circle" size={18} color="rgba(255,255,255,0.5)" />
                   </TouchableOpacity>
                 )}
               </TouchableOpacity>
@@ -694,9 +765,9 @@ function EditProfileModal({
             <View style={{ marginBottom: 16 }}>
               <Text style={s.fieldLabel}>Mobile</Text>
               <View style={[s.fieldCard, s.fieldCardLocked]}>
-                <Feather name="phone" size={18} color="rgba(255,255,255,0.4)" />
+                <AppIcon name="phone" size={18} color="rgba(255,255,255,0.4)" />
                 <Text style={s.fieldInputLocked}>{formatPhone(phone)}</Text>
-                <Feather name="lock" size={14} color="rgba(255,255,255,0.4)" />
+                <AppIcon name="lock" size={14} color="rgba(255,255,255,0.4)" />
               </View>
               <Text style={s.fieldHint}>Phone number can't be changed.</Text>
             </View>
@@ -740,20 +811,27 @@ const s = StyleSheet.create({
   // Hero
   heroWrap: { paddingHorizontal: H_PAD, paddingTop: 14 },
   hero: {
-    borderRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 10,
   },
-  heroAmberLine: {
-    position: 'absolute', bottom: 0, left: '20%', right: '20%', height: 1,
-    backgroundColor: 'rgba(245,163,0,0.4)',
+  heroGlowClip: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  heroGlowLayer: {
+    position: 'absolute',
+    top: '-25%', left: '-25%',
+    width: '150%', height: '150%',
+  },
+  heroZop: {
+    position: 'absolute',
+    top: -8,
+    right: -12,
+    width: 104,
+    height: 104,
+    zIndex: 5,
   },
   heroTop: {
     flexDirection: 'row',

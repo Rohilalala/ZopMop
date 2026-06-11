@@ -95,23 +95,50 @@ func (r *Repository) Create(ctx context.Context, name, city string) (*Locality, 
 	return &l, nil
 }
 
-// Update changes name / city / active for an existing row.
+// Update changes name / city / active for an existing row. helpers.locality
+// and bookings.locality are plain-text name snapshots (no FK), so a rename
+// must cascade to them in the same tx or every pro in that area silently stops
+// matching new bookings (matched by name via ILIKE in the dispatcher).
 func (r *Repository) Update(ctx context.Context, id, name, city string, active bool) (*Locality, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update locality: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var oldName string
+	if err := tx.QueryRow(ctx, `SELECT name FROM localities WHERE id = $1::uuid FOR UPDATE`, id).Scan(&oldName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("load locality: %w", err)
+	}
+
 	var l Locality
-	err := r.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE localities
 		SET name = $2, city = $3, active = $4
 		WHERE id = $1::uuid
 		RETURNING id::text, name, city, active, created_at
 	`, id, name, city, active).Scan(&l.ID, &l.Name, &l.City, &l.Active, &l.CreatedAt)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
 		if isUniqueViolation(err) {
 			return nil, ErrConflict
 		}
 		return nil, fmt.Errorf("update locality: %w", err)
+	}
+
+	if oldName != name {
+		if _, err := tx.Exec(ctx, `UPDATE helpers SET locality = $1 WHERE locality = $2`, name, oldName); err != nil {
+			return nil, fmt.Errorf("cascade locality rename to helpers: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE bookings SET locality = $1 WHERE locality = $2`, name, oldName); err != nil {
+			return nil, fmt.Errorf("cascade locality rename to bookings: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update locality: %w", err)
 	}
 	return &l, nil
 }
@@ -167,9 +194,9 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 // RegisterRoutes mounts /localities under the (already-authed) admin group.
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	router.Get("/localities", middleware.RequirePermission("localities.read"), h.List)
-	router.Post("/localities", h.Create)
-	router.Patch("/localities/:id", h.Update)
-	router.Delete("/localities/:id", h.Delete)
+	router.Post("/localities", middleware.RequirePermission("localities.create"), h.Create)
+	router.Patch("/localities/:id", middleware.RequirePermission("localities.update"), h.Update)
+	router.Delete("/localities/:id", middleware.RequirePermission("localities.delete"), h.Delete)
 }
 
 // RegisterPublicRoutes mounts the read-only subset for the pro app: only

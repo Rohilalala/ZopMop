@@ -13,9 +13,10 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
+import { setNeedsRoleSelection } from '../../utils/pendingAuthStore';
 
 type Props = {
   route: RouteProp<AuthStackParamList, 'RoleSelection'>;
@@ -27,7 +28,7 @@ export default function RoleSelectionScreen({ route }: Props) {
   const { phone } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { user } = useAuth();
-  const c = lightColors; // Auth flow locked to light — no dark variant.
+  const c = authColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   const [selected, setSelected] = useState<Role | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,8 +69,16 @@ export default function RoleSelectionScreen({ route }: Props) {
       setLoading(false);
       return;
     }
-    // No-op: just trip a re-render via local state so the navigator
-    // re-evaluates. AuthProvider already has the session persisted.
+    // Customer chosen. Clear the role-selection flag so the root
+    // navigator stops pinning AuthNavigator for this reason. A nameless
+    // customer still needs NameEntry (App.tsx's needsName keeps Auth
+    // mounted), so route there explicitly; a named one falls through to
+    // MainNavigator on the next render.
+    setNeedsRoleSelection(false);
+    const hasName = !!user.name?.trim();
+    if (!hasName) {
+      navigation.replace('NameEntry', { phone });
+    }
     setLoading(false);
   }
 
@@ -134,7 +143,7 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
   title: string;
   desc: string;
 }) {
-  const c = lightColors; // Auth flow locked to light — no dark variant.
+  const c = authColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   return (
     <TouchableOpacity
@@ -159,7 +168,7 @@ function RoleCard({ selected, onPress, icon, title, desc }: {
 }
 
 function PersonIcon({ active }: { active: boolean }) {
-  const c = lightColors; // Auth flow locked to light — no dark variant.
+  const c = authColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   const color = active ? '#0D0D0F' : c.accent;
   return (
@@ -171,7 +180,7 @@ function PersonIcon({ active }: { active: boolean }) {
 }
 
 function BriefcaseIcon({ active }: { active: boolean }) {
-  const c = lightColors; // Auth flow locked to light — no dark variant.
+  const c = authColors; // Auth flow locked to light — no dark variant.
   const styles = useMemo(() => createStyles(c), [c]);
   const color = active ? '#0D0D0F' : c.accent;
   return (

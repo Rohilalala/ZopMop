@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -21,6 +22,7 @@ var (
 	ErrNotFound       = errors.New("config not found")
 	ErrETagMismatch   = errors.New("etag mismatch")
 	ErrInvalidStatus  = errors.New("invalid status transition")
+	ErrConflict       = errors.New("resource already exists")
 )
 
 // ConfigRecord mirrors one row of sdui_page_configs plus a derived ETag.
@@ -282,7 +284,9 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 		add("change_notes", *patch.ChangeNotes)
 	}
 	if patch.ExperimentID != nil {
-		add("experiment_id", *patch.ExperimentID)
+		// An empty string is a deliberate "unlink from experiment" — store NULL
+		// so the draft no longer carries an experiment association.
+		add("experiment_id", nullableStr(*patch.ExperimentID))
 	}
 	if len(patch.ConfigJSON) > 0 {
 		add("config_json", patch.ConfigJSON)
@@ -618,6 +622,12 @@ func (r *Repository) InsertAllowedAction(ctx context.Context, endpoint string, m
 	)
 	var a AllowedActionRecord
 	if err := row.Scan(&a.ID, &a.Endpoint, &a.Methods, &a.IsActive, &a.CreatedBy, &a.CreatedAt); err != nil {
+		// The endpoint column is UNIQUE; surface a duplicate as a typed conflict
+		// so the handler returns 409 instead of leaking a raw 23505 to the UI.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("insert allowed action: %w", err)
 	}
 	return &a, nil

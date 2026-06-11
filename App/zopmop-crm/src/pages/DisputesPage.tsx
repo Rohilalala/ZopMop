@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tsApi } from '@/api/all';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { Can } from '@/auth/Can';
@@ -46,8 +46,13 @@ function List({ status }: { status: string }) {
     mutationFn: () => tsApi.resolveDispute(resolveID!, resolution),
     onSuccess: () => { showToast({ kind: 'success', message: 'Resolved.' }); qc.invalidateQueries({ queryKey: ['disputes'] }); setResolveID(null); setResolution(''); },
   });
+  const transition = useMutation({
+    mutationFn: (p: { id: string; status: 'in_progress' | 'escalated' }) => tsApi.setDisputeStatus(p.id, p.status),
+    onSuccess: () => { showToast({ kind: 'success', message: 'Status updated.' }); qc.invalidateQueries({ queryKey: ['disputes'] }); },
+  });
 
   if (q.isLoading) return <Skeleton className="h-32" />;
+  if (q.isError) return <Card><ErrorState title="Could not load disputes" onRetry={() => q.refetch()} /></Card>;
   if ((q.data?.length ?? 0) === 0) return <Card><EmptyState title={`No ${status} disputes`} /></Card>;
 
   return (
@@ -69,18 +74,42 @@ function List({ status }: { status: string }) {
                 </div>
               </div>
               {status !== 'resolved' && (
-                <button
-                  className="btn-ghost !py-1 !px-2 text-xs"
-                  disabled={!canResolve}
-                  title={!canResolve ? 'Insufficient permissions' : undefined}
-                  onClick={() => {
-                    if (!canResolve) {
-                      showToast({ kind: 'error', message: 'Insufficient permissions' });
-                      return;
-                    }
-                    setResolveID(d.id);
-                  }}
-                >Resolve</button>
+                <div className="flex gap-1.5 shrink-0">
+                  {d.status !== 'in_progress' && (
+                    <button
+                      className="btn-ghost !py-1 !px-2 text-xs"
+                      disabled={!canResolve || transition.isPending}
+                      title={!canResolve ? 'Insufficient permissions' : undefined}
+                      onClick={() => {
+                        if (!canResolve) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; }
+                        transition.mutate({ id: d.id, status: 'in_progress' });
+                      }}
+                    >In progress</button>
+                  )}
+                  {d.status !== 'escalated' && (
+                    <button
+                      className="btn-ghost !py-1 !px-2 text-xs text-warning"
+                      disabled={!canResolve || transition.isPending}
+                      title={!canResolve ? 'Insufficient permissions' : undefined}
+                      onClick={() => {
+                        if (!canResolve) { showToast({ kind: 'error', message: 'Insufficient permissions' }); return; }
+                        transition.mutate({ id: d.id, status: 'escalated' });
+                      }}
+                    >Escalate</button>
+                  )}
+                  <button
+                    className="btn-ghost !py-1 !px-2 text-xs"
+                    disabled={!canResolve}
+                    title={!canResolve ? 'Insufficient permissions' : undefined}
+                    onClick={() => {
+                      if (!canResolve) {
+                        showToast({ kind: 'error', message: 'Insufficient permissions' });
+                        return;
+                      }
+                      setResolveID(d.id);
+                    }}
+                  >Resolve</button>
+                </div>
               )}
             </div>
           </Card>

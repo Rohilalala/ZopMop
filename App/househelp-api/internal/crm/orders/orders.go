@@ -28,6 +28,27 @@ import (
 
 var ErrNotFound = errors.New("order not found")
 
+// istZone is Asia/Kolkata (fixed UTC+5:30). Used to turn the bare
+// YYYY-MM-DD the Orders date pickers send into the correct UTC instant for
+// a created_at range filter.
+var istZone = time.FixedZone("IST", 5*3600+30*60)
+
+// parseFilterDate accepts an RFC3339 timestamp or a bare YYYY-MM-DD. For the
+// bare form, `endOfDay` controls whether it resolves to 00:00:00 IST (start)
+// or 23:59:59.999999999 IST (inclusive end) of that day.
+func parseFilterDate(v string, endOfDay bool) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	if d, err := time.ParseInLocation("2006-01-02", v, istZone); err == nil {
+		if endOfDay {
+			d = d.Add(24*time.Hour - time.Nanosecond)
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
 // ── Models ─────────────────────────────────────────────────────────────
 
 // ListItem is a row in the orders table.
@@ -725,14 +746,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(q("limit", "50"))
 	offset, _ := strconv.Atoi(q("offset", "0"))
 
+	// Accept either RFC3339 or the bare YYYY-MM-DD the date pickers send.
+	// Bare dates are interpreted as IST day boundaries (from = 00:00 IST,
+	// to = end of the selected day) so the filter matches what the admin sees.
 	var fromTS, toTS *time.Time
 	if v := q("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, false); ok {
 			fromTS = &t
 		}
 	}
 	if v := q("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, true); ok {
 			toTS = &t
 		}
 	}

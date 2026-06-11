@@ -33,3 +33,16 @@
 - No sycophantic openers or closing fluff.
 - Keep solutions simple and direct.
 - User instructions always override this file.
+
+## Learnings
+### 2026-06-11 — lottie-react-native 7.3.6 segment playback
+Imperative `ref.play(start, end)` under New Architecture finishes instantly (onAnimationFinish loop, frame stuck at 0) — even for known-good files. Drive states by swapping `autoPlay` sources between separate .json files whose boundary poses match (see ZopDownLottie in src/screens/BackendDownScreen.tsx).
+
+### 2026-06-11 — hand-authored Lottie JSON rules
+Non-final keyframes MUST carry `o`/`i` easing or `h:1`, else players crash ("reading 'x'") and render static. Shape arrays stack like AE: index 0 = topmost. Validate with lottie-web before shipping.
+
+### 2026-06-11 — pod install needs UTF-8 locale
+`pod install` in zopmop-app/ios dies with `Encoding::CompatibilityError` (Unicode Normalization not appropriate for ASCII-8BIT) under CocoaPods 1.16.2/Ruby 4.0.5 when the shell has no UTF-8 locale. Run as `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 pod install`.
+
+### 2026-06-11 — never build sim with CODE_SIGNING_ALLOWED=NO
+It produces a `linker-signed`-only binary; simulator keychain rejects all SecItem writes, so expo-secure-store fails silently and auth tokens never persist (logout on every reload). Plain `xcodebuild -sdk iphonesimulator` ad-hoc signs and keychain works. Diagnostic tell: zero 401s in device log + zero app items in sim keychain sqlite.

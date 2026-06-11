@@ -3,14 +3,18 @@ import { Search, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { ordersApi, type Order } from '@/api/all';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 
 const PAGE = 25;
 const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
+// Tones keyed to the real bookings.status CHECK values (migration 054):
+// pending, searching, accepted, arrived, in_progress, completed, cancelled,
+// pending_customer_action. 'assigned'/'en_route' are not real statuses.
 const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
   completed: 'success', cancelled: 'danger', pending: 'warning',
-  in_progress: 'info', en_route: 'info', arrived: 'info', assigned: 'info',
+  searching: 'warning', pending_customer_action: 'warning',
+  accepted: 'info', arrived: 'info', in_progress: 'info',
 };
 
 // All filter / pagination / sort state lives in the URL so back-navigation
@@ -145,8 +149,8 @@ export function OrdersPage() {
           >
             <option value="">All statuses</option>
             <option value="pending">Pending</option>
-            <option value="assigned">Assigned</option>
-            <option value="en_route">En route</option>
+            <option value="searching">Searching</option>
+            <option value="accepted">Accepted</option>
             <option value="arrived">Arrived</option>
             <option value="in_progress">In progress</option>
             <option value="completed">Completed</option>
@@ -193,6 +197,8 @@ export function OrdersPage() {
                   {[...Array(6)].map((_, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4" /></td>)}
                 </tr>
               ))
+            ) : q.isError ? (
+              <tr><td colSpan={6}><ErrorState title="Could not load orders" onRetry={() => q.refetch()} /></td></tr>
             ) : (q.data?.items.length ?? 0) === 0 ? (
               <tr><td colSpan={6}><EmptyState title="No orders match" /></td></tr>
             ) : q.data?.items.map((o, i) => (

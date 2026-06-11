@@ -11,7 +11,17 @@ type LangDict = {
   drift: Record<string, string>;
   cancel: Record<string, string>;
   tabs: Record<string, string>;
-  jobs: Record<string, string>;
+  jobs: {
+    headerTitle: string;
+    empty: { title: string; subtitle: string };
+    loadErrorBody: string;
+    sectionNewOffer: string;
+    sectionActive: string;
+    sectionToday: string;
+    activeTap: string;
+    completedSummary: string;
+    secondsShort: string;
+  };
   profile: Record<string, string>;
   language: Record<string, string>;
   offer: Record<string, string>;
@@ -70,6 +80,7 @@ const hi: LangDict = {
     eightHourWarning: '8 घंटे से ज़्यादा काम आपकी सेहत के लिए ठीक नहीं है',
     save: 'सेव करें',
     overlapError: 'इस समय पहले से शिफ्ट है',
+    endBeforeStart: 'खत्म समय शुरू समय के बाद होना चाहिए',
     deleteConfirm: 'इस शिफ्ट को हटाना है?',
   },
   zoneApproval: {
@@ -83,12 +94,14 @@ const hi: LangDict = {
     waitingBody: 'एडमिन आपकी रिक्वेस्ट देख रहे हैं। मंज़ूरी मिलते ही आपको सूचना मिलेगी।',
     backToDashboard: 'डैशबोर्ड पर वापस',
     photoRequired: 'सेल्फी लेना ज़रूरी है',
+    photoTooLarge: 'यह फोटो बहुत बड़ी है। बेहतर रोशनी में या थोड़ा पीछे हटकर दोबारा लें।',
     submitFailed: 'रिक्वेस्ट भेजने में दिक्कत हुई',
+    rejected: 'आपकी ज़ोन अप्रूवल रिक्वेस्ट अस्वीकार कर दी गई।',
   },
   money: {
     title: 'पैसा',
     payoutLine: 'पेआउट {date} को प्रोसेस होगा',
-    progressLine: '{current} / 80 घंटे ऑनलाइन',
+    progressLine: '{current} / {target} घंटे ऑनलाइन',
     overtimeLine: '+ {hours} घंटे ओवरटाइम (₹90/hr)',
     onlinePay: 'ऑनलाइन pay (₹80 × {hours} घंटे)',
     overtimePay: 'ओवरटाइम (₹90 × {hours} घंटे)',
@@ -121,8 +134,8 @@ const hi: LangDict = {
   },
   jobs: {
     headerTitle: 'आज की booking',
-    'empty.title': 'अभी कोई booking नहीं',
-    'empty.subtitle': 'बुकिंग आते ही यहाँ दिखेंगी',
+    empty: { title: 'अभी कोई booking नहीं', subtitle: 'बुकिंग आते ही यहाँ दिखेंगी' },
+    loadErrorBody: 'काम लोड नहीं हो पाए। कनेक्शन जांचें और दोबारा try करें।',
     sectionNewOffer: 'नई booking',
     sectionActive: 'अभी का काम',
     sectionToday: 'आज की पूरी हुई',
@@ -137,6 +150,8 @@ const hi: LangDict = {
     onlineHours: 'ऑनलाइन घंटे',
     totalEarnings: 'कुल कमाई',
     changeLanguage: 'भाषा बदलें',
+    declareLeave: 'छुट्टी घोषित करें',
+    leaveHistory: 'छुट्टी इतिहास',
     support: 'सपोर्ट',
     about: 'हमारे बारे में',
     logout: 'लॉग आउट',
@@ -188,7 +203,10 @@ const hi: LangDict = {
     serviceDone: 'Done',
     serviceSkip: 'Skip',
     serviceSkippedLabel: 'Skipped',
+    serviceFallbackName: 'सेवा',
     skipReasonTitle: 'क्यों skip कर रहे हैं?',
+    skipConfirmTitle: 'यह सेवा skip करें?',
+    skipConfirmBody: 'इससे सेवा job से हमेशा के लिए हट जाएगी। इसे वापस नहीं किया जा सकता।',
     summaryDuration: 'कुल समय',
     summaryServices: 'सेवाएं',
     summaryEarnings: 'कमाई',
@@ -197,6 +215,9 @@ const hi: LangDict = {
     cancelJob: 'Booking रद्द करें',
     callUnavailable: 'Contact नहीं ले सकते अभी',
     callNetworkError: 'Network issue. कृपया दोबारा try करें',
+    cancelledTitle: 'यह booking रद्द हो गई',
+    cancelledBody: 'यह job अब आपको assign नहीं है।',
+    backToJobs: 'Jobs पर वापस जाएं',
   },
 };
 

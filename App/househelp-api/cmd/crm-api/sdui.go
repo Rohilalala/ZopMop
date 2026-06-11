@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/adityarohilla/househelp-api/internal/bff"
+	crmmw "github.com/adityarohilla/househelp-api/internal/crm/middleware"
 	"github.com/adityarohilla/househelp-api/internal/insights"
 	"github.com/adityarohilla/househelp-api/internal/services"
 )
@@ -70,7 +71,13 @@ func registerSDUIAdmin(authed fiber.Router, dbPool *pgxpool.Pool, rdb *redis.Cli
 	// configs, .../stage, .../activate, .../rollback, .../preview,
 	// /admin/pages/:page_id/audit-log, /admin/pages/:page_id/kill-switch,
 	// /admin/experiments/:exp_id/kill-switch, /admin/allowed-actions.
-	adminHandler.RegisterRoutes(authed.Group("", sduiLocalsBridge()))
+	// Enforce server-side RBAC per route: read routes need sdui.read, draft
+	// mutations sdui.write, and activate/rollback/kill-switch/allowlist changes
+	// sdui.activate. The FE gate is cosmetic; this is the real authorization.
+	sduiPerm := func(level string) fiber.Handler {
+		return crmmw.RequirePermission("sdui." + level)
+	}
+	adminHandler.RegisterRoutes(authed.Group("", sduiLocalsBridge()), sduiPerm)
 }
 
 // sduiLocalsBridge maps the CRM admin identity (set by crmmw.JWT under

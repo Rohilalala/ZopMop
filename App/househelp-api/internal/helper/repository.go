@@ -40,7 +40,7 @@ func (r *Repository) GetProfile(ctx context.Context, helperID string) (*Profile,
 		        COALESCE(h.rating, 5.00) AS rating,
 		        COALESCE(h.total_jobs, 0) AS total_jobs,
 		        COALESCE((
-		          SELECT SUM(b.amount_paise)
+		          SELECT SUM(COALESCE(b.pro_earnings_paise, 0))
 		          FROM bookings b
 		          WHERE b.helper_id = h.id AND b.status = 'completed'
 		        ), 0) AS total_earned_paise,

@@ -202,7 +202,7 @@ func main() {
 	flagsSvc := flags.NewService(dbPool, rdb, cfg.RedisNamespace, flags.DefaultRegistry())
 	flagsHandler := flags.NewHandler(flagsSvc, auditRecorder)
 
-	alertsSvc := alerts.NewService(readPool)
+	alertsSvc := alerts.NewService(readPool, dbPool)
 	alertsHandler := alerts.NewHandler(alertsSvc)
 
 	notificationsSvc := notifications.NewService(dbPool)
@@ -501,9 +501,12 @@ func (a refundsWalletAdapter) Credit(
 	amountPaise int64,
 	kind string,
 	paymentID, bookingID *string,
-	note string,
+	note, reference string,
 ) error {
-	_, err := a.svc.Credit(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note)
+	_, err := a.svc.CreditWithRef(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note, reference)
+	if errors.Is(err, wallet.ErrDuplicateTransaction) {
+		return refunds.ErrWalletDuplicate
+	}
 	return err
 }
 

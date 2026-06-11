@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Dimensions,
   Image,
+  Platform,
   ScrollView,
   Share,
   StyleSheet,
@@ -29,6 +30,7 @@ import { usePostHog } from 'posthog-react-native';
 import { BottomSheet } from '../../components/ui/BottomSheet';
 import { Motion } from '../../constants/tokens';
 import { PressFx } from '../../components/ui/PressFx';
+import { DurationSlider } from '../../components/ui/DurationSlider';
 import { serviceIcon } from '../../components/home/serviceIcon';
 
 const fontMed: TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
@@ -91,6 +93,17 @@ function priceFor(
   dur: number,
 ): number {
   return Math.round((svc.base_price_paise * dur) / svc.min_duration_minutes);
+}
+
+// Slashed MRP scales with the selected duration exactly like the price —
+// otherwise picking 60/90 min updates the discounted price against a stale
+// 30-min MRP and the discount % reads wrong.
+function mrpFor(
+  svc: { mrp_paise?: number | null; min_duration_minutes: number },
+  dur: number,
+): number | null {
+  if (svc.mrp_paise == null) return null;
+  return Math.round((svc.mrp_paise * dur) / svc.min_duration_minutes);
 }
 
 function formatReviews(n: number): string {
@@ -163,6 +176,7 @@ export default function ServiceAboutScreen() {
   }, [durations.join(',')]);
 
   const priceCents = priceFor(activeSvc, duration);
+  const mrpCents = mrpFor(activeSvc, duration);
 
   // Sheet visibility drives the slide-down exit. close() animates the sheet
   // down first, then pops the (transparent) route once it's off-screen. Guarded
@@ -228,8 +242,8 @@ export default function ServiceAboutScreen() {
         <Text style={s.bottomPriceLabel}>Total</Text>
         <View style={s.bottomPriceRow}>
           <Text style={s.bottomPrice}>₹{(priceCents / 100).toFixed(0)}</Text>
-          {activeSvc.mrp_paise != null && (
-            <Text style={s.bottomMrp}>₹{(activeSvc.mrp_paise / 100).toFixed(0)}</Text>
+          {mrpCents != null && (
+            <Text style={s.bottomMrp}>₹{(mrpCents / 100).toFixed(0)}</Text>
           )}
         </View>
       </View>
@@ -292,6 +306,16 @@ export default function ServiceAboutScreen() {
               <Text style={s.fixedChipText}>{duration} min</Text>
               <Text style={s.fixedChipNote}>Fixed slot</Text>
             </View>
+          ) : Platform.OS === 'ios' ? (
+            /* iOS: Apple-style discrete slider snapping between the detents. */
+            <DurationSlider
+              options={durations}
+              value={duration}
+              onChange={(d) => {
+                setDuration(d);
+                setAddedToCart(false);
+              }}
+            />
           ) : (
             <View style={s.segRow}>
               {durations.map((d) => {
@@ -366,12 +390,20 @@ export default function ServiceAboutScreen() {
             <View style={s.body}>
               <View style={s.stepsCol}>
                 {details.steps.map((step, i) => {
-                  const numeral = NUMERAL_PNG[step.icon ?? `step-${step.step_number}`];
+                  const numeralKey = step.icon ?? `step-${step.step_number}`;
+                  const numeral = NUMERAL_PNG[numeralKey];
+                  // 3.png is drawn slightly larger than its siblings — scale it
+                  // down a touch so the column reads uniform.
+                  const numeralScale = numeralKey === 'step-3' ? 0.9 : 1;
                   return (
                     <View key={step.id} style={s.stepRow}>
                       <View style={s.stepLeft}>
                         {numeral ? (
-                          <Image source={numeral} style={s.stepNumImg} resizeMode="contain" />
+                          <Image
+                            source={numeral}
+                            style={[s.stepNumImg, numeralScale !== 1 && { transform: [{ scale: numeralScale }] }]}
+                            resizeMode="contain"
+                          />
                         ) : (
                           <View style={s.stepNumCircle}>
                             <Text style={s.stepNum}>{step.step_number}</Text>

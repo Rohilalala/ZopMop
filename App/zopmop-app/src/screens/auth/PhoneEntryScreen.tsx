@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize } from '../../theme';
 import { haptics } from '../../utils/haptics';
 import { IndiaFlag } from '../../components/ui/IndiaFlag';
@@ -32,7 +32,7 @@ const COUNTRY_CODE = '+91';
 
 export default function PhoneEntryScreen({ navigation }: Props) {
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);

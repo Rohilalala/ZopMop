@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 )
 
 // Repository owns all SQL touching the Phase-7 shift tables.
@@ -554,6 +555,7 @@ func (r *Repository) InsertCancellation(ctx context.Context, proID, bookingID st
 		    (pro_id, booking_id, customer_was_notified, estimated_job_minutes,
 		     penalty_amount_paise, cancellation_index_30d)
 		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (pro_id, booking_id) DO NOTHING
 	`, proID, bookingID, notified, estMinutes, penaltyPaise, index)
 	return err
 }
@@ -657,17 +659,40 @@ func (r *Repository) HelperFortnight(ctx context.Context, proID string) (*Helper
 	return s, err
 }
 
-// FortnightJobMinutes sums job_minutes across this fortnight's
-// sessions for the pro.
-func (r *Repository) FortnightJobMinutes(ctx context.Context, proID string, fortnightStart time.Time) (int, error) {
+// FortnightOnlineMinutes sums online_minutes across the cycle's closed
+// sessions for the pro. Computed from shift_sessions (not the unbounded
+// helpers.current_fortnight_online_min column, which never resets) so
+// the Money tab matches the payroll aggregate and zeroes at each cycle.
+func (r *Repository) FortnightOnlineMinutes(ctx context.Context, proID string, fortnightStart, fortnightEnd time.Time) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var n int
 	err := r.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(job_minutes), 0)
-		  FROM shift_sessions
-		 WHERE pro_id = $1 AND online_at >= $2
-	`, proID, fortnightStart).Scan(&n)
+		SELECT COALESCE(SUM(ss.online_minutes), 0)::int
+		  FROM shift_sessions ss
+		  JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		 WHERE ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NOT NULL
+	`, proID, fortnightStart.Format("2006-01-02"), fortnightEnd.Format("2006-01-02")).Scan(&n)
+	return n, err
+}
+
+// FortnightJobMinutes sums job_minutes across this cycle's sessions for
+// the pro, attributed to the commitment's shift_date so cycle
+// membership matches the payroll aggregate.
+func (r *Repository) FortnightJobMinutes(ctx context.Context, proID string, fortnightStart, fortnightEnd time.Time) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var n int
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ss.job_minutes), 0)::int
+		  FROM shift_sessions ss
+		  JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		 WHERE ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NOT NULL
+	`, proID, fortnightStart.Format("2006-01-02"), fortnightEnd.Format("2006-01-02")).Scan(&n)
 	return n, err
 }
 
@@ -675,8 +700,8 @@ func (r *Repository) FortnightJobMinutes(ctx context.Context, proID string, fort
 // penalties in the current fortnight. Kept for callers that only want
 // the rolled-up total; the Money tab now wants them split — see
 // FortnightDeductionsSplit.
-func (r *Repository) FortnightCashDeductions(ctx context.Context, proID string, fortnightStart time.Time) (int, error) {
-	absence, cancel, err := r.FortnightDeductionsSplit(ctx, proID, fortnightStart)
+func (r *Repository) FortnightCashDeductions(ctx context.Context, proID string, fortnightStart, fortnightEnd time.Time) (int, error) {
+	absence, cancel, err := r.FortnightDeductionsSplit(ctx, proID, fortnightStart, fortnightEnd)
 	if err != nil {
 		return 0, err
 	}
@@ -685,9 +710,11 @@ func (r *Repository) FortnightCashDeductions(ctx context.Context, proID string, 
 
 // FortnightDeductionsSplit returns the absence and cancellation
 // deductions separately so the Money tab can render named lines.
-func (r *Repository) FortnightDeductionsSplit(ctx context.Context, proID string, fortnightStart time.Time) (absencePaise, cancellationPaise int, err error) {
+func (r *Repository) FortnightDeductionsSplit(ctx context.Context, proID string, fortnightStart, fortnightEnd time.Time) (absencePaise, cancellationPaise int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	// Cancellations are bound to the cycle window [start, end+1day) so a
+	// row never leaks into the next cycle's projection.
 	err = r.db.QueryRow(ctx, `
 		SELECT
 		  COALESCE((
@@ -696,9 +723,11 @@ func (r *Repository) FortnightDeductionsSplit(ctx context.Context, proID string,
 		  ), 0),
 		  COALESCE((
 		    SELECT SUM(penalty_amount_paise) FROM booking_cancellations
-		     WHERE pro_id = $1 AND cancelled_at >= $2
+		     WHERE pro_id = $1
+		       AND cancelled_at >= $2
+		       AND cancelled_at < ($3::date + INTERVAL '1 day')
 		  ), 0)
-	`, proID, fortnightStart).Scan(&absencePaise, &cancellationPaise)
+	`, proID, fortnightStart, fortnightEnd).Scan(&absencePaise, &cancellationPaise)
 	return
 }
 
@@ -726,11 +755,18 @@ func (r *Repository) BookingMinutesEstimate(ctx context.Context, bookingID strin
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var minutes int
-	_ = r.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(bs.minutes), 0)
+	// Column is duration_minutes (not minutes), and a line can have
+	// quantity > 1. The previous query referenced a nonexistent column,
+	// so the swallowed error meant the 60-min fallback ALWAYS won and
+	// every penalty was a flat ₹80.
+	if err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(bs.duration_minutes * COALESCE(bs.quantity, 1)), 0)
 		  FROM booking_services bs
 		 WHERE bs.booking_id = $1
-	`, bookingID).Scan(&minutes)
+	`, bookingID).Scan(&minutes); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("[shift] booking minutes estimate failed; using 60-min fallback")
+		return 60
+	}
 	if minutes <= 0 {
 		return 60
 	}
@@ -757,14 +793,29 @@ func (r *Repository) BookingOwnerAndStatus(ctx context.Context, bookingID string
 	return
 }
 
-// MarkBookingCancelled transitions the booking to cancelled state.
-func (r *Repository) MarkBookingCancelled(ctx context.Context, bookingID string) error {
+// MarkBookingCancelled transitions the booking to cancelled state ONLY
+// if it is still owned by this pro and in the 'accepted' state. This is
+// the status guard + idempotency gate: a completed/already-cancelled
+// booking, or a double-tap / timeout-retry, matches 0 rows and returns
+// ErrBookingNotCancellable so the caller never stacks a second strike or
+// flips a finished job. Stamps cancelled_at/cancelled_by and returns the
+// customer_id so the caller can notify + refund + re-dispatch.
+func (r *Repository) MarkBookingCancelled(ctx context.Context, bookingID, proID string) (customerID string, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err := r.db.Exec(ctx,
-		`UPDATE bookings SET status = 'cancelled', updated_at = now() WHERE id = $1`,
-		bookingID)
-	return err
+	err = r.db.QueryRow(ctx, `
+		UPDATE bookings
+		   SET status       = 'cancelled',
+		       cancelled_at = now(),
+		       cancelled_by = 'helper',
+		       updated_at   = now()
+		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'
+		RETURNING customer_id::text
+	`, bookingID, proID).Scan(&customerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrBookingNotCancellable
+	}
+	return customerID, err
 }
 
 // ─── helpers ──────────────────────────────────────────────────────

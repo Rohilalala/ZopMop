@@ -44,6 +44,7 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
 import ServiceComplete from '../../components/ServiceComplete';
+import { SuccessBackdrop } from '../../components/SuccessBackdrop';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useC, type ScreenColors } from '../../theme/screen';
@@ -345,7 +346,11 @@ export default function TrackLiveScreen() {
   const customerLng = tracking?.customer_lng;
   const proCoord = useMemo(
     () =>
-      helperLat !== undefined && helperLng !== undefined
+      // Reject (0,0) as well as undefined: the backend tracking fallback
+      // returns 0/0 for a pro who has not yet streamed any GPS. (0,0) is the
+      // Gulf of Guinea, so plotting it drops the marker an ocean away and
+      // fits the map across ~8000 km. No real pro is ever at exactly 0,0.
+      helperLat !== undefined && helperLng !== undefined && (helperLat !== 0 || helperLng !== 0)
         ? { latitude: helperLat, longitude: helperLng }
         : null,
     [helperLat, helperLng],
@@ -579,6 +584,22 @@ export default function TrackLiveScreen() {
 
       {/* Bottom sheet — overlays the map. Content varies by sub-state. */}
       <View style={[styles.sheet, { height: SHEET_HEIGHT, paddingBottom: 24 + insets.bottom }]}>
+        {/* Completed: the same green+amber success glow BookingConfirmed uses,
+            clipped to the sheet's rounded top so both tick screens match. */}
+        {subState === 'completed' && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              overflow: 'hidden',
+            }}
+          >
+            <SuccessBackdrop isDark={isDark} />
+          </View>
+        )}
         <View style={styles.grab} />
         <ScrollView
           style={{ flex: 1 }}

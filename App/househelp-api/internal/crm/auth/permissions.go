@@ -123,6 +123,13 @@ var permissions = map[string]string{
 	"zones.approval.approve": RoleAdmin,
 	"zones.approval.reject":  RoleAdmin,
 
+	// SDUI page-config lifecycle (crm-api fronts the bff admin handler).
+	// Pushing/blanking the production home screen and widening the action
+	// allowlist must be admin-gated; FE gates write/activate at admin.
+	"sdui.read":     RoleAdmin,
+	"sdui.write":    RoleAdmin,
+	"sdui.activate": RoleAdmin,
+
 	// SUPERADMIN-only
 	"flags.update":       RoleSuperadmin,
 	"flags.rollback":     RoleSuperadmin,
@@ -157,6 +164,9 @@ var permissions = map[string]string{
 	"incidents.read":     RoleViewer,
 	"leaves.read":        RoleViewer,
 	"localities.read":    RoleViewer,
+	"localities.create":  RoleAdmin,
+	"localities.update":  RoleAdmin,
+	"localities.delete":  RoleAdmin,
 	"notifications.read": RoleViewer,
 	"orders.read":        RoleViewer,
 	"payouts.read":       RoleViewer,

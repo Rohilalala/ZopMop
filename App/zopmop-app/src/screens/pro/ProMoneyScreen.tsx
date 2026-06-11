@@ -15,16 +15,18 @@ import { Feather } from '@expo/vector-icons';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { getFortnightProgress, getActiveShift, type FortnightProgress } from '../../api/shifts';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { t } from '../../i18n';
-
-const TARGET_HOURS = 80;
 
 function minutesToHours(m: number): number {
   return Math.round((m / 60) * 10) / 10;
 }
 
+// Render the full paise value to two decimals so sub-rupee amounts are
+// never silently rounded away (a ₹80.50/hr line was previously shown as
+// ₹81 / ₹80, making the breakdown rows fail to sum to the headline).
 function paiseToRupees(p: number): string {
-  return `₹${Math.round(p / 100).toLocaleString('en-IN')}`;
+  return `₹${(p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function fmtDate(ymd: string): string {
@@ -34,6 +36,7 @@ function fmtDate(ymd: string): string {
 }
 
 export default function ProMoneyScreen() {
+  useProRoleGate();
   const navigation = useNavigation();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -89,13 +92,17 @@ export default function ProMoneyScreen() {
     );
   }
 
+  // Per-pro tunable target comes from the backend (target_minutes). Fall
+  // back to the legacy 80h only if the field is missing/zero on an older
+  // server build.
+  const targetH = data.target_minutes > 0 ? data.target_minutes / 60 : 80;
   const onlineH = minutesToHours(data.online_minutes);
   const overtimeH = minutesToHours(data.overtime_minutes);
   const jobH = minutesToHours(data.job_minutes);
-  const regularH = Math.max(0, Math.min(onlineH, TARGET_HOURS));
+  const regularH = Math.max(0, Math.min(onlineH, targetH));
   const totalEarn = paiseToRupees(data.projected_pay_paise);
   const payoutDate = fmtDate(data.fortnight_end);
-  const progressPct = Math.min(100, Math.round((onlineH / TARGET_HOURS) * 100));
+  const progressPct = Math.min(100, Math.round((onlineH / targetH) * 100));
 
   const showOvertime = overtimeH > 0;
   const showAbsence = data.absence_deductions_paise > 0;
@@ -132,7 +139,7 @@ export default function ProMoneyScreen() {
 
         <View style={styles.progressCard}>
           <Text style={styles.progressLabel}>
-            {t('money.progressLine', { current: onlineH })}
+            {t('money.progressLine', { current: onlineH, target: targetH })}
           </Text>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${progressPct}%` }]} />

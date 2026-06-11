@@ -13,10 +13,12 @@ import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { getLocale, setLocale, type Locale, t } from '../../i18n';
 import { showSuccess } from '../../utils/toast';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 
 const POP_DELAY_MS = 500;
 
 export default function LanguageToggleScreen() {
+  useProRoleGate();
   const navigation = useNavigation();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);

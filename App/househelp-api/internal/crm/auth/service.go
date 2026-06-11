@@ -21,6 +21,12 @@ var (
 	ErrInvalidChallenge   = errors.New("invalid challenge")
 	ErrInvalidTOTP        = errors.New("invalid totp")
 	ErrSessionExpired     = errors.New("session expired")
+	// ErrSessionRotationRace is a *benign* refresh failure: another tab /
+	// in-flight request already rotated this leg (grace-window retry or CAS
+	// loss). The presented cookie is stale but the session family is alive,
+	// so the caller MUST NOT clear the cookie — the winning rotation already
+	// issued a fresh one. Distinct from ErrSessionExpired (real auth failure).
+	ErrSessionRotationRace = errors.New("session rotation race")
 )
 
 // defaultRefreshGraceWindow absorbs genuine network-flake retries where the
@@ -101,18 +107,35 @@ func (s *Service) Login(ctx context.Context, req LoginRequest, ip string) (*Logi
 		return nil, ErrInvalidCredentials
 	}
 
-	out := &LoginResult{TOTPEnrolled: admin.TOTPSecret != nil && *admin.TOTPSecret != ""}
+	// Enrolment is confirmed by a successful verify (totp_enrolled_at), NOT by
+	// the mere presence of a secret. Otherwise abandoning the first-login QR
+	// step bricks the account: the secret exists, enrolled looks complete, and
+	// otpauth_url is never shown again.
+	out := &LoginResult{TOTPEnrolled: admin.TOTPEnrolledAt != nil}
 
-	// First-login path: generate enrolment secret. We persist it now so the
-	// next call's verification works; if the admin abandons the flow the
-	// secret stays attached to their account but is still secret.
+	// Pre-enrolment path: keep handing back an otpauth_url until the admin
+	// completes a verify. Reuse the existing secret if one was already
+	// persisted (so a QR scanned in a prior attempt still validates); only
+	// generate a fresh secret on the very first attempt.
 	if !out.TOTPEnrolled {
-		otpauthURL, secret, err := GenerateTOTPSecret(s.cfg.TOTPIssuer, admin.Email)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.repo.SetTOTPSecret(ctx, admin.ID, secret); err != nil {
-			return nil, err
+		var (
+			otpauthURL string
+			err        error
+		)
+		if admin.TOTPSecret != nil && *admin.TOTPSecret != "" {
+			otpauthURL, err = BuildTOTPURL(s.cfg.TOTPIssuer, admin.Email, *admin.TOTPSecret)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			var secret string
+			otpauthURL, secret, err = GenerateTOTPSecret(s.cfg.TOTPIssuer, admin.Email)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.repo.SetTOTPSecret(ctx, admin.ID, secret); err != nil {
+				return nil, err
+			}
 		}
 		out.OTPAuthURL = otpauthURL
 	}
@@ -163,6 +186,14 @@ func (s *Service) VerifyTOTPAndIssue(ctx context.Context, req TOTPVerifyRequest,
 
 	if err := s.repo.ResetFailedLogin(ctx, admin.ID); err != nil {
 		return nil, err
+	}
+
+	// First successful verify confirms enrolment. Idempotent (no-op once set),
+	// so this is safe to call on every login.
+	if admin.TOTPEnrolledAt == nil {
+		if err := s.repo.MarkTOTPEnrolled(ctx, admin.ID); err != nil {
+			return nil, err
+		}
 	}
 
 	plaintext, hash, err := GenerateRefreshToken()
@@ -253,7 +284,7 @@ func (s *Service) Refresh(ctx context.Context, plaintext, userAgent, ip, request
 		//   - Outside grace window → replay attempt (RFC 6819 §5.2.2).
 		//     Revoke the entire family and audit-log the event.
 		if time.Since(*sess.RotatedAt) < s.cfg.RefreshGraceWindow {
-			return nil, ErrSessionExpired
+			return nil, ErrSessionRotationRace
 		}
 		s.handleReplay(ctx, sess, userAgent, ip, requestID)
 		return nil, ErrSessionExpired
@@ -291,7 +322,7 @@ func (s *Service) Refresh(ctx context.Context, plaintext, userAgent, ip, request
 		// callers were the same client (true network flake), the second
 		// response was the loser anyway.
 		if errors.Is(err, ErrSessionAlreadyRotated) {
-			return nil, ErrSessionExpired
+			return nil, ErrSessionRotationRace
 		}
 		return nil, err
 	}

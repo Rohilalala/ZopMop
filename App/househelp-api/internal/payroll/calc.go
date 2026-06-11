@@ -23,9 +23,16 @@ func (c CycleClose) StartDate() string { return c.Start.Format("2006-01-02") }
 // EndDate returns cycle_end as a YYYY-MM-DD string.
 func (c CycleClose) EndDate() string { return c.End.Format("2006-01-02") }
 
-// CycleForCloseDate returns the cycle whose close date is `t`, plus
-// true if `t` is in fact a cycle close (the 15th or the last day of
-// its month in IST). Otherwise it returns (zero, false).
+// CycleForCloseDate returns the cycle that ENDED the day before `t`,
+// plus true if `t` is in fact a payroll run day (the 16th, closing
+// the 1st–15th cycle, or the 1st, closing the previous month's
+// 16th–last cycle). Otherwise it returns (zero, false).
+//
+// The run fires the day AFTER cycle_end so the close day's full
+// activity exists before aggregation. Firing ON the close day (the
+// old behaviour) aggregated at 01:00 before any of that day's work
+// happened, and UpsertPayout's ON CONFLICT DO NOTHING made the loss
+// permanent — every 15th and last-of-month was silently unpaid.
 //
 // Cycle 1: 1st .. 15th. Cycle 2: 16th .. last-of-month. Leap-year
 // safe — the last day is computed via the standard Go trick of
@@ -33,25 +40,26 @@ func (c CycleClose) EndDate() string { return c.End.Format("2006-01-02") }
 func CycleForCloseDate(t time.Time) (CycleClose, bool) {
 	t = t.In(istLocation)
 	y, m, d := t.Year(), t.Month(), t.Day()
-	lastDay := lastDayOfMonth(y, m)
 
 	switch d {
-	case 15:
+	case 16:
 		return CycleClose{
 			Start: midnightIST(y, m, 1),
 			End:   midnightIST(y, m, 15),
 		}, true
-	case lastDay:
+	case 1:
+		prev := t.AddDate(0, 0, -1) // last day of the previous month, IST
+		py, pm := prev.Year(), prev.Month()
 		return CycleClose{
-			Start: midnightIST(y, m, 16),
-			End:   midnightIST(y, m, lastDay),
+			Start: midnightIST(py, pm, 16),
+			End:   midnightIST(py, pm, lastDayOfMonth(py, pm)),
 		}, true
 	}
 	return CycleClose{}, false
 }
 
-// IsCycleCloseDate reports whether `t` (in IST) is the 15th or the
-// last day of its calendar month.
+// IsCycleCloseDate reports whether `t` (in IST) is a payroll run day —
+// the 1st or the 16th, i.e. the day after a cycle close.
 func IsCycleCloseDate(t time.Time) bool {
 	_, ok := CycleForCloseDate(t)
 	return ok
@@ -61,12 +69,28 @@ func IsCycleCloseDate(t time.Time) bool {
 // amounts are in paise. Working ⊆ online by the caller's contract;
 // ComputePay enforces it.
 type PayBreakdown struct {
-	OnlineMinutes  int
-	WorkingMinutes int
-	BasePayPaise   int64 // online_minutes × ₹80/hr
-	BonusPayPaise  int64 // working_minutes × ₹80/hr
-	GrossPayPaise  int64 // base + bonus
-	NetPayPaise    int64 // gross − deductions (deductions = 0 in v1)
+	OnlineMinutes   int
+	WorkingMinutes  int
+	BasePayPaise    int64 // online_minutes × ₹80/hr
+	BonusPayPaise   int64 // working_minutes × ₹80/hr
+	GrossPayPaise   int64 // base + bonus
+	DeductionsPaise int64 // sum of non-reversed admin_pro_deductions for the cycle
+	NetPayPaise     int64 // gross − deductions (clamped at 0)
+}
+
+// applyDeductions subtracts admin deductions from gross, clamping net at
+// zero so a pro is never marked as owing money. Returns a copy.
+func (p PayBreakdown) applyDeductions(deductionsPaise int64) PayBreakdown {
+	if deductionsPaise < 0 {
+		deductionsPaise = 0
+	}
+	p.DeductionsPaise = deductionsPaise
+	net := p.GrossPayPaise - deductionsPaise
+	if net < 0 {
+		net = 0
+	}
+	p.NetPayPaise = net
+	return p
 }
 
 // ComputePay applies the pay formula. Integer-only:
@@ -166,15 +190,17 @@ func maxDate(a, b time.Time) time.Time {
 	return b
 }
 
-// NextCloseAfter returns the next cycle-close instant strictly after
-// `t`, anchored at 01:00 IST of the close date. Used by the cron
-// scheduler to compute the next wake-up.
+// NextCloseAfter returns the next payroll-run instant strictly after
+// `t`, anchored at 01:00 IST of the run day — the 1st or the 16th,
+// i.e. the day after a cycle close, so the close day's activity is
+// fully recorded before aggregation. Used by the cron scheduler to
+// compute the next wake-up.
 func NextCloseAfter(t time.Time) time.Time {
 	t = t.In(istLocation)
 	for offset := range 62 {
 		cand := t.AddDate(0, 0, offset)
 		y, m, d := cand.Year(), cand.Month(), cand.Day()
-		if d != 15 && d != lastDayOfMonth(y, m) {
+		if d != 1 && d != 16 {
 			continue
 		}
 		fire := time.Date(y, m, d, 1, 0, 0, 0, istLocation)
@@ -182,7 +208,7 @@ func NextCloseAfter(t time.Time) time.Time {
 			return fire
 		}
 	}
-	// Unreachable: every 31-day window contains at least one close
+	// Unreachable: every 31-day window contains at least one run
 	// date.
 	return t.AddDate(0, 1, 0)
 }

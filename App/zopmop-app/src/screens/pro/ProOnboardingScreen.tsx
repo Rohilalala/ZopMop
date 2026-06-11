@@ -23,6 +23,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { setNeedsRoleSelection } from '../../utils/pendingAuthStore';
 import { BASE_URL } from '../../api/config';
 import { apiFetch } from '../../api/client';
 import { showError } from '../../utils/toast';
@@ -66,6 +67,7 @@ export default function ProOnboardingScreen({ route }: Props) {
   const [gpsLoading, setGpsLoading] = useState(false);
   const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   // Step dot animation
   const dotAnims = useRef(
@@ -148,18 +150,21 @@ export default function ProOnboardingScreen({ route }: Props) {
 
       const data = await res.json();
 
-      // Push GPS to Redis so matching engine can find this pro immediately.
-      await apiFetch(`${BASE_URL}/helpers/me/location`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lat: gpsLat, lng: gpsLng }),
-      });
+      // NOTE: the GPS coordinates are already part of the onboard-pro
+      // payload above. The old PUT /helpers/me/location call here always
+      // 403'd (onboard-pro deliberately leaves role='customer' /
+      // approval_status='pending', while /helpers/* requires role 'pro' +
+      // approved) and its result was never checked — removed.
 
-      // Backend does NOT issue a new token on onboard-pro (admin
-      // approval still pending); just refresh the local user view.
+      // Backend does NOT issue a new token on onboard-pro (admin approval
+      // still pending) and returns approval_status:'pending'. Render a
+      // dedicated "application under review" state instead of leaving the
+      // Start Working button live — repeated taps re-POSTed and re-queued
+      // the application for review each time.
       if (data?.user) {
         updateUser(data.user);
       }
+      setSubmitted(true);
     } catch (err: any) {
       showError('Please check your details and try again.', { title: 'Something went wrong' });
     } finally {
@@ -347,7 +352,7 @@ export default function ProOnboardingScreen({ route }: Props) {
           )}
 
           {/* ── Step 4: Completion ─────────────────────────────────────────── */}
-          {step === 4 && (
+          {step === 4 && !submitted && (
             <View style={[s.stepContainer, s.completionContainer]}>
               <View style={s.successIcon}>
                 <SvgIcon name="celebration" size={52} color={c.success} />
@@ -373,6 +378,19 @@ export default function ProOnboardingScreen({ route }: Props) {
             </View>
           )}
 
+          {step === 4 && submitted && (
+            <View style={[s.stepContainer, s.completionContainer]}>
+              <View style={s.successIcon}>
+                <SvgIcon name="check-circle" size={52} color={c.accent} />
+              </View>
+              <Text style={s.completionTitle}>Application under review</Text>
+              <Text style={s.completionSub}>
+                Thanks! Our team will review your details and approve your account.
+                You'll be notified once you can start working.
+              </Text>
+            </View>
+          )}
+
         </ScrollView>
 
         {/* ── CTA ── */}
@@ -394,6 +412,14 @@ export default function ProOnboardingScreen({ route }: Props) {
               }
             >
               <Text style={s.ctaBtnText}>Continue</Text>
+            </TouchableOpacity>
+          ) : submitted ? (
+            <TouchableOpacity
+              style={[s.ctaBtn, s.ctaBtnGo]}
+              activeOpacity={0.88}
+              onPress={() => setNeedsRoleSelection(false)}
+            >
+              <Text style={s.ctaBtnText}>Done</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity

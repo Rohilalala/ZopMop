@@ -66,34 +66,36 @@ func TestComputePay_OddMinutes(t *testing.T) {
 	}
 }
 
-func TestCycleForCloseDate_Fifteenth(t *testing.T) {
-	t15 := time.Date(2026, time.May, 15, 1, 0, 0, 0, istLocation)
-	c, ok := CycleForCloseDate(t15)
+func TestCycleForCloseDate_Sixteenth(t *testing.T) {
+	// The 16th is the run day that closes the 1st–15th cycle.
+	t16 := time.Date(2026, time.May, 16, 1, 0, 0, 0, istLocation)
+	c, ok := CycleForCloseDate(t16)
 	if !ok {
-		t.Fatalf("expected 15th to be a close date")
+		t.Fatalf("expected the 16th to be a payroll run day")
 	}
 	if c.StartDate() != "2026-05-01" || c.EndDate() != "2026-05-15" {
 		t.Fatalf("bad cycle: start=%s end=%s", c.StartDate(), c.EndDate())
 	}
 }
 
-func TestCycleForCloseDate_LastDay31(t *testing.T) {
-	t31 := time.Date(2026, time.May, 31, 1, 0, 0, 0, istLocation)
-	c, ok := CycleForCloseDate(t31)
+func TestCycleForCloseDate_FirstAfter31(t *testing.T) {
+	// June 1 closes the May 16–31 cycle.
+	t1 := time.Date(2026, time.June, 1, 1, 0, 0, 0, istLocation)
+	c, ok := CycleForCloseDate(t1)
 	if !ok {
-		t.Fatalf("expected 31st (May) to be a close date")
+		t.Fatalf("expected June 1 to be a payroll run day")
 	}
 	if c.StartDate() != "2026-05-16" || c.EndDate() != "2026-05-31" {
 		t.Fatalf("bad cycle: start=%s end=%s", c.StartDate(), c.EndDate())
 	}
 }
 
-func TestCycleForCloseDate_LastDay30(t *testing.T) {
-	// April has 30 days, not 31.
-	t30 := time.Date(2026, time.April, 30, 1, 0, 0, 0, istLocation)
-	c, ok := CycleForCloseDate(t30)
+func TestCycleForCloseDate_FirstAfter30(t *testing.T) {
+	// April has 30 days; May 1 closes Apr 16–30.
+	t1 := time.Date(2026, time.May, 1, 1, 0, 0, 0, istLocation)
+	c, ok := CycleForCloseDate(t1)
 	if !ok {
-		t.Fatalf("expected 30th (April) to be a close date")
+		t.Fatalf("expected May 1 to be a payroll run day")
 	}
 	if c.StartDate() != "2026-04-16" || c.EndDate() != "2026-04-30" {
 		t.Fatalf("bad cycle: start=%s end=%s", c.StartDate(), c.EndDate())
@@ -101,75 +103,64 @@ func TestCycleForCloseDate_LastDay30(t *testing.T) {
 }
 
 func TestCycleForCloseDate_FebNonLeap(t *testing.T) {
-	// 2025 — non-leap. Feb has 28 days. The 28th is the cycle close.
-	t28 := time.Date(2025, time.February, 28, 1, 0, 0, 0, istLocation)
-	c, ok := CycleForCloseDate(t28)
+	// 2025 — non-leap. Feb has 28 days. Mar 1 closes Feb 16–28.
+	t1 := time.Date(2025, time.March, 1, 1, 0, 0, 0, istLocation)
+	c, ok := CycleForCloseDate(t1)
 	if !ok {
-		t.Fatalf("expected Feb 28 (non-leap) to be a close date")
+		t.Fatalf("expected Mar 1 (non-leap) to be a payroll run day")
 	}
 	if c.StartDate() != "2025-02-16" || c.EndDate() != "2025-02-28" {
 		t.Fatalf("bad cycle: start=%s end=%s", c.StartDate(), c.EndDate())
 	}
-	// And the 29th should NOT be a close date in a non-leap year (it
-	// doesn't exist; Go normalises it to March 1, which IS day 1 and
-	// is also not a close date).
-	_, ok29 := CycleForCloseDate(time.Date(2025, time.February, 29, 1, 0, 0, 0, istLocation))
-	if ok29 {
-		t.Fatalf("Feb 29 2025 normalised to Mar 1 — should not be a close date")
-	}
 }
 
 func TestCycleForCloseDate_FebLeap(t *testing.T) {
-	// 2028 is a leap year — Feb has 29 days.
-	t29 := time.Date(2028, time.February, 29, 1, 0, 0, 0, istLocation)
-	c, ok := CycleForCloseDate(t29)
+	// 2028 is a leap year — Feb has 29 days. Mar 1 closes Feb 16–29.
+	t1 := time.Date(2028, time.March, 1, 1, 0, 0, 0, istLocation)
+	c, ok := CycleForCloseDate(t1)
 	if !ok {
-		t.Fatalf("expected Feb 29 (leap year) to be a close date")
+		t.Fatalf("expected Mar 1 (leap year) to be a payroll run day")
 	}
 	if c.StartDate() != "2028-02-16" || c.EndDate() != "2028-02-29" {
 		t.Fatalf("bad cycle: start=%s end=%s", c.StartDate(), c.EndDate())
 	}
-	// Feb 28 in a leap year is NOT a close date (29 is).
-	_, ok28 := CycleForCloseDate(time.Date(2028, time.February, 28, 1, 0, 0, 0, istLocation))
-	if ok28 {
-		t.Fatalf("Feb 28 in a leap year should not be a close date")
-	}
 }
 
-func TestCycleForCloseDate_NotClose(t *testing.T) {
-	for _, d := range []int{1, 5, 14, 16, 20, 28} {
-		// Use July (always 31 days; none of these are last-of-month).
+func TestCycleForCloseDate_NotRunDay(t *testing.T) {
+	for _, d := range []int{2, 5, 14, 15, 20, 28, 31} {
+		// Use July (always 31 days). The 15th and 31st are cycle CLOSE
+		// days but NOT run days — the run fires the morning after.
 		_, ok := CycleForCloseDate(time.Date(2026, time.July, d, 1, 0, 0, 0, istLocation))
 		if ok {
-			t.Fatalf("July %d should not be a close date", d)
+			t.Fatalf("July %d should not be a payroll run day", d)
 		}
 	}
 }
 
 func TestNextCloseAfter(t *testing.T) {
-	// 1 May 02:00 → next close is 15 May 01:00 IST.
-	from := time.Date(2026, time.May, 1, 2, 0, 0, 0, istLocation)
+	// 2 May 02:00 → next run is 16 May 01:00 IST (closes May 1–15).
+	from := time.Date(2026, time.May, 2, 2, 0, 0, 0, istLocation)
 	next := NextCloseAfter(from)
-	want := time.Date(2026, time.May, 15, 1, 0, 0, 0, istLocation)
+	want := time.Date(2026, time.May, 16, 1, 0, 0, 0, istLocation)
 	if !next.Equal(want) {
-		t.Fatalf("next close after %s: want %s, got %s", from, want, next)
+		t.Fatalf("next run after %s: want %s, got %s", from, want, next)
 	}
 
-	// 15 May 01:00 (the close moment itself) → next is 31 May 01:00,
+	// 16 May 01:00 (the run moment itself) → next is 1 Jun 01:00,
 	// because NextCloseAfter is strictly after.
-	from = time.Date(2026, time.May, 15, 1, 0, 0, 0, istLocation)
+	from = time.Date(2026, time.May, 16, 1, 0, 0, 0, istLocation)
 	next = NextCloseAfter(from)
-	want = time.Date(2026, time.May, 31, 1, 0, 0, 0, istLocation)
+	want = time.Date(2026, time.June, 1, 1, 0, 0, 0, istLocation)
 	if !next.Equal(want) {
-		t.Fatalf("next close after 15 May 01:00: want %s, got %s", want, next)
+		t.Fatalf("next run after 16 May 01:00: want %s, got %s", want, next)
 	}
 
-	// 31 Jan 02:00 → next is 15 Feb 01:00 (skips over Feb 28/29).
+	// 31 Jan 02:00 → next is 1 Feb 01:00 (closes Jan 16–31).
 	from = time.Date(2026, time.January, 31, 2, 0, 0, 0, istLocation)
 	next = NextCloseAfter(from)
-	want = time.Date(2026, time.February, 15, 1, 0, 0, 0, istLocation)
+	want = time.Date(2026, time.February, 1, 1, 0, 0, 0, istLocation)
 	if !next.Equal(want) {
-		t.Fatalf("next close after 31 Jan 02:00: want %s, got %s", want, next)
+		t.Fatalf("next run after 31 Jan 02:00: want %s, got %s", want, next)
 	}
 }
 

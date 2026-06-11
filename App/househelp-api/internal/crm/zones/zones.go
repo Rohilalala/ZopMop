@@ -61,7 +61,9 @@ type SurgeRuleRequest struct {
 
 type Repository struct{ read, write *pgxpool.Pool }
 
-func NewRepository(read, write *pgxpool.Pool) *Repository { return &Repository{read: read, write: write} }
+func NewRepository(read, write *pgxpool.Pool) *Repository {
+	return &Repository{read: read, write: write}
+}
 
 func (r *Repository) ListZones(ctx context.Context) ([]Zone, error) {
 	rows, err := r.read.Query(ctx, `
@@ -128,8 +130,11 @@ func (r *Repository) UpdateZone(ctx context.Context, id string, req ZoneRequest)
 
 func (r *Repository) SetZoneActive(ctx context.Context, id string, active bool) error {
 	res, err := r.write.Exec(ctx, `UPDATE service_zones SET is_active = $2 WHERE id = $1::uuid`, id, active)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("set zone active: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -169,7 +174,10 @@ func (r *Repository) CreateSurge(ctx context.Context, req SurgeRuleRequest, crea
 
 func (r *Repository) DeleteSurge(ctx context.Context, id string) error {
 	res, err := r.write.Exec(ctx, `DELETE FROM crm_surge_rules WHERE id = $1::uuid`, id)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
+		return fmt.Errorf("delete surge: %w", err)
+	}
+	if res.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -197,13 +205,13 @@ func (h *Handler) fireWebhook(ctx context.Context, event string, payload any) {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/zones")
-	g.Get("/",       middleware.RequirePermission("zones.read"), h.ListZones)
-	g.Post("/",      middleware.RequirePermission("zones.create"), h.CreateZone)
-	g.Put("/:id",    middleware.RequirePermission("zones.update"), h.UpdateZone)
+	g.Get("/", middleware.RequirePermission("zones.read"), h.ListZones)
+	g.Post("/", middleware.RequirePermission("zones.create"), h.CreateZone)
+	g.Put("/:id", middleware.RequirePermission("zones.update"), h.UpdateZone)
 	g.Post("/:id/toggle", middleware.RequirePermission("zones.toggle"), h.ToggleZone)
 
-	g.Get("/surge",       middleware.RequirePermission("surge.read"), h.ListSurge)
-	g.Post("/surge",      middleware.RequirePermission("surge.create"), h.CreateSurge)
+	g.Get("/surge", middleware.RequirePermission("surge.read"), h.ListSurge)
+	g.Post("/surge", middleware.RequirePermission("surge.create"), h.CreateSurge)
 	g.Delete("/surge/:id", middleware.RequirePermission("surge.delete"), h.DeleteSurge)
 }
 
@@ -239,11 +247,16 @@ func (h *Handler) UpdateZone(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ToggleZone(c *fiber.Ctx) error {
-	var body struct{ Active bool `json:"active"` }
+	var body struct {
+		Active bool `json:"active"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.repo.SetZoneActive(c.UserContext(), id, body.Active); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "zone not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "zone.toggle", id, nil, body.Active)
 	return c.JSON(fiber.Map{"ok": true})

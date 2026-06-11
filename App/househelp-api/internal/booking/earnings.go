@@ -4,7 +4,7 @@
 // retroactively shift past bookings.
 //
 // Formula (Phase 10):
-//   base_job_pay   = ROUND(actual_duration_minutes / 60 * 8000) paise
+//   base_job_pay   = actual_duration_minutes * 8000 / 60 paise (integer)
 //   peak_surcharge = +₹50/hr proportional to actual_duration_minutes
 //                    when completed_at falls in IST peak windows
 //                    08:00–11:00 or 17:00–20:00
@@ -16,7 +16,6 @@
 package booking
 
 import (
-	"math"
 	"time"
 )
 
@@ -45,11 +44,14 @@ func ComputeBookingEarnings(actualMinutes int, completedAt time.Time) EarningsBr
 	}
 	ist := completedAt.In(indiaLocation())
 
-	base := int64(math.Round(float64(actualMinutes) / 60.0 * float64(baseRatePaisePerHour)))
+	// Integer-only, multiply-first / truncate-once — identical to
+	// payroll.ComputePay (calc.go:107) so the per-job snapshot ties to
+	// the paisa with the fortnight/payroll math (no float, no round).
+	base := int64(actualMinutes) * baseRatePaisePerHour / 60
 
 	var peak int64
 	if isPeakHour(ist) {
-		peak = int64(math.Round(float64(actualMinutes) / 60.0 * float64(peakSurchargePaisePerHr)))
+		peak = int64(actualMinutes) * peakSurchargePaisePerHr / 60
 	}
 
 	var weekend int64

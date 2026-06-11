@@ -132,7 +132,15 @@ func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle Cycl
 	if workingMin > onlineMin {
 		return PayBreakdown{}, ErrInvalidActivity
 	}
-	return ComputePay(onlineMin, workingMin)
+	pay, err := ComputePay(onlineMin, workingMin)
+	if err != nil {
+		return PayBreakdown{}, err
+	}
+	deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+	if err != nil {
+		return PayBreakdown{}, fmt.Errorf("sum deductions: %w", err)
+	}
+	return pay.applyDeductions(deductions), nil
 }
 
 // RunCycle is the manual-trigger entry point. It writes one payout
@@ -184,6 +192,14 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			out.Errors++
 			continue
 		}
+
+		deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+		if err != nil {
+			log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] sum deductions failed")
+			out.Errors++
+			continue
+		}
+		pay = pay.applyDeductions(deductions)
 
 		inserted, err := s.repo.UpsertPayout(ctx, proID, cycle, pay)
 		if err != nil {

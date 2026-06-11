@@ -23,20 +23,20 @@ import (
 var ErrNotFound = errors.New("banner not found")
 
 type Banner struct {
-	ID            string     `json:"id"`
-	Title         string     `json:"title"`
-	Subtitle      *string    `json:"subtitle,omitempty"`
-	ImageURL      string     `json:"image_url"`
-	TapAction     *string    `json:"tap_action,omitempty"`
-	CTALabel      *string    `json:"cta_label,omitempty"`
-	CTAKind       *string    `json:"cta_kind,omitempty"`
-	DisplayOrder  int        `json:"display_order"`
-	IsActive      bool       `json:"is_active"`
-	StartsAt      *time.Time `json:"starts_at,omitempty"`
-	EndsAt        *time.Time `json:"ends_at,omitempty"`
-	Audience      string     `json:"audience"`
-	AudienceZone  *string    `json:"audience_zone,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Subtitle     *string    `json:"subtitle,omitempty"`
+	ImageURL     string     `json:"image_url"`
+	TapAction    *string    `json:"tap_action,omitempty"`
+	CTALabel     *string    `json:"cta_label,omitempty"`
+	CTAKind      *string    `json:"cta_kind,omitempty"`
+	DisplayOrder int        `json:"display_order"`
+	IsActive     bool       `json:"is_active"`
+	StartsAt     *time.Time `json:"starts_at,omitempty"`
+	EndsAt       *time.Time `json:"ends_at,omitempty"`
+	Audience     string     `json:"audience"`
+	AudienceZone *string    `json:"audience_zone,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type CreateRequest struct {
@@ -56,7 +56,9 @@ type CreateRequest struct {
 
 type Repository struct{ read, write *pgxpool.Pool }
 
-func NewRepository(read, write *pgxpool.Pool) *Repository { return &Repository{read: read, write: write} }
+func NewRepository(read, write *pgxpool.Pool) *Repository {
+	return &Repository{read: read, write: write}
+}
 
 func (r *Repository) List(ctx context.Context) ([]Banner, error) {
 	rows, err := r.read.Query(ctx, `
@@ -102,7 +104,11 @@ func (r *Repository) Get(ctx context.Context, id string) (*Banner, error) {
 	return &b, nil
 }
 
-func validate(req CreateRequest) error {
+// validate checks required fields and applies the audience default. Takes a
+// pointer so the "" → "all" default actually reaches the caller's struct
+// before it is bound into the INSERT/UPDATE — otherwise an omitted audience
+// inserts ” and trips the banners.audience CHECK constraint.
+func validate(req *CreateRequest) error {
 	if strings.TrimSpace(req.Title) == "" {
 		return fmt.Errorf("title required")
 	}
@@ -119,7 +125,7 @@ func validate(req CreateRequest) error {
 }
 
 func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy string) (*Banner, error) {
-	if err := validate(req); err != nil {
+	if err := validate(&req); err != nil {
 		return nil, err
 	}
 	id := ""
@@ -141,7 +147,7 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 }
 
 func (r *Repository) Update(ctx context.Context, id string, req CreateRequest) error {
-	if err := validate(req); err != nil {
+	if err := validate(&req); err != nil {
 		return err
 	}
 	res, err := r.write.Exec(ctx, `
@@ -202,12 +208,12 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/banners")
 	read := middleware.RequirePermission("banners.read")
-	g.Get("/",          read, h.List)
-	g.Post("/",         middleware.RequirePermission("banners.create"), h.Create)
-	g.Post("/reorder",  middleware.RequirePermission("banners.reorder"), h.Reorder)
-	g.Get("/:id",       read, h.Get)
-	g.Put("/:id",       middleware.RequirePermission("banners.update"), h.Update)
-	g.Delete("/:id",    middleware.RequirePermission("banners.delete"), h.Delete)
+	g.Get("/", read, h.List)
+	g.Post("/", middleware.RequirePermission("banners.create"), h.Create)
+	g.Post("/reorder", middleware.RequirePermission("banners.reorder"), h.Reorder)
+	g.Get("/:id", read, h.Get)
+	g.Put("/:id", middleware.RequirePermission("banners.update"), h.Update)
+	g.Delete("/:id", middleware.RequirePermission("banners.delete"), h.Delete)
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {

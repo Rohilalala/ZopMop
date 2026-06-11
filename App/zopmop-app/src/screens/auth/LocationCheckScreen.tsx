@@ -30,6 +30,8 @@ import { FontFamily, FontSize, Spacing, Radius } from '../../theme';
 // THEME NOTE: auth flow is locked to light — these are light-mode Lottie pages,
 // so this screen always uses the light screen.ts palette (lightC), NOT the global
 // dark/light toggle. Cream bg, amber accents, danger on the light token.
+// Rebrand preview: bg/text overridden to the designer cream/brown (see authColors).
+const authC = { ...lightC, bg: '#FFF6EB', text: '#3C2D1B' } as ScreenColors;
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Location'>;
@@ -41,7 +43,7 @@ type GpsState = 'idle' | 'requesting' | 'checking' | 'denied' | 'error';
 
 export default function LocationCheckScreen({ navigation, route }: Props) {
   const { phone, name } = route.params;
-  const c = lightC;
+  const c = authC;
   const danger = c.danger;
   const styles = useMemo(() => createStyles(c, danger), [c, danger]);
   const [mode, setMode] = useState<Mode>('choose');

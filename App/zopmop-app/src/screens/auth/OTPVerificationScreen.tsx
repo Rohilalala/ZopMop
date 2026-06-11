@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { haptics } from '../../utils/haptics';
@@ -24,6 +24,7 @@ import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { posthog } from '../../config/posthog';
 import { sendOTP, verifyOTP, AuthError } from '../../services/auth';
+import { setNeedsRoleSelection } from '../../utils/pendingAuthStore';
 
 // Public-facing policy URLs. Kept inline rather than from env because they're
 // the same across builds — the Privacy Policy link in the new-user consent
@@ -46,7 +47,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone, isNewUser = false } = route.params;
   const { signIn } = useAuth();
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
@@ -113,15 +114,29 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         return;
       }
 
-      // Customer flow: anyone without a name on file must set one before
-      // entering the app. Covers brand-new users AND returning users who
-      // bailed on profile setup earlier (name left NULL). Gating on
-      // is_new_user alone let nameless returning users slip straight in,
-      // landing on a default name that's never collected.
+      // Brand-new signup: every new account starts as a customer role,
+      // but the user hasn't yet chosen customer-vs-pro. Keep them in the
+      // AuthNavigator (via the role-selection flag) so Welcome →
+      // RoleSelection → ProOnboarding is reachable. We still sign in so
+      // the downstream authed calls (/me/onboard-pro) have a session;
+      // the flag — not isAuthenticated — gates the navigator swap.
+      // Previously signIn() flipped straight to MainNavigator and the
+      // Welcome auto-advance to RoleSelection never fired, so in-app pro
+      // signup was dead and every signup became a customer.
+      if (data.is_new_user) {
+        setNeedsRoleSelection(true);
+        signIn(data.access_token, data.refresh_token, data.user);
+        navigation.replace('Welcome', { phone, name: data.user.name });
+        return;
+      }
+
+      // Returning customer: anyone without a name on file must set one
+      // before entering the app. Gating on is_new_user alone let nameless
+      // returning users slip straight in, landing on a default name that's
+      // never collected.
       const hasName = data.user.name && data.user.name.trim().length > 0;
       if (hasName) {
         signIn(data.access_token, data.refresh_token, data.user);
-        navigation.replace('Welcome', { phone, name: data.user.name });
       } else {
         // Stash tokens via signIn THEN route to NameEntry so the
         // user is authenticated for the profile-setup PUT /me call.

@@ -36,12 +36,17 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
   if (!data || !data.type) return;
   const bookingId = data.booking_id ?? '';
 
-  if (PRO_TARGETED_MESSAGE_TYPES.includes(data.type) && userRole !== 'helper') {
-    // Pro-targeted push delivered to a non-helper. Drop without UI side-
+  // Canonical JWT role for pros is 'pro' (migration 019 renamed every
+  // 'helper' row and tightened the CHECK constraint — 'helper' can no
+  // longer exist in the DB). Accept the legacy literal anyway in case a
+  // stale pre-019 JWT is still cached on-device. Gating on 'helper'
+  // alone dropped EVERY job-offer push for every pro.
+  if (PRO_TARGETED_MESSAGE_TYPES.includes(data.type) && userRole !== 'pro' && userRole !== 'helper') {
+    // Pro-targeted push delivered to a non-pro. Drop without UI side-
     // effects: navigating would land them on a Pro screen, toasting would
     // acknowledge a misrouted message we don't want to surface.
     // eslint-disable-next-line no-console
-    console.warn('[pushRouter] Pro-targeted push for non-helper user, dropping', {
+    console.warn('[pushRouter] Pro-targeted push for non-pro user, dropping', {
       type: data.type,
       userRole: userRole ?? '<unauthenticated>',
     });
@@ -52,11 +57,15 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
     // Legacy SCHEDULED_INVITE path is now handled by the
     // booking_offer case below — both share the same emit/route.
 
-    case 'BOOKING_ACCEPTED': {
+    // 'booking_accepted' (lowercase) is the durable outbox-driven
+    // "Helper on the way!" push (notification/service.go); 'BOOKING_ACCEPTED'
+    // is the dispatch-cron variant. Same customer-facing toast + feed refresh.
+    case 'BOOKING_ACCEPTED':
+    case 'booking_accepted': {
       const helperName = data.helper_name ?? 'Your pro';
       showSuccess(`${helperName} has accepted your booking.`, { title: 'Booking confirmed' });
-      // No navigation push — customer is likely on Bookings or Home; the
-      // toast + a list refresh on focus is enough.
+      // Refresh any open booking feed/track screen in addition to the toast.
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: data.status });
       return;
     }
 
@@ -90,6 +99,26 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       return;
     }
 
+    // Customer's booking was cancelled (pro/admin cancel) or auto-cancelled by
+    // the pending-action sweeper. Toast + refresh the booking feed so the
+    // customer isn't left on a stale "searching"/"on the way" screen.
+    case 'booking_cancelled':
+    case 'BOOKING_AUTO_CANCELLED': {
+      showInfo(data.body ?? 'Your booking has been cancelled.', {
+        title: data.title ?? 'Booking cancelled',
+      });
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: 'cancelled' });
+      return;
+    }
+
+    case 'refund_processed': {
+      showInfo(data.body ?? 'Your refund has been initiated.', {
+        title: data.title ?? 'Refund processed',
+      });
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: data.status });
+      return;
+    }
+
     case 'zone_approval_granted': {
       emitShiftEvent({
         type: 'zone_approval_granted',
@@ -103,6 +132,20 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       emitShiftEvent({
         type: 'zone_drift_warning',
         commitment_id: data.commitment_id,
+      });
+      return;
+    }
+
+    case 'zone_approval_rejected': {
+      // Pro's out-of-zone go-online request was rejected by an admin.
+      // Without this case the pro sat on "Waiting for approval" the whole
+      // shift and never saw the admin's notes. The ZoneApproval screen
+      // listens for this to clear approvalPendingRef + show the reason.
+      emitShiftEvent({
+        type: 'zone_approval_rejected',
+        request_id: data.request_id,
+        commitment_id: data.commitment_id,
+        reason: data.reason ?? data.notes ?? data.body,
       });
       return;
     }
@@ -137,7 +180,24 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
     case 'pro_en_route':
     case 'pro_arrived':
     case 'job_started':
-    case 'job_completed': {
+    case 'job_completed':
+    // Backend sends 'booking_completed' (notification/service.go); the app's
+    // legacy name was 'job_completed'. Alias both so the customer's
+    // TrackLive feed refreshes to the completed/review state.
+    case 'booking_completed':
+    // Pro-side ownership changes — a cancelled / (re|un)assigned booking
+    // must refresh the pro's job screens. Without these the pro kept
+    // offering En-Route/Arrived/Start on a job they no longer own (or that
+    // the customer cancelled) and every tap then errored.
+    case 'booking_cancelled_for_pro':
+    case 'booking_assigned':
+    case 'booking_reassigned':
+    case 'booking_unassigned':
+    // Customer-side: their pro was swapped (CRM/leave reassign) or the
+    // booking was cancelled with no coverage. Refresh the booking feed.
+    case 'worker_changed':
+    case 'helper_reassigned':
+    case 'cancelled_no_coverage': {
       emitShiftEvent({
         type: 'booking_status_change',
         booking_id: bookingId,

@@ -19,6 +19,11 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/middleware"
 )
 
+// ErrNotFound means the targeted row was missing or not in a state the
+// mutation could act on. Returned instead of wrapping a nil error with %w,
+// which previously rendered a garbled "%!w(<nil>)" string to admins.
+var ErrNotFound = errors.New("not found")
+
 type Dispute struct {
 	ID          string     `json:"id"`
 	BookingID   *string    `json:"booking_id,omitempty"`
@@ -46,12 +51,12 @@ type DisputeRequest struct {
 }
 
 type FraudFlag struct {
-	ID         string          `json:"id"`
-	UserID     *string         `json:"user_id,omitempty"`
-	Pattern    string          `json:"pattern"`
-	Details    json.RawMessage `json:"details,omitempty"`
-	Status     string          `json:"status"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID        string          `json:"id"`
+	UserID    *string         `json:"user_id,omitempty"`
+	Pattern   string          `json:"pattern"`
+	Details   json.RawMessage `json:"details,omitempty"`
+	Status    string          `json:"status"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type BlacklistEntry struct {
@@ -63,16 +68,16 @@ type BlacklistEntry struct {
 }
 
 type Incident struct {
-	ID                 string     `json:"id"`
-	Severity           string     `json:"severity"`
-	Source             string     `json:"source"`
-	Description        string     `json:"description"`
-	InvolvedUserID     *string    `json:"involved_user_id,omitempty"`
-	InvolvedWorkerID   *string    `json:"involved_worker_id,omitempty"`
-	ActionsTaken       *string    `json:"actions_taken,omitempty"`
-	Status             string     `json:"status"`
-	ResolvedAt         *time.Time `json:"resolved_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID               string     `json:"id"`
+	Severity         string     `json:"severity"`
+	Source           string     `json:"source"`
+	Description      string     `json:"description"`
+	InvolvedUserID   *string    `json:"involved_user_id,omitempty"`
+	InvolvedWorkerID *string    `json:"involved_worker_id,omitempty"`
+	ActionsTaken     *string    `json:"actions_taken,omitempty"`
+	Status           string     `json:"status"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type Service struct{ read, write *pgxpool.Pool }
@@ -139,8 +144,32 @@ func (s *Service) ResolveDispute(ctx context.Context, id, resolution string) err
 		UPDATE crm_disputes SET status='resolved', resolution=$2, resolved_at=now(), updated_at=now()
 		WHERE id = $1::uuid
 	`, id, resolution)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("resolve dispute: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetDisputeStatus moves an open/in-progress dispute along the triage
+// workflow ('in_progress', 'escalated'). 'resolved' goes through
+// ResolveDispute (which records the outcome); this path is for the
+// intermediate states the SLA-escalation workflow needs.
+func (s *Service) SetDisputeStatus(ctx context.Context, id, status string) error {
+	if status != "in_progress" && status != "escalated" {
+		return errors.New("status must be in_progress or escalated")
+	}
+	res, err := s.write.Exec(ctx, `
+		UPDATE crm_disputes SET status=$2, updated_at=now()
+		WHERE id = $1::uuid AND status NOT IN ('resolved','closed')
+	`, id, status)
+	if err != nil {
+		return fmt.Errorf("set dispute status: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -179,8 +208,11 @@ func (s *Service) ReviewFraud(ctx context.Context, id, status string) error {
 	}
 	res, err := s.write.Exec(ctx,
 		`UPDATE crm_fraud_flags SET status=$2, reviewed_at=now() WHERE id=$1::uuid`, id, status)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("review fraud: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -223,8 +255,11 @@ func (s *Service) AddBlacklist(ctx context.Context, kind, value, reason, created
 
 func (s *Service) RemoveBlacklist(ctx context.Context, id string) error {
 	res, err := s.write.Exec(ctx, `DELETE FROM crm_blacklist WHERE id = $1::uuid`, id)
-	if err != nil || res.RowsAffected() == 0 {
-		return errors.New("not found")
+	if err != nil {
+		return fmt.Errorf("remove blacklist: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -278,8 +313,11 @@ func (s *Service) CreateIncident(ctx context.Context, req IncidentRequest, creat
 
 func (s *Service) ResolveIncident(ctx context.Context, id string) error {
 	res, err := s.write.Exec(ctx, `UPDATE crm_incidents SET status='resolved', resolved_at=now() WHERE id=$1::uuid`, id)
-	if err != nil || res.RowsAffected() == 0 {
-		return errors.New("not found")
+	if err != nil {
+		return fmt.Errorf("resolve incident: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -297,22 +335,23 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	d := r.Group("/disputes")
-	d.Get("/",        middleware.RequirePermission("disputes.read"), h.ListDisputes)
-	d.Post("/",       middleware.RequirePermission("disputes.create"), h.CreateDispute)
+	d.Get("/", middleware.RequirePermission("disputes.read"), h.ListDisputes)
+	d.Post("/", middleware.RequirePermission("disputes.create"), h.CreateDispute)
 	d.Post("/:id/resolve", middleware.RequirePermission("disputes.resolve"), h.ResolveDispute)
+	d.Post("/:id/status", middleware.RequirePermission("disputes.resolve"), h.SetDisputeStatus)
 
 	f := r.Group("/fraud")
-	f.Get("/",        middleware.RequirePermission("fraud.read"), h.ListFraud)
+	f.Get("/", middleware.RequirePermission("fraud.read"), h.ListFraud)
 	f.Post("/:id/review", middleware.RequirePermission("fraud.review"), h.ReviewFraud)
 
 	b := r.Group("/blacklist")
-	b.Get("/",        middleware.RequirePermission("blacklist.read"), h.ListBlacklist)
-	b.Post("/",       middleware.RequirePermission("blacklist.add"), h.AddBlacklist)
-	b.Delete("/:id",  middleware.RequirePermission("blacklist.remove"), h.RemoveBlacklist)
+	b.Get("/", middleware.RequirePermission("blacklist.read"), h.ListBlacklist)
+	b.Post("/", middleware.RequirePermission("blacklist.add"), h.AddBlacklist)
+	b.Delete("/:id", middleware.RequirePermission("blacklist.remove"), h.RemoveBlacklist)
 
 	in := r.Group("/incidents")
-	in.Get("/",       middleware.RequirePermission("incidents.read"), h.ListIncidents)
-	in.Post("/",      middleware.RequirePermission("incidents.create"), h.CreateIncident)
+	in.Get("/", middleware.RequirePermission("incidents.read"), h.ListIncidents)
+	in.Post("/", middleware.RequirePermission("incidents.create"), h.CreateIncident)
 	in.Post("/:id/resolve", middleware.RequirePermission("incidents.resolve"), h.ResolveIncident)
 }
 
@@ -336,13 +375,34 @@ func (h *Handler) CreateDispute(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ResolveDispute(c *fiber.Ctx) error {
-	var body struct{ Resolution string `json:"resolution"` }
+	var body struct {
+		Resolution string `json:"resolution"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.svc.ResolveDispute(c.UserContext(), id, body.Resolution); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "dispute not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "dispute.resolve", id, nil, body.Resolution)
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+func (h *Handler) SetDisputeStatus(c *fiber.Ctx) error {
+	var body struct {
+		Status string `json:"status"`
+	}
+	_ = c.BodyParser(&body)
+	id := c.Params("id")
+	if err := h.svc.SetDisputeStatus(c.UserContext(), id, body.Status); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "dispute not found or already resolved"})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.audit(c, "dispute.status", id, nil, body.Status)
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -352,11 +412,20 @@ func (h *Handler) ListFraud(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ReviewFraud(c *fiber.Ctx) error {
-	var body struct{ Status string `json:"status"` }
+	var body struct {
+		Status string `json:"status"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.svc.ReviewFraud(c.UserContext(), id, body.Status); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "fraud flag not found"})
+		}
+		// validation error (bad status) vs DB error
+		if err.Error() == "status must be reviewed_false or actioned" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "fraud.review", id, nil, body.Status)
 	return c.JSON(fiber.Map{"ok": true})
@@ -386,7 +455,10 @@ func (h *Handler) AddBlacklist(c *fiber.Ctx) error {
 func (h *Handler) RemoveBlacklist(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := h.svc.RemoveBlacklist(c.UserContext(), id); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "blacklist entry not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "blacklist.remove", id, nil, nil)
 	return c.JSON(fiber.Map{"ok": true})
@@ -414,7 +486,10 @@ func (h *Handler) CreateIncident(c *fiber.Ctx) error {
 func (h *Handler) ResolveIncident(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if err := h.svc.ResolveIncident(c.UserContext(), id); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "incident not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "incident.resolve", id, nil, nil)
 	return c.JSON(fiber.Map{"ok": true})

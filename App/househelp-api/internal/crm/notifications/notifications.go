@@ -91,22 +91,26 @@ type Service struct {
 // NewService constructs the Service.
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
-// List returns the most recent notifications. limit clamped to [1, 200].
-// onlyUnread filters to read_at IS NULL.
-func (s *Service) List(ctx context.Context, limit int, onlyUnread bool) ([]Notification, error) {
+// List returns the most recent notifications for the calling admin. limit
+// clamped to [1, 200]. onlyUnread filters to rows the admin has NOT read.
+// Read-state is per-admin (read_by JSONB array), so one admin marking read
+// never clears another admin's feed. The returned ReadAt reflects whether
+// THIS admin has read the row (NOW() sentinel when read, nil when unread).
+func (s *Service) List(ctx context.Context, adminID string, limit int, onlyUnread bool) ([]Notification, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	q := `
-		SELECT id, title, body, severity, entity_type, entity_id, read_at, created_at
+		SELECT id, title, body, severity, entity_type, entity_id,
+		       (read_by ? $1) AS is_read, created_at
 		FROM crm_notifications
 	`
 	if onlyUnread {
-		q += ` WHERE read_at IS NULL `
+		q += ` WHERE NOT (read_by ? $1) `
 	}
-	q += ` ORDER BY created_at DESC LIMIT $1 `
+	q += ` ORDER BY created_at DESC LIMIT $2 `
 
-	rows, err := s.db.Query(ctx, q, limit)
+	rows, err := s.db.Query(ctx, q, adminID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
 	}
@@ -114,47 +118,55 @@ func (s *Service) List(ctx context.Context, limit int, onlyUnread bool) ([]Notif
 
 	out := []Notification{}
 	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.Title, &n.Body, &n.Severity, &n.EntityType, &n.EntityID, &n.ReadAt, &n.CreatedAt); err != nil {
+		var (
+			n      Notification
+			isRead bool
+		)
+		if err := rows.Scan(&n.ID, &n.Title, &n.Body, &n.Severity, &n.EntityType, &n.EntityID, &isRead, &n.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan notification: %w", err)
+		}
+		if isRead {
+			n.ReadAt = &n.CreatedAt // non-nil signals "read" to the UI; exact ts not tracked per-admin
 		}
 		out = append(out, n)
 	}
 	return out, rows.Err()
 }
 
-// UnreadCount returns the number of notifications with read_at IS NULL.
-func (s *Service) UnreadCount(ctx context.Context) (int, error) {
+// UnreadCount returns the number of notifications the calling admin has not read.
+func (s *Service) UnreadCount(ctx context.Context, adminID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM crm_notifications WHERE read_at IS NULL`).Scan(&n)
+	err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM crm_notifications WHERE NOT (read_by ? $1)`, adminID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("unread count: %w", err)
 	}
 	return n, nil
 }
 
-// MarkRead stamps read_at = NOW() on a single notification. Idempotent.
-func (s *Service) MarkRead(ctx context.Context, id int64) error {
+// MarkRead appends adminID to one notification's read_by array. Idempotent.
+func (s *Service) MarkRead(ctx context.Context, adminID string, id int64) error {
 	res, err := s.db.Exec(ctx, `
-		UPDATE crm_notifications SET read_at = NOW()
-		WHERE id = $1 AND read_at IS NULL
-	`, id)
+		UPDATE crm_notifications
+		SET read_by = CASE WHEN read_by ? $2 THEN read_by ELSE read_by || to_jsonb($2::text) END
+		WHERE id = $1
+	`, id, adminID)
 	if err != nil {
 		return fmt.Errorf("mark read: %w", err)
 	}
 	if res.RowsAffected() == 0 {
-		// Already read or doesn't exist — verify which.
-		var exists bool
-		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM crm_notifications WHERE id = $1)`, id).Scan(&exists); err == nil && !exists {
-			return errors.New("notification not found")
-		}
+		return errors.New("notification not found")
 	}
 	return nil
 }
 
-// MarkAllRead bulk-marks every unread notification as read.
-func (s *Service) MarkAllRead(ctx context.Context) error {
-	_, err := s.db.Exec(ctx, `UPDATE crm_notifications SET read_at = NOW() WHERE read_at IS NULL`)
+// MarkAllRead appends adminID to every notification's read_by array,
+// scoping the bulk mark to the calling admin only.
+func (s *Service) MarkAllRead(ctx context.Context, adminID string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE crm_notifications
+		SET read_by = read_by || to_jsonb($1::text)
+		WHERE NOT (read_by ? $1)
+	`, adminID)
 	if err != nil {
 		return fmt.Errorf("mark all read: %w", err)
 	}
@@ -180,9 +192,13 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 
 // List handles GET /notifications?limit=&unread=true.
 func (h *Handler) List(c *fiber.Ctx) error {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	if adminID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
+	}
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 	onlyUnread := strings.EqualFold(c.Query("unread"), "true")
-	out, err := h.svc.List(c.UserContext(), limit, onlyUnread)
+	out, err := h.svc.List(c.UserContext(), adminID, limit, onlyUnread)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.notifications] list failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -192,7 +208,11 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // UnreadCount handles GET /notifications/unread-count.
 func (h *Handler) UnreadCount(c *fiber.Ctx) error {
-	n, err := h.svc.UnreadCount(c.UserContext())
+	adminID, _ := c.Locals("crmAdminID").(string)
+	if adminID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
+	}
+	n, err := h.svc.UnreadCount(c.UserContext(), adminID)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.notifications] unread-count failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
@@ -202,11 +222,15 @@ func (h *Handler) UnreadCount(c *fiber.Ctx) error {
 
 // MarkRead handles POST /notifications/:id/read.
 func (h *Handler) MarkRead(c *fiber.Ctx) error {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	if adminID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
+	}
 	id, err := strconv.ParseInt(c.Params("id"), 10, 64)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
-	if err := h.svc.MarkRead(c.UserContext(), id); err != nil {
+	if err := h.svc.MarkRead(c.UserContext(), adminID, id); err != nil {
 		if err.Error() == "notification not found" {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
 		}
@@ -218,10 +242,13 @@ func (h *Handler) MarkRead(c *fiber.Ctx) error {
 
 // MarkAllRead handles POST /notifications/read-all.
 func (h *Handler) MarkAllRead(c *fiber.Ctx) error {
-	if err := h.svc.MarkAllRead(c.UserContext()); err != nil {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	if adminID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})
+	}
+	if err := h.svc.MarkAllRead(c.UserContext(), adminID); err != nil {
 		log.Error().Err(err).Msg("[crm.notifications] mark-all-read failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	return c.JSON(fiber.Map{"ok": true})
 }
-

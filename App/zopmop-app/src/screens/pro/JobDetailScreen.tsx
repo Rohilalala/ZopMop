@@ -37,9 +37,17 @@ import { onShiftEvent } from '../../utils/shiftEvents';
 import { showError, showInfo, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
+import { useLocationPublisher } from '../../hooks/useLocationPublisher';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { t } from '../../i18n';
 
 const ARRIVED_RADIUS_METERS = 100;
+
+// Render full paise to two decimals so sub-rupee earnings are not rounded
+// off (the finish toast + summary previously dropped the paise component).
+function paiseToRupees(p: number): string {
+  return `₹${(p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 interface JobDetail {
   id: string;
@@ -68,6 +76,7 @@ function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng:
 }
 
 export default function JobDetailScreen() {
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'JobDetail'>>();
   const c = useColors();
@@ -86,6 +95,16 @@ export default function JobDetailScreen() {
   // booking transitions to a terminal state (completed/cancelled).
   const [contactCache, setContactCache] = useState<CustomerContact | null>(null);
   const [callBusy, setCallBusy] = useState(false);
+
+  // Stream live GPS to /location/ws once the pro is en-route, through the job,
+  // until it ends. This is the only path that feeds the customer's live map
+  // and the CRM live-pins map during a job — the one-shot en-route/arrived
+  // stamps alone left the pro frozen at their go-online position.
+  const isStreaming =
+    !!detail?.en_route_at &&
+    detail?.status !== 'completed' &&
+    detail?.status !== 'cancelled';
+  useLocationPublisher(isStreaming);
 
   const refresh = useCallback(async () => {
     try {
@@ -159,7 +178,11 @@ export default function JobDetailScreen() {
       }, 5000);
     }
     return () => {
-      if (completeNavTimerRef.current && detail?.status !== 'completed') {
+      // Clear UNCONDITIONALLY. The old guard (`status !== 'completed'`)
+      // left the timer alive when the screen unmounted while still
+      // completed, so it fired 5s later and popped an unrelated screen
+      // (and auto-kicked a pro who merely opened an already-completed job).
+      if (completeNavTimerRef.current) {
         clearTimeout(completeNavTimerRef.current);
         completeNavTimerRef.current = null;
       }
@@ -247,7 +270,7 @@ export default function JobDetailScreen() {
           try {
             const res = await jobComplete(bookingID);
             haptics.success();
-            showSuccess(`₹${Math.round(res.pro_earnings_paise / 100)}`);
+            showSuccess(paiseToRupees(res.pro_earnings_paise));
             await refresh();
           } catch (e: any) {
             showError(e?.message ?? t('common.error'));
@@ -286,30 +309,46 @@ export default function JobDetailScreen() {
     }
   }
 
+  async function performSkip(s: JobServiceLine, reason: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await skipService(bookingID, s.id, reason);
+      await refresh();
+    } catch (e: any) {
+      showError(e?.message ?? t('common.error'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function tapServiceSkip(s: JobServiceLine) {
-    Alert.prompt
-      ? // iOS supports Alert.prompt for free-text input
-        Alert.prompt(
-          t('jobDetail.skipReasonTitle'),
-          undefined,
-          async (reason: string) => {
-            try {
-              await skipService(bookingID, s.id, reason ?? '');
-              await refresh();
-            } catch (e: any) {
-              showError(e?.message ?? t('common.error'));
-            }
-          },
-        )
-      : (async () => {
-          // Android fallback: skip without a reason.
-          try {
-            await skipService(bookingID, s.id, '');
-            await refresh();
-          } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
-          }
-        })();
+    if (busy) return;
+    if (Alert.prompt) {
+      // iOS supports Alert.prompt for free-text input (with its own
+      // Cancel/OK confirm step).
+      Alert.prompt(
+        t('jobDetail.skipReasonTitle'),
+        undefined,
+        (reason: string) => performSkip(s, reason ?? ''),
+      );
+      return;
+    }
+    // Android has no Alert.prompt. Skipping permanently strikes a paid
+    // service line, so require an explicit confirm tap (reason omitted)
+    // instead of firing on a single tap of the small Skip button.
+    Alert.alert(
+      t('jobDetail.skipConfirmTitle'),
+      t('jobDetail.skipConfirmBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('jobDetail.serviceSkip'),
+          style: 'destructive',
+          onPress: () => performSkip(s, ''),
+        },
+      ],
+    );
   }
 
   // Status set that the server-side guard allows. Keep this in sync with
@@ -439,6 +478,7 @@ export default function JobDetailScreen() {
               estimatedJobMinutes: undefined,
               onCancelled: () => navigation.goBack(),
             }),
+          onGoBack: () => { if (navigation.canGoBack()) navigation.goBack(); },
         })}
       </ScrollView>
     </SafeAreaView>
@@ -458,10 +498,27 @@ interface RenderArgs {
   tapServiceComplete: (s: JobServiceLine) => void;
   tapServiceSkip: (s: JobServiceLine) => void;
   onCancelBooking: () => void;
+  onGoBack: () => void;
 }
 
 function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: RenderArgs) {
   const { c, styles, busy, gpsNearby } = args;
+
+  // Cancelled — terminal. The customer (or an admin/leave reassign)
+  // cancelled or reassigned this job. Render a dead-end state instead of
+  // live En-Route/Arrived/Start buttons that all error on tap.
+  if (detail.status === 'cancelled') {
+    return (
+      <View style={styles.summaryCard}>
+        <Feather name="x-circle" size={28} color={c.danger ?? c.text} style={{ alignSelf: 'center', marginBottom: 8 }} />
+        <Text style={[styles.summaryValue, { textAlign: 'center' }]}>{t('jobDetail.cancelledTitle')}</Text>
+        <Text style={[styles.summaryLabel, { textAlign: 'center', marginTop: 4 }]}>{t('jobDetail.cancelledBody')}</Text>
+        <TouchableOpacity style={[styles.primaryBtn, { marginTop: 16 }]} onPress={args.onGoBack}>
+          <Text style={styles.primaryBtnText}>{t('jobDetail.backToJobs')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // Completed — summary.
   if (detail.status === 'completed') {
@@ -480,7 +537,7 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>{t('jobDetail.summaryEarnings')}</Text>
           <Text style={[styles.summaryValue, { color: c.accent }]}>
-            ₹{Math.round((detail.pro_earnings_paise ?? 0) / 100)}
+            {paiseToRupees(detail.pro_earnings_paise ?? 0)}
           </Text>
         </View>
         {detail.customer_rating_pending && (
@@ -589,7 +646,10 @@ function ServiceRow({
     <View style={styles.serviceRow}>
       <View style={{ flex: 1, gap: 4 }}>
         <Text style={[styles.serviceName, isStruck && styles.serviceStruck]}>
-          {service.duration_minutes}min · {service.quantity}×
+          {service.service_name || t('jobDetail.serviceFallbackName')}
+        </Text>
+        <Text style={[styles.serviceMeta, isStruck && styles.serviceStruck]}>
+          {service.duration_minutes}min{service.quantity > 1 ? ` · ×${service.quantity}` : ''}
         </Text>
         {isSkipped && (
           <Text style={styles.skippedTag}>{t('jobDetail.serviceSkippedLabel')}</Text>
@@ -658,6 +718,7 @@ function createStyles(c: ReturnType<typeof useColors>) {
       padding: Spacing.base, borderBottomWidth: 1, borderBottomColor: c.border,
     },
     serviceName: { fontFamily: FontFamily.medium, fontSize: FontSize.base, color: c.text },
+    serviceMeta: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textSecondary },
     serviceStruck: { textDecorationLine: 'line-through', color: c.textMuted },
     skippedTag: { fontFamily: FontFamily.regular, fontSize: FontSize.xs, color: c.textMuted },
     servicePrimary: { backgroundColor: c.accent, paddingHorizontal: Spacing.base, paddingVertical: 6, borderRadius: Radius.md },

@@ -26,8 +26,15 @@ const STATUS_TONE: Record<ConfigStatus, 'success' | 'warning' | 'info' | 'neutra
   archived: 'neutral',
 };
 
+// The stage validator requires page_id, version, min_client_version (semver)
+// and sections. Seed a passing min_client_version and the typed version so a
+// freshly-created draft can actually be staged without hand-editing the JSON.
 const STARTER_CONFIG = (pageId: string, version: string) =>
-  JSON.stringify({ page_id: pageId, version, schema_version: 1, sections: [] }, null, 2);
+  JSON.stringify(
+    { page_id: pageId, version, min_client_version: '1.0.0', schema_version: 1, sections: [] },
+    null,
+    2,
+  );
 
 export function SduiPageDetailPage() {
   const { pageId = '' } = useParams();
@@ -374,7 +381,7 @@ function KillSwitchCard({ pageId }: { pageId: string }) {
             <div className="text-sm font-medium">Kill switch</div>
             <div className="text-xs text-text-secondary">
               {on
-                ? 'Active — clients fall back to the safe baked-in layout for this page.'
+                ? 'Active (stays on until disabled) — clients fall back to the baked-in safe layout. If no safe layout is shipped for this page, clients receive an empty layout.'
                 : 'Off — clients receive the active config.'}
             </div>
           </div>
@@ -399,7 +406,7 @@ function KillSwitchCard({ pageId }: { pageId: string }) {
         onConfirm={() => toggle.mutateAsync()}
         title="Enable kill switch?"
         destructive
-        impact={<span>All clients will immediately stop receiving the active config for <code className="font-mono">{pageId}</code> and fall back to the safe baked-in layout.</span>}
+        impact={<span>All clients will immediately stop receiving the active config for <code className="font-mono">{pageId}</code> and fall back to the baked-in safe layout. If no safe layout is shipped for this page, clients get an empty layout. The switch stays on until you disable it.</span>}
         confirmLabel="Enable"
       />
     </Card>
@@ -473,7 +480,16 @@ function DraftEditor({
   const [json, setJson] = useState(() =>
     config ? JSON.stringify(config.config_json, null, 2) : STARTER_CONFIG(pageId, ''),
   );
+  // Tracks whether the operator has hand-edited the JSON. While false (a new
+  // draft still showing the starter template), we keep the embedded "version"
+  // in sync with the version input so the staged config carries a non-empty
+  // version. Stops syncing the moment they edit the JSON themselves.
+  const [jsonDirty, setJsonDirty] = useState(false);
   const [jsonOk, setJsonOk] = useState(true);
+
+  useEffect(() => {
+    if (!isEdit && !jsonDirty) setJson(STARTER_CONFIG(pageId, version));
+  }, [version, isEdit, jsonDirty, pageId]);
   // ETag captured via getConfig for the optimistic-lock PATCH. Loaded lazily
   // when an existing draft is opened.
   const [etag, setEtag] = useState('');
@@ -494,7 +510,11 @@ function DraftEditor({
       if (isEdit) {
         await sduiApi.patchDraft(
           pageId, config!.version,
-          { config_json: parsed, name, change_notes: changeNotes, experiment_id: experimentId || undefined },
+          // Send experiment_id even when cleared (''): the backend patch only
+          // applies fields that are present, so omitting it (undefined) makes
+          // unlinking a draft from an experiment impossible. '' is mapped to
+          // NULL server-side.
+          { config_json: parsed, name, change_notes: changeNotes, experiment_id: experimentId },
           etag,
         );
       } else {
@@ -532,7 +552,7 @@ function DraftEditor({
         </div>
         <div>
           <label className="block text-xs uppercase tracking-wider text-text-muted mb-1">config_json</label>
-          <LazyJsonEditor value={json} onChange={setJson} onValidate={setJsonOk} />
+          <LazyJsonEditor value={json} onChange={(v) => { setJsonDirty(true); setJson(v); }} onValidate={setJsonOk} />
           {!jsonOk && <p className="text-xs text-danger mt-1">JSON has syntax errors — fix before saving.</p>}
         </div>
         <div className="flex justify-end gap-2 pt-3 border-t border-border">

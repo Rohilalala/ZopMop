@@ -34,20 +34,28 @@ type Payout struct {
 }
 
 type CreateRequest struct {
-	WorkerID    string    `json:"worker_id"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	AmountCents int64     `json:"amount_paise"`
-	Notes       string    `json:"notes"`
+	WorkerID    string `json:"worker_id"`
+	// PeriodStart/PeriodEnd arrive as date-only strings (YYYY-MM-DD) from the
+	// CRM. time.Time would require RFC3339 and 400 before validation, so we
+	// bind strings and parse them in Create.
+	PeriodStart string `json:"period_start"`
+	PeriodEnd   string `json:"period_end"`
+	AmountCents int64  `json:"amount_paise"`
+	Notes       string `json:"notes"`
 }
 
 type Repository struct{ read, write *pgxpool.Pool }
 
-func NewRepository(read, write *pgxpool.Pool) *Repository { return &Repository{read: read, write: write} }
+func NewRepository(read, write *pgxpool.Pool) *Repository {
+	return &Repository{read: read, write: write}
+}
 
 func (r *Repository) List(ctx context.Context, status string, limit, offset int) ([]Payout, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	args := []any{}
 	cond := ""
@@ -92,16 +100,30 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 
 func (r *Repository) Create(ctx context.Context, req CreateRequest) (string, error) {
 	if req.AmountCents <= 0 {
-		return "", errors.New("amount_cents must be > 0")
+		return "", errors.New("amount_paise must be > 0")
+	}
+	start, err := time.Parse("2006-01-02", req.PeriodStart)
+	if err != nil {
+		return "", errors.New("period_start must be YYYY-MM-DD")
+	}
+	end, err := time.Parse("2006-01-02", req.PeriodEnd)
+	if err != nil {
+		return "", errors.New("period_end must be YYYY-MM-DD")
 	}
 	id := ""
-	err := r.write.QueryRow(ctx, `
+	err = r.write.QueryRow(ctx, `
 		INSERT INTO crm_payouts (worker_id, period_start, period_end, amount_cents, notes)
 		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''))
 		RETURNING id::text
-	`, req.WorkerID, req.PeriodStart, req.PeriodEnd, req.AmountCents, req.Notes).Scan(&id)
+	`, req.WorkerID, start, end, req.AmountCents, req.Notes).Scan(&id)
 	return id, err
 }
+
+// ErrNotActionable means the payout row was missing or not in a state the
+// mutation allows (e.g. already paid). Distinct from a real DB error so the
+// handler can return 409 with a human message instead of a garbled
+// "%!w(<nil>)" string from wrapping a nil error.
+var ErrNotActionable = errors.New("payout not found or not in an actionable state")
 
 func (r *Repository) MarkPaid(ctx context.Context, id, externalRef string) error {
 	res, err := r.write.Exec(ctx, `
@@ -109,8 +131,11 @@ func (r *Repository) MarkPaid(ctx context.Context, id, externalRef string) error
 		SET status='paid', paid_at=now(), external_ref=NULLIF($2, ''), updated_at=now()
 		WHERE id = $1::uuid AND status IN ('pending','processing')
 	`, id, externalRef)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("mark paid: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotActionable
 	}
 	return nil
 }
@@ -120,8 +145,11 @@ func (r *Repository) MarkFailed(ctx context.Context, id, notes string) error {
 		UPDATE crm_payouts SET status='failed', notes=NULLIF($2, ''), updated_at=now()
 		WHERE id = $1::uuid AND status IN ('pending','processing')
 	`, id, notes)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotActionable
 	}
 	return nil
 }
@@ -137,9 +165,9 @@ func NewHandler(repo *Repository, recorder *audit.Recorder) *Handler {
 
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/payouts")
-	g.Get("/",            middleware.RequirePermission("payouts.read"), h.List)
-	g.Post("/",           middleware.RequirePermission("payouts.create"), h.Create)
-	g.Post("/:id/paid",   middleware.RequirePermission("payouts.mark_paid"), h.MarkPaid)
+	g.Get("/", middleware.RequirePermission("payouts.read"), h.List)
+	g.Post("/", middleware.RequirePermission("payouts.create"), h.Create)
+	g.Post("/:id/paid", middleware.RequirePermission("payouts.mark_paid"), h.MarkPaid)
 	g.Post("/:id/failed", middleware.RequirePermission("payouts.mark_failed"), h.MarkFailed)
 }
 
@@ -168,22 +196,34 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 }
 
 func (h *Handler) MarkPaid(c *fiber.Ctx) error {
-	var body struct{ ExternalRef string `json:"external_ref"` }
+	var body struct {
+		ExternalRef string `json:"external_ref"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.repo.MarkPaid(c.UserContext(), id, body.ExternalRef); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotActionable) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payout not found or already paid/failed"})
+		}
+		log.Error().Err(err).Str("payout_id", id).Msg("[crm.payouts] mark paid failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "payout.paid", id, nil, body.ExternalRef)
 	return c.JSON(fiber.Map{"ok": true})
 }
 
 func (h *Handler) MarkFailed(c *fiber.Ctx) error {
-	var body struct{ Notes string `json:"notes"` }
+	var body struct {
+		Notes string `json:"notes"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.repo.MarkFailed(c.UserContext(), id, body.Notes); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrNotActionable) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payout not found or already paid/failed"})
+		}
+		log.Error().Err(err).Str("payout_id", id).Msg("[crm.payouts] mark failed failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "payout.failed", id, nil, body.Notes)
 	return c.JSON(fiber.Map{"ok": true})

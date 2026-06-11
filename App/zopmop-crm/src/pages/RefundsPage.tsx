@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { refundsApi, type PaymentMethod, type Refund, type RefundStatus } from '@/api/all';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { Can } from '@/auth/Can';
@@ -78,6 +78,7 @@ export function RefundsPage() {
       </div>
       <Card className="!p-0 overflow-hidden">
         {q.isLoading ? <div className="p-5"><Skeleton className="h-32" /></div> :
+          q.isError ? <ErrorState title="Could not load refunds" onRetry={() => q.refetch()} /> :
           (q.data?.items.length ?? 0) === 0 ? <EmptyState title={`No ${tab.replace(/_/g, ' ')} refunds`} /> :
             <table className="w-full text-sm">
               <thead className="bg-surface-elevated text-text-muted text-xs uppercase tracking-wider">

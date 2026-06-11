@@ -53,3 +53,25 @@ export function EmptyState({
     </div>
   );
 }
+
+// ErrorState — distinct from EmptyState so a failed query doesn't masquerade
+// as "no data". Offers a retry that re-runs the query's refetch.
+export function ErrorState({
+  title = 'Could not load data',
+  body = 'The request failed. This may be a transient error — retry, or check your connection.',
+  onRetry,
+}: {
+  title?: string;
+  body?: ReactNode;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-12 px-6">
+      <h3 className="text-base font-semibold text-danger">{title}</h3>
+      <p className="mt-1 text-sm text-text-secondary max-w-md">{body}</p>
+      {onRetry && (
+        <button className="btn-ghost mt-5" onClick={onRetry}>Retry</button>
+      )}
+    </div>
+  );
+}

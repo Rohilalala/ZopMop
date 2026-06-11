@@ -19,6 +19,7 @@ export interface OfferPayload {
 
 type ShiftEvent =
   | { type: 'zone_approval_granted'; request_id?: string; commitment_id?: string }
+  | { type: 'zone_approval_rejected'; request_id?: string; commitment_id?: string; reason?: string }
   | { type: 'zone_drift_warning'; commitment_id?: string }
   | { type: 'booking_offer'; payload: OfferPayload }
   | { type: 'booking_status_change'; booking_id: string; status?: string };

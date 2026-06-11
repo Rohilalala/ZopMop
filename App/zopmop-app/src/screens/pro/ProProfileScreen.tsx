@@ -20,6 +20,7 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { getCurrentZone, getFortnightProgress, type ZoneInfo, type FortnightProgress } from '../../api/shifts';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 import { t } from '../../i18n';
 
 const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
@@ -47,6 +48,7 @@ function paiseToRupeesShort(p: number): string {
 }
 
 export default function ProProfileScreen() {
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user, signOut } = useAuth();
   const c = useColors();
@@ -96,6 +98,9 @@ export default function ProProfileScreen() {
   }
 
   const onlineH = progress ? Math.round((progress.online_minutes / 60) * 10) / 10 : 0;
+  // Per-pro tunable target from the backend; legacy 80h fallback only if the
+  // field is missing/zero on an older server.
+  const targetH = progress && progress.target_minutes > 0 ? progress.target_minutes / 60 : 80;
   const earnings = progress ? paiseToRupeesShort(progress.projected_pay_paise) : '—';
 
   return (
@@ -133,7 +138,7 @@ export default function ProProfileScreen() {
           <View style={styles.statsRow}>
             <View style={styles.statCell}>
               <Text style={styles.statLabel}>{t('profile.onlineHours')}</Text>
-              <Text style={styles.statValue}>{onlineH} / 80</Text>
+              <Text style={styles.statValue}>{onlineH} / {targetH}</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statCell}>
@@ -144,6 +149,20 @@ export default function ProProfileScreen() {
         </View>
 
         <View style={styles.card}>
+          <SettingsRow
+            colors={c}
+            icon="calendar"
+            label={t('profile.declareLeave')}
+            onPress={() => navigation.navigate('ProDeclareLeave')}
+          />
+          <View style={styles.rowDivider} />
+          <SettingsRow
+            colors={c}
+            icon="clock"
+            label={t('profile.leaveHistory')}
+            onPress={() => navigation.navigate('ProLeaveHistory')}
+          />
+          <View style={styles.rowDivider} />
           <SettingsRow
             colors={c}
             icon="globe"
