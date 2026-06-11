@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZopMop — Spotless, on schedule</title>
+  <meta name="description" content="Premium on-demand home cleaning in Gurugram. Trained, salaried, background-verified pros at your door in 30 minutes." />
+  <meta property="og:title" content="ZopMop — Spotless, on schedule" />
+  <meta property="og:description" content="Premium on-demand home cleaning. Salaried pros, 30-minute slots, hotel-grade shine." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#FAF7F2" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Fragment+Mono&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/style.css" />
+  <script>document.documentElement.classList.remove('no-js');</script>
+</head>
+<body>
+
+  <!-- Preloader -->
+  <div class="preloader" aria-hidden="true">
+    <div class="preloader__inner">
+      <span class="preloader__mark">✦</span>
+      <span class="preloader__count">0</span>
+    </div>
+  </div>
+
+  <!-- Custom cursor (desktop) -->
+  <div class="cursor" aria-hidden="true"></div>
+  <div class="cursor-ring" aria-hidden="true"></div>
+
+  <!-- Grain overlay -->
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- Nav -->
+  <header class="nav" id="nav">
+    <a class="nav__logo" href="#top" data-cursor>Zop<em>Mop</em><span class="nav__spark">✦</span></a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="#services" data-cursor>Services</a>
+      <a href="#why" data-cursor>Why ZopMop</a>
+      <a href="#how" data-cursor>How it works</a>
+    </nav>
+    <a href="#get-app" class="btn btn--small nav__cta" data-cursor data-magnetic>Book a clean</a>
+  </header>
+
+  <main id="top">
+
+    <!-- ============ HERO ============ -->
+    <section class="hero" id="hero">
+      <div class="hero__glow hero__glow--indigo" aria-hidden="true"></div>
+      <div class="hero__glow hero__glow--amber" aria-hidden="true"></div>
+      <canvas class="hero__canvas" id="bubble-canvas" aria-hidden="true"></canvas>
+
+      <div class="hero__content">
+        <p class="hero__kicker reveal-up"><span class="dot"></span>Now serving Orchid Island, Gurugram</p>
+        <h1 class="hero__title">
+          <span class="h-line"><span class="h-line__inner">Spotless,</span></span>
+          <span class="h-line"><span class="h-line__inner"><em>on schedule.</em></span></span>
+        </h1>
+        <p class="hero__sub reveal-up">Trained, salaried cleaning professionals — at your door in a 30-minute window, gone in an hour, leaving nothing behind but shine.</p>
+        <div class="hero__actions reveal-up">
+          <a href="#get-app" class="btn btn--primary" data-cursor data-magnetic>Book a clean <span class="btn__arrow">→</span></a>
+          <a href="#services" class="btn btn--ghost" data-cursor data-magnetic>Explore services</a>
+        </div>
+      </div>
+
+      <div class="hero__scroll-hint reveal-up" aria-hidden="true">
+        <span>Scroll</span>
+        <span class="hero__scroll-line"></span>
+      </div>
+    </section>
+
+    <!-- ============ MARQUEE ============ -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee__track">
+        <span>Salaried pros ✦ 30-minute slots ✦ Background-verified ✦ Transparent pricing ✦ Hotel-grade shine ✦&nbsp;</span><span>Salaried pros ✦ 30-minute slots ✦ Background-verified ✦ Transparent pricing ✦ Hotel-grade shine ✦&nbsp;</span>
+      </div>
+    </div>
+
+    <!-- ============ MANIFESTO ============ -->
+    <section class="manifesto" id="why">
+      <p class="manifesto__label mono">Why ZopMop</p>
+      <p class="manifesto__text" id="manifesto-text">Gig apps send strangers. We send staff — trained for hundreds of hours, salaried, background-verified, and proud of the work. That's why your bathroom ends up looking like a hotel's.</p>
+    </section>
+
+    <!-- ============ SERVICES ============ -->
+    <section class="services" id="services">
+      <div class="services__head">
+        <p class="mono services__label">The menu</p>
+        <h2 class="services__title">Pick your shine.</h2>
+      </div>
+      <div class="services__viewport">
+        <div class="services__track" id="services-track">
+
+          <article class="card" data-cursor>
+            <span class="card__index">01</span>
+            <h3 class="card__name">Deep Home<br/>Reset</h3>
+            <p class="card__desc">Every room, every corner. The clean you photograph.</p>
+            <span class="card__chip">90 min</span>
+          </article>
+
+          <article class="card card--indigo" data-cursor>
+            <span class="card__index">02</span>
+            <h3 class="card__name">Bathroom<br/>Revival</h3>
+            <p class="card__desc">Tiles, taps and grout brought back to showroom white.</p>
+            <span class="card__chip">30 min</span>
+          </article>
+
+          <article class="card" data-cursor>
+            <span class="card__index">03</span>
+            <h3 class="card__name">Kitchen<br/>Degrease</h3>
+            <p class="card__desc">Hob, chimney, counters — oil doesn't stand a chance.</p>
+            <span class="card__chip">60 min</span>
+          </article>
+
+          <article class="card card--amber" data-cursor>
+            <span class="card__index">04</span>
+            <h3 class="card__name">Sofa &amp;<br/>Upholstery</h3>
+            <p class="card__desc">Fabric-safe deep extraction. Like new, minus the smell.</p>
+            <span class="card__chip">60 min</span>
+          </article>
+
+          <article class="card" data-cursor>
+            <span class="card__index">05</span>
+            <h3 class="card__name">Dish &amp; Sink<br/>Rescue</h3>
+            <p class="card__desc">The post-party miracle. Sparkling sink, empty rack.</p>
+            <span class="card__chip">30 min</span>
+          </article>
+
+          <article class="card card--indigo" data-cursor>
+            <span class="card__index">06</span>
+            <h3 class="card__name">Daily<br/>Shine</h3>
+            <p class="card__desc">Mop, dust, reset. Your everyday baseline of clean.</p>
+            <span class="card__chip">30 min</span>
+          </article>
+
+        </div>
+      </div>
+      <p class="services__note mono">Transparent pricing, always in the app. No surge. No haggling.</p>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section class="steps" id="how">
+      <div class="steps__head">
+        <p class="mono steps__label">How it works</p>
+        <h2 class="steps__title">Three taps to spotless.</h2>
+      </div>
+
+      <div class="steps__stack">
+        <div class="step">
+          <span class="step__num">01</span>
+          <div class="step__body">
+            <h3>Pick your slot</h3>
+            <p>30-minute windows, today or this week. Real capacity, no overbooking — what you see is who shows up.</p>
+          </div>
+        </div>
+        <div class="step step--indigo">
+          <span class="step__num">02</span>
+          <div class="step__body">
+            <h3>Your pro arrives</h3>
+            <p>Uniformed, verified and on time. Track them live from dispatch to your doorbell.</p>
+          </div>
+        </div>
+        <div class="step step--ink">
+          <span class="step__num">03</span>
+          <div class="step__body">
+            <h3>Walk into shine</h3>
+            <p>Rate the clean, rebook in two taps. Same pro again, if you loved them.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STATS ============ -->
+    <section class="stats">
+      <div class="stat">
+        <span class="stat__num"><span data-count="100">0</span>%</span>
+        <span class="stat__label">salaried pros</span>
+      </div>
+      <div class="stat">
+        <span class="stat__num"><span data-count="30">0</span><small>min</small></span>
+        <span class="stat__label">slot precision</span>
+      </div>
+      <div class="stat">
+        <span class="stat__num"><span data-count="60">0</span><small>min</small></span>
+        <span class="stat__label">average clean</span>
+      </div>
+      <div class="stat">
+        <span class="stat__num"><span data-count="0">0</span></span>
+        <span class="stat__label">gig workers. ever.</span>
+      </div>
+    </section>
+
+    <!-- ============ QUOTE ============ -->
+    <section class="quote">
+      <p class="quote__mark" aria-hidden="true">“</p>
+      <blockquote class="quote__text">We built ZopMop because a great clean shouldn't depend on luck — it should arrive on a schedule.</blockquote>
+      <cite class="quote__cite mono">— the founders, Gurugram</cite>
+    </section>
+
+    <!-- ============ CTA ============ -->
+    <section class="cta" id="get-app">
+      <h2 class="cta__title">
+        <span class="h-line"><span class="h-line__inner">Your home,</span></span>
+        <span class="h-line"><span class="h-line__inner"><em>handled.</em></span></span>
+      </h2>
+      <p class="cta__sub">Live now at Orchid Island, Gurugram. Your society could be next.</p>
+      <div class="cta__actions">
+        <a href="#" class="btn btn--amber" data-cursor data-magnetic>Get the app <span class="btn__arrow">→</span></a>
+        <a href="#" class="btn btn--ghost-light" data-cursor data-magnetic>Talk to us</a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span class="footer__logo">Zop<em>Mop</em> ✦</span>
+    <span class="footer__copy mono">© 2026 ZopMop · Gurugram, India</span>
+    <a href="#top" class="footer__top mono" data-cursor>Back to top ↑</a>
+  </footer>
+
+  <!-- Libs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js" integrity="sha384-Z3REaz79l2IaAZqJsSABtTbhjgOUYyV3p90XNnAPCSHg3EMTz1fouunq9WZRtj3d" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/lenis@1.1.18/dist/lenis.min.js" integrity="sha384-tKsJDT6PlUI0pSBt9/sBKJluKgA19/a6mBrDsZaXotLB4ZYfMGM6xt6/WgGpYhTm" crossorigin="anonymous"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
