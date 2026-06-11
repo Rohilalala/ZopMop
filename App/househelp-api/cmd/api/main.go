@@ -362,11 +362,13 @@ func main() {
 	configService := config_manager.NewService(configRepo, rdb)
 	configHandler := config_manager.NewHandler(configService)
 
-	// Matching engine + batcher (instant bookings only).
+	// Matching engine. The 5s batcher is retired by the unified JIT assigner
+	// (spec §9) — it is no longer started. The instance is still constructed so
+	// booking.NewService's signature is satisfied; TODO(T5): drop the constructor
+	// arg and the matchEngine.SetMapsClient batch-filter wiring once the booking
+	// service stops enqueueing instant bookings.
 	matchEngine := matching.NewEngine(dbPool, rdb, configService)
 	matchBatcher := matching.NewBatcher(matchEngine, 5*time.Second)
-	matchBatcher.Start()
-	defer matchBatcher.Stop()
 
 	// Google Maps client. Required: instant-booking eligibility is decided
 	// purely by the walking-time filter, which calls the Distance Matrix API.
@@ -645,17 +647,22 @@ func main() {
 	referralsGroup := api.Group("/referrals", authMiddleware, authLimiter, dbBoundLimiter)
 	referralHandler.RegisterRoutes(referralsGroup)
 
-	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
-	//   - ScheduledDispatcher: nightly 22:00 IST batch
-	//   - StealthDispatcher:   per-minute after-8pm bookings
-	//   - RebookScanner:            per-5-minute "pros are back" nudge
-	//   - PendingActionSweeper:     per-5-minute stuck-booking auto-cancel
+	// Dispatch crons (unified JIT model — spec §5.1, §9).
+	//   - AssignerCron:  60s tick, claims due bookings + force-assigns; the
+	//     no-pro terminal path cancels + refunds at slot start. Replaces the
+	//     retired nightly ScheduledDispatcher, per-minute StealthDispatcher,
+	//     5s batcher, and the pending-action sweeper.
+	//   - RebookScanner: per-5-minute "pros are back" nudge (kept).
 	cronCtx, cancelCrons := context.WithCancel(context.Background())
+	assigner := matching.NewAssigner(
+		dbPool, rdb, notificationService, expertsService, mapsClient,
+		func(ctx context.Context) matching.DispatchConfig {
+			return matching.LoadDispatchConfig(ctx, configService)
+		},
+	)
+	go matching.NewAssignerCron(assigner, walletRepo).Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
-	go matching.NewScheduledDispatcher(dispatcher).Start(cronCtx)
-	go matching.NewStealthDispatcher(dispatcher).Start(cronCtx)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
-	go booking.NewPendingActionSweeper(dbPool, walletRepo, notificationService).Start(cronCtx)
 	defer cancelCrons()
 
 	// Device-token routes (requires JWT). New per-device push registration —

@@ -159,37 +159,14 @@ func (s *PendingActionSweeper) claimAndCancel(ctx context.Context) (sweepResult,
 		}
 	}
 
-	// Route refund if money was actually collected.
-	paid := paymentStatus != nil && *paymentStatus == "paid"
+	// Route refund if money was actually collected. Shared rails so the unified
+	// assigner's no-pro terminal path and this sweeper agree on wallet vs
+	// pending_refunds behaviour.
 	refundAmount := amountPaise - discountPaise
-	if paid && refundAmount > 0 && paymentMethod != nil {
-		switch *paymentMethod {
-		case "wallet":
-			if _, wErr := s.walletRepo.ApplyTransactionTx(ctx, tx, wallet.WalletTx{
-				UserID:      customerID,
-				AmountPaise: refundAmount,
-				Kind:        wallet.KindRefundCredit,
-				BookingID:   &bookingID,
-				Note:        "Auto-cancelled: no response to keep-looking prompt",
-			}); wErr != nil {
-				return sweepResult{}, false, wErr
-			}
-		case "cashfree":
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO pending_refunds
-				  (user_id, amount_cents, source, source_ref,
-				   booking_id, payment_method, payment_id, status)
-				VALUES ($1::uuid, $2, 'booking_cancellation', $3::text,
-				        $3::uuid, $4, $5, 'pending')
-				ON CONFLICT (booking_id)
-				  WHERE booking_id IS NOT NULL
-				    AND status IN ('pending','approved','processed','processed_manual')
-				DO NOTHING
-			`, customerID, refundAmount, bookingID, paymentMethod, paymentID); err != nil {
-				return sweepResult{}, false, err
-			}
-		}
-		// cash / null / unknown: no money movement needed.
+	if err := RecordNoProRefund(ctx, tx, s.walletRepo, customerID, bookingID,
+		paymentMethod, paymentID, paymentStatus, refundAmount,
+		"Auto-cancelled: no response to keep-looking prompt"); err != nil {
+		return sweepResult{}, false, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
