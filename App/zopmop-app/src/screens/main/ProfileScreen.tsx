@@ -23,7 +23,7 @@ import { useAnimatedColor } from '../../theme/useAnimatedTheme';
 import { AppSwitch } from '../../components/ui/AppSwitch';
 import { SkeletonBox } from '../../components/SkeletonBox';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { AppIcon } from '../../components/ui/AppIcon';
 import Svg, {
   Defs,
   LinearGradient as SvgLinearGradient,
@@ -214,7 +214,7 @@ export default function ProfileScreen() {
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topbar}>
           <ARowTouchable style={[s.iconBtn, iconBtnStyle]} onPress={() => navigation.goBack()} activeOpacity={0.75} hitSlop={10}>
-            <Feather name="chevron-left" size={18} color={c.text} />
+            <AppIcon name="chevron-left" size={18} color={c.text} />
           </ARowTouchable>
           <ARowTouchable
             style={[s.iconBtn, iconBtnStyle]}
@@ -222,7 +222,7 @@ export default function ProfileScreen() {
             activeOpacity={0.75}
             hitSlop={10}
           >
-            <Feather name="help-circle" size={16} color={c.text} />
+            <AppIcon name="help-circle" size={16} color={c.text} />
           </ARowTouchable>
         </View>
 
@@ -246,7 +246,7 @@ export default function ProfileScreen() {
           <SectionHeader>Preferences</SectionHeader>
           <Card>
             <Row
-              icon={<Feather name="moon" size={17} color={C.amber} />}
+              icon={<AppIcon name="moon" size={17} color={C.amber} />}
               label="Appearance"
               meta={darkOn ? 'Dark mode' : 'Light mode'}
               right={<AppSwitch value={darkOn} onValueChange={() => toggleTheme()} />}
@@ -254,7 +254,7 @@ export default function ProfileScreen() {
             {/* Reminder timing is locally toggled today; meta hidden until
                 backend exposes a reminder-prefs endpoint (S8). */}
             <Row
-              icon={<Feather name="bell" size={17} color={C.amber} />}
+              icon={<AppIcon name="bell" size={17} color={C.amber} />}
               label="Reminders"
               right={<AppSwitch value={remindersOn} onValueChange={setRemindersOn} />}
               last
@@ -264,21 +264,21 @@ export default function ProfileScreen() {
           <SectionHeader>Account</SectionHeader>
           <Card>
             <Row
-              icon={<Feather name="map-pin" size={17} color={C.amber} />}
+              icon={<AppIcon name="map-pin" size={17} color={C.amber} />}
               label="Saved Addresses"
               meta={addressMeta}
               chev
               onPress={() => navigation.navigate('Addresses')}
             />
             <Row
-              icon={<Feather name="home" size={17} color={C.amber} />}
+              icon={<AppIcon name="home" size={17} color={C.amber} />}
               label="Roomies"
               meta={roomiesMeta}
               chev
               onPress={() => navigation.navigate('RoomiesSetup')}
             />
             <Row
-              icon={<Feather name="users" size={17} color={C.amber} />}
+              icon={<AppIcon name="users" size={17} color={C.amber} />}
               label="Your Experts"
               meta={expertsMeta}
               chev
@@ -286,7 +286,7 @@ export default function ProfileScreen() {
             />
             {/* Notifications meta hidden until /me/notification-prefs ships (S7). */}
             <Row
-              icon={<Feather name="bell" size={17} color={C.amber} />}
+              icon={<AppIcon name="bell" size={17} color={C.amber} />}
               label="Notifications"
               chev
               onPress={() => showInfo("We'll let you know when channel preferences are configurable.", { title: 'Notifications' })}
@@ -298,21 +298,21 @@ export default function ProfileScreen() {
           <Card>
             <Row
               muted
-              icon={<Feather name="info" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="info" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="About ZopMop"
               chev
               onPress={() => showInfo(`ZopMop · v${APP_VERSION}\nHome, handled.`, { title: 'About ZopMop' })}
             />
             <Row
               muted
-              icon={<Feather name="file-text" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="file-text" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Terms of Service"
               chev
               onPress={() => Linking.openURL(TERMS_URL).catch(() => showError('Could not open Terms of Service.', { title: 'Terms' }))}
             />
             <Row
               muted
-              icon={<Feather name="shield" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
+              icon={<AppIcon name="shield" size={17} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(13,13,15,0.55)'} />}
               label="Privacy Policy"
               chev
               onPress={() => Linking.openURL(PRIVACY_POLICY_URL).catch(() => showError('Could not open Privacy Policy.', { title: 'Privacy' }))}
@@ -322,7 +322,7 @@ export default function ProfileScreen() {
 
           <View style={s.danger}>
             <TouchableOpacity style={s.logoutBtn} activeOpacity={0.85} onPress={handleLogout}>
-              <Feather name="log-out" size={16} color={C.danger} />
+              <AppIcon name="log-out" size={16} color={C.danger} />
               <Text style={s.logoutText}>Log out</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.deleteBtn} activeOpacity={0.7} onPress={handleDelete}>
@@ -393,7 +393,7 @@ function HeroCard({
             ZopMop · {roleLabel(role)}
           </Text>
           <TouchableOpacity onPress={onEdit} activeOpacity={0.75} hitSlop={12} style={s.heroEdit}>
-            <Feather name="edit-2" size={13} color={C.white} />
+            <AppIcon name="edit-2" size={13} color={C.white} />
           </TouchableOpacity>
         </View>
 
@@ -460,25 +460,25 @@ function ActionRail({ navigation }: { navigation: Nav }) {
     {
       id: 'bookings',
       label: 'Bookings',
-      icon: <Feather name="calendar" size={22} color={C.amber} />,
+      icon: <AppIcon name="calendar" size={22} color={C.amber} />,
       go: () => navigation.navigate('Bookings'),
     },
     {
       id: 'wallet',
       label: 'Wallet',
-      icon: <Feather name="credit-card" size={22} color={C.amber} />,
+      icon: <AppIcon name="credit-card" size={22} color={C.amber} />,
       go: () => navigation.navigate('Wallet'),
     },
     {
       id: 'offers',
       label: 'Offers',
-      icon: <Feather name="tag" size={22} color={C.amber} />,
+      icon: <AppIcon name="tag" size={22} color={C.amber} />,
       go: () => navigation.navigate('Offers'),
     },
     {
       id: 'help',
       label: 'Help',
-      icon: <Feather name="help-circle" size={22} color={C.amber} />,
+      icon: <AppIcon name="help-circle" size={22} color={C.amber} />,
       go: () => navigation.navigate('HelpSupport'),
     },
   ];
@@ -527,7 +527,7 @@ function ReferralTicket({ onPress }: { onPress: () => void }) {
       <View style={s.ticketDash} />
       <View style={s.ticketRight}>
         <View style={s.ticketCta}>
-          <Feather name="gift" size={20} color={C.amberHi} />
+          <AppIcon name="gift" size={20} color={C.amberHi} />
         </View>
         <Text style={s.ticketCtaLabel}>SHARE</Text>
       </View>
@@ -597,7 +597,7 @@ function Row({
         {!!meta && <Reanimated.Text style={[s.rowMeta, metaColor]} numberOfLines={1}>{meta}</Reanimated.Text>}
       </View>
       {right}
-      {chev && <Feather name="chevron-right" size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.50)'} />}
+      {chev && <AppIcon name="chevron-right" size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.50)'} />}
     </Comp>
   );
 }
@@ -657,7 +657,7 @@ function EditProfileModal({
           <View style={s.sheetHeader}>
             <Text style={s.sheetTitle}>Edit profile</Text>
             <TouchableOpacity style={s.sheetClose} onPress={onClose} hitSlop={10} activeOpacity={0.7}>
-              <Feather name="x" size={18} color="rgba(255,255,255,0.6)" />
+              <AppIcon name="x" size={18} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
           </View>
 
@@ -669,7 +669,7 @@ function EditProfileModal({
                 activeOpacity={1}
                 onPress={() => nameRef.current?.focus()}
               >
-                <Feather name="user" size={18} color="rgba(255,255,255,0.5)" />
+                <AppIcon name="user" size={18} color="rgba(255,255,255,0.5)" />
                 <TextInput
                   ref={nameRef}
                   style={s.fieldInput}
@@ -684,7 +684,7 @@ function EditProfileModal({
                 />
                 {name.length > 0 && (
                   <TouchableOpacity onPress={() => setName('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Feather name="x-circle" size={18} color="rgba(255,255,255,0.5)" />
+                    <AppIcon name="x-circle" size={18} color="rgba(255,255,255,0.5)" />
                   </TouchableOpacity>
                 )}
               </TouchableOpacity>
@@ -694,9 +694,9 @@ function EditProfileModal({
             <View style={{ marginBottom: 16 }}>
               <Text style={s.fieldLabel}>Mobile</Text>
               <View style={[s.fieldCard, s.fieldCardLocked]}>
-                <Feather name="phone" size={18} color="rgba(255,255,255,0.4)" />
+                <AppIcon name="phone" size={18} color="rgba(255,255,255,0.4)" />
                 <Text style={s.fieldInputLocked}>{formatPhone(phone)}</Text>
-                <Feather name="lock" size={14} color="rgba(255,255,255,0.4)" />
+                <AppIcon name="lock" size={14} color="rgba(255,255,255,0.4)" />
               </View>
               <Text style={s.fieldHint}>Phone number can't be changed.</Text>
             </View>

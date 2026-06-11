@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, type TextStyle } from 'react-native';
+import { View, Text, Platform, type TextStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -8,6 +8,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { useTheme } from '../../context/ThemeContext';
 import { PressFx } from '../ui/PressFx';
+import { BlurView } from 'expo-blur';
+import { liquidGlass, GlassView } from '../ui/LiquidGlass';
 import type { HeaderPromoData, SduiAction } from '../../sdui/types';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
@@ -42,15 +44,45 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
   const locationTextColor = isDark ? '#FFFFFF' : c.text;
   const chevronColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.35)';
 
-  // Earn pill: amber-tinted on dark, inverted (dark bg + amber text) on light
-  const earnBg = isDark ? 'rgba(245,163,0,0.12)' : '#0D0D0F';
-  const earnBorder = isDark ? 'rgba(245,163,0,0.3)' : '#0D0D0F';
+  // Earn pill: borderless frosted-blur button — content behind simply blurs
+  // (BlurView clipped to the pill), amber text on top.
+  const earnBg = 'transparent';
   const earnTextColor = '#F5A300';
 
   // Household pill reuses the same inversion logic
-  const householdBg = isDark ? 'rgba(245,163,0,0.12)' : 'rgba(13,13,15,0.06)';
-  const householdBorder = isDark ? 'rgba(245,163,0,0.3)' : 'rgba(13,13,15,0.12)';
+  const householdBg = liquidGlass ? 'transparent' : isDark ? 'rgba(245,163,0,0.12)' : 'rgba(13,13,15,0.06)';
+  const householdBorder = liquidGlass ? 'transparent' : isDark ? 'rgba(245,163,0,0.3)' : 'rgba(13,13,15,0.12)';
   const householdTextColor = isDark ? '#F5A300' : c.text;
+
+  // Amber-tinted glass for the brand pills. Subtle tint so the glass still
+  // reads as glass; text stays the brand amber.
+  const pillGlass = (radius: number) =>
+    liquidGlass ? (
+      <GlassView
+        glassEffectStyle="regular"
+        tintColor={isDark ? 'rgba(245,163,0,0.16)' : 'rgba(245,163,0,0.22)'}
+        style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0, bottom: 0,
+          borderRadius: radius,
+        }}
+      />
+    ) : null;
+
+  // Frosted blur for the earn button — whatever scrolls behind just blurs.
+  // No rim, no border: BlurView clipped to the pill radius.
+  const clearGlass = (radius: number) => (
+    <BlurView
+      intensity={40}
+      tint={isDark ? 'dark' : 'light'}
+      style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        borderRadius: radius,
+        overflow: 'hidden',
+      }}
+    />
+  );
 
   return (
     <View
@@ -107,6 +139,7 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
               borderColor: householdBorder,
             }}
           >
+            {pillGlass(999)}
             <Text style={[fontBold, { fontSize: 11, color: householdTextColor }]}>Household</Text>
           </PressFx>
         )}
@@ -122,10 +155,9 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
                 paddingHorizontal: 12,
                 borderRadius: 18,
                 backgroundColor: earnBg,
-                borderWidth: 1,
-                borderColor: earnBorder,
               }}
             >
+              {clearGlass(18)}
               <Feather name="plus-circle" size={12} color={earnTextColor} />
               <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>
                 {promo.amount_label ? `${promo.label} ${promo.amount_label}` : promo.label}
@@ -143,14 +175,16 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
               paddingHorizontal: 12,
               borderRadius: 18,
               backgroundColor: earnBg,
-              borderWidth: 1,
-              borderColor: earnBorder,
             }}
           >
+            {clearGlass(18)}
             <Feather name="plus-circle" size={12} color={earnTextColor} />
             <Text style={[fontBold, { fontSize: 12, color: earnTextColor }]}>Earn ₹150</Text>
           </PressFx>
         )}
+        {/* iOS reaches Profile via its native tab; the top-right avatar is
+            kept Android-only to avoid a redundant entry point there. */}
+        {Platform.OS !== 'ios' && (
         <PressFx
           onPress={() => navigation.navigate('Profile')}
           style={{
@@ -173,6 +207,7 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
             {initialsOf(user?.name)}
           </Text>
         </PressFx>
+        )}
       </View>
     </View>
   );

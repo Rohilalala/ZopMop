@@ -18,6 +18,7 @@ import Svg, {
   Stop,
 } from 'react-native-svg';
 import { useTheme } from '../../context/ThemeContext';
+import { liquidGlass, GlassView } from '../ui/LiquidGlass';
 
 type Props = {
   radius?: number;
@@ -29,6 +30,38 @@ type Props = {
 
 export function GlassCard({ radius = 18, style, hero = false, children }: Props) {
   const { isDark } = useTheme();
+
+  /* ── iOS 26+: real Apple Liquid Glass. The native effect supplies fill,
+     refraction and specular edge itself, so ALL the hand-built layers
+     (SVG gradient fill, sheen, bloom, hairline) are skipped — only the
+     drop shadow stays, since UIGlassEffect doesn't ship one. ── */
+  if (liquidGlass) {
+    return (
+      <View
+        style={[
+          {
+            borderRadius: radius,
+            shadowColor: isDark ? '#000' : 'rgba(100,60,0,1)',
+            shadowOffset: { width: 0, height: hero ? 16 : 6 },
+            shadowOpacity: isDark ? (hero ? 0.45 : 0.25) : 0.10,
+            shadowRadius: hero ? 40 : 18,
+            elevation: hero ? 14 : 8,
+          },
+          style,
+        ]}
+      >
+        <GlassView
+          glassEffectStyle="regular"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            borderRadius: radius,
+          }}
+        />
+        {children}
+      </View>
+    );
+  }
 
   /* ── light / non-hero: pure elevated white card, no SVG at all ── */
   if (!isDark && !hero) {

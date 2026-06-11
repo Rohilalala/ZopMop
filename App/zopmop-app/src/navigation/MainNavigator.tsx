@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../types/navigation';
 import { BottomTabBar } from '../components/home/BottomTabBar';
@@ -30,6 +30,7 @@ import JobOfferScreen from '../screens/pro/JobOfferScreen';
 import JobDetailScreen from '../screens/pro/JobDetailScreen';
 import ProNavigator from './ProNavigator';
 import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
+import { IosZopButton } from '../components/home/IosZopButton';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
 import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
@@ -278,7 +279,9 @@ export default function MainNavigator() {
           options={{ gestureEnabled: false, animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
-      <PersistentTabBar />
+      {/* iOS: native UITabBar (TabsNavigator) + an independent floating Zop
+          button. Android: the custom branded bar (Zop mascot lives in it). */}
+      {Platform.OS === 'ios' ? <IosZopButton /> : <PersistentTabBar />}
       <ZoneDriftOverlay />
       </View>
     </CartProvider>
