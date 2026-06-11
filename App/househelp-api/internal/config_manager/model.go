@@ -43,12 +43,19 @@ const (
 	ConfigBookingMaxActivePerCustomer      = "booking.max_active_per_customer"
 	ConfigBookingMaxActivePerHelper        = "booking.max_active_per_helper"
 
+	// Dispatch (unified slot dispatch — spec §2).
+	ConfigDispatchLeadMin           = "dispatch.lead_min"
+	ConfigDispatchTravelBufferMin   = "dispatch.travel_buffer_min"
+	ConfigDispatchAsapEtaPadMin     = "dispatch.asap_eta_pad_min"
+	ConfigDispatchAsapMaxPromiseMin = "dispatch.asap_max_promise_min"
+	ConfigDispatchMinSlotLeadMin    = "dispatch.min_slot_lead_min"
+
 	// App.
-	ConfigAppMaintenanceMode       = "app.maintenance_mode"
-	ConfigAppMinVersionIOS         = "app.min_app_version_ios"
-	ConfigAppMinVersionAndroid     = "app.min_app_version_android"
-	ConfigAppSupportPhone          = "app.support_phone"
-	ConfigAppSupportEmail          = "app.support_email"
+	ConfigAppMaintenanceMode   = "app.maintenance_mode"
+	ConfigAppMinVersionIOS     = "app.min_app_version_ios"
+	ConfigAppMinVersionAndroid = "app.min_app_version_android"
+	ConfigAppSupportPhone      = "app.support_phone"
+	ConfigAppSupportEmail      = "app.support_email"
 
 	// Helper.
 	ConfigHelperMinRatingToAppear = "helper.min_rating_to_appear"
@@ -65,6 +72,11 @@ var DefaultConfigs = map[string]AppConfig{
 	ConfigBookingCancellationWindowMinutes: {Key: ConfigBookingCancellationWindowMinutes, Value: "5", ValueType: "int", Description: "Free cancellation window in minutes"},
 	ConfigBookingMaxActivePerCustomer:      {Key: ConfigBookingMaxActivePerCustomer, Value: "2", ValueType: "int", Description: "Max simultaneous bookings per customer"},
 	ConfigBookingMaxActivePerHelper:        {Key: ConfigBookingMaxActivePerHelper, Value: "3", ValueType: "int", Description: "Max simultaneous bookings per helper"},
+	ConfigDispatchLeadMin:                  {Key: ConfigDispatchLeadMin, Value: "30", ValueType: "int", Description: "Minutes before scheduled_time that assignment fires"},
+	ConfigDispatchTravelBufferMin:          {Key: ConfigDispatchTravelBufferMin, Value: "15", ValueType: "int", Description: "Planning travel buffer used in window math and shift-runway checks"},
+	ConfigDispatchAsapEtaPadMin:            {Key: ConfigDispatchAsapEtaPadMin, Value: "5", ValueType: "int", Description: "Pad added to walking ETA for the customer-facing arrival promise"},
+	ConfigDispatchAsapMaxPromiseMin:        {Key: ConfigDispatchAsapMaxPromiseMin, Value: "15", ValueType: "int", Description: "Max promise for ASAP; pros whose ETA+pad exceeds this are ineligible"},
+	ConfigDispatchMinSlotLeadMin:           {Key: ConfigDispatchMinSlotLeadMin, Value: "45", ValueType: "int", Description: "Minimum lead before a regular slot is bookable (= lead + travel buffer)"},
 	ConfigAppMaintenanceMode:               {Key: ConfigAppMaintenanceMode, Value: "false", ValueType: "bool", Description: "Show maintenance screen to all users"},
 	ConfigAppMinVersionIOS:                 {Key: ConfigAppMinVersionIOS, Value: "1.0.0", ValueType: "string", Description: "Minimum supported iOS app version"},
 	ConfigAppMinVersionAndroid:             {Key: ConfigAppMinVersionAndroid, Value: "1.0.0", ValueType: "string", Description: "Minimum supported Android app version"},
