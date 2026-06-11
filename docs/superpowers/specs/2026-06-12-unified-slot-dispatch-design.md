@@ -64,9 +64,13 @@ Today the system has three booking pipelines (instant batcher, nightly scheduled
 
 ### 5.2 Candidate ordering
 1. Customer's preferred pros (existing `experts.PreferredHelperIDs`, oldest relationship first).
-2. General pool, locality-filtered; **nearest-first by live location** when available (Redis geo), else shuffled.
+2. General pool, locality-filtered. Among eligible pros, order by:
+   1. **Shift ending soonest** (spend expiring capacity first — preserves flexible pros for later bookings; closes most of greedy assignment's "capacity stealing" failure mode for free),
+   2. then **nearest-first by live location** (Redis geo) when available, else random.
 
 ### 5.3 Per-candidate eligibility (all must pass)
+
+Eligibility for the WHOLE candidate pool is computed in **one set-based SQL query** (joins evaluate every row of the matrix below for all candidates at once, returning ranked survivors) — not one round-trip per candidate. Only the travel-feasibility check runs per-candidate afterwards, in §5.2 order, stopping at the first pass.
 | Check | Rule |
 |---|---|
 | Account | not banned/deleted, `approval_status='approved'` |
@@ -103,6 +107,7 @@ RETURNING customer_id
 | Shift runway | `duration + travelBufferMin` |
 | Dispatch lead | `dispatchLeadMin = 30` = travel + breathing room, verified per-pro with real ETA at assignment |
 | Maps quota | ASAP ≈ 1 call per candidate until one qualifies (nearest-first → usually 1–3); slot = 1 per assignment; fail-open on error |
+| ETA cache | in-process **LRU with TTL (~2 min)** keyed `(pro geohash bucket, booking address)` — pros barely move between ticks, so repeat candidate checks are cache hits instead of Maps calls |
 
 ## 7. Post-assignment changes
 
@@ -143,6 +148,14 @@ pending ──(assigner)──→ accepted ──→ in_progress ──→ compl
 
 - New migrations start at **131** (audit branch holds 127–130): slotcap gating objects (renumbered from branch's 112), plus any config seeds for §2 keys.
 - No destructive schema changes: `is_stealth_instant`, `fire_at`, `time_slots` counters, `pending_customer_action` enum value all remain for historical rows.
+
+### 11.1 Indexes (the compute model)
+All hot dispatch paths are index probes, not scans:
+- **Claim scan** (every 60 s): partial B-tree `ON bookings (scheduled_time) WHERE status='pending' AND helper_id IS NULL` — the index contains only unassigned rows; the DB index IS the dispatcher's priority queue, persistent and crash-safe.
+- **Clash check** (per pro × window): GiST **`tstzrange` index** `ON bookings USING gist (helper_id, tstzrange(scheduled_time, scheduled_time + (total_duration_minutes + 15) * interval '1 minute'))` — a real interval tree; overlap (`&&`) becomes one O(log n) probe instead of per-row date math.
+- **Capacity recount** (per locality × window): same range-index approach keyed by locality (extends slotcap's partial index).
+- **Nearest pro:** Redis GEO (geohash sorted set) — already in place.
+These four + the single set-based eligibility query (§5.3) and the ETA cache (§6) make a dispatch tick a handful of index probes and at most a few Maps calls.
 
 ## 12. Edge cases
 
