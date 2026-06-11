@@ -31,10 +31,22 @@
 </head>
 <body>
 
+  <!-- Zop body shape, shared by every Zop instance (assets/zop/zop-body.svg) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="zop-body" viewBox="0 0 395.32 395.32">
+      <path d="M178.1,26.44c1.39-5.53,10.07-5.53,11.46,0,24.18,96.14,68.9,141.13,165.61,165.5,5.53,1.39,5.53,10.05,0,11.44-96.73,24.37-141.45,69.36-165.61,165.5-1.39,5.53-10.07,5.53-11.46,0-24.18-96.14-68.9-141.15-165.59-165.5-5.53-1.39-5.53-10.05,0-11.44,96.72-24.37,141.44-69.36,165.6-165.5h-.01Z" fill="#FFBA03"/>
+    </symbol>
+  </svg>
+
   <!-- Preloader -->
   <div class="preloader" aria-hidden="true">
     <div class="preloader__inner">
-      <span class="preloader__mark">✦</span>
+      <svg class="preloader__zop" viewBox="0 0 395.32 395.32" aria-hidden="true">
+        <use href="#zop-body"/>
+        <path d="M108 138 Q 128 110 148 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        <path d="M168 138 Q 188 110 208 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        <path d="M120 195 Q 168 240 220 195" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+      </svg>
       <span class="preloader__count">0</span>
     </div>
   </div>
@@ -75,7 +87,7 @@
         <p class="hero__kicker reveal-up"><span class="dot"></span>Coming Soon · Gurugram first</p>
         <h1 class="hero__title">
           <span class="h-line"><span class="h-line__inner">Home,</span></span>
-          <span class="h-line"><span class="h-line__inner"><em>handled.</em></span></span>
+          <span class="h-line"><span class="h-line__inner"><em>handled.</em><span class="zop-anchor" id="zop-anchor" aria-hidden="true"></span></span></span>
         </h1>
         <p class="hero__sub reveal-up">On-demand sweeping &amp; mopping, dishes, kitchen prep, bathroom cleaning, window cleaning, balcony, plant care and more, booked in 60 seconds, tracked in real time, billed transparently. The household app you'll actually open every day.</p>
         <div class="hero__actions reveal-up">
@@ -243,7 +255,12 @@
 
     <!-- ============ QUOTE / MASCOT ============ -->
     <section class="quote">
-      <p class="quote__mark" aria-hidden="true">“</p>
+      <svg class="quote__zop" viewBox="0 0 395.32 395.32" aria-hidden="true">
+        <use href="#zop-body"/>
+        <path d="M128 115 C 117 105, 102 117, 117 132 L 128 144 L 139 132 C 154 117, 139 105, 128 115 Z" fill="#E63946"/>
+        <path d="M188 115 C 177 105, 162 117, 177 132 L 188 144 L 199 132 C 214 117, 199 105, 188 115 Z" fill="#E63946"/>
+        <path d="M125 200 Q 168 235 215 200" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+      </svg>
       <blockquote class="quote__text">Home's a mess? Zop's obsessed.</blockquote>
       <cite class="quote__cite mono">Meet Zop — he lives for the job. Yours, specifically.</cite>
     </section>
@@ -263,6 +280,79 @@
     </section>
 
   </main>
+
+  <!-- ============ ZOP — he runs this page ============ -->
+  <div class="zop" id="zop" role="button" tabindex="0" aria-label="Zop, the ZopMop mascot">
+    <div class="zop__bubble mono" id="zop-bubble"></div>
+    <div class="zop__zzz" id="zop-zzz" aria-hidden="true"><span>z</span><span>z</span><span>z</span></div>
+    <div class="zop__bob" id="zop-bob">
+      <svg class="zop__svg" id="zop-svg" viewBox="0 0 395.32 395.32">
+        <use href="#zop-body"/>
+        <!-- faces: assets/zop/*.svg, shared coordinate space -->
+        <g class="zop-face" data-face="default">
+          <path d="M183.12,99.4c-4.12,10.16-11.91,36.67-10.04,61.34" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M137.45,99.4c-4.12,10.16-11.91,36.67-10.04,61.34" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M133.73,217.5c49.7-1.76,78.83-17.91,100.22-35.07" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="blink" style="display:none">
+          <path d="M108 128 Q 128 152 148 128" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M168 128 Q 188 152 208 128" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M133.73,217.5c49.7-1.76,78.83-17.91,100.22-35.07" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="happy" style="display:none">
+          <path d="M108 138 Q 128 110 148 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M168 138 Q 188 110 208 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M120 195 Q 168 240 220 195" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="wink" style="display:none">
+          <path d="M108 128 Q 128 152 148 128" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <circle cx="188" cy="128" r="9" fill="#1F1F1F"/>
+          <path d="M135 210 Q 175 230 215 200" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="cool" style="display:none">
+          <rect x="100" y="115" width="50" height="28" rx="6" fill="#1F1F1F"/>
+          <rect x="166" y="115" width="50" height="28" rx="6" fill="#1F1F1F"/>
+          <line x1="150" y1="129" x2="166" y2="129" stroke="#1F1F1F" stroke-width="6" stroke-linecap="round"/>
+          <line x1="110" y1="123" x2="124" y2="123" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+          <line x1="176" y1="123" x2="190" y2="123" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+          <path d="M135 205 Q 175 225 215 200" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="love" style="display:none">
+          <path d="M128 115 C 117 105, 102 117, 117 132 L 128 144 L 139 132 C 154 117, 139 105, 128 115 Z" fill="#E63946"/>
+          <path d="M188 115 C 177 105, 162 117, 177 132 L 188 144 L 199 132 C 214 117, 199 105, 188 115 Z" fill="#E63946"/>
+          <path d="M125 200 Q 168 235 215 200" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="shocked" style="display:none">
+          <circle cx="128" cy="128" r="18" fill="#FFFFFF" stroke="#1F1F1F" stroke-width="5"/>
+          <circle cx="188" cy="128" r="18" fill="#FFFFFF" stroke="#1F1F1F" stroke-width="5"/>
+          <circle cx="128" cy="130" r="7" fill="#1F1F1F"/>
+          <circle cx="188" cy="130" r="7" fill="#1F1F1F"/>
+          <ellipse cx="168" cy="218" rx="20" ry="24" fill="#1F1F1F"/>
+        </g>
+        <g class="zop-face" data-face="thinking" style="display:none">
+          <circle cx="128" cy="118" r="9" fill="#1F1F1F"/>
+          <circle cx="188" cy="118" r="9" fill="#1F1F1F"/>
+          <line x1="138" y1="210" x2="200" y2="210" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round"/>
+        </g>
+        <g class="zop-face" data-face="dizzy" style="display:none">
+          <path d="M128 128 m -14 0 a 14 14 0 1 0 28 0 a 10 10 0 1 0 -20 0 a 6 6 0 1 0 12 0" stroke="#1F1F1F" stroke-width="5" fill="none"/>
+          <path d="M188 128 m -14 0 a 14 14 0 1 0 28 0 a 10 10 0 1 0 -20 0 a 6 6 0 1 0 12 0" stroke="#1F1F1F" stroke-width="5" fill="none"/>
+          <path d="M125 210 Q 145 222 165 210 T 200 210 T 220 215" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="smug" style="display:none">
+          <path d="M108 130 Q 128 138 148 130" stroke="#1F1F1F" stroke-width="11" stroke-linecap="round" fill="none"/>
+          <path d="M168 130 Q 188 138 208 130" stroke="#1F1F1F" stroke-width="11" stroke-linecap="round" fill="none"/>
+          <path d="M130 210 Q 175 232 220 195" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+        </g>
+        <g class="zop-face" data-face="tongue" style="display:none">
+          <path d="M108 138 Q 128 110 148 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M168 138 Q 188 110 208 138" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M130 200 Q 168 230 206 200" stroke="#1F1F1F" stroke-width="13.03" stroke-linecap="round" fill="none"/>
+          <path d="M178 218 Q 175 240 188 240 Q 198 240 196 222 Z" fill="#FF6B7A"/>
+        </g>
+      </svg>
+    </div>
+  </div>
 
   <footer class="footer">
     <span class="footer__logo">Zop<em>Mop</em> ✦</span>

@@ -168,7 +168,7 @@ function init() {
   };
   sectionReveal('.services__head > *', '.services');
   sectionReveal('.steps__head > *, .step', '.steps');
-  sectionReveal('.quote > *', '.quote');
+  sectionReveal('.quote__text, .quote__cite', '.quote');
 
   /* ---------- Stats counters ---------- */
   document.querySelectorAll('[data-count]').forEach((el) => {
@@ -192,8 +192,227 @@ function init() {
     scrollTrigger: { trigger: '.cta', start: 'top 60%' },
   });
 
+  /* ---------- Zop, the mascot who runs this page ---------- */
+  initZop(lenis);
+
   /* ---------- Three.js bubble field ---------- */
   if (!prefersReduced) initBubbles().catch(() => { /* hero glows remain as fallback */ });
+}
+
+/* ============================================================
+   Zop controller — one mascot, born in the hero headline, flies
+   to a bottom-right dock (same spot as the app's IosZopButton),
+   reacts to sections, blinks, naps, gets dizzy, pops on click.
+   ============================================================ */
+function initZop(lenis) {
+  const zop = document.getElementById('zop');
+  const bob = document.getElementById('zop-bob');
+  const svgEl = document.getElementById('zop-svg');
+  const bubble = document.getElementById('zop-bubble');
+  const zzz = document.getElementById('zop-zzz');
+  const anchor = document.getElementById('zop-anchor');
+  if (!zop || !anchor) return;
+
+  if (prefersReduced) {
+    zop.classList.add('zop--static');
+    setFaceRaw('happy');
+    return;
+  }
+
+  /* ---- faces ---- */
+  const faces = {};
+  svgEl.querySelectorAll('.zop-face').forEach((g) => { faces[g.dataset.face] = g; });
+  let current = 'default';
+  let sleeping = false;
+
+  function setFaceRaw(name) {
+    svgEl.querySelectorAll('.zop-face').forEach((g) => { g.style.display = g.dataset.face === name ? 'block' : 'none'; });
+  }
+  function setFace(name, pop = true) {
+    if (!faces[name] || current === name) return;
+    current = name;
+    setFaceRaw(name);
+    if (pop) {
+      gsap.fromTo(svgEl, { scaleY: 0.85, scaleX: 1.1 }, { scaleY: 1, scaleX: 1, duration: 0.5, ease: 'elastic.out(1, 0.45)', overwrite: 'auto' });
+    }
+  }
+
+  /* ---- geometry ---- */
+  const isMobile = () => window.innerWidth < 720;
+  const BOX = 64; // .zop CSS box; mobile visual size handled by scale
+  const dockX = () => window.innerWidth - BOX - (isMobile() ? 12 : 28);
+  const dockY = () => window.innerHeight - BOX - (isMobile() ? 16 : 28);
+  const dockScale = () => (isMobile() ? 0.84 : 1);
+  const heroXY = () => {
+    const r = anchor.getBoundingClientRect();
+    return {
+      x: r.left + window.scrollX + r.width / 2 - BOX / 2,
+      y: r.top + window.scrollY + r.height / 2 - BOX / 2,
+    };
+  };
+  const heroScale = () => (isMobile() ? 1.0 : 1.6);
+
+  zop.classList.add('zop--hero-side');
+  gsap.set(zop, { ...heroXY(), scale: heroScale() });
+
+  /* birth: pop out of the headline after the hero reveal */
+  gsap.from(bob, { scale: 0, rotation: -135, duration: 0.7, ease: 'back.out(1.6)', delay: 2.2 });
+  gsap.to(bob, { y: -7, duration: 1.7, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+
+  /* hero → dock flight, scrubbed to scroll */
+  gsap.fromTo(zop,
+    { x: () => heroXY().x, y: () => heroXY().y, scale: () => heroScale() },
+    {
+      x: () => dockX(), y: () => dockY(), scale: () => dockScale(),
+      ease: 'power2.inOut', immediateRender: true,
+      scrollTrigger: {
+        trigger: '.hero', start: '8% top', end: '75% top', scrub: 0.6,
+        invalidateOnRefresh: true,
+        onUpdate: (self) => zop.classList.toggle('zop--hero-side', self.progress < 0.5),
+      },
+    });
+
+  /* ---- speech bubble ---- */
+  let hideCall = null;
+  function say(text, ms = 3200) {
+    bubble.textContent = text;
+    if (hideCall) hideCall.kill();
+    gsap.to(bubble, { opacity: 1, scale: 1, duration: 0.45, ease: 'back.out(1.8)', overwrite: 'auto' });
+    hideCall = gsap.delayedCall(ms / 1000, () => gsap.to(bubble, { opacity: 0, scale: 0.6, duration: 0.3, ease: 'power2.in' }));
+  }
+
+  /* greeting (assets/zop/hi-i-am-zop.svg) */
+  gsap.delayedCall(3.1, () => { setFace('happy'); say("Hi — I'm Zop."); });
+  gsap.delayedCall(6.0, () => setFace('default', false));
+
+  /* ---- blink loop ---- */
+  (function blink() {
+    gsap.delayedCall(2.6 + Math.random() * 2.6, () => {
+      if (!sleeping && (current === 'default' || current === 'happy')) {
+        const prev = current;
+        setFaceRaw('blink');
+        gsap.delayedCall(0.12, () => { if (!sleeping) setFaceRaw(prev); });
+      }
+      blink();
+    });
+  })();
+
+  /* ---- section reactions (lines from the old site) ---- */
+  const reactions = [
+    ['#why', 'smug', 'Zop lives for the job. Yours, specifically.'],
+    ['#services', 'cool', 'Pick your first job.'],
+    ['#how', 'thinking', 'Two taps. Done.'],
+    ['.stats', 'smug', '100% verified pros'],
+    ['#get-app', 'love', 'Get early access.'],
+  ];
+  reactions.forEach(([sel, face, line]) => {
+    ScrollTrigger.create({
+      trigger: sel, start: 'top 62%',
+      onEnter: () => { wake(); setFace(face); say(line); },
+      onEnterBack: () => { wake(); setFace(face); say(line); },
+    });
+  });
+
+  /* the quote section IS Zop — hide the companion so there's only one of him */
+  ScrollTrigger.create({
+    trigger: '.quote', start: 'top 70%', end: 'bottom 35%',
+    onToggle: (self) => gsap.to(zop, { autoAlpha: self.isActive ? 0 : 1, duration: 0.25 }),
+  });
+  gsap.from('.quote__zop', {
+    scale: 0, rotation: -30, duration: 0.8, ease: 'back.out(1.8)',
+    scrollTrigger: { trigger: '.quote', start: 'top 72%' },
+  });
+
+  /* ---- sleep / wake ---- */
+  const zzzTl = gsap.timeline({ repeat: -1, paused: true });
+  zzzTl.fromTo('#zop-zzz span',
+    { y: 6, opacity: 0 },
+    { y: -34, opacity: 1, duration: 1.4, stagger: 0.4, ease: 'sine.out' })
+    .to('#zop-zzz span', { opacity: 0, duration: 0.4 }, '-=0.3');
+
+  function sleep() {
+    if (sleeping) return;
+    sleeping = true;
+    setFaceRaw('blink');
+    gsap.to(bob, { rotation: 10, duration: 0.5 });
+    zzz.style.display = 'block';
+    zzzTl.play(0);
+  }
+  function wake() {
+    if (!sleeping) return;
+    sleeping = false;
+    zzzTl.pause();
+    zzz.style.display = 'none';
+    gsap.to(bob, { rotation: 0, duration: 0.4 });
+    setFaceRaw('shocked');
+    gsap.delayedCall(0.45, () => { if (!sleeping) { current = 'shocked'; setFace('default', false); } });
+  }
+
+  ScrollTrigger.create({
+    trigger: '.footer', start: 'top 92%',
+    onEnter: () => { sleep(); },
+    onLeaveBack: () => { wake(); },
+  });
+
+  let idleTimer = setTimeout(sleep, 18000);
+  const resetIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(sleep, 18000); };
+  window.addEventListener('mousemove', resetIdle, { passive: true });
+  window.addEventListener('touchstart', resetIdle, { passive: true });
+
+  /* ---- scroll-speed dizziness ---- */
+  if (lenis) {
+    let settle = null;
+    lenis.on('scroll', ({ velocity }) => {
+      resetIdle();
+      if (sleeping) wake();
+      if (Math.abs(velocity) > 38 && current !== 'dizzy') {
+        setFace('dizzy', false);
+        gsap.to(bob, { rotation: velocity > 0 ? 14 : -14, duration: 0.3, overwrite: 'auto' });
+      }
+      if (settle) settle.kill();
+      settle = gsap.delayedCall(0.7, () => {
+        if (current === 'dizzy') { setFace('default', false); gsap.to(bob, { rotation: 0, duration: 0.5, ease: 'back.out(2)' }); }
+      });
+    });
+  }
+
+  /* ---- poke Zop ---- */
+  const pokeFaces = ['tongue', 'wink', 'shocked'];
+  const pokeLines = ['Home, handled.', 'Book in 30 seconds', 'Pros nearby · under 15 min'];
+  let pokeCount = 0;
+  function poke() {
+    wake();
+    resetIdle();
+    setFace(pokeFaces[pokeCount % pokeFaces.length]);
+    say(pokeLines[pokeCount % pokeLines.length], 2200);
+    pokeCount++;
+    gsap.timeline()
+      .to(bob, { scaleY: 0.72, scaleX: 1.22, duration: 0.12, ease: 'power2.in' })
+      .to(bob, { scaleY: 1, scaleX: 1, y: -22, duration: 0.35, ease: 'back.out(3)' })
+      .to(bob, { y: -7, duration: 0.4, ease: 'bounce.out' });
+    /* star burst */
+    const r = zop.getBoundingClientRect();
+    for (let i = 0; i < 6; i++) {
+      const s = document.createElement('span');
+      s.textContent = '✦';
+      s.setAttribute('aria-hidden', 'true');
+      Object.assign(s.style, {
+        position: 'fixed', left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`,
+        color: '#FFC042', fontSize: '14px', zIndex: 8599, pointerEvents: 'none',
+      });
+      document.body.appendChild(s);
+      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.6;
+      const d = 46 + Math.random() * 42;
+      gsap.to(s, {
+        x: Math.cos(a) * d, y: Math.sin(a) * d - 18,
+        rotation: Math.random() * 240 - 120, opacity: 0, scale: 0.4,
+        duration: 0.8, ease: 'power2.out', onComplete: () => s.remove(),
+      });
+    }
+    gsap.delayedCall(1.4, () => setFace('default', false));
+  }
+  zop.addEventListener('click', poke);
+  zop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); poke(); } });
 }
 
 async function initBubbles() {
