@@ -178,9 +178,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Hydrate state before the /me probe so the UI can render
-        // cached user info if the network is slow.
+        // cached user info if the network is slow. The refs must be
+        // primed synchronously too: the /me probe below runs before
+        // React re-renders, and apiFetch reads tokens through the refs
+        // — leaving them null sent /me with no Bearer header, whose
+        // guaranteed 401 + null-refresh "auth failure" wiped the
+        // session on every single launch/reload.
         setToken(access);
-        if (storedRefresh) setRefreshToken(storedRefresh);
+        tokenRef.current = access;
+        if (storedRefresh) {
+          setRefreshToken(storedRefresh);
+          refreshTokenRef.current = storedRefresh;
+        }
 
         // Prefer the JWT's role over the cached user object. The JWT
         // is rewritten atomically on every login/refresh, so it can't
