@@ -15,6 +15,14 @@ if (staticMode || typeof gsap === 'undefined' || typeof ScrollTrigger === 'undef
 function init() {
   gsap.registerPlugin(ScrollTrigger);
 
+  /* ---------- Theme toggle (mirrors app's 340ms dark<->light morph) ---------- */
+  document.getElementById('theme-toggle')?.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    document.querySelector('meta[name="theme-color"]').setAttribute('content', next === 'dark' ? '#0A0A0A' : '#FAF7F2');
+    try { localStorage.setItem('zopmop_theme', next); } catch (e) { /* private mode */ }
+  });
+
   /* ---------- Smooth scroll (Lenis) ---------- */
   let lenis = null;
   if (typeof Lenis !== 'undefined' && !prefersReduced) {
@@ -117,7 +125,7 @@ function init() {
       return i < words.length - 1 ? [span, document.createTextNode(' ')] : [span];
     }));
     gsap.to('#manifesto-text .w', {
-      color: '#0D0D0F',
+      opacity: 1,
       stagger: 0.08,
       ease: 'none',
       scrollTrigger: {
@@ -225,13 +233,13 @@ async function initBubbles() {
     transparent: true,
     opacity: 0.92,
   });
-  const indigoMat = soapMat.clone();
-  indigoMat.color = new THREE.Color(0x818cf8);
-  indigoMat.iridescenceIOR = 1.6;
   const amberMat = soapMat.clone();
   amberMat.color = new THREE.Color(0xffc042);
+  const champagneMat = soapMat.clone();
+  champagneMat.color = new THREE.Color(0xffe2b0);
+  champagneMat.iridescenceIOR = 1.5;
 
-  const mats = [soapMat, soapMat, soapMat, indigoMat, amberMat];
+  const mats = [soapMat, amberMat, soapMat, champagneMat, amberMat];
   const COUNT = isMobile ? 8 : 15;
   const bubbles = [];
   for (let i = 0; i < COUNT; i++) {
