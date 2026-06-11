@@ -199,8 +199,7 @@ type Service struct {
 	db            *pgxpool.Pool
 	rdb           *redis.Client
 	configSvc     *config_manager.Service
-	matchBatcher  *matching.Batcher    // nil-safe; only used for instant bookings
-	matchEngine   *matching.Engine     // nil-safe; used for status queries
+	matchEngine   *matching.Engine     // nil-safe; legacy Redis invite-set surface
 	maps          *googlemaps.Client   // nil-safe; used for tracking ETA + polyline
 	analytics     *analytics.Service   // nil-safe; fire-and-forget event tracking
 	webhooks      *webhooks.Dispatcher // nil-safe; outbound CRM webhook fan-out
@@ -374,18 +373,13 @@ func (s *Service) fireWebhook(ctx context.Context, event string, payload any) {
 }
 
 // NewService creates a new booking service.
-func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, batcher *matching.Batcher) *Service {
-	var engine *matching.Engine
-	if batcher != nil {
-		engine = matching.NewEngine(db, rdb, configSvc)
-	}
+func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc *config_manager.Service, engine *matching.Engine) *Service {
 	return &Service{
-		repo:         repo,
-		db:           db,
-		rdb:          rdb,
-		configSvc:    configSvc,
-		matchBatcher: batcher,
-		matchEngine:  engine,
+		repo:        repo,
+		db:          db,
+		rdb:         rdb,
+		configSvc:   configSvc,
+		matchEngine: engine,
 	}
 }
 
@@ -1154,46 +1148,6 @@ func tokenizeForLocality(s string) []string {
 	}
 	flush()
 	return out
-}
-
-// KeepLookingBooking extends the stealth-search window by another 15 minutes.
-// Only valid when the booking is currently in 'pending_customer_action' and
-// the caller is the customer who placed it.
-//
-// Implementation: bump fire_at to NOW (so the next stealth-dispatch tick
-// picks it up) and reset status to 'pending'. The next cron run will flip
-// it back to 'searching' and rerun the invite chain.
-func (s *Service) KeepLookingBooking(ctx context.Context, bookingID, userID string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var customerID string
-	var status string
-	var isStealth bool
-	err := s.db.QueryRow(ctx,
-		`SELECT customer_id::text, status, is_stealth_instant FROM bookings WHERE id = $1::uuid`,
-		bookingID,
-	).Scan(&customerID, &status, &isStealth)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("booking not found")
-		}
-		return err
-	}
-	if customerID != userID {
-		return fmt.Errorf("forbidden")
-	}
-	if status != "pending_customer_action" || !isStealth {
-		return fmt.Errorf("booking not in pending_customer_action")
-	}
-	_, err = s.db.Exec(ctx, `
-		UPDATE bookings
-		SET status     = 'pending',
-		    fire_at    = now(),
-		    updated_at = now()
-		WHERE id = $1::uuid
-	`, bookingID)
-	return err
 }
 
 // CreateScheduledBooking creates a booking using cart items + time slot.

@@ -75,7 +75,6 @@ func (h *JobsHandler) RegisterRoutes(r fiber.Router) {
 	r.Get("/active", h.Active)
 	r.Get("/pending", h.Pending)
 	r.Post("/:id/accept", h.Accept)
-	r.Post("/:id/decline", h.Decline)
 	r.Post("/:id/en-route", h.EnRoute)
 	r.Post("/:id/arrived", h.Arrived)
 	r.Post("/:id/start", h.Start)
@@ -117,21 +116,6 @@ func (h *JobsHandler) Accept(c *fiber.Ctx) error {
 		return mapAcceptError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "accepted"})
-}
-
-func (h *JobsHandler) Decline(c *fiber.Ctx) error {
-	bookingID := c.Params("id")
-	if !validateBookingIDParam(bookingID) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
-	}
-	helperID, _ := c.Locals("userID").(string)
-	// Pro decline = drop from this pro's Redis invite set so they stop
-	// seeing it; the dispatcher's per-pro timer advances the chain
-	// automatically. No DB state change at this layer.
-	if h.service.matchEngine != nil {
-		h.service.matchEngine.RemoveHelperInvites(c.UserContext(), helperID, []string{bookingID})
-	}
-	return c.JSON(fiber.Map{"message": "declined"})
 }
 
 type enRouteRequest struct {

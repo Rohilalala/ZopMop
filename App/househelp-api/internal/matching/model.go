@@ -1,8 +1,9 @@
 package matching
 
-import "time"
-
-// HelperMatch is the final, scored result returned to callers.
+// HelperMatch is a legacy scored result persisted in the Redis match:b:* keys.
+// The scoring pipeline that produced these is retired (spec §9); the type
+// survives only so the Engine's invite-set readers can decode historical
+// entries still sitting in Redis.
 type HelperMatch struct {
 	HelperID       string  `json:"helper_id"`
 	DistanceKm     float64 `json:"distance_km"`
@@ -11,39 +12,6 @@ type HelperMatch struct {
 	ActiveBookings int     `json:"active_bookings"`
 	Score          float64 `json:"score"`
 	WalkingMinutes int     `json:"walking_minutes,omitempty"` // from Google Maps; 0 if unavailable
-}
-
-// MatchRequest is used by callers (e.g. booking service) to request matching.
-// Spatial bounds come from the engine's MatchingConfig (max_walk_minutes), not
-// from the request — there is no per-request radius override.
-type MatchRequest struct {
-	BookingID  string  `json:"booking_id"`
-	CustomerID string  `json:"customer_id"`
-	Lat        float64 `json:"lat"`
-	Lng        float64 `json:"lng"`
-}
-
-// HelperCandidate is an intermediate representation during the scoring pipeline.
-type HelperCandidate struct {
-	HelperID       string
-	Lat            float64
-	Lng            float64
-	DistanceKm     float64
-	Rating         float64
-	TotalJobs      int
-	ActiveBookings int
-	Score          float64 // filled by scorer
-	WalkingMinutes int     // filled by walking-time filter; 0 if not yet checked
-}
-
-// BatchEntry represents a pending booking request waiting in the batch queue.
-type BatchEntry struct {
-	BookingID  string
-	CustomerID string
-	Lat        float64
-	Lng        float64
-	CellID     string    // hex cell at booking coords
-	EnqueuedAt time.Time
 }
 
 // DemandCell is one entry in the demand heatmap response.

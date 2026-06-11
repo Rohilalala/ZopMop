@@ -23,9 +23,9 @@ const PilotLocality = "Orchid Island Gurugram"
 
 // committedStatusList is the SQL tuple of booking statuses that hold (commit)
 // a helper for their scheduled window. Terminal states (completed, cancelled)
-// and pending_customer_action are excluded — a cancelled booking frees its
-// capacity automatically by dropping out of this set. Kept in sync with the
-// partial index in migration 131_slot_capacity_gating.
+// are excluded — a cancelled booking frees its capacity automatically by
+// dropping out of this set. Kept in sync with the partial index in migration
+// 131_slot_capacity_gating.
 const committedStatusList = `('pending', 'searching', 'accepted', 'arrived', 'in_progress')`
 
 // capacityTravelPadMin extends each committed booking's window by a flat travel

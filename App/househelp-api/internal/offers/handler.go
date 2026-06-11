@@ -82,7 +82,7 @@ func listForUser(ctx context.Context, db *pgxpool.Pool, userID string) ([]Offer,
 		   OR (audience = 'new_users' AND NOT EXISTS (
 		          SELECT 1 FROM bookings
 		          WHERE user_id = $1::uuid
-		            AND status NOT IN ('cancelled', 'pending_customer_action')
+		            AND status NOT IN ('cancelled')
 		       ))
 		  )
 		ORDER BY

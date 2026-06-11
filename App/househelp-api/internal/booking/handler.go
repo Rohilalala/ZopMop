@@ -72,7 +72,6 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Post("/:id/cancel", h.CancelBooking)
 	router.Delete("/:id", h.CancelBooking)
 	router.Post("/:id/reschedule", h.RescheduleBooking)
-	router.Post("/:id/keep-looking", h.KeepLookingBooking)
 	router.Post("/:id/accept", append(proChain, h.AcceptBooking)...)
 	router.Post("/:id/arrived", append(proChain, h.MarkArrived)...)
 	router.Post("/:id/start", append(proChain, h.StartBooking)...)
@@ -369,33 +368,6 @@ func (h *Handler) GetSlotAvailability(c *fiber.Ctx) error {
 // CancelBooking handles POST /bookings/:id/cancel and DELETE /bookings/:id.
 // Response body echoes whether a cancellation fee was charged so the app can
 // surface it without a follow-up GET.
-// KeepLookingBooking handles POST /bookings/:id/keep-looking. Used when a
-// stealth-instant booking has rolled into 'pending_customer_action' (15 min
-// of searching with no acceptance) and the customer chooses to extend the
-// search window by another 15 minutes instead of cancelling. The
-// stealth-dispatch cron picks the booking back up on its next tick once
-// fire_at moves into the past.
-func (h *Handler) KeepLookingBooking(c *fiber.Ctx) error {
-	bookingID := c.Params("id")
-	if !validateBookingIDParam(bookingID) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
-	}
-	userID, _ := c.Locals("userID").(string)
-	if err := h.service.KeepLookingBooking(c.UserContext(), bookingID, userID); err != nil {
-		log.Error().Err(err).Str("booking_id", bookingID).Str("user_id", userID).Msg("[booking] keep-looking failed")
-		switch err.Error() {
-		case "booking not found":
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "booking not found"})
-		case "booking not in pending_customer_action":
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "booking is not waiting for your decision"})
-		case "forbidden":
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "forbidden"})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to extend search"})
-	}
-	return c.JSON(fiber.Map{"ok": true, "status": "searching"})
-}
-
 func (h *Handler) CancelBooking(c *fiber.Ctx) error {
 	bookingID := c.Params("id")
 	if !validateBookingIDParam(bookingID) {

@@ -7,11 +7,9 @@ type BookingStatus string
 
 const (
 	StatusPending    BookingStatus = "pending"
-	// StatusSearching is set by the StealthDispatcher after it claims a
-	// new instant booking and before it emits the FCM invites. Pros that
-	// receive the invite call AcceptBooking, which now accepts both
-	// 'pending' (scheduled flow) and 'searching' (stealth flow) as the
-	// pre-assignment state.
+	// StatusSearching is a legacy pre-assignment state. The invite-chain
+	// dispatchers that produced it are retired; AcceptBooking still tolerates
+	// it so any old 'searching' rows remain claimable.
 	StatusSearching  BookingStatus = "searching"
 	StatusAccepted   BookingStatus = "accepted"
 	StatusInProgress BookingStatus = "in_progress"

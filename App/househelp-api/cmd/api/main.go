@@ -362,25 +362,20 @@ func main() {
 	configService := config_manager.NewService(configRepo, rdb)
 	configHandler := config_manager.NewHandler(configService)
 
-	// Matching engine. The 5s batcher is retired by the unified JIT assigner
-	// (spec §9) — it is no longer started. The instance is still constructed so
-	// booking.NewService's signature is satisfied; TODO(T5): drop the constructor
-	// arg and the matchEngine.SetMapsClient batch-filter wiring once the booking
-	// service stops enqueueing instant bookings.
-	matchEngine := matching.NewEngine(dbPool, rdb, configService)
-	matchBatcher := matching.NewBatcher(matchEngine, 5*time.Second)
+	// Matching engine. The scoring/batch pipeline is retired by the unified JIT
+	// assigner (spec §9); the Engine now only owns the legacy Redis invite-set
+	// surface that the pro app's pending-offers poll still reads.
+	matchEngine := matching.NewEngine(dbPool, rdb)
 
-	// Google Maps client. Required: instant-booking eligibility is decided
-	// purely by the walking-time filter, which calls the Distance Matrix API.
-	// Boot fails loud if the key is missing so we never silently match a pro
-	// who is hours away from the customer.
+	// Google Maps client. Required: the assigner's travel-feasibility check
+	// calls the Distance Matrix API. Boot fails loud if the key is missing so
+	// we never silently assign a pro who is hours away from the customer.
 	mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	if mapsAPIKey == "" {
-		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — instant booking matches on walking-time only")
+		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — the assigner gates on walking-time feasibility")
 	}
 	mapsClient := googlemaps.NewClient(mapsAPIKey, rdb)
 	log.Info().Msg("Google Maps client initialised")
-	matchEngine.SetMapsClient(mapsClient)
 
 	// Analytics.
 	analyticsSvc := analytics.NewService(dbPool)
@@ -414,7 +409,7 @@ func main() {
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
-	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchBatcher)
+	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchEngine)
 
 	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
 	// account deletion when the customer has completed-but-unpaid Cashfree

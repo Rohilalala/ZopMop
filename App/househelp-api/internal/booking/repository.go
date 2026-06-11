@@ -420,10 +420,10 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 	}
 
 	var customerID string
-	// Accept any unassigned booking — either a freshly-created 'pending'
-	// row from the scheduled flow OR a stealth-instant row already flipped
-	// to 'searching' by the StealthDispatcher. The race semantics stay
-	// the same: a single UPDATE … WHERE status IN (...) RETURNING id
+	// Accept any unassigned booking — a freshly-created 'pending' row, or a
+	// legacy 'searching' row (the status is no longer produced now the invite
+	// chain is retired, but old rows may still carry it). The race semantics
+	// stay the same: a single UPDATE … WHERE status IN (...) RETURNING id
 	// claims the row atomically; the loser (a second accept attempt) sees
 	// status='accepted' and falls through to ErrAlreadyAccepted.
 	if err := tx.QueryRow(queryCtx,
