@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   StatusBar,
   StyleSheet,
@@ -9,19 +9,9 @@ import {
   type TextStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withTiming,
-  Easing,
-} from 'react-native-reanimated';
+import LottieView from 'lottie-react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
-import ZopDead from '../../assets/zop/zop-dead.svg';
-import ZopPeekLeft from '../../assets/zop/zop-dead-peek-left.svg';
-import ZopPeekRight from '../../assets/zop/zop-dead-peek-right.svg';
-import ZopPeekCenter from '../../assets/zop/zop-dead-peek-center.svg';
 import ZopFull from '../../assets/zop/zop-full.svg';
 import ZopLookingUp from '../../assets/zop/zop-looking-up.svg';
 import ZopLookingAway from '../../assets/zop/zop-looking-away.svg';
@@ -85,81 +75,32 @@ const BG_ZOPS: BgZop[] = [
   { x: 0.30, y: 0.82, size: 40, rot: -16, V: ZopSurprised },
 ];
 
-// Subtle glitch on the foreground dead Zop:
-//   • Tiny translateX/Y bursts every ~2-3.5s (broken-signal jitter)
-//   • Faint red + cyan duplicate Zops behind, riding a slightly larger
-//     offset, render chromatic-aberration without needing colour-matrix
-//     filters (which RN-svg doesn't expose cleanly).
 const ZOP_SIZE = 220;
 
-function GlitchZop() {
-  const dx = useSharedValue(0);
-  const dy = useSharedValue(0);
-
-  useEffect(() => {
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const burst = () => {
-      if (!alive) return;
-      const ax = (Math.random() * 5) - 2.5;
-      const bx = (Math.random() * 5) - 2.5;
-      const ay = (Math.random() * 3) - 1.5;
-      const by = (Math.random() * 3) - 1.5;
-      dx.value = withSequence(
-        withTiming(ax, { duration: 45, easing: Easing.linear }),
-        withTiming(bx, { duration: 45, easing: Easing.linear }),
-        withTiming(0,  { duration: 50, easing: Easing.linear }),
-      );
-      dy.value = withSequence(
-        withTiming(ay, { duration: 45, easing: Easing.linear }),
-        withTiming(by, { duration: 45, easing: Easing.linear }),
-        withTiming(0,  { duration: 50, easing: Easing.linear }),
-      );
-      const next = 1800 + Math.random() * 1700;
-      timer = setTimeout(burst, next);
-    };
-
-    timer = setTimeout(burst, 700);
-    return () => {
-      alive = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [dx, dy]);
-
-  const mainStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: dx.value }, { translateY: dy.value }],
-  }));
-
-  return (
-    <Animated.View style={[{ width: ZOP_SIZE, height: ZOP_SIZE }, mainStyle]}>
-      <ZopDead width={ZOP_SIZE} height={ZOP_SIZE} />
-    </Animated.View>
-  );
-}
-
-// Sneaky peek while probing — open eyes forward, glance left, glance right,
-// then settle back to the dead-X face. Keeps zigzag mouth on every frame.
-function PeekZop() {
-  // 0 = forward, 1 = left, 2 = right, 3 = dead-X (settled)
-  const [step, setStep] = React.useState<0 | 1 | 2 | 3>(0);
-  useEffect(() => {
-    const t1 = setTimeout(() => setStep(1), 280);
-    const t2 = setTimeout(() => setStep(2), 620);
-    const t3 = setTimeout(() => setStep(3), 980);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, []);
-  return (
-    <View style={{ width: ZOP_SIZE, height: ZOP_SIZE }}>
-      {step === 0 && <ZopPeekCenter width={ZOP_SIZE} height={ZOP_SIZE} />}
-      {step === 1 && <ZopPeekLeft width={ZOP_SIZE} height={ZOP_SIZE} />}
-      {step === 2 && <ZopPeekRight width={ZOP_SIZE} height={ZOP_SIZE} />}
-      {step === 3 && <ZopDead width={ZOP_SIZE} height={ZOP_SIZE} />}
-    </View>
+// Two-state Zop driven by lottie files that share the same X-eyes pose at
+// their boundaries, so swapping is seamless:
+//   dead — X-eyes idle with baked glitch twitches, loops (3s)
+//   peek — eyes open, glance left, sweep right, settle back to X (1.4s)
+// Imperative play(start, end) is broken on lottie-react-native 7.3.6 under
+// the New Architecture (finishes instantly), so segment playback is done by
+// swapping autoPlay sources instead.
+function ZopDownLottie({ state }: { state: 'dead' | 'peek' }) {
+  return state === 'peek' ? (
+    <LottieView
+      key="peek"
+      source={require('../../assets/animation/zop-down-peek.json')}
+      style={{ width: ZOP_SIZE, height: ZOP_SIZE }}
+      autoPlay
+      loop={false}
+    />
+  ) : (
+    <LottieView
+      key="dead"
+      source={require('../../assets/animation/zop-down-dead.json')}
+      style={{ width: ZOP_SIZE, height: ZOP_SIZE }}
+      autoPlay
+      loop
+    />
   );
 }
 
@@ -226,7 +167,7 @@ export default function BackendDownScreen({ onRetry }: Props) {
             pressed && !refreshing && { transform: [{ scale: 0.97 }] },
           ]}
         >
-          {refreshing ? <PeekZop /> : <GlitchZop />}
+          <ZopDownLottie state={refreshing ? 'peek' : 'dead'} />
         </Pressable>
         <View style={styles.tapHint}>
           <Feather name="refresh-cw" size={12} color="rgba(255,255,255,0.55)" />

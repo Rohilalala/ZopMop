@@ -33,3 +33,10 @@
 - No sycophantic openers or closing fluff.
 - Keep solutions simple and direct.
 - User instructions always override this file.
+
+## Learnings
+### 2026-06-11 — lottie-react-native 7.3.6 segment playback
+Imperative `ref.play(start, end)` under New Architecture finishes instantly (onAnimationFinish loop, frame stuck at 0) — even for known-good files. Drive states by swapping `autoPlay` sources between separate .json files whose boundary poses match (see ZopDownLottie in src/screens/BackendDownScreen.tsx).
+
+### 2026-06-11 — hand-authored Lottie JSON rules
+Non-final keyframes MUST carry `o`/`i` easing or `h:1`, else players crash ("reading 'x'") and render static. Shape arrays stack like AE: index 0 = topmost. Validate with lottie-web before shipping.
