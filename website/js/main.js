@@ -4,6 +4,23 @@ const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').mat
 /* ?static=1 — QA/screenshot mode: plain page, no animation states */
 const staticMode = new URLSearchParams(location.search).has('static');
 
+/* ---------- GSAP-free bits: run in every mode (static QA, CDN failure) ---------- */
+/* Theme toggle (mirrors app's 340ms dark<->light morph — the morph itself is CSS) */
+document.getElementById('theme-toggle')?.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', next === 'dark' ? '#0A0A0A' : '#FAF7F2');
+  try { localStorage.setItem('zopmop_theme', next); } catch (e) { /* private mode */ }
+});
+/* Ghosted numeral watermark on the service slabs */
+document.querySelectorAll('.card').forEach((card) => {
+  const ghost = document.createElement('span');
+  ghost.className = 'card__ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.textContent = card.querySelector('.card__index')?.textContent ?? '';
+  card.appendChild(ghost);
+});
+
 /* If CDN libs failed, degrade to a static (but fully readable) page. */
 if (staticMode || typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') {
   document.documentElement.classList.add('no-js');
@@ -14,14 +31,6 @@ if (staticMode || typeof gsap === 'undefined' || typeof ScrollTrigger === 'undef
 
 function init() {
   gsap.registerPlugin(ScrollTrigger);
-
-  /* ---------- Theme toggle (mirrors app's 340ms dark<->light morph) ---------- */
-  document.getElementById('theme-toggle')?.addEventListener('click', () => {
-    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    document.querySelector('meta[name="theme-color"]').setAttribute('content', next === 'dark' ? '#0A0A0A' : '#FAF7F2');
-    try { localStorage.setItem('zopmop_theme', next); } catch (e) { /* private mode */ }
-  });
 
   /* ---------- Smooth scroll (Lenis) ---------- */
   let lenis = null;
@@ -56,6 +65,13 @@ function init() {
     .to('.hero .reveal-up', {
       opacity: 1, y: 0, duration: 0.9, stagger: 0.09, ease: 'power3.out',
     }, '-=0.7');
+  /* re-measure once the headline is in its final place — Zop's perch
+     (#zop-anchor) is inside the masked h-line, so any measurement taken
+     before this point is ~1 line-height too low */
+  heroTl.eventCallback('onComplete', () => ScrollTrigger.refresh());
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => ScrollTrigger.refresh()).catch(() => {});
+  }
 
   if (prefersReduced) {
     preloader?.remove();
@@ -108,15 +124,19 @@ function init() {
         mx((e.clientX - r.left - r.width / 2) * 0.3);
         my((e.clientY - r.top - r.height / 2) * 0.3);
       });
-      el.addEventListener('mouseleave', () => {
-        gsap.to(el, { x: 0, y: 0, duration: 0.6, ease: 'elastic.out(1, 0.4)' });
-      });
+      el.addEventListener('mouseleave', () => { mx(0); my(0); });
     });
+  }
+
+  /* ---------- Scroll choreography (skipped under prefers-reduced-motion:
+     content renders in its final state, counters jump to their values) ---------- */
+  if (prefersReduced) {
+    document.querySelectorAll('[data-count]').forEach((el) => { el.textContent = el.dataset.count; });
   }
 
   /* ---------- Manifesto: word-by-word ink reveal ---------- */
   const manifesto = document.getElementById('manifesto-text');
-  if (manifesto) {
+  if (manifesto && !prefersReduced) {
     const words = manifesto.textContent.trim().split(/\s+/);
     manifesto.replaceChildren(...words.flatMap((w, i) => {
       const span = document.createElement('span');
@@ -137,6 +157,7 @@ function init() {
     });
   }
 
+  if (!prefersReduced) {
   /* ---------- Services: pinned horizontal scroll (desktop only) ---------- */
   ScrollTrigger.matchMedia({
     '(min-width: 900px)': () => {
@@ -167,6 +188,35 @@ function init() {
     });
   };
   sectionReveal('.services__head > *', '.services');
+  let cardsReady = false;
+  gsap.from('.card', {
+    y: 70, opacity: 0, rotateZ: 2.5, duration: 1, stagger: 0.09, ease: 'power3.out',
+    scrollTrigger: { trigger: '.services', start: 'top 70%' },
+    onComplete: () => { cardsReady = true; },
+  });
+
+  /* ---------- Liquid-glass slabs: cursor specular + 3D tilt ---------- */
+  if (window.matchMedia('(pointer: fine)').matches && !prefersReduced) {
+    document.querySelectorAll('.card').forEach((card) => {
+      gsap.set(card, { transformPerspective: 1000 });
+      const rx = gsap.quickTo(card, 'rotationX', { duration: 0.5, ease: 'power3' });
+      const ry = gsap.quickTo(card, 'rotationY', { duration: 0.5, ease: 'power3' });
+      const ty = gsap.quickTo(card, 'y', { duration: 0.5, ease: 'power3' });
+      let rect = null;
+      card.addEventListener('mouseenter', () => { rect = card.getBoundingClientRect(); });
+      card.addEventListener('mousemove', (e) => {
+        if (!cardsReady || !rect) return;
+        const px = (e.clientX - rect.left) / rect.width;
+        const py = (e.clientY - rect.top) / rect.height;
+        card.style.setProperty('--mx', `${px * 100}%`);
+        card.style.setProperty('--my', `${py * 100}%`);
+        ry((px - 0.5) * 10);
+        rx((0.5 - py) * 8);
+        ty(-12);
+      });
+      card.addEventListener('mouseleave', () => { rx(0); ry(0); ty(0); });
+    });
+  }
   sectionReveal('.steps__head > *, .step', '.steps');
   sectionReveal('.quote__text, .quote__cite', '.quote');
 
@@ -191,6 +241,7 @@ function init() {
     opacity: 0, y: 30, duration: 0.9, stagger: 0.12, ease: 'power3.out',
     scrollTrigger: { trigger: '.cta', start: 'top 60%' },
   });
+  } /* end !prefersReduced scroll choreography */
 
   /* ---------- Zop, the mascot who runs this page ---------- */
   initZop(lenis);
@@ -252,24 +303,103 @@ function initZop(lenis) {
   };
   const heroScale = () => (isMobile() ? 1.0 : 1.6);
 
+  /* ---- star bursts + sparkle trail ---- */
+  function spawnStars(cx, cy, n, opts = {}) {
+    for (let i = 0; i < n; i++) {
+      const s = document.createElement('span');
+      s.textContent = '✦';
+      s.setAttribute('aria-hidden', 'true');
+      Object.assign(s.style, {
+        position: 'fixed', left: `${cx}px`, top: `${cy}px`,
+        color: opts.color || '#FFC042', fontSize: `${opts.size || 14}px`,
+        zIndex: 8599, pointerEvents: 'none',
+      });
+      document.body.appendChild(s);
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.9;
+      const d = (opts.dist || 46) + Math.random() * 42;
+      gsap.to(s, {
+        x: Math.cos(a) * d, y: Math.sin(a) * d - (opts.lift ?? 18),
+        rotation: Math.random() * 240 - 120, opacity: 0, scale: 0.4,
+        duration: opts.dur || 0.8, ease: 'power2.out', onComplete: () => s.remove(),
+      });
+    }
+  }
+
   zop.classList.add('zop--hero-side');
-  gsap.set(zop, { ...heroXY(), scale: heroScale() });
+  const perch = () => gsap.set(zop, { ...heroXY(), scale: heroScale() });
+  perch();
+  /* the anchor moves when the headline reveal lands / fonts swap / resize —
+     re-perch on every ScrollTrigger refresh so leg-1 starts from truth */
+  ScrollTrigger.addEventListener('refreshInit', perch);
 
-  /* birth: pop out of the headline after the hero reveal */
-  gsap.from(bob, { scale: 0, rotation: -135, duration: 0.7, ease: 'back.out(1.6)', delay: 2.2 });
-  gsap.to(bob, { y: -7, duration: 1.7, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+  /* birth: pop out of the headline once the reveal has fully landed */
+  gsap.from(bob, { scale: 0, rotation: -135, duration: 0.7, ease: 'back.out(1.6)', delay: 2.9 });
+  /* lissajous idle float — livelier than a straight bob */
+  gsap.to(bob, { y: -9, duration: 1.7, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+  gsap.to(bob, { x: 6, duration: 2.6, yoyo: true, repeat: -1, ease: 'sine.inOut' });
 
-  /* hero → dock flight, scrubbed to scroll */
-  gsap.fromTo(zop,
-    { x: () => heroXY().x, y: () => heroXY().y, scale: () => heroScale() },
-    {
-      x: () => dockX(), y: () => dockY(), scale: () => dockScale(),
-      ease: 'power2.inOut', immediateRender: true,
-      scrollTrigger: {
-        trigger: '.hero', start: '8% top', end: '75% top', scrub: 0.6,
-        invalidateOnRefresh: true,
-        onUpdate: (self) => zop.classList.toggle('zop--hero-side', self.progress < 0.5),
+  /* roll that always lands flat: tween to the next clean multiple of 360 */
+  function roll(dur = 0.75, ease = 'back.out(1.2)') {
+    const cur = Number(gsap.getProperty(bob, 'rotation')) || 0;
+    gsap.to(bob, { rotation: (Math.floor(cur / 360) + 1) * 360, duration: dur, ease });
+  }
+  /* vertical hops live on svgEl — bob's y belongs to the lissajous float */
+  function hop(height, withSquash = true) {
+    const tl = gsap.timeline();
+    if (withSquash) {
+      tl.to(bob, { scaleY: 0.75, scaleX: 1.2, duration: 0.12 })
+        .to(bob, { scaleY: 1, scaleX: 1, duration: 0.3, ease: 'back.out(2.5)' }, '<0.12');
+    }
+    tl.to(svgEl, { y: -height, duration: 0.35, ease: 'back.out(2.2)' }, 0)
+      .to(svgEl, { y: 0, duration: 0.5, ease: 'bounce.out' });
+    return tl;
+  }
+
+  /* hero → dock: dive off the headline, rolling sweep across the marquee
+     band (sparkle trail behind him), then land in the corner with a bounce */
+  let docked = false;
+  let lastTrail = 0;
+  const flight = gsap.timeline({
+    scrollTrigger: {
+      trigger: '.hero', start: '8% top', end: '110% top', scrub: 0.7,
+      invalidateOnRefresh: true,
+      onUpdate: (self) => {
+        zop.classList.toggle('zop--hero-side', self.progress < 0.4);
+        const wasDocked = docked;
+        docked = self.progress > 0.96;
+        if (docked && !wasDocked) {
+          gsap.fromTo(bob, { scaleY: 0.7, scaleX: 1.25 }, { scaleY: 1, scaleX: 1, duration: 0.6, ease: 'elastic.out(1, 0.4)' });
+          const r = zop.getBoundingClientRect();
+          spawnStars(r.left + r.width / 2, r.bottom - 6, 5, { dist: 30, size: 10, lift: 4, dur: 0.6 });
+        }
+        if (self.progress > 0.25 && self.progress < 0.85) {
+          const now = performance.now();
+          if (now - lastTrail > 70 && Math.abs(self.getVelocity()) > 100) {
+            lastTrail = now;
+            const r = zop.getBoundingClientRect();
+            spawnStars(r.left + r.width / 2, r.top + r.height / 2, 1, { dist: 26, size: 9, lift: 0, dur: 0.55 });
+          }
+        }
       },
+    },
+  });
+  flight
+    .to(zop, {
+      x: () => heroXY().x - window.innerWidth * 0.18,
+      y: () => heroXY().y + window.innerHeight * 0.34,
+      rotation: -24, scale: () => heroScale() * 0.9,
+      ease: 'power1.in', duration: 1,
+    })
+    .to(zop, {
+      x: () => window.innerWidth * 0.62,
+      y: () => heroXY().y + window.innerHeight * 0.42,
+      rotation: 400, scale: () => heroScale() * 0.8,
+      ease: 'none', duration: 1.3,
+    })
+    .to(zop, {
+      x: () => dockX(), y: () => dockY(),
+      rotation: 720, scale: () => dockScale(),
+      ease: 'power2.out', duration: 1,
     });
 
   /* ---- speech bubble ---- */
@@ -297,21 +427,79 @@ function initZop(lenis) {
     });
   })();
 
-  /* ---- section reactions (lines from the old site) ---- */
+  /* ---- section reactions (lines from the old site) — roll into each one ---- */
   const reactions = [
-    ['#why', 'smug', 'Zop lives for the job. Yours, specifically.'],
-    ['#services', 'cool', 'Pick your first job.'],
-    ['#how', 'thinking', 'Two taps. Done.'],
-    ['.stats', 'smug', '100% verified pros'],
-    ['#get-app', 'love', 'Get early access.'],
+    ['#why', 'smug', 'Zop lives for the job. Yours, specifically.', null],
+    ['#services', 'cool', 'Pick your first job.', null],
+    ['#how', 'thinking', 'Two taps. Done.', null],
+    ['.stats', 'smug', '100% verified pros', null],
+    ['#get-app', 'love', 'Get early access.', () => {
+      /* big celebratory leap + two-tone heart burst */
+      hop(30);
+      const r = zop.getBoundingClientRect();
+      spawnStars(r.left + r.width / 2, r.top + r.height / 2, 5, { color: '#E63946', dist: 40 });
+      spawnStars(r.left + r.width / 2, r.top + r.height / 2, 5, { dist: 58 });
+    }],
   ];
-  reactions.forEach(([sel, face, line]) => {
-    ScrollTrigger.create({
-      trigger: sel, start: 'top 62%',
-      onEnter: () => { wake(); setFace(face); say(line); },
-      onEnterBack: () => { wake(); setFace(face); say(line); },
-    });
+  reactions.forEach(([sel, face, line, fx]) => {
+    const react = () => {
+      wake();
+      setFace(face);
+      say(line);
+      roll();
+      if (fx) fx();
+    };
+    ScrollTrigger.create({ trigger: sel, start: 'top 62%', onEnter: react, onEnterBack: react });
   });
+
+  /* ---- docked antics: he never just sits there ---- */
+  const antics = [
+    () => roll(0.8, 'back.inOut(1.2)'),
+    () => hop(18),
+    () => { setFace('tongue'); gsap.delayedCall(0.9, () => setFace('default', false)); },
+    () => { setFace('wink'); gsap.delayedCall(0.7, () => setFace('default', false)); },
+  ];
+  (function antic() {
+    gsap.delayedCall(8 + Math.random() * 6, () => {
+      if (docked && !sleeping && !document.hidden && current !== 'dizzy') {
+        antics[Math.floor(Math.random() * antics.length)]();
+      }
+      antic();
+    });
+  })();
+
+  /* ---- lean into the services rail while it scrubs sideways ----
+     (rotates svgEl, not bob — bob's rotation belongs to rolls/antics
+     and a quickTo sharing that channel gets its tween overwritten) */
+  const leanTo = gsap.quickTo(svgEl, 'rotation', { duration: 0.4, ease: 'power2' });
+  ScrollTrigger.create({
+    trigger: '.services', start: 'top top', end: 'bottom top',
+    onUpdate: (self) => { if (!sleeping) leanTo(gsap.utils.clamp(-14, 14, self.getVelocity() / 60)); },
+    onLeave: () => leanTo(0),
+    onLeaveBack: () => leanTo(0),
+  });
+
+  /* ---- he notices your cursor when you get close ---- */
+  if (window.matchMedia('(pointer: fine)').matches) {
+    let near = false;
+    window.addEventListener('mousemove', (e) => {
+      if (!docked || sleeping) return;
+      const r = zop.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width / 2);
+      const dy = e.clientY - (r.top + r.height / 2);
+      const isNear = dx * dx + dy * dy < 130 * 130;
+      if (isNear !== near) {
+        near = isNear;
+        if (isNear && current === 'default') {
+          setFace('happy');
+          gsap.to(bob, { scale: 1.12, duration: 0.3, ease: 'back.out(2)' });
+        } else if (!isNear) {
+          if (current === 'happy') setFace('default', false);
+          gsap.to(bob, { scale: 1, duration: 0.3 });
+        }
+      }
+    }, { passive: true });
+  }
 
   /* the quote section IS Zop — hide the companion so there's only one of him */
   ScrollTrigger.create({
@@ -333,6 +521,7 @@ function initZop(lenis) {
   function sleep() {
     if (sleeping) return;
     sleeping = true;
+    leanTo(0);
     setFaceRaw('blink');
     gsap.to(bob, { rotation: 10, duration: 0.5 });
     zzz.style.display = 'block';
@@ -343,6 +532,7 @@ function initZop(lenis) {
     sleeping = false;
     zzzTl.pause();
     zzz.style.display = 'none';
+    leanTo(0);
     gsap.to(bob, { rotation: 0, duration: 0.4 });
     setFaceRaw('shocked');
     gsap.delayedCall(0.45, () => { if (!sleeping) { current = 'shocked'; setFace('default', false); } });
@@ -386,29 +576,9 @@ function initZop(lenis) {
     setFace(pokeFaces[pokeCount % pokeFaces.length]);
     say(pokeLines[pokeCount % pokeLines.length], 2200);
     pokeCount++;
-    gsap.timeline()
-      .to(bob, { scaleY: 0.72, scaleX: 1.22, duration: 0.12, ease: 'power2.in' })
-      .to(bob, { scaleY: 1, scaleX: 1, y: -22, duration: 0.35, ease: 'back.out(3)' })
-      .to(bob, { y: -7, duration: 0.4, ease: 'bounce.out' });
-    /* star burst */
+    hop(22);
     const r = zop.getBoundingClientRect();
-    for (let i = 0; i < 6; i++) {
-      const s = document.createElement('span');
-      s.textContent = '✦';
-      s.setAttribute('aria-hidden', 'true');
-      Object.assign(s.style, {
-        position: 'fixed', left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`,
-        color: '#FFC042', fontSize: '14px', zIndex: 8599, pointerEvents: 'none',
-      });
-      document.body.appendChild(s);
-      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.6;
-      const d = 46 + Math.random() * 42;
-      gsap.to(s, {
-        x: Math.cos(a) * d, y: Math.sin(a) * d - 18,
-        rotation: Math.random() * 240 - 120, opacity: 0, scale: 0.4,
-        duration: 0.8, ease: 'power2.out', onComplete: () => s.remove(),
-      });
-    }
+    spawnStars(r.left + r.width / 2, r.top + r.height / 2, 6);
     gsap.delayedCall(1.4, () => setFace('default', false));
   }
   zop.addEventListener('click', poke);

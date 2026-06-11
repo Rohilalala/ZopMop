@@ -462,38 +462,88 @@ html.no-js .manifesto__text .w { opacity: 1; }
 .services__viewport { position: relative; }
 .services__track {
   display: flex; gap: clamp(1rem, 2vw, 1.75rem);
-  padding: 0 var(--pad-x);
+  padding: 1.5rem var(--pad-x) 2rem;
   width: max-content;
 }
-/* Service cards — dark-glass recipe (cards always sit on an ink/dark field) */
+/* Service slabs — Apple liquid-glass: layered fill, diagonal sheen,
+   cursor-tracked specular (--mx/--my set from JS), 3D tilt via GSAP */
 .card {
-  width: clamp(280px, 78vw, 460px);
-  min-height: clamp(360px, 52vh, 480px);
-  background: linear-gradient(rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.025));
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
-  backdrop-filter: blur(18px) saturate(1.4);
+  width: clamp(280px, 78vw, 440px);
+  min-height: clamp(380px, 54vh, 500px);
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.045) 45%, rgba(255, 255, 255, 0.02) 100%);
+  -webkit-backdrop-filter: blur(26px) saturate(1.8);
+  backdrop-filter: blur(26px) saturate(1.8);
   color: #FFFFFF;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.10);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 20px 50px rgba(0, 0, 0, 0.45),
-    0 4px 12px rgba(0, 0, 0, 0.3);
-  border-radius: var(--radius-card);
+    inset 0 1px 0 rgba(255, 255, 255, 0.20),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    0 30px 70px -10px rgba(0, 0, 0, 0.55),
+    0 4px 14px rgba(0, 0, 0, 0.30);
+  border-radius: 32px;
   padding: 2.2rem 2.2rem 2.4rem;
   display: flex; flex-direction: column;
   position: relative;
   flex-shrink: 0;
-  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s;
+  overflow: clip;
+  transition: border-color 0.35s, box-shadow 0.35s;
 }
-.card:hover { transform: translateY(-10px) rotate(-0.5deg); border-color: var(--amber-line); }
+/* diagonal sheen — GlassCard hero variant's glassSheen layer */
+.card::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(118deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.03) 28%, transparent 55%);
+  pointer-events: none;
+}
+/* cursor-tracked specular bloom */
+.card::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 20%), rgba(255, 255, 255, 0.16), transparent 65%);
+  opacity: 0;
+  transition: opacity 0.35s;
+  pointer-events: none;
+}
+.card:hover::after { opacity: 1; }
+.card:hover {
+  border-color: var(--amber-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+    0 40px 90px -12px rgba(0, 0, 0, 0.6),
+    0 10px 30px -6px rgba(245, 163, 0, 0.18);
+}
+/* ghosted numeral watermark (filled by JS from .card__index) */
+.card__ghost {
+  position: absolute;
+  right: -0.06em; bottom: -0.28em;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(7rem, 12vw, 10rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: rgba(255, 255, 255, 0.045);
+  pointer-events: none;
+  user-select: none;
+}
+.card--amber .card__ghost { color: rgba(13, 13, 15, 0.07); }
 .card--amber {
   background: linear-gradient(160deg, var(--amber-hi), var(--amber) 55%, var(--amber-lo));
   color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.30);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 20px 50px rgba(245, 163, 0, 0.25),
-    0 4px 12px rgba(0, 0, 0, 0.25);
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    0 30px 70px -10px rgba(245, 163, 0, 0.30),
+    0 4px 14px rgba(0, 0, 0, 0.25);
+}
+.card--amber::before {
+  background: linear-gradient(118deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.08) 30%, transparent 55%);
+}
+.card--amber::after {
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 20%), rgba(255, 255, 255, 0.30), transparent 65%);
 }
 .card__index {
   font-family: var(--font-label);
@@ -814,5 +864,7 @@ html[data-theme="light"] .zop__svg {
   html:not(.no-js) .reveal-up,
   html:not(.no-js) .h-line__inner { opacity: 1; transform: none; }
   html:not(.no-js) .manifesto__text .w { opacity: 1; }
+  /* no pinned rail without motion — let the slabs scroll natively */
+  .services__viewport { overflow-x: auto; }
   .grain { display: none; }
 }
