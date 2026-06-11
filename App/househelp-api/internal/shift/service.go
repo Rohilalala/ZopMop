@@ -381,8 +381,21 @@ func (s *Service) CancelBooking(ctx context.Context, proID, bookingID string) (*
 		penaltyPaise = (BaseRatePaisePerHour * estMinutes) / 60
 	}
 
-	if err := s.repo.MarkBookingCancelled(ctx, bookingID); err != nil {
-		return nil, err
+	// Re-dispatch instead of dead-ending (spec §7): a future booking returns to
+	// the assigner with this pro excluded so it isn't immediately re-offered to
+	// them. Once the slot has passed there's nothing to re-dispatch, so keep the
+	// old terminal cancel path. scheduled_time read failure also falls back to
+	// cancel — never leave the booking stuck assigned to a pro who quit it.
+	scheduledTime, stErr := s.repo.BookingScheduledTime(ctx, bookingID)
+	reDispatch := stErr == nil && time.Now().Before(scheduledTime)
+	if reDispatch {
+		if err := s.repo.UnassignBooking(ctx, bookingID, proID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.repo.MarkBookingCancelled(ctx, bookingID); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.InsertCancellation(ctx, proID, bookingID, customerNotified, estMinutes, penaltyPaise, index); err != nil {
 		return nil, err

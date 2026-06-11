@@ -1,0 +1,17 @@
+-- 135_booking_excluded_pro.up.sql
+-- Re-dispatch exclusion (spec §7). Forward-only by repo policy (cmd/migrate/main.go).
+--
+-- Plan Task 6 calls this "migration 133", but a Task-3 review follow-up already
+-- consumed 133/134 (134_assigner_clash_arrived) and the local + test DBs are at
+-- head 134, so a 133 would land below the applied head and never run. Forward-
+-- only convention → this takes the next free number above the head: 135.
+--
+-- When a pro cancels an assigned booking or declares leave, the booking returns
+-- to 'pending' (helper_id cleared) and the assigner re-claims it on the next
+-- tick. excluded_pro_id records the pro that just dropped it so EligibleCandidates
+-- skips them and the same booking is not immediately re-offered to that pro.
+--
+-- Single-pro exclusion is enough for the pilot: a booking only ever has one
+-- recently-dropping pro at a time. A multi-pro exclusion (array / side table)
+-- can replace this column post-pilot if churn warrants it.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS excluded_pro_id UUID;

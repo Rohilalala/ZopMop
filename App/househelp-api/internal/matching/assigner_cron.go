@@ -94,10 +94,10 @@ func (c *AssignerCron) RunOnce(ctx context.Context) (assigned, cancelled int, er
 			return assigned, cancelled, nil // nothing due
 		}
 
-		// TODO(T6): pass bookings.excluded_pro_id here so a pro that just cancelled
-		// or went on leave isn't immediately re-offered the same booking. The
-		// column lands in migration 133 (Task 6); until then there is nothing to
-		// exclude, so the cron passes the empty exclusion.
+		// AssignOne reads bookings.excluded_pro_id itself (migration 135), so a pro
+		// that just cancelled or declared leave isn't immediately re-offered the
+		// same booking. The cron passes "" — the persisted column is the source of
+		// truth for re-dispatch exclusion (spec §7).
 		_, aErr := c.asg.AssignOne(ctx, bookingID, "")
 		switch {
 		case aErr == nil:

@@ -390,6 +390,38 @@ func TestAssigner_ExclusionHonored(t *testing.T) {
 	}
 }
 
+// ── excluded_pro_id (re-dispatch after pro cancel/leave, migration 135) ──────
+
+// A booking stamped with excluded_pro_id (a pro that just cancelled or went on
+// leave) must be re-dispatched to a DIFFERENT pro: AssignOne reads the column
+// itself (caller passes ""), skips the excluded pro even though it would
+// otherwise rank first (soonest shift end), and assigns the second.
+func TestAssigner_AssignOne_SkipsExcludedColumn(t *testing.T) {
+	f := newAsgFixture(t)
+	// excluded ends soonest → would be picked first without the exclusion.
+	excluded := f.addPro(2 * time.Hour)
+	other := f.addPro(4 * time.Hour)
+	bk := f.makeBooking(time.Now().Add(60*time.Minute), 60)
+
+	// Stamp the column the cancel/leave path writes (migration 135).
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE bookings SET excluded_pro_id = $2::uuid WHERE id = $1::uuid`, bk, excluded); err != nil {
+		t.Fatal(err)
+	}
+
+	// Caller exclusion is empty — AssignOne must read excluded_pro_id from the row.
+	res, err := f.asg.AssignOne(context.Background(), bk, "")
+	if err != nil {
+		t.Fatalf("AssignOne: %v", err)
+	}
+	if res.HelperID == excluded {
+		t.Fatalf("assigned the excluded pro %s — exclusion not honored", excluded)
+	}
+	if res.HelperID != other {
+		t.Fatalf("assigned %s, want the non-excluded pro %s", res.HelperID, other)
+	}
+}
+
 // ── nil maps → fail-open travel ─────────────────────────────────────────────
 
 func TestAssigner_TravelFailOpen_NilMaps(t *testing.T) {

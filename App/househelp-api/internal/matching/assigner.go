@@ -126,6 +126,11 @@ type assignerBooking struct {
 	Locality        *string
 	Lat             float64
 	Lng             float64
+	// ExcludedProID is the pro that just cancelled/went on leave on this booking
+	// (bookings.excluded_pro_id, migration 135). EligibleCandidates skips them so
+	// a re-dispatch isn't immediately re-offered to the same pro (spec §7). Empty
+	// when none.
+	ExcludedProID string
 }
 
 // Candidate is one eligible pro returned by EligibleCandidates, already
@@ -595,6 +600,13 @@ func (a *Assigner) AssignOne(ctx context.Context, bookingID, excludeProID string
 	}
 	cfg := a.cfg(ctx)
 
+	// A re-dispatch after a pro cancel/leave stamps bookings.excluded_pro_id
+	// (migration 135). The cron passes "" — the persisted column is the source of
+	// truth — but a caller-supplied exclusion takes precedence when set (spec §7).
+	if excludeProID == "" {
+		excludeProID = b.ExcludedProID
+	}
+
 	candidates, err := a.EligibleCandidates(ctx, b, excludeProID)
 	if err != nil {
 		return nil, err
@@ -632,21 +644,26 @@ func (a *Assigner) AssignOne(ctx context.Context, bookingID, excludeProID string
 func (a *Assigner) loadAssignerBooking(ctx context.Context, bookingID string) (*assignerBooking, error) {
 	b := &assignerBooking{}
 	var locality *string
+	var excludedProID *string
 	err := a.db.QueryRow(ctx, `
 		SELECT id::text, customer_id::text, scheduled_time,
 		       COALESCE(total_duration_minutes, 60),
 		       locality,
-		       lat::float8, lng::float8
+		       lat::float8, lng::float8,
+		       excluded_pro_id::text
 		FROM bookings
 		WHERE id = $1::uuid
 	`, bookingID).Scan(
 		&b.ID, &b.CustomerID, &b.ScheduledTime, &b.DurationMinutes,
-		&locality, &b.Lat, &b.Lng,
+		&locality, &b.Lat, &b.Lng, &excludedProID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	b.Locality = locality
+	if excludedProID != nil {
+		b.ExcludedProID = *excludedProID
+	}
 	return b, nil
 }
 

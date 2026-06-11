@@ -255,6 +255,24 @@ func (r *Repository) ReassignBooking(ctx context.Context, bookingID, newProID st
 	return err
 }
 
+// UnassignBooking returns an assigned booking to the assigner (spec §7,
+// migration 135): clears the on-leave pro, resets the row to 'pending', wipes
+// matched_at so the claim index re-picks it, and stamps excluded_pro_id so the
+// on-leave pro is skipped on the next dispatch tick. The status guard leaves a
+// booking already past 'accepted' untouched.
+func (r *Repository) UnassignBooking(ctx context.Context, bookingID, excludedProID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE bookings
+		SET helper_id       = NULL,
+		    status          = 'pending',
+		    matched_at      = NULL,
+		    excluded_pro_id = $2,
+		    updated_at      = now()
+		WHERE id = $1 AND status = 'accepted'
+	`, bookingID, excludedProID)
+	return err
+}
+
 // CancelBookingNoCoverage marks a booking cancelled because no replacement
 // pro was available.
 func (r *Repository) CancelBookingNoCoverage(ctx context.Context, bookingID string) error {
