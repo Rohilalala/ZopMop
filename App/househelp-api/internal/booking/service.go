@@ -18,6 +18,7 @@ import (
 	mw "github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/users"
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 	"github.com/adityarohilla/househelp-api/internal/webhooks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,42 +55,18 @@ var ErrSlotTooFar = errors.New("bookings can only be made up to 2 days in advanc
 // stale slot IDs and slots that lapsed while the customer was on the screen.
 var ErrSlotInPast = errors.New("requested time slot is in the past")
 
-// schedulingCutoffHourIST is the hour-of-day (India local time) at which a
-// scheduled booking switches into "stealth instant" mode: the customer can
-// still place it but the dispatch cron treats it as a near-instant request
-// instead of waiting for the nightly batch.
-const schedulingCutoffHourIST = 20 // 8pm IST
+// ErrSlotTooSoon is returned when a regular slot is requested closer than
+// MinSlotLeadMin (default 45 min) from now. The 15–45 minute gap is
+// intentionally not bookable as a slot — the customer is told to use ASAP
+// instead (spec §3.1). Handler maps it to 400 with code "slot_too_soon".
+var ErrSlotTooSoon = errors.New("slot too soon — use ASAP for sooner")
 
-// instantBookingNightStartHour / instantBookingNightEndHour close the instant
-// booking window between 20:00 and 06:00 IST. Pros are off-shift overnight,
-// so no walking-time match could succeed; we reject the request up-front
-// (mirrors the LivePill night gate so the UI stays consistent with the API).
-const (
-	instantBookingNightStartHour = 20 // 8pm IST
-	instantBookingNightEndHour   = 6  // 6am IST
-)
-
-// ErrInstantBookingClosed is returned when a customer tries to place an
-// instant booking outside operating hours (20:00–06:00 IST).
-var ErrInstantBookingClosed = errors.New("instant booking is closed overnight")
-
-// isInstantBookingClosed reports whether `t` (in IST) falls inside the
-// nightly closed window.
 // roundLogCoord rounds a lat/lng to 2 decimals (~1.1 km precision)
 // for safe structured logging. Audit C-8 / F2D-1 chunk 13 — log
 // retention now governs only city-block-level coordinates rather
 // than home-pinpoint GPS coords. Mirrors the pattern in
 // internal/matching/engine.go and internal/insights/handler.go.
 func roundLogCoord(x float64) float64 { return math.Round(x*100) / 100 }
-
-func isInstantBookingClosed(t time.Time) bool {
-	hr := t.In(indiaLocation()).Hour()
-	return hr >= instantBookingNightStartHour || hr < instantBookingNightEndHour
-}
-
-// stealthFireLeadTime is how far before scheduled_time the stealth dispatch
-// cron fires its invite chain. Spec calls for 15 minutes.
-const stealthFireLeadTime = 15 * time.Minute
 
 // scheduledBookingMaxLeadDays caps how far ahead a customer can book.
 const scheduledBookingMaxLeadDays = 2
@@ -171,6 +148,51 @@ type Notifier interface {
 	SendData(ctx context.Context, userID string, data map[string]string) error
 }
 
+// SyncAssigner is the narrow slice of the unified matching.Assigner the booking
+// service needs for the ASAP synchronous-assignment path (spec §3.2, §5). Typed
+// as an interface so booking depends on matching only via this surface and the
+// AssignResult value type — no import cycle (matching imports nothing from
+// booking). Wired in cmd/api/main.go after the assigner is constructed.
+type SyncAssigner interface {
+	AssignOne(ctx context.Context, bookingID, excludeProID string) (*matching.AssignResult, error)
+}
+
+// ASAPResult is the success payload of an ASAP booking: the created booking row
+// plus the customer-facing arrival promise (winning pro's walking ETA + pad)
+// and the assigned helper's name. Marshalled straight back to the caller.
+//
+// Booking is `any` so both entrypoints fit: the legacy single-service path
+// (CreateBooking) returns a *Booking, the cart path a *ScheduledBooking.
+type ASAPResult struct {
+	Booking           any    `json:"booking"`
+	Assigned          bool   `json:"assigned"`
+	PromiseETAMinutes int    `json:"promise_eta_minutes"`
+	HelperName        string `json:"helper_name"`
+}
+
+// EarliestSlot is the "book this instead" suggestion returned alongside
+// ErrNoProsAvailable — the first regular slot today/tomorrow that still has
+// window capacity.
+type EarliestSlot struct {
+	SlotID        string `json:"slot_id"`
+	Date          string `json:"date"`
+	StartTime     string `json:"start_time"`
+	EndTime       string `json:"end_time"`
+	ScheduledTime string `json:"scheduled_time"` // RFC3339 (UTC)
+}
+
+// ErrNoProsAvailable is returned by the ASAP path when no pro can take the job
+// right now. It carries the earliest bookable regular slot (nil if none is free
+// today/tomorrow) so the handler can offer "book it instead" in one round-trip.
+// The just-created booking is already marked cancelled/no_pros_found by the
+// time this surfaces (audit trail, spec §5.5). Handler maps to 409
+// "no_pros_available".
+type ErrNoProsAvailable struct {
+	Earliest *EarliestSlot
+}
+
+func (e *ErrNoProsAvailable) Error() string { return "no pros available right now" }
+
 // Service handles booking business logic.
 type Service struct {
 	repo          *Repository
@@ -186,7 +208,20 @@ type Service struct {
 	wallet        WalletDebiter        // nil-safe; payment_source="wallet" flow
 	referrals     ReferralCompleter    // nil-safe; referral reward on completion
 	notifications Notifier             // nil-safe; FCM data push to customer
+	assigner      SyncAssigner         // nil-safe; ASAP synchronous force-assign
+	walletRepo    *wallet.Repository   // nil-safe; ASAP no-pro refund rail
 }
+
+// SetSyncAssigner wires the unified assigner for the ASAP synchronous-assign
+// path. nil-safe — without it, an ASAP create can't place a pro and reports
+// no-pros-available (the 60s cron is still the safety net for any row left
+// pending). Wired in cmd/api/main.go after the assigner is built.
+func (s *Service) SetSyncAssigner(a SyncAssigner) { s.assigner = a }
+
+// SetWalletRepo wires the wallet repository so the ASAP no-pro terminal path
+// can route a refund when the just-created booking was already paid. nil-safe —
+// without it the cancel still happens, only the refund record is skipped.
+func (s *Service) SetWalletRepo(r *wallet.Repository) { s.walletRepo = r }
 
 // SetNotifier wires the FCM data-push surface. nil-safe — leaving it
 // unset disables customer pushes for en_route/arrived/etc.
@@ -354,16 +389,152 @@ func NewService(repo *Repository, db *pgxpool.Pool, rdb *redis.Client, configSvc
 	}
 }
 
-// CreateBooking validates the service category, applies promo if present,
-// and creates the booking record.
-func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, customerID string) (*Booking, error) {
-	// Reject after 8pm / before 6am IST. Pros are off-shift overnight; the
-	// matcher has nothing to invite, so the booking is closed at the API
-	// boundary instead of being silently routed to the stealth path.
-	if isInstantBookingClosed(time.Now()) {
-		return nil, ErrInstantBookingClosed
+// assignASAP runs the synchronous force-assign for a freshly created ASAP
+// booking (spec §3.2, §5): it asks the unified assigner to place a pro right
+// now. On success it returns the arrival promise (winning pro's walking ETA +
+// AsapEtaPadMin) and the helper's name. When no pro is free it marks the
+// just-created booking cancelled/no_pros_found (audit trail + refund, spec
+// §5.5), then returns ErrNoProsAvailable carrying the earliest bookable regular
+// slot so the customer gets an immediate "book it instead" answer.
+//
+// A nil assigner (unconfigured) is treated as "no pro available" — the 60s cron
+// remains the safety net for the pending row, but the synchronous answer is
+// honest about not having placed anyone.
+func (s *Service) assignASAP(ctx context.Context, bookingID, customerID, addressID string) (*ASAPResult, error) {
+	var (
+		res *matching.AssignResult
+		err error
+	)
+	if s.assigner != nil {
+		res, err = s.assigner.AssignOne(ctx, bookingID, "")
+	} else {
+		err = matching.ErrNoEligiblePro
 	}
 
+	if err == nil {
+		pad := matching.LoadDispatchConfig(ctx, s.configSvc).AsapEtaPadMin
+		return &ASAPResult{
+			Assigned:          true,
+			PromiseETAMinutes: res.EtaMin + pad,
+			HelperName:        res.HelperName,
+		}, nil
+	}
+
+	// ErrAlreadyClaimed: another writer (cron tick, racing ASAP) took the row
+	// between create and assign — it IS placed, just not by us. Treat as a
+	// no-pros answer for this synchronous caller rather than a 500; the customer
+	// already has a confirmed booking visible in their list.
+	if !errors.Is(err, matching.ErrNoEligiblePro) && !errors.Is(err, matching.ErrAlreadyClaimed) {
+		return nil, fmt.Errorf("asap assign: %w", err)
+	}
+
+	// No pro right now → terminal: cancel the just-created row (audit trail),
+	// refund if it was paid, then surface the earliest regular slot.
+	s.markASAPNoPro(ctx, bookingID)
+	earliest := s.earliestAvailableSlot(ctx, addressID)
+	return nil, &ErrNoProsAvailable{Earliest: earliest}
+}
+
+// markASAPNoPro flips a just-created ASAP booking to cancelled/no_pros_found and
+// routes a refund if money was collected — mirrors the assigner cron's terminal
+// path (spec §5.5) so the two agree. Best-effort: a cancel/refund glitch is
+// logged, never propagated, because the caller is already returning
+// ErrNoProsAvailable to the customer.
+func (s *Service) markASAPNoPro(ctx context.Context, bookingID string) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("[booking] asap no-pro: begin tx failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		customerID    string
+		paymentMethod *string
+		paymentID     *string
+		paymentStatus *string
+		amountPaise   int64
+		discountPaise int64
+	)
+	// Guarded by status='pending' AND helper_id IS NULL so a row the cron or a
+	// racing assign already placed is left untouched.
+	err = tx.QueryRow(ctx, `
+		UPDATE bookings
+		SET    status              = 'cancelled',
+		       cancelled_by        = 'no_pros_found',
+		       invite_exhausted_at = now(),
+		       cancelled_at        = now(),
+		       updated_at          = now()
+		WHERE  id = $1::uuid AND status = 'pending' AND helper_id IS NULL
+		RETURNING customer_id::text, payment_method, payment_id, payment_status,
+		          amount_paise, COALESCE(discount_paise, 0)
+	`, bookingID).Scan(&customerID, &paymentMethod, &paymentID, &paymentStatus,
+		&amountPaise, &discountPaise)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			log.Warn().Err(err).Str("booking_id", bookingID).Msg("[booking] asap no-pro: cancel failed")
+		}
+		return // already placed/cancelled — nothing to do.
+	}
+
+	if s.walletRepo != nil {
+		refundAmount := amountPaise - discountPaise
+		if rErr := RecordNoProRefund(ctx, tx, s.walletRepo, customerID, bookingID,
+			paymentMethod, paymentID, paymentStatus, refundAmount,
+			"Auto-refunded: no pro available for ASAP booking"); rErr != nil {
+			log.Warn().Err(rErr).Str("booking_id", bookingID).Msg("[booking] asap no-pro: refund record failed")
+			return
+		}
+	}
+
+	if cErr := tx.Commit(ctx); cErr != nil {
+		log.Warn().Err(cErr).Str("booking_id", bookingID).Msg("[booking] asap no-pro: commit failed")
+	}
+}
+
+// earliestAvailableSlot returns the first regular slot today or tomorrow whose
+// live window-recount capacity is > 0, for the address's locality. Returns nil
+// when nothing is free in that horizon (the customer just sees "no pros" with
+// no suggestion). Best-effort: any lookup error yields nil.
+func (s *Service) earliestAvailableSlot(ctx context.Context, addressID string) *EarliestSlot {
+	now := time.Now().In(indiaLocation())
+	for dayOffset := 0; dayOffset <= 1; dayOffset++ {
+		date := now.AddDate(0, 0, dayOffset).Format("2006-01-02")
+		resp, err := s.GetSlotAvailability(ctx, addressID, date)
+		if err != nil {
+			log.Warn().Err(err).Str("address_id", addressID).Str("date", date).
+				Msg("[booking] earliest-slot availability lookup failed")
+			return nil
+		}
+		for _, p := range resp.Periods {
+			for _, sl := range p.Slots {
+				if !sl.IsAvailable || sl.AvailableCapacity <= 0 {
+					continue
+				}
+				scheduled, sErr := s.GetSlotScheduledTime(ctx, sl.ID)
+				if sErr != nil {
+					continue
+				}
+				return &EarliestSlot{
+					SlotID:        sl.ID,
+					Date:          sl.SlotDate,
+					StartTime:     sl.StartTime,
+					EndTime:       sl.EndTime,
+					ScheduledTime: scheduled,
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// CreateBooking validates the service category, applies promo if present,
+// creates the booking as an ASAP (scheduled_time = now), and synchronously
+// force-assigns a pro (spec §3.2, §5). No 8 PM blackout: the assignment attempt
+// IS the gate — if an online pro is free now the booking confirms with an
+// arrival promise, otherwise it's cancelled/no_pros_found and ErrNoProsAvailable
+// is returned.
+func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, customerID string) (*ASAPResult, error) {
 	// Check max active bookings from config.
 	maxActiveStr, err := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerCustomer)
 	if err != nil {
@@ -465,6 +636,16 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		return nil, err
 	}
 
+	// ASAP = now: stamp scheduled_time so the assigner (which requires a
+	// non-null scheduled_time for its lead/slot math) can place this row right
+	// away. The legacy repo INSERT leaves scheduled_time NULL.
+	if _, err := s.db.Exec(ctx,
+		`UPDATE bookings SET scheduled_time = now(), updated_at = now() WHERE id = $1::uuid`,
+		booking.ID,
+	); err != nil {
+		log.Warn().Err(err).Str("booking_id", booking.ID).Msg("[booking] failed to stamp ASAP scheduled_time")
+	}
+
 	// Atomically increment promo code usage after booking is successfully created.
 	if promoCode != nil && *promoCode != "" {
 		if err := s.repo.IncrementPromoCodeUsage(ctx, *promoCode); err != nil {
@@ -523,23 +704,19 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		OccurredAt:        time.Now().UTC(),
 	})
 
-	// ── Matching (instant bookings only) ──────────────────────────────────────
-	// Track demand for the heatmap and enqueue into the batch matcher.
-	// Scheduled bookings are NOT enqueued here — they are matched closer to
-	// their scheduled_time by a separate pre-dispatch job.
+	// Track demand for the heatmap, then synchronously force-assign. The batch
+	// matcher is gone (spec §9) — the assignment attempt itself is the gate.
 	matching.TrackDemand(ctx, s.rdb, req.Lat, req.Lng)
-	if s.matchBatcher != nil {
-		s.matchBatcher.Enqueue(matching.BatchEntry{
-			BookingID:  booking.ID,
-			CustomerID: customerID,
-			Lat:        req.Lat,
-			Lng:        req.Lng,
-			CellID:     matching.LatLngToCell(req.Lat, req.Lng),
-			EnqueuedAt: time.Now(),
-		})
-	}
 
-	return booking, nil
+	// Legacy single-service path has no saved-address UUID, so the no-pro
+	// earliest-slot suggestion can't be locality-resolved (empty addressID →
+	// nil suggestion); the cart ASAP path carries one.
+	result, err := s.assignASAP(ctx, booking.ID, customerID, "")
+	if err != nil {
+		return nil, err
+	}
+	result.Booking = booking
+	return result, nil
 }
 
 // GetBooking retrieves a booking with IDOR protection. For active bookings
@@ -819,25 +996,36 @@ func (s *Service) ClearUserCart(ctx context.Context, userID string) {
 	}
 }
 
-// classifyScheduling decides whether a scheduled booking is "normal" (sits in
-// the nightly 10pm cron's queue) or "stealth instant" (the customer placed
-// it after the 8pm IST cutoff and the stealth dispatch cron handles it
-// closer to fire time). Also enforces the 2-day lead-time cap.
+// validateSlotTime enforces the three regular-slot lead-time rules (spec §3.1,
+// §3.3) on a scheduled booking's start time:
 //
-// Returns isStealth, fireAt (non-nil only when isStealth=true), or an error
-// matching ErrSlotInPast / ErrSlotTooFar. scheduledTime must be a parsable
-// RFC3339 timestamp.
-func (s *Service) classifyScheduling(scheduledTimeRFC3339 string) (bool, *time.Time, error) {
+//   - past                         → ErrSlotInPast
+//   - < now + MinSlotLeadMin (45m) → ErrSlotTooSoon (use ASAP for sooner)
+//   - > 2 days out                 → ErrSlotTooFar
+//
+// No stealth / 8pm-cutoff branch — the unified assigner handles every booking
+// just-in-time, so a "normal vs stealth" distinction no longer exists.
+// scheduledTime must be a parsable RFC3339 timestamp; all comparisons are
+// anchored in Asia/Kolkata.
+func (s *Service) validateSlotTime(scheduledTimeRFC3339 string) error {
 	scheduled, err := time.Parse(time.RFC3339, scheduledTimeRFC3339)
 	if err != nil {
-		return false, nil, fmt.Errorf("invalid scheduled time: %w", err)
+		return fmt.Errorf("invalid scheduled time: %w", err)
 	}
 	loc := indiaLocation()
 	scheduled = scheduled.In(loc)
 	now := time.Now().In(loc)
 
 	if scheduled.Before(now) {
-		return false, nil, ErrSlotInPast
+		return ErrSlotInPast
+	}
+
+	// Minimum lead: a regular slot must be at least MinSlotLeadMin (45m, =
+	// dispatchLead + travelBuffer) out. The 15–45 minute gap is intentionally
+	// not slot-bookable — sooner-than-45m requests go through ASAP.
+	minLead := matching.LoadDispatchConfig(context.Background(), s.configSvc).MinSlotLeadMin
+	if scheduled.Before(now.Add(time.Duration(minLead) * time.Minute)) {
+		return ErrSlotTooSoon
 	}
 
 	// Cap = midnight at end of (today + maxLeadDays). 2 days from "today"
@@ -846,17 +1034,10 @@ func (s *Service) classifyScheduling(scheduledTimeRFC3339 string) (bool, *time.T
 		now.Year(), now.Month(), now.Day()+scheduledBookingMaxLeadDays, 23, 59, 59, 0, loc,
 	)
 	if scheduled.After(maxDay) {
-		return false, nil, ErrSlotTooFar
+		return ErrSlotTooFar
 	}
 
-	if now.Hour() >= schedulingCutoffHourIST {
-		// Past 8pm IST — customer is allowed to book (Cutoff Rule §2 of the
-		// spec) but the booking goes into the stealth path. fire_at fires
-		// the invite chain a bit before the slot starts.
-		fire := scheduled.Add(-stealthFireLeadTime).UTC()
-		return true, &fire, nil
-	}
-	return false, nil, nil
+	return nil
 }
 
 // resolveLocality looks up the customer's chosen address and tries to pin it
@@ -1001,8 +1182,9 @@ func (s *Service) KeepLookingBooking(ctx context.Context, bookingID, userID stri
 // The cart must be non-empty. Items are converted to BookingServiceItems and
 // the cart is cleared on success.
 //
-// Cutoff handling — see classifyScheduling. Slots more than 2 days out are
-// rejected; slots placed after 8pm IST get the stealth-instant treatment.
+// Slot lead-time rules — see validateSlotTime: a regular slot must be at least
+// MinSlotLeadMin out and no more than 2 days ahead. Closer-than-45m requests
+// belong on the ASAP path, not here.
 func (s *Service) CreateScheduledBooking(
 	ctx context.Context,
 	customerID string,
@@ -1040,8 +1222,7 @@ func (s *Service) CreateScheduledBooking(
 		return nil, &ErrUnpaidBookings{Count: unpaidCount, TotalPaise: unpaidTotal}
 	}
 
-	isStealth, fireAt, schedErr := s.classifyScheduling(scheduledTime)
-	if schedErr != nil {
+	if schedErr := s.validateSlotTime(scheduledTime); schedErr != nil {
 		return nil, schedErr
 	}
 
@@ -1106,11 +1287,13 @@ func (s *Service) CreateScheduledBooking(
 		}
 	}
 
+	// Unified assigner: no stealth/fire-at distinction — every booking is
+	// dispatched just-in-time by the 60s assigner cron at scheduled_time−lead.
 	booking, err := s.repo.CreateScheduledBooking(
 		ctx, customerID, req.AddressID, req.TimeSlotID,
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCode,
-		isStealth, fireAt, locality,
+		false, nil, locality,
 		true, // enforce live slot-capacity gate for the scheduled flow
 	)
 	if err != nil {
@@ -1155,29 +1338,36 @@ func (s *Service) CreateScheduledBooking(
 	return booking, nil
 }
 
-// CreateInstantBookingFromCart is the cart-based instant booking entrypoint
-// used by the Zop AI assistant's `create_instant_booking` tool. The legacy
+// CreateInstantBookingFromCart is the cart-based ASAP booking entrypoint used by
+// the Zop AI assistant's `create_instant_booking` tool. The legacy
 // `CreateBooking` path is single-service and prices off `service_categories`
 // + `BaseFeeCents` + surge — the LLM never sees those add-ons, so its
-// rendered total would diverge from the booking total. We need the same
-// cart-derived totals as `CreateScheduledBooking`, BUT the booking must hit
-// the matcher batcher in real time (not the nightly scheduled cron). This
-// method bridges the two: insert via the cart-aware repo, stamp lat/lng/
-// address onto the row from the chosen saved address, then enqueue into
-// the batcher exactly like `CreateBooking` does.
+// rendered total would diverge from the booking total. This method uses the
+// same cart-derived totals as `CreateScheduledBooking`.
+//
+// ASAP semantics (spec §3.2, §5): scheduled_time = now (the passed timeSlotID/
+// scheduledTime are ignored for timing), slot capacity is bypassed
+// (enforceCapacity=false), and a pro is force-assigned synchronously. Success
+// returns the arrival promise; no pro free now returns ErrNoProsAvailable with
+// the earliest regular slot, after cancelling the just-created row (spec §5.5).
 func (s *Service) CreateInstantBookingFromCart(
 	ctx context.Context,
 	customerID, addressID, timeSlotID, scheduledTime string,
 	cartItems []BookingServiceItem,
 	promoCode string,
 	paymentSource string,
-) (*ScheduledBooking, error) {
-	if isInstantBookingClosed(time.Now()) {
-		return nil, ErrInstantBookingClosed
-	}
+) (*ASAPResult, error) {
 	if len(cartItems) == 0 {
 		return nil, fmt.Errorf("cart is empty")
 	}
+
+	// ASAP = now: override any slot-derived scheduledTime the caller passed — the
+	// pro leaves immediately (UTC RFC3339 so the repo's timestamp parse + the
+	// assigner's lead/slot math line up). The caller's timeSlotID is still passed
+	// through to the repo (it loads the slot row for slot_date / is_active); for
+	// ASAP it doesn't gate capacity (enforceCapacity=false) and the assigner
+	// keys off scheduled_time, so the slot_id on the row is cosmetic.
+	scheduledTime = time.Now().UTC().Format(time.RFC3339)
 
 	maxActiveStr, _ := s.configSvc.GetConfig(ctx, config_manager.ConfigBookingMaxActivePerCustomer)
 	maxActive, parseErr := strconv.Atoi(maxActiveStr)
@@ -1247,10 +1437,9 @@ func (s *Service) CreateInstantBookingFromCart(
 		}
 	}
 
-	// Insert with isStealthInstant=false + fireAt=nil so the stealth/
-	// scheduled crons leave it alone — the matcher batcher owns this row.
-	// enforceCapacity=false: instant/cart bookings are not slot-gated (only
-	// the scheduled flow is).
+	// Insert with isStealthInstant=false + fireAt=nil (no stealth path exists
+	// anymore). enforceCapacity=false: ASAP bypasses the slot-capacity gate —
+	// the synchronous assignment attempt is the real capacity check (spec §3.2).
 	booking, err := s.repo.CreateScheduledBooking(
 		ctx, customerID, addressID, timeSlotID,
 		scheduledTime, cartItems,
@@ -1262,9 +1451,8 @@ func (s *Service) CreateInstantBookingFromCart(
 		return nil, err
 	}
 
-	// Stamp coords + address onto the row so the batcher's pending-bookings
-	// rescan picks up real lat/lng (FetchPendingUnmatched reads them) and
-	// the customer-facing match status renders the correct address.
+	// Stamp coords + address onto the row so the assigner's Maps ETA uses real
+	// lat/lng and the customer-facing detail renders the correct address.
 	if _, err := s.db.Exec(ctx,
 		`UPDATE bookings SET lat = $1, lng = $2, address = $3 WHERE id = $4::uuid`,
 		lat, lng, addressText, booking.ID,
@@ -1302,16 +1490,6 @@ func (s *Service) CreateInstantBookingFromCart(
 	}
 
 	matching.TrackDemand(ctx, s.rdb, lat, lng)
-	if s.matchBatcher != nil {
-		s.matchBatcher.Enqueue(matching.BatchEntry{
-			BookingID:  booking.ID,
-			CustomerID: customerID,
-			Lat:        lat,
-			Lng:        lng,
-			CellID:     matching.LatLngToCell(lat, lng),
-			EnqueuedAt: time.Now(),
-		})
-	}
 
 	log.Info().
 		Str("booking_id", booking.ID).
@@ -1319,9 +1497,16 @@ func (s *Service) CreateInstantBookingFromCart(
 		Int("services", len(cartItems)).
 		Int("amount_paise", totalPriceCents).
 		Float64("lat", roundLogCoord(lat)).Float64("lng", roundLogCoord(lng)).
-		Msg("instant booking created via cart")
+		Msg("ASAP booking created via cart")
 
-	return booking, nil
+	// Synchronous force-assign. Success → arrival promise; no pro → the row is
+	// cancelled (no_pros_found) and ErrNoProsAvailable carries the earliest slot.
+	result, err := s.assignASAP(ctx, booking.ID, customerID, addressID)
+	if err != nil {
+		return nil, err
+	}
+	result.Booking = booking
+	return result, nil
 }
 
 // ValidatePromoCode validates a promo code and returns the discount.

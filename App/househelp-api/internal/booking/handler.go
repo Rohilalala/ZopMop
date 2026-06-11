@@ -98,7 +98,7 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 
 	customerID, _ := c.Locals("userID").(string)
 
-	booking, err := h.service.CreateBooking(c.UserContext(), &req, customerID)
+	result, err := h.service.CreateBooking(c.UserContext(), &req, customerID)
 	if err != nil {
 		// Map Postgres unique-violation (e.g. bookings_dedup constraint
 		// preventing same customer+category within 1 hour) to 409 Conflict
@@ -115,13 +115,15 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 			})
 		}
 
-		// Instant booking is closed overnight (20:00–06:00 IST) — return 503
-		// with a stable code so the app can show a "we're closed" prompt
-		// instead of a generic failure.
-		if errors.Is(err, ErrInstantBookingClosed) {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-				"error": "instant booking is closed overnight — please try after 6am",
-				"code":  "INSTANT_BOOKING_CLOSED",
+		// No pro free right now (ASAP) — 409 with the earliest regular slot so
+		// the app can offer "book it instead" in one round-trip. The booking row
+		// was already cancelled (no_pros_found) server-side.
+		var noProsErr *ErrNoProsAvailable
+		if errors.As(err, &noProsErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":         "no pros are free right now",
+				"code":          "no_pros_available",
+				"earliest_slot": noProsErr.Earliest,
 			})
 		}
 
@@ -164,7 +166,7 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(booking)
+	return c.Status(fiber.StatusCreated).JSON(result)
 }
 
 // GetBooking handles GET /bookings/:id. Returns the enriched BookingDetail
@@ -280,6 +282,12 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 		if errors.Is(err, ErrSlotTooFar) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "Bookings can only be made up to 2 days in advance.",
+			})
+		}
+		if errors.Is(err, ErrSlotTooSoon) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "slots open 45 minutes out — use ASAP for now",
+				"code":  "slot_too_soon",
 			})
 		}
 		if errors.Is(err, ErrSlotInPast) {

@@ -660,6 +660,10 @@ func main() {
 			return matching.LoadDispatchConfig(ctx, configService)
 		},
 	)
+	// Wire the assigner into the booking service for the ASAP synchronous-assign
+	// path (spec §3.2, §5), plus the wallet repo for the no-pro refund rail.
+	bookingService.SetSyncAssigner(assigner)
+	bookingService.SetWalletRepo(walletRepo)
 	go matching.NewAssignerCron(assigner, walletRepo).Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)

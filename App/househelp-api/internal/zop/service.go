@@ -1616,7 +1616,7 @@ var zopTools = []openRouterTool{
 		Type: "function",
 		Function: openRouterToolDescription{
 			Name:        "create_instant_booking",
-			Description: "Create an INSTANT booking — dispatch a pro now via the real-time matcher. ONLY call AFTER summary + explicit user confirm. Same prereqs as create_scheduled_booking (cart populated, address_id, slot). Pass the EARLIEST available slot from get_available_slots for today as time_slot_id+scheduled_time. Instant is open 6AM–8PM IST; outside that window the call fails (INSTANT_BOOKING_CLOSED) — offer scheduled instead. This is DIFFERENT from create_scheduled_booking: instant goes to a pro right now, scheduled is dispatched closer to the slot.",
+			Description: "Create an ASAP booking — a pro is force-assigned right now (scheduled_time = now). ONLY call AFTER summary + explicit user confirm. Prereqs: cart populated + address_id. time_slot_id/scheduled_time are ignored for timing (ASAP means now) but still accepted. If no pro is free right now the call fails with no_pros_available and an earliest_slot — offer that slot via create_scheduled_booking instead. This is DIFFERENT from create_scheduled_booking: ASAP goes to a pro immediately, scheduled is dispatched ~30 min before the slot.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
