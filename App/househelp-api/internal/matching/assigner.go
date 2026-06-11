@@ -251,7 +251,7 @@ func (a *Assigner) EligibleCandidates(ctx context.Context, b *assignerBooking, e
 		      SELECT 1 FROM bookings ob
 		      WHERE ob.helper_id      = h.id
 		        AND ob.id             <> p.booking_id
-		        AND ob.status         IN ('accepted','in_progress')
+		        AND ob.status         IN ('accepted','in_progress','arrived')
 		        AND ob.scheduled_time IS NOT NULL
 		        AND tstzrange(
 		                ob.scheduled_time,

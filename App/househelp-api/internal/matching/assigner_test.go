@@ -182,16 +182,18 @@ func (f *asgFixture) loadFor(bookingID string) *assignerBooking {
 	return b
 }
 
-// assignClashingJob inserts an accepted booking for proID whose padded window
-// overlaps `at`, so the clash gate excludes the pro.
-func (f *asgFixture) assignClashingJob(proID string, at time.Time, durationMin int) {
+// assignClashingJob inserts a booking in the given clash status for proID whose
+// padded window overlaps `at`, so the clash gate excludes the pro. status must
+// be one of the clash set ('accepted','in_progress','arrived') for the GiST
+// partial index (migration 134) to cover the row.
+func (f *asgFixture) assignClashingJob(proID, status string, at time.Time, durationMin int) {
 	f.t.Helper()
 	if _, err := f.pool.Exec(context.Background(), `
 		INSERT INTO bookings
 		  (customer_id, helper_id, status, address, lat, lng, amount_paise,
 		   total_duration_minutes, scheduled_time, locality)
-		VALUES ($1::uuid, $2::uuid, 'accepted', 'Test Addr', 28.45, 77.05, 10000, $3, $4, $5)
-	`, f.customer, proID, durationMin, at, f.locality); err != nil {
+		VALUES ($1::uuid, $2::uuid, $3, 'Test Addr', 28.45, 77.05, 10000, $4, $5, $6)
+	`, f.customer, proID, status, durationMin, at, f.locality); err != nil {
 		f.t.Fatalf("insert clashing job: %v", err)
 	}
 }
@@ -303,10 +305,23 @@ func TestAssigner_Eligibility_ClashOverlap(t *testing.T) {
 	at := time.Now().Add(40 * time.Minute)
 	// Existing accepted 60-min job starting 20 min before the new booking →
 	// its padded window [start, start+60+15) overlaps the new window.
-	f.assignClashingJob(pro, at.Add(-20*time.Minute), 60)
+	f.assignClashingJob(pro, "accepted", at.Add(-20*time.Minute), 60)
 	bk := f.makeBooking(at, 60)
 	if ids := f.eligibleIDs(bk, ""); contains(ids, pro) {
 		t.Fatalf("clashing pro must be excluded, got %v", ids)
+	}
+}
+
+func TestAssigner_Eligibility_ClashArrived(t *testing.T) {
+	f := newAsgFixture(t)
+	pro := f.addPro(3 * time.Hour)
+	at := time.Now().Add(40 * time.Minute)
+	// A pro who has marked 'arrived' on an overlapping job must still clash
+	// (spec §5.3: accepted/arrived/in-progress) — else the assigner double-books.
+	f.assignClashingJob(pro, "arrived", at.Add(-20*time.Minute), 60)
+	bk := f.makeBooking(at, 60)
+	if ids := f.eligibleIDs(bk, ""); contains(ids, pro) {
+		t.Fatalf("arrived-clash pro must be excluded, got %v", ids)
 	}
 }
 
