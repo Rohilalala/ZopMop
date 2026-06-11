@@ -1,4 +1,4 @@
--- 131_slot_capacity_gating.sql
+-- 131_slot_capacity_gating.up.sql
 -- Slot capacity gating (pilot: single society, Orchid Island Gurugram).
 --
 -- Capacity is LIVE-derived at read/booking time — there is no counter column.
