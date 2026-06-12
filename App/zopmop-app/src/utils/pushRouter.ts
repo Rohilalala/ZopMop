@@ -48,6 +48,11 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
   }
 
   switch (data.type) {
+    // The unified assigner is the sole producer of the customer "accepted" push
+    // and sends data.type as lowercase 'booking_accepted' (notification SendData);
+    // the legacy uppercase string is kept for any in-flight pushes. Both land on
+    // the same confirmation toast.
+    case 'booking_accepted':
     case 'BOOKING_ACCEPTED': {
       const helperName = data.helper_name ?? 'Your pro';
       showSuccess(`${helperName} has accepted your booking.`, { title: 'Booking confirmed' });
