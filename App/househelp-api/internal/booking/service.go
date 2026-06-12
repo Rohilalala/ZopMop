@@ -1570,9 +1570,13 @@ func (s *Service) ValidatePromoCode(ctx context.Context, code string, orderAmoun
 	defer cancel()
 
 	var promo admin.Promotion
+	// created_by is nullable (migration 107 orphans pre-CRM promo authors to
+	// NULL; the column was never NOT NULL). Promotion.CreatedBy is a plain
+	// string, so scanning a NULL row would 500 every booking that uses such a
+	// promo. COALESCE to '' — the creator is irrelevant to validation here.
 	err := s.db.QueryRow(queryCtx,
 		`SELECT id, code, discount_type, discount_value, min_order_cents, max_uses, uses_count,
-		        is_active, expires_at, created_by, created_at
+		        is_active, expires_at, COALESCE(created_by::text, ''), created_at
 		 FROM promotions
 		 WHERE code = $1 AND is_active = true`,
 		code,
