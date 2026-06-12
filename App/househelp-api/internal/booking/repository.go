@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 )
 
 // Repository handles all database operations for the booking module.
@@ -211,76 +213,99 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 }
 
 // CancelBookingWithFee transitions a booking to cancelled and atomically
-// stamps the cancellation fee fields. cancelledBy is "customer" | "helper" |
-// "system". feeCents is 0 when the cancellation is inside the free window.
+// settles the cancellation fee + refund. cancelledBy is "customer" | "helper" |
+// "system". feeCents is the *notional* fee (0 inside the free window).
 //
-// If the booking was already paid through a non-COD method, this also inserts
-// a pending_refunds row for (price - discount - fee), all in the same
-// transaction. The CRM refund worker drains the table; we no longer rely on
-// an async event consumer to create the row, so a crash between cancel and
-// refund-event publish can no longer leave the customer un-reimbursed.
-func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancelledBy string, feeCents int) error {
+// The fee is collected by withholding it from the refund, so it can never
+// exceed what the customer actually paid: the effective fee is clamped to the
+// net collected amount (and is 0 for unpaid / COD bookings, which have nothing
+// to deduct). This stops the broken case where a flat fee larger than a small
+// booking produced a negative refund — no refund row at all and a silent
+// forfeit of the whole paid amount (and a phantom fee on an unpaid row).
+//
+// The refund (net paid − effective fee) is routed through the canonical
+// wallet.RecordBookingRefundTx so wallet payments are instant-credited back to
+// the wallet, Cashfree payments land on the pending_refunds queue, and
+// cash/null methods move nothing — all in the same transaction as the status
+// change. walletRepo may be nil (the fee=0 system/rollback callers never have
+// a paid booking to refund); a nil repo means "no movement".
+//
+// Returns the effective (clamped) fee actually stamped on the row so callers
+// can echo a truthful amount back to the user.
+func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancelledBy string, feeCents int, walletRepo *wallet.Repository) (int, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to begin cancel tx: %w", err)
+		return 0, fmt.Errorf("failed to begin cancel tx: %w", err)
 	}
 	defer tx.Rollback(context.Background())
 
-	feeApplied := feeCents > 0
 	var (
-		customerID     string
-		helperID       *string
-		priceCents     int64
-		discountCents  int64
-		paymentMethod  *string
-		paymentID      *string
-		paymentStatus  *string
+		customerID    string
+		helperID      *string
+		priceCents    int64
+		discountCents int64
+		paymentMethod *string
+		paymentID     *string
+		paymentStatus *string
 	)
+	// First read the row (locking it) so we can compute the effective fee from
+	// the amount actually collected before we stamp it.
 	err = tx.QueryRow(queryCtx,
+		`SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0),
+		        payment_method, payment_id, payment_status, helper_id::text
+		   FROM bookings
+		  WHERE id = $1 AND status IN ('pending', 'accepted')
+		  FOR UPDATE`,
+		bookingID,
+	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus, &helperID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, fmt.Errorf("booking cannot be cancelled in current status")
+		}
+		return 0, fmt.Errorf("failed to load booking for cancel: %w", err)
+	}
+
+	// The fee is only ever realised by withholding it from a refund, so it can
+	// never exceed the net amount the customer actually paid. Unpaid / COD rows
+	// have nothing collected → net paid is 0 → effective fee is 0 (no phantom
+	// fee on a row the customer was never charged for).
+	paid := paymentStatus != nil && *paymentStatus == "paid"
+	netPaid := int64(0)
+	if paid {
+		netPaid = priceCents - discountCents
+		if netPaid < 0 {
+			netPaid = 0
+		}
+	}
+	effectiveFee := int64(feeCents)
+	if effectiveFee > netPaid {
+		effectiveFee = netPaid
+	}
+	feeApplied := effectiveFee > 0
+
+	if _, err := tx.Exec(queryCtx,
 		`UPDATE bookings
 		    SET status = $2, updated_at = NOW(), cancelled_at = NOW(),
 		        cancelled_by = $3,
 		        cancellation_fee_applied = $4, cancellation_fee_cents = $5
-		  WHERE id = $1
-		    AND status IN ('pending', 'accepted')
-		  RETURNING customer_id::text, amount_paise, COALESCE(discount_paise, 0),
-		            payment_method, payment_id, payment_status, helper_id::text`,
-		bookingID, StatusCancelled, cancelledBy, feeApplied, feeCents,
-	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus, &helperID)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("booking cannot be cancelled in current status")
-		}
-		return fmt.Errorf("failed to cancel booking: %w", err)
+		  WHERE id = $1`,
+		bookingID, StatusCancelled, cancelledBy, feeApplied, effectiveFee,
+	); err != nil {
+		return 0, fmt.Errorf("failed to cancel booking: %w", err)
 	}
 
-	// Only create a refund row when money was actually collected.
-	// COD + unpaid bookings have nothing to refund.
-	paid := paymentStatus != nil && *paymentStatus == "paid"
-	nonCod := paymentMethod != nil && *paymentMethod != "" && *paymentMethod != "cod"
-	refundAmount := priceCents - discountCents - int64(feeCents)
-	if paid && nonCod && refundAmount > 0 {
-		// $3 is used twice — once as text (source_ref) and once as uuid
-		// (booking_id). Postgres prepared-statement parameter inference
-		// requires a single type per param, so both usages get explicit
-		// casts: $3::text for source_ref, $3::uuid for booking_id.
-		// Without the ::text cast we get SQLSTATE 42P08 ("inconsistent
-		// types deduced for parameter $3").
-		if _, err := tx.Exec(queryCtx,
-			`INSERT INTO pending_refunds
-			   (user_id, amount_cents, source, source_ref,
-			    booking_id, payment_method, payment_id, status)
-			 VALUES ($1::uuid, $2, 'booking_cancellation', $3::text,
-			         $3::uuid, $4, $5, 'pending')
-			 ON CONFLICT (booking_id) WHERE booking_id IS NOT NULL
-			   AND status IN ('pending','approved','processed','processed_manual')
-			 DO NOTHING`,
-			customerID, refundAmount, bookingID, paymentMethod, paymentID,
-		); err != nil {
-			return fmt.Errorf("failed to create refund record: %w", err)
+	// Refund the net paid amount minus the (clamped) fee through the canonical
+	// router. RecordBookingRefundTx no-ops when unpaid or refund <= 0, and picks
+	// the wallet-credit vs Cashfree-queue rail by payment_method.
+	refundAmount := netPaid - effectiveFee
+	if walletRepo != nil && refundAmount > 0 {
+		if err := wallet.RecordBookingRefundTx(queryCtx, tx, walletRepo,
+			customerID, bookingID, paymentMethod, paymentID, paymentStatus,
+			refundAmount, "Booking cancellation refund"); err != nil {
+			return 0, fmt.Errorf("failed to record cancellation refund: %w", err)
 		}
 	}
 
@@ -296,9 +321,9 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 	}
 
 	if err := tx.Commit(queryCtx); err != nil {
-		return fmt.Errorf("failed to commit cancel tx: %w", err)
+		return 0, fmt.Errorf("failed to commit cancel tx: %w", err)
 	}
-	return nil
+	return int(effectiveFee), nil
 }
 
 // isValidTransition checks if a booking status transition is valid.

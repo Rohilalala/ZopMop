@@ -335,6 +335,23 @@ func (s *Service) stampBookingDirectPay(ctx context.Context, bookingID string) {
 	}
 }
 
+// stampBookingCOD tags a freshly created booking as cash-on-delivery. Unlike
+// the Cashfree path there is no prepay gate: the row stays in 'pending' and is
+// force-assigned inline by the caller. payment_method='cod' keeps the row
+// visible in the customer-facing 'upcoming' list (the filter only hides unpaid
+// Cashfree rows) and tells the cancel-refund router that nothing was collected.
+// Errors are logged, never propagated — a tag glitch must not unwind a booking
+// the customer already saw confirmed.
+func (s *Service) stampBookingCOD(ctx context.Context, bookingID string) {
+	if _, err := s.db.Exec(ctx,
+		`UPDATE bookings SET payment_method = 'cod', updated_at = NOW()
+		 WHERE id = $1::uuid AND payment_method IS NULL`,
+		bookingID,
+	); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("failed to stamp booking payment_method='cod'")
+	}
+}
+
 // recordPaymentIntent inserts a pending payment row for a freshly created
 // booking and emits payment.initiated. Errors are logged, never propagated —
 // a ledger glitch must not unwind a booking the customer already saw confirmed.
@@ -694,12 +711,13 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 	// synchronously, so it stays paid and assigns inline.
 	unpaidCashfree := false
 
-	if req.PaymentSource == "wallet" {
+	switch req.PaymentSource {
+	case "wallet":
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
-			// Roll back the booking on wallet-debit failure so we don't
-			// leave a pending unpaid row in the matching pipeline. Free
-			// cancellation (fee=0) — customer never saw a confirmation.
-			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+			// Rollback after a failed wallet debit: nothing was collected, so
+			// there is no refund to route (nil walletRepo) and fee is 0. Leaving
+			// a pending unpaid row in the matching pipeline would be worse.
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
 				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
 					Msg("failed to roll back booking after wallet payment failure")
 			}
@@ -708,7 +726,15 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 			}
 			return nil, fmt.Errorf("wallet payment failed: %w", err)
 		}
-	} else {
+	case "cod":
+		// Cash on delivery: no money moves at booking time. Stamp
+		// payment_method='cod' (keeps the row visible in 'upcoming' — the list
+		// filter only hides unpaid Cashfree rows) and fall through to the
+		// synchronous assign below. No prepay gate to wait on, so unpaidCashfree
+		// stays false and the pro is dispatched immediately.
+		s.stampBookingCOD(ctx, booking.ID)
+		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	default:
 		// Default / "direct" path: stamp payment_method='cashfree' so the
 		// customer-facing bookings list filters this row out until the
 		// webhook stamps payment_status='paid'. Without this tag the row
@@ -833,7 +859,12 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 			Msg("booking cancelled outside free window; fee applied")
 	}
 
-	if err := s.repo.CancelBookingWithFee(ctx, bookingID, "customer", feeCents); err != nil {
+	// appliedFee is the fee actually settled — clamped to what the customer
+	// paid (so a flat fee can't exceed a small booking and silently forfeit it)
+	// and 0 for unpaid/COD rows. The refund is routed inside the same tx via
+	// the canonical wallet rail (instant wallet credit / Cashfree queue).
+	appliedFee, err := s.repo.CancelBookingWithFee(ctx, bookingID, "customer", feeCents, s.walletRepo)
+	if err != nil {
 		return nil, err
 	}
 
@@ -865,8 +896,8 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 	log.Info().Str("booking_id", bookingID).Str("user_id", userID).Msg("booking cancelled")
 	return &CancelBookingResponse{
 		Message:                "booking cancelled",
-		CancellationFeeApplied: feeCents > 0,
-		CancellationFeeCents:   feeCents,
+		CancellationFeeApplied: appliedFee > 0,
+		CancellationFeeCents:   appliedFee,
 	}, nil
 }
 
@@ -1308,7 +1339,9 @@ func (s *Service) CreateScheduledBooking(
 	netPaise := totalPriceCents - discountCents
 	if req.PaymentSource == "wallet" {
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
-			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+			// Rollback after a failed wallet debit: nothing was collected, so
+			// there is no refund to route (nil walletRepo) and fee is 0.
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
 				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
 					Msg("failed to roll back scheduled booking after wallet payment failure")
 			}
@@ -1476,9 +1509,12 @@ func (s *Service) CreateInstantBookingFromCart(
 	// list hides it until paid and the 60s assigner cron's payment gate (ClaimDue,
 	// payment_method <> 'cashfree' OR payment_status='paid') places it post-webhook.
 	unpaidCashfree := false
-	if paymentSource == "wallet" {
+	switch paymentSource {
+	case "wallet":
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
-			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
+			// Rollback after a failed wallet debit: nothing was collected, so
+			// there is no refund to route (nil walletRepo) and fee is 0.
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
 				log.Error().Err(cancelErr).Str("booking_id", booking.ID).
 					Msg("failed to roll back instant cart booking after wallet payment failure")
 			}
@@ -1487,7 +1523,13 @@ func (s *Service) CreateInstantBookingFromCart(
 			}
 			return nil, fmt.Errorf("wallet payment failed: %w", err)
 		}
-	} else {
+	case "cod":
+		// Cash on delivery: no prepay gate, assign immediately. Stamp
+		// payment_method='cod' so the row stays visible and the cancel-refund
+		// router treats it as nothing-collected. unpaidCashfree stays false.
+		s.stampBookingCOD(ctx, booking.ID)
+		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	default:
 		s.stampBookingDirectPay(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
 		unpaidCashfree = true
