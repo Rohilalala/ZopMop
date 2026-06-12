@@ -54,9 +54,8 @@ import {
   type BookingDetail,
   type TrackingResponse,
 } from '../../api/matching';
-import { cancelBooking, keepLookingBooking } from '../../api/bookings';
 import { onShiftEvent } from '../../utils/shiftEvents';
-import { showSuccess, showError } from '../../utils/toast';
+import { showError } from '../../utils/toast';
 import polyline from '@mapbox/polyline';
 
 // ── Sub-state derivation ─────────────────────────────────────────────────────
@@ -70,19 +69,21 @@ type SubState =
   | 'completed'
   | 'cancelled'
   | 'no_pro_available'
-  | 'no_show'
-  | 'pending_action';
+  | 'no_show';
 
 function deriveSubState(d: BookingDetail | null): SubState {
   if (!d) return 'dispatching';
-  if (d.status === 'cancelled') return 'cancelled';
-  // Failed-match terminal/decision states. Backend (migration 101) emits
-  // these when dispatch exhausts the pool, a pro no-shows, or the stealth
-  // search window expires. Must come before the timestamp checks below so a
-  // partially-stamped booking that later fails still surfaces the right UI.
+  if (d.status === 'cancelled') {
+    // The unified flow's unfilled-booking terminal state is status='cancelled'
+    // with cancelled_by='no_pros_found' (assigner + ASAP no-pro path). Surface
+    // the tailored no-pros rebook panel for it; everything else cancelled
+    // (customer/system) gets the generic cancelled UI.
+    return d.cancelled_by === 'no_pros_found' ? 'no_pro_available' : 'cancelled';
+  }
+  // Legacy failed-match terminal states (pre-unified-dispatch rows). The new
+  // flow no longer produces status='no_pro_available'; kept for old rows.
   if (d.status === 'no_pro_available') return 'no_pro_available';
   if (d.status === 'no_show') return 'no_show';
-  if (d.status === 'pending_customer_action') return 'pending_action';
   if (d.completed_at) return 'completed';
   if (d.started_at) return 'in_progress';
   if (d.arrived_at) return 'arrived';
@@ -236,43 +237,11 @@ export default function TrackLiveScreen() {
   };
 
   // ── Failed-match recovery actions ─────────────────────────────────────────
-  // Guards against double-tap while a request is in flight. `actionBusy`
-  // disables every CTA on the failed-match panels.
-  const [actionBusy, setActionBusy] = useState(false);
-
+  // The unified flow's terminal failed-match panels (no_pro_available, no_show)
+  // are all already terminal server-side, so they just route home — no in-screen
+  // cancel/keep-looking action remains (those belonged to the deleted
+  // pending_customer_action limbo, spec §9).
   const goHome = () => navigation.navigate('Tabs', { screen: 'Home' });
-
-  // Keep Looking — only valid in pending_customer_action (stealth window
-  // expired). Extends the search 15 min, then we refetch so the panel flips
-  // back to the dispatching spinner.
-  const onKeepLooking = async () => {
-    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
-    setActionBusy(true);
-    try {
-      await keepLookingBooking(token, bookingId);
-      showSuccess("We're looking again — hang tight");
-      await fetchDetail();
-    } catch (e) {
-      showError((e as Error)?.message ?? 'Could not extend the search');
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  // Cancel — used by the pending_action panel's secondary CTA. no_pro_available
-  // / no_show are already terminal server-side, so those panels just route
-  // home rather than issue a redundant cancel.
-  const onCancelBooking = async () => {
-    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
-    setActionBusy(true);
-    try {
-      await cancelBooking(token, bookingId);
-      goHome();
-    } catch (e) {
-      showError((e as Error)?.message ?? 'Could not cancel the booking');
-      setActionBusy(false);
-    }
-  };
 
   // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
   // ~5s on this socket — replaces the previous setInterval poll. Saves mobile
@@ -651,33 +620,6 @@ export default function TrackLiveScreen() {
                 style={styles.secondaryCta}
               >
                 <Text style={[fontSemi, styles.secondaryCtaText]}>Contact support</Text>
-              </PressFx>
-            </View>
-          )}
-
-          {/* Pending customer action: stealth search window expired. The
-              customer decides — keep looking (extends 15 min) or cancel. */}
-          {subState === 'pending_action' && (
-            <View style={styles.statePanel}>
-              <View style={styles.warnIcon}>
-                <Feather name="clock" size={26} color={isDark ? '#FFFFFF' : c.amber} />
-              </View>
-              <Text style={[fontBold, styles.stateHeadline]}>Still looking for a pro</Text>
-              <Text style={[fontMed, styles.stateSub]}>
-                We haven't matched you with a pro yet. Want us to keep looking
-                for a little longer?
-              </Text>
-              <PressFx
-                onPress={onKeepLooking}
-                style={[styles.primaryCta, actionBusy && { opacity: 0.5 }]}
-              >
-                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Keep looking</Text>
-              </PressFx>
-              <PressFx
-                onPress={onCancelBooking}
-                style={[styles.secondaryCta, actionBusy && { opacity: 0.5 }]}
-              >
-                <Text style={[fontSemi, styles.secondaryCtaText]}>Cancel booking</Text>
               </PressFx>
             </View>
           )}

@@ -223,19 +223,3 @@ export async function rateBooking(
   return { ok: res.ok, statusCode: res.status };
 }
 
-// keep-looking: extends the stealth-search window by another 15 minutes
-// when a booking is in 'pending_customer_action'. Server: POST
-// /bookings/:id/keep-looking (added in service.go KeepLookingBooking).
-export async function keepLookingBooking(
-  token: string,
-  bookingId: string,
-): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/keep-looking`, {
-    method: 'POST',
-    headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? 'failed to extend search');
-  }
-}
