@@ -4,14 +4,13 @@
 // Type schema (set by backend in internal/notification/service.go SendData
 // + internal/matching dispatch crons):
 //
-//   SCHEDULED_INVITE          — scheduled-job invite for a pro
 //   BOOKING_ACCEPTED          — pro took the customer's job
 //   BOOKING_NO_PROS_FOUND     — chain exhausted, customer must rebook
 //   BOOKING_STILL_LOOKING     — stealth-instant 15-min mark, no taker yet
 //   BOOKING_REBOOK_AVAILABLE  — pros came back online within 2h
+//   booking_assigned          — job force-assigned into a pro's roster
 //
-// All types carry booking_id. SCHEDULED_INVITE additionally carries
-// scheduled_time, duration_minutes, locality, customer_id.
+// All types carry booking_id.
 
 import { navigate } from '../navigation/navigationRef';
 import { showInfo, showSuccess } from './toast';
@@ -26,11 +25,11 @@ type FcmMessageData = Record<string, string> | undefined;
 // token registered as a pro target). We drop those silently and warn —
 // see audit C-9 / CH1D-1.
 //
-// Today only SCHEDULED_INVITE meets that bar (it deep-links into
-// ProScheduledInvite). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
+// Today only booking_assigned meets that bar (it refreshes a pro's
+// roster). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
 // REBOOK_AVAILABLE are customer-facing toasts/redirects and stay open.
 // When new Pro-targeted types are added, append them here.
-const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE', 'booking_offer', 'booking_assigned'];
+const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['booking_assigned'];
 
 export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) {
   if (!data || !data.type) return;
@@ -49,9 +48,6 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
   }
 
   switch (data.type) {
-    // Legacy SCHEDULED_INVITE path is now handled by the
-    // booking_offer case below — both share the same emit/route.
-
     case 'BOOKING_ACCEPTED': {
       const helperName = data.helper_name ?? 'Your pro';
       showSuccess(`${helperName} has accepted your booking.`, { title: 'Booking confirmed' });
@@ -104,32 +100,6 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
         type: 'zone_drift_warning',
         commitment_id: data.commitment_id,
       });
-      return;
-    }
-
-    case 'booking_offer':
-    case 'SCHEDULED_INVITE': {
-      // SCHEDULED_INVITE is the wire name from backend Phase 10; the
-      // pro app treats every invite as a booking_offer regardless of
-      // whether it's a stealth-instant or scheduled flow.
-      if (!bookingId) return;
-      const offer = {
-        booking_id: bookingId,
-        customer_first_name: data.customer_first_name,
-        address_summary: data.address_summary,
-        task_list_json: data.task_list_json,
-        estimated_earnings_paise: data.estimated_earnings_paise ? parseInt(data.estimated_earnings_paise, 10) : undefined,
-        estimated_duration_minutes: data.estimated_duration_minutes ? parseInt(data.estimated_duration_minutes, 10) : undefined,
-        time_remaining_sec: data.time_remaining_sec ? parseInt(data.time_remaining_sec, 10) : 25,
-        received_at_ms: Date.now(),
-      };
-      emitShiftEvent({ type: 'booking_offer', payload: offer });
-      // Background-tap deep-link: navigate to JobOffer screen so the
-      // pro lands on it after tapping the notification. The
-      // foreground modal listener (in MainNavigator) will also fire
-      // on the same emit but is a no-op if the screen is already
-      // mounted.
-      navigate('JobOffer', { booking_id: bookingId });
       return;
     }
 

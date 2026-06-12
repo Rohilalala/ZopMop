@@ -24,9 +24,10 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'YourExperts', 'ZopIntro',
 	// Pro flows (also gated per-screen via useProRoleGate from C-9).
 	// Phase 10: ProActive/ProMatched/ProScheduledInvite retired —
-	// replaced by JobDetail + JobOffer.
+	// replaced by JobDetail. JobOffer removed under unified-slot-dispatch
+	// (offer/accept flow deleted; jobs are force-assigned to the roster).
 	'ProDashboard', 'ProDeclareLeave', 'ProLeaveHistory',
-	'ProOnboarding', 'ProProfile', 'JobDetail', 'JobOffer',
+	'ProOnboarding', 'ProProfile', 'JobDetail',
 ]);
 
 // SDUI deep_link actions are restricted to https. First-party tel: and

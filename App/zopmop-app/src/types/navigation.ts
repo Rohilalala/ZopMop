@@ -89,10 +89,10 @@ export type MainStackParamList = {
   };
   ProMoney: undefined;
   LanguageToggle: undefined;
-  JobOffer: { booking_id: string };
   JobDetail: { booking_id: string };
   // ProMatched / ProActive / ProScheduledInvite retired in Phase 10.
-  // Replaced by JobDetail + JobOffer below. Screens archived at
+  // Replaced by JobDetail. The offer/accept JobOffer flow was deleted
+  // under the unified-slot-dispatch design. Screens archived at
   // _legacy/pro_legacy_screens/.
   RoomiesSetup: undefined;
   RoomiesCodeShare: { groupId: string; code: string; groupName: string };
