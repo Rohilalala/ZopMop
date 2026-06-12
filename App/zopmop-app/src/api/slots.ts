@@ -21,6 +21,13 @@ export interface ApiSlotPeriod {
   slots: ApiTimeSlot[];
 }
 
+// Full body of GET /bookings/availability (backend booking.AvailabilityResponse).
+// The helpers below return only .periods, which is all the picker consumes.
+export interface AvailabilityResponse {
+  date: string; // YYYY-MM-DD (IST)
+  periods: ApiSlotPeriod[];
+}
+
 // Returns slots grouped by period as the backend sends them.
 // Response shape: { date, periods: [{ label, slots: [...] }] }
 export async function getTimeSlots(token: string, date: string): Promise<ApiSlotPeriod[]> {
@@ -54,8 +61,8 @@ export async function getSlotAvailability(
       { headers: authHeaders(token) },
     );
     if (!res.ok) return getTimeSlots(token, date);
-    const data = await res.json();
-    return (data.periods ?? []) as ApiSlotPeriod[];
+    const data = (await res.json()) as AvailabilityResponse;
+    return data.periods ?? [];
   } catch {
     return getTimeSlots(token, date);
   }

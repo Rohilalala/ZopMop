@@ -5,7 +5,7 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  
+  Modal,
   Alert,
   Animated,
   Easing,
@@ -34,10 +34,17 @@ import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { listAddresses, type ApiAddress } from '../../api/addresses';
-import { createScheduledBooking, getBookings } from '../../api/bookings';
+import {
+  createScheduledBooking,
+  createInstantCartBooking,
+  getBookings,
+  NoProsAvailableError,
+  SlotTooSoonError,
+  type EarliestSlot,
+} from '../../api/bookings';
 import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
-import SchedulingModal from '../../components/SchedulingModal';
+import SchedulingModal, { type ScheduleSelection } from '../../components/SchedulingModal';
 import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
@@ -58,6 +65,21 @@ function generateUUID(): string {
     const r = (Math.random() * 16) | 0;
     return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
+}
+
+// "14:30" (IST 24h, as the slots feed sends it) → "2:30 PM" for display.
+function prettyTime(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  if (Number.isNaN(h)) return hhmm;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m ?? 0).padStart(2, '0')} ${period}`;
+}
+
+// "Today" if the slot date matches the current IST date, else the short date.
+function earliestDayLabel(dateIso: string): string {
+  const istToday = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().split('T')[0];
+  return dateIso === istToday ? 'today' : 'tomorrow';
 }
 
 // Module-level cache: keeps last fetched addresses + selection so re-opening
@@ -85,6 +107,12 @@ export default function CartScreen() {
   const [schedulingVisible, setSchedulingVisible] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [selectedSlotLabel, setSelectedSlotLabel] = useState<string | null>(null);
+  // true when the customer chose ASAP (no specific slot) — routes checkout to
+  // the instant-create path instead of the scheduled-create path.
+  const [asapSelected, setAsapSelected] = useState(false);
+  // Earliest-slot fallback offered when ASAP finds no free pro (409). Drives an
+  // inline "book it instead" sheet.
+  const [noProsEarliest, setNoProsEarliest] = useState<EarliestSlot | null>(null);
   const [booking, setBooking] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const bookingInFlight = useRef(false);
@@ -217,10 +245,14 @@ export default function CartScreen() {
     } finally { setRemoving(null); }
   }, [removeItem, items, posthog]);
 
-  const handleCheckout = useCallback(async () => {
+  const handleCheckout = useCallback(async (slotOverride?: string) => {
     if (!token) return;
     if (!selectedAddress) { showError('Please select a delivery address.', { title: 'No address' }); return; }
-    if (!selectedSlotId) { showError('Please pick a date and time slot.', { title: 'No time selected' }); return; }
+    // ASAP needs no slot; a scheduled booking needs one. slotOverride is set by
+    // the "book the earliest slot instead" tap from the no-pros sheet.
+    const slotId = slotOverride ?? selectedSlotId;
+    const isAsap = asapSelected && !slotOverride;
+    if (!isAsap && !slotId) { showError('Please pick a date and time slot.', { title: 'No time selected' }); return; }
     if (itemCount === 0) return;
     if (bookingInFlight.current) return;
 
@@ -249,14 +281,34 @@ export default function CartScreen() {
 
     bookingInFlight.current = true;
     setBooking(true);
+    setNoProsEarliest(null);
     const promoCode = promoStore.get() ?? undefined;
+    // ASAP assignment outcome — passed to the confirmation screen so it can
+    // render the "<Name> is on the way — arriving by <now + eta>" promise
+    // (Task 2 owns the rendering; here we just thread the values through).
+    let asapAssigned = false;
+    let asapHelperName: string | undefined;
+    let asapEtaMinutes: number | undefined;
     try {
-      const created = await createScheduledBooking(token, {
-        address_id: selectedAddress.id,
-        time_slot_id: selectedSlotId,
-        ...(promoCode ? { promo_code: promoCode } : {}),
-        payment_source: paymentSource,
-      });
+      let created;
+      if (isAsap) {
+        const asap = await createInstantCartBooking(token, {
+          address_id: selectedAddress.id,
+          ...(promoCode ? { promo_code: promoCode } : {}),
+          payment_source: paymentSource,
+        });
+        created = asap.booking;
+        asapAssigned = asap.assigned;
+        asapHelperName = asap.helper_name || undefined;
+        asapEtaMinutes = asap.promise_eta_minutes;
+      } else {
+        created = await createScheduledBooking(token, {
+          address_id: selectedAddress.id,
+          time_slot_id: slotId!,
+          ...(promoCode ? { promo_code: promoCode } : {}),
+          payment_source: paymentSource,
+        });
+      }
 
       posthog.capture('booking_confirmed', {
         booking_id: created.id,
@@ -294,7 +346,7 @@ export default function CartScreen() {
           // JSON field is back-compat; value is paise (see backend
           // migration 065). No * 100 conversion needed.
           amount_paise: created.price_paise,
-          bookingType: 'scheduled',
+          bookingType: isAsap ? 'instant' : 'scheduled',
         });
         return;
       }
@@ -305,11 +357,39 @@ export default function CartScreen() {
       navigation.replace('BookingConfirmed', {
         bookingId: created.id,
         totalCents,
-        bookingType: 'scheduled',
-        slot: selectedSlotLabel ?? undefined,
+        bookingType: isAsap ? 'instant' : 'scheduled',
+        slot: isAsap ? undefined : selectedSlotLabel ?? undefined,
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
+        // ASAP arrival promise — the confirmation screen turns these into
+        // "<Name> is on the way — arriving by <now + eta>" (spec §6).
+        ...(isAsap && asapAssigned
+          ? { helperName: asapHelperName, etaMinutes: asapEtaMinutes }
+          : {}),
       });
     } catch (err: any) {
+      if (err instanceof NoProsAvailableError) {
+        // ASAP found no free pro right now. The booking row was already
+        // cancelled server-side. Offer the earliest bookable regular slot in an
+        // inline sheet (one-tap rebooks via the scheduled path); if none is
+        // free today/tomorrow, just tell the customer to try again shortly.
+        if (err.earliest) {
+          setNoProsEarliest(err.earliest);
+        } else {
+          showError(
+            'No pros are free right now and no later slot is open today. Please try again in a few minutes.',
+            { title: 'No pros available' },
+          );
+        }
+        return;
+      }
+
+      if (err instanceof SlotTooSoonError) {
+        // The chosen slot is inside the 45-min lead window (race past the
+        // picker's own disable). Nudge to ASAP.
+        showError('Slots open 45 minutes out — use ASAP for now.', { title: 'Too soon' });
+        return;
+      }
+
       if (err instanceof UnpaidBookingsError) {
         // Customer has completed-but-unpaid Cashfree bookings; route them
         // to the bookings list to settle before re-trying.
@@ -349,7 +429,7 @@ export default function CartScreen() {
       bookingInFlight.current = false;
     }
   }, [
-    token, selectedAddress, selectedSlotId, itemCount, refreshCart, navigation,
+    token, selectedAddress, selectedSlotId, asapSelected, itemCount, refreshCart, navigation,
     splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore, selectedSlotLabel,
     paymentSource, walletBalance, refetchWalletBalance, subtotalCents, posthog,
   ]);
@@ -651,12 +731,69 @@ export default function CartScreen() {
         addressId={selectedAddress?.id}
         durationMinutes={items.reduce((sum, it) => sum + (it.duration_minutes ?? 0), 0)}
         onClose={() => setSchedulingVisible(false)}
-        onConfirm={(slotId, label) => {
-          setSelectedSlotId(slotId);
-          setSelectedSlotLabel(label);
+        onConfirm={(sel: ScheduleSelection) => {
+          if (sel.kind === 'asap') {
+            setAsapSelected(true);
+            setSelectedSlotId(null);
+            setSelectedSlotLabel('ASAP · pro on the way in ~15 min');
+          } else {
+            setAsapSelected(false);
+            setSelectedSlotId(sel.slotId);
+            setSelectedSlotLabel(sel.label);
+          }
           setSchedulingVisible(false);
         }}
       />
+
+      <Modal
+        visible={!!noProsEarliest}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNoProsEarliest(null)}
+      >
+        <View style={s.sheetOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setNoProsEarliest(null)}
+          />
+          <View style={[s.noProsSheet, { backgroundColor: c.bg, borderColor: c.glassBorderHi }]}>
+            <View style={[s.noProsIcon, { backgroundColor: c.amberSoft }]}>
+              <Feather name="clock" size={20} color={c.amber} />
+            </View>
+            <Text style={[s.noProsTitle, { color: c.text }]}>No pros free right now</Text>
+            {noProsEarliest && (
+              <Text style={[s.noProsBody, { color: c.textMuted }]}>
+                The earliest slot is {prettyTime(noProsEarliest.start_time)} {earliestDayLabel(noProsEarliest.date)}. Book it?
+              </Text>
+            )}
+            <PrimaryButton
+              label={
+                noProsEarliest
+                  ? `Book ${prettyTime(noProsEarliest.start_time)} ${earliestDayLabel(noProsEarliest.date)}`
+                  : 'Book earliest slot'
+              }
+              onPress={() => {
+                const slot = noProsEarliest;
+                if (!slot) return;
+                setNoProsEarliest(null);
+                setAsapSelected(false);
+                setSelectedSlotId(slot.slot_id);
+                setSelectedSlotLabel(`${prettyTime(slot.start_time)} – ${prettyTime(slot.end_time)}`);
+                handleCheckout(slot.slot_id);
+              }}
+              showChevron
+            />
+            <TouchableOpacity
+              style={s.noProsCancel}
+              activeOpacity={0.7}
+              onPress={() => setNoProsEarliest(null)}
+            >
+              <Text style={[s.noProsCancelText, { color: c.textMuted }]}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <LocationSelector
         visible={addressPickerVisible}
@@ -838,6 +975,32 @@ const s = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
     zIndex: 1,
   },
+
+  // No-pros-available sheet (ASAP fallback)
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  noProsSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 0.5,
+    paddingHorizontal: 24,
+    paddingTop: 22,
+    paddingBottom: 34,
+    alignItems: 'center',
+    gap: 10,
+  },
+  noProsIcon: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 4,
+  },
+  noProsTitle: { fontFamily: FontFamily.extrabold, fontSize: 18, letterSpacing: -0.3 },
+  noProsBody: { fontFamily: FontFamily.medium, fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 8 },
+  noProsCancel: { paddingVertical: 8, marginTop: 2 },
+  noProsCancelText: { fontFamily: FontFamily.semibold, fontSize: 13 },
 
   // Pay dock
   payDock: {

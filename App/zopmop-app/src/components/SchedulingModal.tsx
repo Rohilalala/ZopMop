@@ -16,6 +16,13 @@ import { useTheme } from '../context/ThemeContext';
 import { Bloom } from './home/Bloom';
 import { getSlotAvailability, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
 
+// What the user picked: ASAP (earliest slot — pro leaves now) or a specific
+// regular slot. CartScreen routes ASAP to the instant-create path and a slot to
+// the scheduled-create path.
+export type ScheduleSelection =
+  | { kind: 'asap' }
+  | { kind: 'slot'; slotId: string; label: string };
+
 interface Props {
   visible: boolean;
   token: string;
@@ -27,7 +34,7 @@ interface Props {
   // is only shown open if a job this long can actually be booked there.
   durationMinutes?: number;
   onClose: () => void;
-  onConfirm: (slotId: string, label: string) => void;
+  onConfirm: (selection: ScheduleSelection) => void;
 }
 
 const { height: SCREEN_H } = Dimensions.get('window');
@@ -47,8 +54,29 @@ const IST_CUTOFF_HOUR = 20;
 // yesterday's (already-past) slots and look unbookable.
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
+// Customers can't book a regular slot closer than this (spec §3.1:
+// minSlotLeadMin = dispatchLead 30 + travelBuffer 15). The backend /slots feed
+// only filters at +30 min, so a slot in the 30–45 min window can still arrive —
+// the picker disables it here (and the scheduled-create path would 400
+// slot_too_soon as a backstop).
+const MIN_SLOT_LEAD_MIN = 45;
+
 function istNow(): Date {
   return new Date(Date.now() + IST_OFFSET_MS);
+}
+
+// IST wall-clock instant for a slot on `dayIso` (YYYY-MM-DD) starting at
+// `startTime` ("HH:MM"). Built via Date.UTC so its UTC fields equal the IST
+// wall-clock — directly comparable to istNow() (same shifted-epoch convention).
+function slotIstStart(dayIso: string, startTime: string): Date {
+  const [y, m, d] = dayIso.split('-').map(Number);
+  const [hh, mm] = startTime.split(':').map(Number);
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0));
+}
+
+// A slot is too soon to book when its IST start is within the 45-min lead.
+function isSlotTooSoon(dayIso: string, startTime: string): boolean {
+  return slotIstStart(dayIso, startTime).getTime() < istNow().getTime() + MIN_SLOT_LEAD_MIN * 60 * 1000;
 }
 
 function buildDays(): { iso: string; label: string; dayName: string; disabled: boolean }[] {
@@ -85,16 +113,20 @@ function slotCapacity(slot: ApiTimeSlot): number {
 }
 
 // Bookable is colour-independent so the period tab counts don't depend on theme.
-function isSlotBookable(slot: ApiTimeSlot): boolean {
-  return slot.is_available && slotCapacity(slot) > 0;
+// A slot is bookable only if it has live capacity AND its start is ≥ 45 min out.
+function isSlotBookable(slot: ApiTimeSlot, dayIso: string): boolean {
+  return slot.is_available && slotCapacity(slot) > 0 && !isSlotTooSoon(dayIso, slot.start_time);
 }
 
 // Three capacity states drive the meter colour, fill and label. Scarce-only
 // copy: roomy slots say "Available" with no raw number; numbers appear only at
 // <= 3. fill is bucketed — the meter is a signal, not a precise gauge.
 type CapView = { fill: number; color: string; label: string; bookable: boolean };
-function capView(slot: ApiTimeSlot, c: ScreenColors): CapView {
+function capView(slot: ApiTimeSlot, c: ScreenColors, dayIso: string): CapView {
   const n = slotCapacity(slot);
+  if (isSlotTooSoon(dayIso, slot.start_time)) {
+    return { fill: 1, color: c.textMuted, label: 'Too soon', bookable: false };
+  }
   if (!slot.is_available || n <= 0) {
     return { fill: 1, color: c.textMuted, label: 'Full', bookable: false };
   }
@@ -117,9 +149,16 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
   const [activePeriod, setActivePeriod] = useState<string>('Morning');
   const [loading, setLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
+  // ASAP ("pro at your door in ~15 min") is the first, default-highlighted
+  // option. Picking a regular slot clears it and vice-versa.
+  const [asapSelected, setAsapSelected] = useState(true);
 
   useEffect(() => {
-    if (visible) setSelectedDay(firstSelectableIso(DAYS));
+    if (visible) {
+      setSelectedDay(firstSelectableIso(DAYS));
+      setSelectedSlot(null);
+      setAsapSelected(true);
+    }
   }, [visible]);
 
   // Cache availability per (day, duration, address) so switching dates is
@@ -169,10 +208,10 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
     const byLabel = new Map(periods.map(p => [p.label, p]));
     return PERIOD_ORDER.filter(l => byLabel.has(l)).map(label => {
       const p = byLabel.get(label)!;
-      const open = p.slots.filter(isSlotBookable).length;
+      const open = p.slots.filter(sl => isSlotBookable(sl, selectedDay)).length;
       return { label, tab: PERIOD_TAB[label] ?? label, open, slots: p.slots };
     });
-  }, [periods]);
+  }, [periods, selectedDay]);
 
   // When slots (re)load, land on the first period that has open slots so the
   // user opens onto something bookable; fall back to the first tab.
@@ -189,13 +228,20 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
   );
 
   const handleConfirm = useCallback(() => {
+    if (asapSelected) {
+      onConfirm({ kind: 'asap' });
+      return;
+    }
     if (!selectedSlot) return;
     const day = DAYS.find(d => d.iso === selectedDay);
     const label = `${day?.dayName ?? selectedDay}, ${selectedSlot.start_time} – ${selectedSlot.end_time}`;
-    onConfirm(selectedSlot.id, label);
-  }, [selectedSlot, selectedDay, onConfirm]);
+    onConfirm({ kind: 'slot', slotId: selectedSlot.id, label });
+  }, [asapSelected, selectedSlot, selectedDay, DAYS, onConfirm]);
 
-  const confirmLabel = selectedSlot
+  const canConfirm = asapSelected || !!selectedSlot;
+  const confirmLabel = asapSelected
+    ? 'Confirm · ASAP'
+    : selectedSlot
     ? `Confirm · ${DAYS.find(d => d.iso === selectedDay)?.dayName ?? ''} ${selectedSlot.start_time}`.trim()
     : 'Select a time';
 
@@ -222,6 +268,27 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
               <Feather name="x" size={16} color={c.text} />
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[s.asapCard, asapSelected && s.asapCardActive]}
+            onPress={() => { setAsapSelected(true); setSelectedSlot(null); }}
+          >
+            <View style={[s.asapIcon, asapSelected && s.asapIconActive]}>
+              <Feather name="zap" size={16} color={asapSelected ? c.ink : c.amber} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[s.asapTitle, asapSelected && s.asapTitleActive]}>ASAP</Text>
+              <Text style={[s.asapSub, asapSelected && s.asapSubActive]}>
+                Pro at your door in ~15 min
+              </Text>
+            </View>
+            <View style={[s.asapRadio, asapSelected && s.asapRadioActive]}>
+              {asapSelected && <Feather name="check" size={12} color={c.ink} />}
+            </View>
+          </TouchableOpacity>
+
+          <Text style={s.orLabel}>or schedule for later</Text>
 
           <ScrollView
             horizontal
@@ -300,8 +367,8 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.slotsScroll}>
                 <View style={s.slotsGrid}>
                   {activeSlots.map(slot => {
-                    const cap = capView(slot, c);
-                    const active = selectedSlot?.id === slot.id;
+                    const cap = capView(slot, c, selectedDay);
+                    const active = !asapSelected && selectedSlot?.id === slot.id;
                     return (
                       <TouchableOpacity
                         key={slot.id}
@@ -312,7 +379,7 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
                         ]}
                         activeOpacity={0.78}
                         disabled={!cap.bookable}
-                        onPress={() => setSelectedSlot(slot)}
+                        onPress={() => { setSelectedSlot(slot); setAsapSelected(false); }}
                       >
                         <Text style={[s.slotTime, active && s.slotTimeActive, !cap.bookable && s.slotTimeDisabled]}>
                           {slot.start_time}
@@ -336,12 +403,12 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
 
           <View style={s.footer}>
             <TouchableOpacity
-              style={[s.confirmBtn, !selectedSlot && s.confirmBtnDisabled]}
+              style={[s.confirmBtn, !canConfirm && s.confirmBtnDisabled]}
               activeOpacity={0.88}
-              disabled={!selectedSlot}
+              disabled={!canConfirm}
               onPress={handleConfirm}
             >
-              <Text style={[s.confirmText, !selectedSlot && s.confirmTextDisabled]}>{confirmLabel}</Text>
+              <Text style={[s.confirmText, !canConfirm && s.confirmTextDisabled]}>{confirmLabel}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -399,6 +466,59 @@ const makeStyles = (c: ScreenColors, isDark: boolean) => {
       backgroundColor: c.glassHi,
       borderWidth: 0.5, borderColor: c.glassBorderHi,
       alignItems: 'center', justifyContent: 'center',
+    },
+
+    asapCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginHorizontal: 16,
+      marginTop: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderRadius: 16,
+      backgroundColor: c.glass,
+      borderWidth: 0.5,
+      borderColor: c.glassBorder,
+    },
+    asapCardActive: {
+      backgroundColor: c.amberSoft,
+      borderColor: c.amberLine,
+    },
+    asapIcon: {
+      width: 36, height: 36, borderRadius: 11,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amberSoft,
+    },
+    asapIconActive: { backgroundColor: c.amber },
+    asapTitle: {
+      fontFamily: FontFamily.bold,
+      fontSize: 14,
+      color: c.text,
+      letterSpacing: -0.1,
+    },
+    asapTitleActive: { color: c.amberLo },
+    asapSub: {
+      fontFamily: FontFamily.medium,
+      fontSize: 11.5,
+      color: c.textMuted,
+      marginTop: 2,
+    },
+    asapSubActive: { color: c.amberLo },
+    asapRadio: {
+      width: 22, height: 22, borderRadius: 11,
+      borderWidth: 1.5, borderColor: c.glassBorderHi,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    asapRadioActive: { backgroundColor: c.amber, borderColor: c.amber },
+    orLabel: {
+      fontFamily: FontFamily.semibold,
+      fontSize: 11,
+      color: c.textMuted,
+      letterSpacing: 0.3,
+      marginTop: 14,
+      marginBottom: 2,
+      marginLeft: 20,
     },
 
     dateScrollView: {
