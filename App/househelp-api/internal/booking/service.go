@@ -520,6 +520,16 @@ func (s *Service) earliestAvailableSlot(ctx context.Context, addressID string) *
 				if sErr != nil {
 					continue
 				}
+				// Only suggest a slot the customer can actually book. The slots
+				// repository future-filter is now+30m, but a regular booking
+				// requires MinSlotLeadMin (45m) of lead (validateSlotTime →
+				// ErrSlotTooSoon). Without this guard the 409 "book it instead"
+				// suggestion can be a 30–45m slot that CreateScheduledBooking then
+				// rejects, dead-ending the customer. Skip any candidate that
+				// wouldn't pass the same gate creation enforces.
+				if s.validateSlotTime(scheduled) != nil {
+					continue
+				}
 				return &EarliestSlot{
 					SlotID:        sl.ID,
 					Date:          sl.SlotDate,
