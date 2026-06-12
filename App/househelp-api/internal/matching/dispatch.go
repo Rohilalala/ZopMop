@@ -113,28 +113,6 @@ func (d *Dispatcher) pushCustomerNoProsFound(ctx context.Context, customerID, bo
 	})
 }
 
-// pushCustomerAccepted notifies the customer that someone accepted. The
-// assigner uses helperName + a slightly different body when the accepter was a
-// preferred ("expert") pro.
-func (d *Dispatcher) pushCustomerAccepted(ctx context.Context, customerID, bookingID, helperName string, fromPreferred bool) {
-	if d.notifications == nil {
-		return
-	}
-	title := "Booking confirmed"
-	body := fmt.Sprintf("%s has accepted your booking.", helperName)
-	if fromPreferred {
-		title = "Your expert is on it"
-		body = fmt.Sprintf("Your expert %s has accepted your booking.", helperName)
-	}
-	_ = d.notifications.SendData(ctx, customerID, map[string]string{
-		"type":       "BOOKING_ACCEPTED",
-		"booking_id": bookingID,
-		"helper_name": helperName,
-		"title":       title,
-		"body":        body,
-	})
-}
-
 // helperName fetches the display name of the assigned helper for the
 // customer-facing acceptance push. Returns "Your pro" on lookup failure so
 // the push always has a meaningful subject.

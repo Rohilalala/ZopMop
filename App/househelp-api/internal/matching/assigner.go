@@ -23,7 +23,8 @@ package matching
 //
 // Pros never accept or decline — work is force-assigned into their committed
 // shift window (pilot). The assigner reuses dispatch.go helpers
-// (loadBooking shape, pushCustomerAccepted, helperName).
+// (loadBooking shape, helperName). The customer's accepted push is durable —
+// driven by the booking.accepted outbox row, not a direct call here.
 
 import (
 	"context"
@@ -493,10 +494,10 @@ func (a *Assigner) proPosition(ctx context.Context, proID string) (lat, lng floa
 // runs before either booking commits, so each booking's own row guard passes
 // independently.
 //
-// On success: pro alert push (booking_assigned), customer accepted push, and a
-// booking.accepted outbox row (mirrors booking/repository.go:449) — all
-// best-effort after the row is committed. Returns the assigned helper's display
-// name (looked up once, reused for the customer push and the AssignResult).
+// On success: a booking.accepted outbox row written inside the tx (mirrors
+// booking/repository.go:449) drives the durable customer push; after commit the
+// pro gets a best-effort tray alert (booking_assigned). Returns the assigned
+// helper's display name (looked up once, reused for the AssignResult).
 func (a *Assigner) Assign(ctx context.Context, b *assignerBooking, proID string) (helperName string, err error) {
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
@@ -578,7 +579,7 @@ func (a *Assigner) Assign(ctx context.Context, b *assignerBooking, proID string)
 		return "", fmt.Errorf("assign commit: %w", err)
 	}
 
-	return a.notifyAssigned(ctx, proID, customerID, b.ID), nil
+	return a.notifyAssigned(ctx, proID, b.ID), nil
 }
 
 // ErrAlreadyClaimed signals that another writer (cron tick, admin assign, racing
@@ -592,11 +593,16 @@ var ErrAlreadyClaimed = errors.New("booking already claimed by another pro")
 // candidate"; the booking itself is untouched.
 var ErrProBusy = errors.New("pro became busy on an overlapping job")
 
-// notifyAssigned fires the post-assignment pushes (best-effort) and returns the
+// notifyAssigned fires the pro's tray alert (best-effort) and returns the
 // assigned helper's display name (looked up once here, reused by the caller).
-// Pro gets a tray alert (booking_assigned, already routed in the app); customer
-// gets the accepted push via the shared dispatch helper.
-func (a *Assigner) notifyAssigned(ctx context.Context, proID, customerID, bookingID string) string {
+//
+// The customer's accepted push is NOT sent here: Assign already wrote a
+// booking.accepted outbox row inside the tx, and the outbox worker
+// (outbox/handlers.go) drives the durable customer push via
+// notification.NotifyCustomerBookingAccepted. Pushing directly here too would
+// double-notify the customer, so the direct path is dropped in favour of the
+// durable outbox one.
+func (a *Assigner) notifyAssigned(ctx context.Context, proID, bookingID string) string {
 	if a.notifications != nil {
 		_ = a.notifications.SendToProByID(ctx, proID,
 			"New job scheduled",
@@ -604,13 +610,10 @@ func (a *Assigner) notifyAssigned(ctx context.Context, proID, customerID, bookin
 			map[string]string{"type": "booking_assigned", "booking_id": bookingID},
 		)
 	}
-	// Customer accepted push reuses the dispatch.go helper (data push). Build a
-	// throwaway Dispatcher carrying the same db + notifier so we don't duplicate
-	// the body/lookup logic.
-	d := &Dispatcher{db: a.db, notifications: dataNotifier{a.notifications}}
-	name := d.helperName(ctx, proID)
-	d.pushCustomerAccepted(ctx, customerID, bookingID, name, false)
-	return name
+	// Name lookup only (no customer push). Reuse the dispatch.go helper via a
+	// throwaway Dispatcher carrying the same db; helperName reads db only.
+	d := &Dispatcher{db: a.db}
+	return d.helperName(ctx, proID)
 }
 
 // dataNotifier adapts an assignerNotifier down to the SendData-only notifier
