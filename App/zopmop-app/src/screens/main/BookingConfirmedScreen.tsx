@@ -175,6 +175,20 @@ export default function BookingConfirmedScreen() {
     }
   }, [isInstant, liveStage]);
 
+  // ASAP arrival promise — "arriving by <HH:MM>" where HH:MM = now + the
+  // backend's promise_eta_minutes (winning pro's walking ETA + pad, spec §6),
+  // rendered as an IST clock time. Computed once on mount: etaMinutes is the
+  // promise captured at booking time, not a live-decrementing countdown.
+  const arrivalBy = useMemo(() => {
+    if (!isInstant || typeof etaMinutes !== 'number' || etaMinutes <= 0) return undefined;
+    const at = new Date(Date.now() + etaMinutes * 60_000);
+    return at.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }, [isInstant, etaMinutes]);
+
   const heroSub = useMemo(() => {
     if (!isInstant) return "We'll match you with a top pro the morning of your booking.";
     switch (liveStage) {
@@ -182,9 +196,13 @@ export default function BookingConfirmedScreen() {
       case 'in_progress': return 'Sit back — your pro is hard at work.';
       case 'completed':   return 'Cleaning wrapped up. Rate your pro and add a tip if you loved it.';
       case 'cancelled':   return 'This booking was cancelled.';
-      default:            return "Pro is on the way. We'll keep you posted at every step.";
+      default:
+        if (arrivalBy) {
+          return `${(liveHelperName ?? 'Your pro').split(' ')[0]} is on the way — arriving by ${arrivalBy}.`;
+        }
+        return "Pro is on the way. We'll keep you posted at every step.";
     }
-  }, [isInstant, liveStage, liveHelperName]);
+  }, [isInstant, liveStage, liveHelperName, arrivalBy]);
 
   const onDone     = () => navigation.popToTop();
   const onTrack    = () =>
