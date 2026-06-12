@@ -91,6 +91,10 @@ func TestKPIs_BookingsAtRisk(t *testing.T) {
 	makeDashBooking(t, pool, customerID, locality, "pending", &hid, now.Add(10*time.Minute))
 	// (e) In-window but not pending (accepted) → NOT at risk.
 	makeDashBooking(t, pool, customerID, locality, "accepted", &hid, now.Add(10*time.Minute))
+	// (f) In-window pending unassigned but UNPAID Cashfree → NOT at risk: the
+	//     assigner's ClaimDue skips it until the payment webhook stamps it paid,
+	//     so the KPI must mirror that payment gate and not over-report it.
+	makeDashCashfreeBooking(t, pool, customerID, locality, nil, now.Add(10*time.Minute), "pending")
 
 	got, err := svc.KPIs(ctx)
 	if err != nil {
@@ -98,7 +102,24 @@ func TestKPIs_BookingsAtRisk(t *testing.T) {
 	}
 	delta := got.BookingsAtRisk - base.BookingsAtRisk
 	if delta != 2 {
-		t.Fatalf("bookings_at_risk delta = %d, want 2 (only the two in-window unassigned pending rows)", delta)
+		t.Fatalf("bookings_at_risk delta = %d, want 2 (only the two in-window unassigned PAID-gate pending rows)", delta)
+	}
+}
+
+// makeDashCashfreeBooking inserts an unpaid Cashfree booking (payment_method=
+// 'cashfree', payment_status NOT 'paid') so the at-risk payment gate can be
+// exercised — these are rows the assigner deliberately ignores until paid.
+func makeDashCashfreeBooking(t *testing.T, pool *pgxpool.Pool, customerID, locality string, helperID *string, scheduledAt time.Time, paymentStatus string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO bookings
+		  (customer_id, helper_id, status, address, lat, lng, amount_paise,
+		   total_duration_minutes, scheduled_time, locality,
+		   payment_method, payment_status)
+		VALUES ($1::uuid, $2::uuid, 'pending', 'Test Addr', 28.45, 77.05, 10000, 60, $3, $4,
+		        'cashfree', $5)
+	`, customerID, helperID, scheduledAt, locality, paymentStatus); err != nil {
+		t.Fatalf("insert cashfree booking: %v", err)
 	}
 }
 

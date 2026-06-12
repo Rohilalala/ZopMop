@@ -81,8 +81,17 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 	}{
 		{
 			"active_orders",
+			// Live booking statuses under the unified assigner: a booking is
+			// 'pending' until placed, 'accepted' once a pro is force-assigned and
+			// through en-route/arrival (those are timestamps on an 'accepted' row —
+			// see repository MarkArrived, which keeps status='accepted'), then
+			// 'in_progress' once started, plus 'arrived' for the per-line arrived
+			// state. There is no 'assigned'/'en_route' booking status in the CHECK
+			// constraint (migrations 004/054) — listing them counted nothing while
+			// dropping the entire 'accepted' bucket, i.e. every assigned-but-not-
+			// started job.
 			`SELECT COUNT(*) FROM bookings
-			 WHERE status IN ('pending','assigned','en_route','in_progress','arrived')`,
+			 WHERE status IN ('pending','accepted','in_progress','arrived')`,
 			&out.ActiveOrders,
 		},
 		{
@@ -133,6 +142,7 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 		WHERE status = 'pending'
 		  AND helper_id IS NULL
 		  AND now() >= scheduled_time - make_interval(mins => $1)
+		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
 	`, lead).Scan(&out.BookingsAtRisk); err != nil {
 		log.Warn().Err(err).Msg("[crm.dashboard] bookings_at_risk query failed — defaulting to 0")
 		out.BookingsAtRisk = 0
