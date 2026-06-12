@@ -58,8 +58,40 @@ func contains(s, sub string) bool {
 	return false
 }
 
+// restoreVersionOnCleanup snapshots the schema_migrations version on entry and
+// forces it back on cleanup. The migrate suite shares one DB with the rest of
+// the package suites (TEST_DATABASE_URL), so a test that Force()s the version
+// down to baselineVersion MUST restore head afterwards — otherwise the next
+// `go test ./...` run sees version=79 against a head schema, re-applies 080+
+// (083 then collides: "referral_code already exists"), leaves the DB dirty, and
+// cascades into spurious failures in the booking/matching suites. Forcing the
+// recorded version back (schema objects are untouched by Force) restores the
+// at-head, not-dirty precondition the whole suite assumes.
+func restoreVersionOnCleanup(t *testing.T, m *migrate.Migrate) {
+	t.Helper()
+	v, dirty, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return // empty DB on entry — nothing to restore.
+	}
+	if err != nil {
+		t.Fatalf("snapshot version: %v", err)
+	}
+	t.Cleanup(func() {
+		if dirty {
+			return // never seen clean — don't claim it is.
+		}
+		if cur, _, cerr := m.Version(); cerr == nil && cur == v {
+			return // already back at the snapshot — nothing to do.
+		}
+		if ferr := m.Force(int(v)); ferr != nil {
+			t.Logf("restore version to %d: %v", v, ferr)
+		}
+	})
+}
+
 func TestMigrate_VersionAndBaseline(t *testing.T) {
 	m := openMigrate(t)
+	restoreVersionOnCleanup(t, m)
 	// State on entry is whatever the dev DB currently is. The smoke
 	// run after chunk-19 left it at version 79; if a future chunk
 	// adds 080 the version will be higher. Either way, baseline is
@@ -97,6 +129,7 @@ func TestMigrate_UpReturnsNoChangeAtCurrent(t *testing.T) {
 
 func TestMigrate_BaselineIdempotent(t *testing.T) {
 	m := openMigrate(t)
+	restoreVersionOnCleanup(t, m)
 	// Calling Force(baselineVersion) repeatedly is benign — the row
 	// is rewritten with the same value. The CLI's `baseline`
 	// subcommand short-circuits when version >= baselineVersion to
