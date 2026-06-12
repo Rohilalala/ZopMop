@@ -553,6 +553,7 @@ func (a *Assigner) Assign(ctx context.Context, b *assignerBooking, proID string)
 		       status     = 'accepted',
 		       accepted_at = now(),
 		       matched_at = COALESCE(matched_at, now()),
+		       excluded_pro_id = NULL,
 		       updated_at = now()
 		WHERE  id = $1::uuid AND helper_id IS NULL AND status = 'pending'
 		RETURNING customer_id::text

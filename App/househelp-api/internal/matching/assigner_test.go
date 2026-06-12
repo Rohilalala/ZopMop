@@ -471,6 +471,19 @@ func TestAssigner_AssignOne_SkipsExcludedColumn(t *testing.T) {
 	if res.HelperID != other {
 		t.Fatalf("assigned %s, want the non-excluded pro %s", res.HelperID, other)
 	}
+
+	// A successful re-assign must CLEAR the exclusion stamp — otherwise the
+	// column leaks into any future re-dispatch of this booking and would wrongly
+	// keep skipping `excluded` forever (Assign sets excluded_pro_id = NULL).
+	var excludedAfter *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT excluded_pro_id::text FROM bookings WHERE id = $1::uuid`, bk,
+	).Scan(&excludedAfter); err != nil {
+		t.Fatal(err)
+	}
+	if excludedAfter != nil {
+		t.Fatalf("excluded_pro_id = %q after successful reassign, want NULL", *excludedAfter)
+	}
 }
 
 // ── nil maps → fail-open travel ─────────────────────────────────────────────
