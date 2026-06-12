@@ -14,7 +14,6 @@ type LangDict = {
   jobs: Record<string, string>;
   profile: Record<string, string>;
   language: Record<string, string>;
-  offer: Record<string, string>;
   jobDetail: Record<string, string>;
 };
 
@@ -123,12 +122,10 @@ const hi: LangDict = {
     headerTitle: 'आज की booking',
     'empty.title': 'अभी कोई booking नहीं',
     'empty.subtitle': 'बुकिंग आते ही यहाँ दिखेंगी',
-    sectionNewOffer: 'नई booking',
     sectionActive: 'अभी का काम',
     sectionToday: 'आज की पूरी हुई',
     activeTap: 'विवरण देखें',
     completedSummary: '{count} सेवा · {minutes}min · ₹{earnings}',
-    secondsShort: '{n}s',
     newBadge: 'नई',
     gotIt: 'समझ गया',
   },
@@ -154,17 +151,6 @@ const hi: LangDict = {
     hindiSubtitle: 'Hindi',
     englishSubtitle: 'अंग्रेज़ी',
     changed: 'भाषा बदल दी गई',
-  },
-  offer: {
-    title: 'नई booking आई है',
-    earningsLabel: 'अनुमानित कमाई',
-    durationLabel: 'कुल समय',
-    minutesShort: '{n} min',
-    accept: 'स्वीकार करें',
-    decline: 'मना करें',
-    expired: 'Offer expired',
-    busyWarning: 'आप पहले से एक काम कर रहे हैं',
-    serviceLine: '{name} · {qty}',
   },
   jobDetail: {
     headerStepAccepted: 'ग्राहक के पास जाएं',
