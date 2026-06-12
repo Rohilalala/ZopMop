@@ -659,7 +659,8 @@ func main() {
 	// path (spec §3.2, §5), plus the wallet repo for the no-pro refund rail.
 	bookingService.SetSyncAssigner(assigner)
 	bookingService.SetWalletRepo(walletRepo)
-	go matching.NewAssignerCron(assigner, walletRepo).Start(cronCtx)
+	assignerCron := matching.NewAssignerCron(assigner, walletRepo)
+	assignerCron.Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
 	defer cancelCrons()
@@ -861,12 +862,18 @@ func main() {
 	// Drain background cron workers (audit NEW-B1-001). Each gets up to 5s
 	// to finish an in-flight DB call; ctx-cancel itself is immediate so the
 	// next ticker iteration never starts.
-	cronCtx, cronCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cronCancel()
-	if err := leaveWorker.Stop(cronCtx); err != nil {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer drainCancel()
+	// The assigner cron drains first: its in-flight tick may be inside the
+	// no-pro cancel+refund transaction, which must finish (or hit the deadline)
+	// rather than be cut off by the deferred cancelCrons() when main returns.
+	if err := assignerCron.Stop(drainCtx); err != nil {
+		log.Warn().Err(err).Msg("assigner cron stop deadline exceeded")
+	}
+	if err := leaveWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("leave worker stop deadline exceeded")
 	}
-	if err := roomiesWorker.Stop(cronCtx); err != nil {
+	if err := roomiesWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("roomies worker stop deadline exceeded")
 	}
 

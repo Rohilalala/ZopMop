@@ -42,39 +42,70 @@ type AssignerCron struct {
 	asg        *Assigner
 	walletRepo *wallet.Repository
 	loc        *time.Location // IST for the customer-facing "when" copy
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 // NewAssignerCron constructs the cron driver. walletRepo may be nil to skip
 // refund records (e.g. in tests that don't exercise paid bookings).
 func NewAssignerCron(asg *Assigner, walletRepo *wallet.Repository) *AssignerCron {
-	return &AssignerCron{asg: asg, walletRepo: walletRepo, loc: istLocation()}
+	return &AssignerCron{asg: asg, walletRepo: walletRepo, loc: istLocation(), done: make(chan struct{})}
 }
 
-// Start runs the tick loop until ctx is cancelled. Safe to call on a goroutine.
-func (c *AssignerCron) Start(ctx context.Context) {
-	ticker := time.NewTicker(assignerTickInterval)
-	defer ticker.Stop()
-
-	tick := func() {
-		assigned, cancelled, err := c.RunOnce(ctx)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn().Err(err).Msg("[assigner-cron] tick error")
-			return
-		}
-		if assigned > 0 || cancelled > 0 {
-			log.Info().Int("assigned", assigned).Int("cancelled", cancelled).Msg("[assigner-cron] tick")
-		}
+// Start runs the tick loop until ctx is cancelled (or Stop is called). Safe to
+// call on a goroutine. Calling Start a second time is a no-op. The cron is the
+// most important background worker — its no-pro terminal path performs the
+// cancel + auto-refund DB transaction — so it exposes Stop for a clean drain on
+// SIGTERM (audit NEW-B1-001 pattern), letting an in-flight tick finish.
+func (c *AssignerCron) Start(parent context.Context) {
+	if c.cancel != nil {
+		return
 	}
+	ctx, cancel := context.WithCancel(parent)
+	c.cancel = cancel
 
-	tick() // immediate first run on startup (catch-up after a restart)
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info().Msg("[assigner-cron] ctx cancelled — exiting")
-			return
-		case <-ticker.C:
-			tick()
+	go func() {
+		defer close(c.done)
+
+		ticker := time.NewTicker(assignerTickInterval)
+		defer ticker.Stop()
+
+		tick := func() {
+			assigned, cancelled, err := c.RunOnce(ctx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn().Err(err).Msg("[assigner-cron] tick error")
+				return
+			}
+			if assigned > 0 || cancelled > 0 {
+				log.Info().Int("assigned", assigned).Int("cancelled", cancelled).Msg("[assigner-cron] tick")
+			}
 		}
+
+		tick() // immediate first run on startup (catch-up after a restart)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info().Msg("[assigner-cron] ctx cancelled — exiting")
+				return
+			case <-ticker.C:
+				tick()
+			}
+		}
+	}()
+}
+
+// Stop cancels the cron and waits for the current tick to drain, or for ctx to
+// fire, whichever comes first. A no-op if Start was never called.
+func (c *AssignerCron) Stop(ctx context.Context) error {
+	if c.cancel == nil {
+		return nil
+	}
+	c.cancel()
+	select {
+	case <-c.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
