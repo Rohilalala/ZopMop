@@ -316,6 +316,18 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 				"total_paise": unpaidErr.TotalPaise,
 			})
 		}
+		// Map Postgres unique-violation (booking-dedup trigger rejecting a
+		// second pending same customer+category insert within 2 minutes) to a
+		// clean 409 DUPLICATE_BOOKING, mirroring CreateBooking. Log at WARN so
+		// it stays out of the ERR stream.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			log.Warn().Str("user_id", userID).Msg("rejected duplicate pending booking within 2-minute window")
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "you already have a pending booking for this service — give it a moment to match",
+				"code":  "DUPLICATE_BOOKING",
+			})
+		}
 		status := fiber.StatusInternalServerError
 		message := "failed to create scheduled booking"
 		if err.Error() == "cart is empty" {
@@ -409,7 +421,19 @@ func (h *Handler) CreateInstantBooking(c *fiber.Ctx) error {
 				"total_paise": unpaidErr.TotalPaise,
 			})
 		}
-		log.Error().Err(err).Str("user_id", userID).Msg("failed to create instant booking")
+		// Map Postgres unique-violation (booking-dedup trigger rejecting a
+		// second pending same customer+category insert within 2 minutes) to a
+		// clean 409 DUPLICATE_BOOKING, mirroring CreateBooking. Hit by rapid
+		// double-taps and the concurrent-ASAP race; log at WARN so it stays out
+		// of the ERR stream.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			log.Warn().Str("user_id", userID).Msg("rejected duplicate pending booking within 2-minute window")
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "you already have a pending booking for this service — give it a moment to match",
+				"code":  "DUPLICATE_BOOKING",
+			})
+		}
 		status := fiber.StatusInternalServerError
 		message := "failed to create instant booking"
 		if err.Error() == "cart is empty" {
@@ -421,6 +445,11 @@ func (h *Handler) CreateInstantBooking(c *fiber.Ctx) error {
 		} else if strings.HasPrefix(err.Error(), "invalid promo code: ") {
 			status = fiber.StatusBadRequest
 			message = "invalid promo code"
+		}
+		// Only genuine server faults (the default 500) reach the ERR stream;
+		// expected client-side rejections mapped above stay out of it.
+		if status == fiber.StatusInternalServerError {
+			log.Error().Err(err).Str("user_id", userID).Msg("failed to create instant booking")
 		}
 		return c.Status(status).JSON(fiber.Map{"error": message})
 	}
