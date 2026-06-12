@@ -65,18 +65,7 @@ func asapRealAssignerService(t *testing.T, f *capFixture) (*Service, *redis.Clie
 
 	// ASAP rows resolve to locality=NULL → the fixture's locality-scoped cleanup
 	// misses them; delete by booker first (t.Cleanup is LIFO → before f.cleanup).
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = f.pool.Exec(ctx,
-			`DELETE FROM payments WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
-			f.userIDs)
-		_, _ = f.pool.Exec(ctx,
-			`DELETE FROM booking_services WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
-			f.userIDs)
-		_, _ = f.pool.Exec(ctx, `DELETE FROM bookings WHERE customer_id = ANY($1::uuid[])`, f.userIDs)
-		_, _ = f.pool.Exec(ctx, `DELETE FROM wallet_transactions WHERE user_id = ANY($1::uuid[])`, f.userIDs)
-		_, _ = f.pool.Exec(ctx, `DELETE FROM wallets WHERE user_id = ANY($1::uuid[])`, f.userIDs)
-	})
+	t.Cleanup(func() { cleanASAPBookingsByBooker(f) })
 	return s, rdb
 }
 

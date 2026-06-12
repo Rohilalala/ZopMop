@@ -39,7 +39,14 @@ var istLoc = func() *time.Location {
 // isolated from one another. The base is well beyond the ~14-day window the
 // slot-seed migration pre-populates, so each fixture inserts its own slots on
 // an otherwise-empty date. No hardcoded calendar dates.
-var dayOffsetSeq int64 = 30
+//
+// The base is randomized PER PROCESS (a fixed constant made consecutive
+// `go test` runs against the same shared TEST_DATABASE_URL reuse identical
+// dates — so any slot/booking a prior run failed to clean up collided with the
+// next run's fixture on the same date, cascading failures). Seeding from the
+// wall clock spreads each run onto its own date band, ~60..~16k days out — far
+// past the seed window and astronomically unlikely to overlap a prior run.
+var dayOffsetSeq = 60 + (time.Now().UnixNano()/int64(time.Millisecond))%16384
 
 // phoneCounter seeds unique numeric phone numbers for fixture users.
 var phoneCounter = time.Now().UnixNano() % 1_000_000_000
@@ -179,9 +186,24 @@ func (f *capFixture) slotID(hhmm string) string {
 	return id
 }
 
-// nearSlotSeq hands each near-future slot a distinct minute offset so concurrent
-// fixtures never collide on time_slots' UNIQUE(slot_date, start_time).
+// nearSlotSeq hands each near-future slot a distinct, off-grid start time so
+// fixtures never collide with each other or with the seeded slot grid.
 var nearSlotSeq int64
+
+// nearSlotBase anchors every nearSlot() to ONE wall-clock instant captured at
+// process start, truncated to the hour. Two earlier shapes were both wrong:
+//   - reading time.Now() per call drifted across the package's tests, so the
+//     counter-derived minute offset could map two calls onto the same absolute
+//     minute (a wall-clock-dependent collision); and
+//   - anchoring at a fixed now+2h still landed on :00/:30 minute boundaries,
+//     which collide with migration 022's seeded 30-minute slot grid for the
+//     today..today+13d range (UNIQUE(slot_date, start_time)).
+// Anchoring to a fixed hour and then placing each slot at an OFF-GRID minute
+// (never :00 or :30) derived purely from the monotonic counter makes every slot
+// both unique and seed-free, while staying ≥ MinSlotLeadMin out and ≤ 2 days.
+// +2h-truncated-to-the-hour guarantees ≥ ~60 min lead even at minute :03 from
+// any now() within the hour, comfortably past the 45-min MinSlotLeadMin floor.
+var nearSlotBase = time.Now().In(istLoc).Add(2 * time.Hour).Truncate(time.Hour)
 
 // nearSlot creates a 30-minute time_slots row anchored within the bookable
 // window (≥ MinSlotLeadMin and ≤ 2-day cap), so RescheduleBooking's
@@ -190,9 +212,13 @@ var nearSlotSeq int64
 // constraint, and the slot is registered for fixture cleanup.
 func (f *capFixture) nearSlot() (string, string) {
 	off := atomic.AddInt64(&nearSlotSeq, 1)
-	// ~2h out plus a per-call minute nudge: comfortably past the 45-min floor and
-	// well inside the 2-day horizon, with a unique start time.
-	start := time.Now().In(istLoc).Add(2*time.Hour + time.Duration(off)*time.Minute).Truncate(time.Minute)
+	// Off-grid minute in [3,27] (never :00/:30, so no seed collision); advance the
+	// hour every 25 calls so successive slots stay unique. 1h + up to a few hours
+	// keeps the slot ≥45 min out and well inside the 2-day horizon for any
+	// realistic fixture count.
+	minute := 3 + (off % 25)
+	hours := off / 25
+	start := nearSlotBase.Add(time.Duration(hours)*time.Hour + time.Duration(minute)*time.Minute)
 	date := start.Format("2006-01-02")
 	startHHMM := start.Format("15:04")
 	endHHMM := start.Add(30 * time.Minute).Format("15:04")
@@ -276,6 +302,32 @@ func (f *capFixture) cleanup() {
 	if len(f.userIDs) > 0 {
 		exec(`DELETE FROM users WHERE id = ANY($1::uuid[])`, f.userIDs)
 	}
+}
+
+// cleanASAPBookingsByBooker removes every booking made by the fixture's users
+// plus its FK children, in dependency order, then the wallet ledger. ASAP rows
+// resolve to locality=NULL so the locality-scoped fixture cleanup misses them;
+// this booker-keyed pass catches them and must run BEFORE the wallet rows and
+// the user rows are deleted (t.Cleanup LIFO).
+//
+// Crucially, ALL booking-referencing children — wallet_transactions and
+// analytics_events included — are cleared before the bookings DELETE. Earlier
+// this only cleared payments + booking_services, so the wallet debit row (and
+// the booking.created analytics row) FK-blocked the bookings DELETE, silently
+// leaking accepted/cancelled rows. Those leaks then collided with the next run's
+// fixtures and tripped the global helper_id-points-to-helper invariant test.
+func cleanASAPBookingsByBooker(f *capFixture) {
+	ctx := context.Background()
+	exec := func(sql string, args ...any) { _, _ = f.pool.Exec(ctx, sql, args...) }
+	const bookingsByBooker = `SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[])`
+	exec(`DELETE FROM payments            WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM booking_services    WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM wallet_transactions WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM analytics_events    WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM pending_refunds     WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM bookings WHERE customer_id = ANY($1::uuid[])`, f.userIDs)
+	exec(`DELETE FROM wallet_transactions WHERE user_id = ANY($1::uuid[])`, f.userIDs)
+	exec(`DELETE FROM wallets WHERE user_id = ANY($1::uuid[])`, f.userIDs)
 }
 
 // Test A/B/C: two approved helpers, two 09:00 bookings fill the slot, the

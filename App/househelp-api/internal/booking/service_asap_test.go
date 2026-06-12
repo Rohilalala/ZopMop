@@ -83,16 +83,7 @@ func asapService(t *testing.T, f *capFixture, fa SyncAssigner) *Service {
 	// ASAP rows resolve to locality=NULL, so the fixture's locality-scoped
 	// cleanup misses them and the later users delete would FK-fail. Delete them
 	// by booker first (t.Cleanup is LIFO → this runs before f.cleanup).
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = f.pool.Exec(ctx,
-			`DELETE FROM payments WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
-			f.userIDs)
-		_, _ = f.pool.Exec(ctx,
-			`DELETE FROM booking_services WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
-			f.userIDs)
-		_, _ = f.pool.Exec(ctx, `DELETE FROM bookings WHERE customer_id = ANY($1::uuid[])`, f.userIDs)
-	})
+	t.Cleanup(func() { cleanASAPBookingsByBooker(f) })
 	return s
 }
 
