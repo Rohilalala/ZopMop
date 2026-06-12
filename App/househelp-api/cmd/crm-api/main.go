@@ -22,6 +22,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/auth"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/capacity"
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
@@ -261,6 +262,12 @@ func main() {
 	localitiesRepo := localities.NewRepository(dbPool)
 	localitiesHandler := localities.NewHandler(localitiesRepo, auditRecorder)
 
+	// Capacity — read-only window-recount grid (spec §14.2), drill-down from
+	// the localities page. Uses the write pool so the grid is read-after-write
+	// consistent with the booking-creation gate (no replica lag for ops
+	// verifying capacity right after a booking lands).
+	capacityHandler := capacity.NewHandler(dbPool)
+
 	payoutsRepo := payouts.NewRepository(readPool, dbPool)
 	payoutsHandler := payouts.NewHandler(payoutsRepo, auditRecorder)
 
@@ -429,6 +436,7 @@ func main() {
 	growthHandler.RegisterRoutes(authed)
 	zonesHandler.RegisterRoutes(authed)
 	localitiesHandler.RegisterRoutes(authed)
+	capacityHandler.RegisterRoutes(authed)
 	payoutsHandler.RegisterRoutes(authed)
 	crmPayrollHandler.RegisterRoutes(authed)
 	tsHandler.RegisterRoutes(authed)

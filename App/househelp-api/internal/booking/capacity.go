@@ -182,6 +182,69 @@ func (r *Repository) availableForSlotExcluding(ctx context.Context, q rowQuerier
 	return avail, nil
 }
 
+// WindowCapacity is one slot's capacity breakdown for the CRM read API
+// (GET /admin/capacity). Window bounds are IST wall-clock "HH:MM" strings
+// (time_slots stores start_time/end_time as IST time-of-day). Free is the
+// clamped headroom roster − onLeave − committed.
+type WindowCapacity struct {
+	SlotID      string `json:"slot_id"`
+	WindowStart string `json:"window_start"` // "HH:MM" IST
+	WindowEnd   string `json:"window_end"`   // "HH:MM" IST
+	Roster      int    `json:"roster"`
+	OnLeave     int    `json:"on_leave"`
+	Committed   int    `json:"committed"`
+	Free        int    `json:"free"`
+}
+
+// CapacityForDate returns the per-slot capacity breakdown for a locality on an
+// IST calendar date, for read-only CRM visibility. Same math as
+// GetSlotAvailability: roster and on-leave are locality/date-wide (computed
+// once), only the padded committed-overlap count varies per slot. The day's
+// slot list comes from the slots module (same generation + future-filter +
+// bucketing the picker uses). date is "YYYY-MM-DD".
+func (r *Repository) CapacityForDate(ctx context.Context, locality, date string) ([]WindowCapacity, error) {
+	roster, err := r.countActiveRosterHelpers(ctx, r.db, locality)
+	if err != nil {
+		return nil, fmt.Errorf("roster count: %w", err)
+	}
+	onLeave, err := r.countHelpersOnLeave(ctx, r.db, locality, date)
+	if err != nil {
+		return nil, fmt.Errorf("leave count: %w", err)
+	}
+
+	// Reuse the slots module's public API for generation + future-filter +
+	// bucketing rather than duplicating it.
+	slotsSvc := slots.NewService(slots.NewRepository(r.db))
+	periods, err := slotsSvc.GetByDate(ctx, date)
+	if err != nil {
+		return nil, fmt.Errorf("load slots: %w", err)
+	}
+
+	out := []WindowCapacity{}
+	for _, p := range periods {
+		for _, sl := range p.Slots {
+			committed, err := r.committedCountForSlot(ctx, r.db, locality, sl.ID)
+			if err != nil {
+				return nil, fmt.Errorf("committed count for slot %s: %w", sl.ID, err)
+			}
+			free := roster - onLeave - committed
+			if free < 0 {
+				free = 0
+			}
+			out = append(out, WindowCapacity{
+				SlotID:      sl.ID,
+				WindowStart: sl.StartTime,
+				WindowEnd:   sl.EndTime,
+				Roster:      roster,
+				OnLeave:     onLeave,
+				Committed:   committed,
+				Free:        free,
+			})
+		}
+	}
+	return out, nil
+}
+
 // resolveGateLocality maps an address to the locality used for capacity
 // gating. It reuses resolveLocality's fuzzy match and, on a miss or error,
 // defaults to PilotLocality so the gate always applies during the pilot.
