@@ -77,6 +77,8 @@ func asapService(t *testing.T, f *capFixture, fa SyncAssigner) *Service {
 	// dispatch. Direct/Cashfree defers to the cron and never reaches the assigner.
 	s.SetWallet(testWalletAdapter{svc: wallet.NewService(wallet.NewRepository(f.pool))})
 	s.SetPaymentsLedger(payments.NewLedger(f.pool))
+	// Wire the wallet repo so the no-pro terminal path can refund a paid row.
+	s.SetWalletRepo(wallet.NewRepository(f.pool))
 
 	// ASAP rows resolve to locality=NULL, so the fixture's locality-scoped
 	// cleanup misses them and the later users delete would FK-fail. Delete them
@@ -376,5 +378,54 @@ func TestASAP_EmptySlotID(t *testing.T) {
 	}
 	if timeSlotID != nil {
 		t.Fatalf("time_slot_id = %v, want NULL for ASAP", *timeSlotID)
+	}
+}
+
+// TestASAP_WalletAssignErrorRefunds: a non-terminal assigner error (a Maps/DB
+// fault, not ErrNoEligiblePro) on the wallet rail must NOT leave the customer
+// charged with a 500. The booking is debited before assignASAP runs; on the
+// error the path cancels the row and refunds the wallet, returning the coherent
+// *ErrNoProsAvailable instead of a bare error. Guards the charged-on-error
+// window (spec §5.5 refund-path reuse).
+func TestASAP_WalletAssignErrorRefunds(t *testing.T) {
+	f := newCapFixture(t, 1)
+	seedPilotRosterPro(t, f) // PilotLocality capacity → non-nil earliest slot
+	seedWalletBalance(t, f, 100000)
+	fa := &fakeAssigner{err: errors.New("maps: deadline exceeded")} // non-terminal
+	s := asapService(t, f, fa)
+
+	res, err := s.CreateInstantBookingFromCart(
+		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "wallet",
+	)
+	if res != nil {
+		t.Fatalf("expected nil result on assign error, got %+v", res)
+	}
+	var noPros *ErrNoProsAvailable
+	if !errors.As(err, &noPros) {
+		t.Fatalf("err = %v, want *ErrNoProsAvailable (not a bare 500)", err)
+	}
+
+	// The just-created row must be cancelled/no_pros_found.
+	var status string
+	var cancelledBy *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT status, cancelled_by FROM bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC LIMIT 1`,
+		f.customer,
+	).Scan(&status, &cancelledBy); err != nil {
+		t.Fatalf("load created booking: %v", err)
+	}
+	if status != "cancelled" || cancelledBy == nil || *cancelledBy != "no_pros_found" {
+		t.Fatalf("booking status=%q cancelled_by=%v, want cancelled/no_pros_found", status, cancelledBy)
+	}
+
+	// The wallet must be made whole: seeded 100000, debited the net, refunded it
+	// → balance back to 100000.
+	var balance int64
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT balance_paise FROM wallets WHERE user_id = $1::uuid`, f.customer).Scan(&balance); err != nil {
+		t.Fatalf("load wallet balance: %v", err)
+	}
+	if balance != 100000 {
+		t.Fatalf("wallet balance = %d, want 100000 (debit refunded)", balance)
 	}
 }

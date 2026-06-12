@@ -418,12 +418,23 @@ func (s *Service) assignASAP(ctx context.Context, bookingID, customerID, address
 	// between create and assign — it IS placed, just not by us. Treat as a
 	// no-pros answer for this synchronous caller rather than a 500; the customer
 	// already has a confirmed booking visible in their list.
+	//
+	// Any OTHER error (a Maps/DB fault surfacing through AssignOne, which the
+	// assigner is designed to fail-open on, so reaching here is exceptional):
+	// the booking row already exists and — on the wallet rail — the customer has
+	// already been DEBITED. Returning a bare 500 here would leave them charged
+	// with a pending/paid row and a confusing failure. Route it through the same
+	// terminal no-pro path (cancel + refund-if-paid) so the synchronous answer is
+	// coherent and the customer is never left charged-on-error. Logged so the
+	// underlying fault is still visible.
 	if !errors.Is(err, matching.ErrNoEligiblePro) && !errors.Is(err, matching.ErrAlreadyClaimed) {
-		return nil, fmt.Errorf("asap assign: %w", err)
+		log.Error().Err(err).Str("booking_id", bookingID).
+			Msg("[booking] asap assign errored (non-terminal) — cancelling + refunding the just-created row")
 	}
 
-	// No pro right now → terminal: cancel the just-created row (audit trail),
-	// refund if it was paid, then surface the earliest regular slot.
+	// No pro right now (or an assign fault) → terminal: cancel the just-created
+	// row (audit trail), refund if it was paid, then surface the earliest regular
+	// slot.
 	s.markASAPNoPro(ctx, bookingID)
 	earliest := s.earliestAvailableSlot(ctx, addressID)
 	return nil, &ErrNoProsAvailable{Earliest: earliest}
