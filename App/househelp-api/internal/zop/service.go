@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1370,6 +1371,18 @@ func (s *Service) ZopToolExecutor(ctx context.Context, userID, toolName string, 
 				ctx, userID, addressID, timeSlotID, scheduledTime, cartItems, "", "",
 			)
 			if err != nil {
+				// No pro free right now: surface the structured no_pros_available
+				// contract this tool's description promises (code + earliest_slot)
+				// so the LLM can offer that slot via create_scheduled_booking,
+				// instead of a bare error string that drops the suggestion.
+				var noPros *booking.ErrNoProsAvailable
+				if errors.As(err, &noPros) {
+					out, _ := json.Marshal(map[string]interface{}{
+						"code":          "no_pros_available",
+						"earliest_slot": noPros.Earliest,
+					})
+					return string(out)
+				}
 				return errorJSON(err.Error())
 			}
 			out, _ := json.Marshal(b)
