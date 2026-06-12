@@ -178,6 +178,7 @@ type CreateScheduledBookingRequest struct {
 // Cart items are read server-side; only the delivery address is required.
 type CreateInstantBookingRequest struct {
 	AddressID     string `json:"address_id" validate:"required,uuid_format"`
+	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
 	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
 }
 

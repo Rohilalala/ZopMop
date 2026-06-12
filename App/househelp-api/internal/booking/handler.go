@@ -59,6 +59,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	}
 	router.Post("/", append(createChain, h.CreateBooking)...)
 	router.Post("/scheduled", append(createChain, h.CreateScheduledBooking)...)
+	router.Post("/instant", append(createChain, h.CreateInstantBooking)...)
 	router.Get("/helper/invites", append(proChain, h.GetHelperInvites)...)
 	router.Get("/helper/active", append(proChain, h.GetHelperActive)...)
 	router.Get("/helper/today", append(proChain, h.GetHelperToday)...)
@@ -325,6 +326,96 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	h.service.ClearUserCart(c.UserContext(), userID)
 
 	return c.Status(fiber.StatusCreated).JSON(booking)
+}
+
+// CreateInstantBooking handles POST /bookings/instant.
+// ASAP cart booking: reads the user's server-side cart, force-assigns a pro
+// synchronously, and returns the arrival promise. Mirrors CreateScheduledBooking's
+// auth/body/cart conventions but bypasses slot capacity (spec §3.2, §5). When no
+// pro is free right now the just-created row is cancelled server-side and a 409
+// {code:"no_pros_available", earliest_slot} is returned so the app can offer the
+// earliest regular slot in one round-trip.
+func (h *Handler) CreateInstantBooking(c *fiber.Ctx) error {
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+
+	var req CreateInstantBookingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "validation failed",
+			"fields": validator.FormatValidationErrors(err),
+		})
+	}
+
+	// Fetch cart items.
+	items, err := h.service.GetCartItemsForUser(c.UserContext(), userID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("failed to fetch cart items")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to read cart"})
+	}
+	if len(items) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cart is empty"})
+	}
+
+	// timeSlotID/scheduledTime are cosmetic for ASAP — the service overrides the
+	// schedule to "now" and bypasses slot capacity (matches the Zop tool call).
+	result, err := h.service.CreateInstantBookingFromCart(
+		c.UserContext(), userID, req.AddressID, "", "", items, req.PromoCode, req.PaymentSource,
+	)
+	if err != nil {
+		// No pro free right now — 409 with the earliest regular slot. The booking
+		// row was already cancelled (no_pros_found) server-side (spec §5.5).
+		var noProsErr *ErrNoProsAvailable
+		if errors.As(err, &noProsErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":         "no pros are free right now",
+				"code":          "no_pros_available",
+				"earliest_slot": noProsErr.Earliest,
+			})
+		}
+		if errors.Is(err, ErrAddressNotOwned) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
+		}
+		if errors.Is(err, ErrInsufficientWalletBalance) {
+			return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+				"error": "insufficient wallet balance",
+				"code":  "INSUFFICIENT_WALLET_BALANCE",
+			})
+		}
+		var unpaidErr *ErrUnpaidBookings
+		if errors.As(err, &unpaidErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error":       "unpaid bookings block this action",
+				"code":        "UNPAID_BOOKINGS",
+				"count":       unpaidErr.Count,
+				"total_paise": unpaidErr.TotalPaise,
+			})
+		}
+		log.Error().Err(err).Str("user_id", userID).Msg("failed to create instant booking")
+		status := fiber.StatusInternalServerError
+		message := "failed to create instant booking"
+		if err.Error() == "cart is empty" {
+			status = fiber.StatusBadRequest
+			message = "cart is empty"
+		} else if err.Error() == "maximum active bookings limit reached" {
+			status = fiber.StatusBadRequest
+			message = err.Error()
+		} else if strings.HasPrefix(err.Error(), "invalid promo code: ") {
+			status = fiber.StatusBadRequest
+			message = "invalid promo code"
+		}
+		return c.Status(status).JSON(fiber.Map{"error": message})
+	}
+
+	// Clear cart on success (best-effort, don't fail the response).
+	h.service.ClearUserCart(c.UserContext(), userID)
+
+	return c.Status(fiber.StatusCreated).JSON(result)
 }
 
 // GetSlotAvailability handles GET /bookings/availability?date=&address_id=.
