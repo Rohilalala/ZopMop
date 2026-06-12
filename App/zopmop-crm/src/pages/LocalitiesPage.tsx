@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, BarChart3, Plus, Trash2 } from 'lucide-react';
 
 import {
   createLocality,
@@ -14,15 +14,21 @@ import {
   updateLocality,
   type Locality,
 } from '@/api/localities';
+import { fetchCapacity } from '@/api/capacity';
 import { Card, EmptyState, Skeleton } from '@/components/ui';
-import { ConfirmModal } from '@/components/ui/Modal';
+import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+
+// Today in IST (YYYY-MM-DD) — capacity windows are IST-bucketed, so the
+// drill-down must default to the IST calendar day, not the browser's.
+const todayIST = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
 export function LocalitiesPage() {
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [city, setCity] = useState('Gurugram');
   const [confirmDel, setConfirmDel] = useState<Locality | null>(null);
+  const [capacityFor, setCapacityFor] = useState<Locality | null>(null);
 
   const q = useQuery({
     queryKey: ['localities'],
@@ -127,7 +133,7 @@ export function LocalitiesPage() {
                 <th className="px-4 py-3 text-left">City</th>
                 <th className="px-4 py-3 text-left">Active</th>
                 <th className="px-4 py-3 text-left">Created</th>
-                <th className="px-4 py-3 text-right w-32">Actions</th>
+                <th className="px-4 py-3 text-right w-56">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -152,13 +158,22 @@ export function LocalitiesPage() {
                     {new Date(l.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      className="text-rose-400 hover:text-rose-300 inline-flex items-center gap-1"
-                      onClick={() => setConfirmDel(l)}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Delete
-                    </button>
+                    <div className="inline-flex items-center gap-4">
+                      <button
+                        className="text-text-secondary hover:text-primary inline-flex items-center gap-1"
+                        onClick={() => setCapacityFor(l)}
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" />
+                        Capacity
+                      </button>
+                      <button
+                        className="text-rose-400 hover:text-rose-300 inline-flex items-center gap-1"
+                        onClick={() => setConfirmDel(l)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -185,6 +200,94 @@ export function LocalitiesPage() {
         }}
         onClose={() => setConfirmDel(null)}
       />
+
+      <CapacityModal locality={capacityFor} onClose={() => setCapacityFor(null)} />
     </div>
+  );
+}
+
+// CapacityModal — read-only window-recount drill-down for a locality on a
+// chosen IST date (spec §14.2). Date defaults to today IST.
+function CapacityModal({ locality, onClose }: { locality: Locality | null; onClose: () => void }) {
+  const [date, setDate] = useState(todayIST());
+
+  const q = useQuery({
+    queryKey: ['capacity', locality?.name, date],
+    queryFn: () => fetchCapacity(locality!.name, date),
+    enabled: !!locality,
+  });
+
+  const windows = q.data?.windows ?? [];
+
+  return (
+    <Modal
+      open={!!locality}
+      onClose={onClose}
+      title={locality ? `Capacity · ${locality.name}` : 'Capacity'}
+      width="max-w-2xl"
+    >
+      <div className="space-y-4">
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="text-xs text-text-muted block mb-1">Date (IST)</label>
+            <input
+              className="input"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+          <p className="text-xs text-text-muted pb-2">
+            Free = roster − on leave − committed (padded windows). Read-only.
+          </p>
+        </div>
+
+        {q.isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-9" />
+            ))}
+          </div>
+        ) : q.isError ? (
+          <EmptyState
+            icon={<AlertCircle className="w-10 h-10" />}
+            title="Could not load capacity"
+            body="The capacity service did not respond. Try again in a moment."
+          />
+        ) : windows.length === 0 ? (
+          <EmptyState
+            title="No slots for this date"
+            body="No bookable windows exist for this locality on the selected date."
+          />
+        ) : (
+          <div className="card-elevated overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-elevated text-text-muted text-xs uppercase tracking-wider">
+                <tr>
+                  <th className="px-3 py-2 text-left">Window</th>
+                  <th className="px-3 py-2 text-right">Roster</th>
+                  <th className="px-3 py-2 text-right">On leave</th>
+                  <th className="px-3 py-2 text-right">Committed</th>
+                  <th className="px-3 py-2 text-right">Free</th>
+                </tr>
+              </thead>
+              <tbody>
+                {windows.map((w) => (
+                  <tr key={w.slot_id} className="border-t border-border-subtle">
+                    <td className="px-3 py-2 font-medium">{w.window_start}–{w.window_end}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{w.roster}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{w.on_leave}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{w.committed}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${w.free === 0 ? 'text-danger' : 'text-success'}`}>
+                      {w.free}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

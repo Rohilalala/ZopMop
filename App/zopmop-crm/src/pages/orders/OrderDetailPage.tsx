@@ -138,7 +138,7 @@ function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' |
 
 const TIMELINE_STEPS: { key: keyof OrderDetail; label: string }[] = [
   { key: 'created_at',    label: 'Created' },
-  { key: 'matched_at',    label: 'Matched' },
+  { key: 'matched_at',    label: 'Assigned' },
   { key: 'accepted_at',   label: 'Accepted' },
   { key: 'en_route_at',   label: 'En route' },
   { key: 'arrived_at',    label: 'Arrived' },

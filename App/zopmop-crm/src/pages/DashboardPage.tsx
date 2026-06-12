@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
   Briefcase, Users as UsersIcon, IndianRupee, RefreshCw,
-  UserPlus, ShieldAlert,
+  UserPlus, ShieldAlert, AlertTriangle,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer,
@@ -45,6 +45,7 @@ export function DashboardPage() {
         <KpiCard label="Pending refunds"    icon={RefreshCw}     loading={kpis.isLoading} value={kpis.data?.pending_refunds} tone="warning" />
         <KpiCard label="Worker applications" icon={UserPlus}     loading={kpis.isLoading} value={kpis.data?.pending_applications} />
         <KpiCard label="Open disputes"      icon={ShieldAlert}   loading={kpis.isLoading} value={kpis.data?.open_disputes} tone="danger" />
+        <KpiCard label="Bookings at risk"   icon={AlertTriangle} loading={kpis.isLoading} value={kpis.data?.bookings_at_risk} tone={(kpis.data?.bookings_at_risk ?? 0) > 0 ? 'danger' : 'info'} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
