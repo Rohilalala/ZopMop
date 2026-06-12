@@ -18,6 +18,8 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/googlemaps"
 	"github.com/adityarohilla/househelp-api/internal/matching"
+	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 )
 
 // DB-backed integration test for plan Task 9 case (a): two concurrent ASAP
@@ -55,15 +57,25 @@ func asapRealAssignerService(t *testing.T, f *capFixture) (*Service, *redis.Clie
 	s := NewService(f.repo, f.pool, rdb, cfgSvc, nil)
 	s.SetSyncAssigner(asg)
 	s.SetAnalytics(analytics.NewService(f.pool))
+	// Only the wallet (already-paid) rail force-assigns synchronously; direct/
+	// Cashfree defers to the post-payment cron. Wire wallet + ledger so the race
+	// runs over the rail that actually contends for the pro.
+	s.SetWallet(testWalletAdapter{svc: wallet.NewService(wallet.NewRepository(f.pool))})
+	s.SetPaymentsLedger(payments.NewLedger(f.pool))
 
 	// ASAP rows resolve to locality=NULL → the fixture's locality-scoped cleanup
 	// misses them; delete by booker first (t.Cleanup is LIFO → before f.cleanup).
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = f.pool.Exec(ctx,
+			`DELETE FROM payments WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
+			f.userIDs)
+		_, _ = f.pool.Exec(ctx,
 			`DELETE FROM booking_services WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
 			f.userIDs)
 		_, _ = f.pool.Exec(ctx, `DELETE FROM bookings WHERE customer_id = ANY($1::uuid[])`, f.userIDs)
+		_, _ = f.pool.Exec(ctx, `DELETE FROM wallet_transactions WHERE user_id = ANY($1::uuid[])`, f.userIDs)
+		_, _ = f.pool.Exec(ctx, `DELETE FROM wallets WHERE user_id = ANY($1::uuid[])`, f.userIDs)
 	})
 	return s, rdb
 }
@@ -149,6 +161,15 @@ func TestIntegration_ConcurrentASAP_OnePro_OneWins(t *testing.T) {
 	cA, aA := f.newCustomer()
 	cB, aB := f.newCustomer()
 
+	// Fund both wallets: the wallet rail is the only one that force-assigns
+	// synchronously (direct defers to the cron), so the race runs over wallet.
+	w := wallet.NewService(wallet.NewRepository(f.pool))
+	for _, c := range []string{cA, cB} {
+		if _, err := w.Credit(context.Background(), c, 100000, wallet.KindAdjustment, nil, nil, "test seed"); err != nil {
+			t.Fatalf("seed wallet balance: %v", err)
+		}
+	}
+
 	// Pre-create the slot row so the two goroutines hit the cache, not a racing
 	// INSERT on time_slots' UNIQUE(slot_date, start_time).
 	slotID := f.slotID("10:00")
@@ -161,7 +182,7 @@ func TestIntegration_ConcurrentASAP_OnePro_OneWins(t *testing.T) {
 		res, err := s.CreateInstantBookingFromCart(
 			context.Background(), customerID, addressID, slotID, "",
 			[]BookingServiceItem{{ServiceID: f.serviceID, DurationMinutes: 30, PriceCents: 100}},
-			"", "direct",
+			"", "wallet",
 		)
 		return outcome{res, err}
 	}

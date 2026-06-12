@@ -8,12 +8,25 @@ import (
 	_ "time/tzdata"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/adityarohilla/househelp-api/internal/analytics"
 	"github.com/adityarohilla/househelp-api/internal/config_manager"
 	"github.com/adityarohilla/househelp-api/internal/matching"
+	"github.com/adityarohilla/househelp-api/internal/payments"
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 )
+
+// testWalletAdapter mirrors cmd/api's bookingWalletAdapter: it adapts the real
+// *wallet.Service (kind wallet.Kind, returns *ApplyResult) to the booking
+// package's WalletDebiter interface (kind string, returns error).
+type testWalletAdapter struct{ svc *wallet.Service }
+
+func (a testWalletAdapter) DebitTx(ctx context.Context, tx pgx.Tx, userID string, amountPaise int64, kind string, bookingID *string, note string) error {
+	_, err := a.svc.DebitTx(ctx, tx, userID, amountPaise, wallet.Kind(kind), bookingID, note)
+	return err
+}
 
 // DB-backed tests for the ASAP synchronous-assign path (spec §3.2, §5.5):
 // CreateInstantBookingFromCart with a faked assigner. Reuses capFixture (same
@@ -59,12 +72,20 @@ func asapService(t *testing.T, f *capFixture, fa SyncAssigner) *Service {
 	// nil analytics service panics, so wire a real (fire-and-forget) one over
 	// the test pool.
 	s.SetAnalytics(analytics.NewService(f.pool))
+	// Wallet + payments ledger over the test pool so the wallet (already-paid)
+	// ASAP path — the only one that force-assigns synchronously — can debit and
+	// dispatch. Direct/Cashfree defers to the cron and never reaches the assigner.
+	s.SetWallet(testWalletAdapter{svc: wallet.NewService(wallet.NewRepository(f.pool))})
+	s.SetPaymentsLedger(payments.NewLedger(f.pool))
 
 	// ASAP rows resolve to locality=NULL, so the fixture's locality-scoped
 	// cleanup misses them and the later users delete would FK-fail. Delete them
 	// by booker first (t.Cleanup is LIFO → this runs before f.cleanup).
 	t.Cleanup(func() {
 		ctx := context.Background()
+		_, _ = f.pool.Exec(ctx,
+			`DELETE FROM payments WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
+			f.userIDs)
 		_, _ = f.pool.Exec(ctx,
 			`DELETE FROM booking_services WHERE booking_id IN (SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[]))`,
 			f.userIDs)
@@ -76,6 +97,22 @@ func asapService(t *testing.T, f *capFixture, fa SyncAssigner) *Service {
 // asapCart is a single 30-minute service line in the fixture's category.
 func asapCart(f *capFixture) []BookingServiceItem {
 	return []BookingServiceItem{{ServiceID: f.serviceID, DurationMinutes: 30, PriceCents: 100}}
+}
+
+// seedWalletBalance tops up the customer's wallet so the wallet (already-paid)
+// ASAP path can debit and synchronously force-assign. Only the wallet rail
+// reaches the assigner; direct/Cashfree defers to the post-payment cron.
+func seedWalletBalance(t *testing.T, f *capFixture, paise int64) {
+	t.Helper()
+	w := wallet.NewService(wallet.NewRepository(f.pool))
+	if _, err := w.Credit(context.Background(), f.customer, paise, wallet.KindAdjustment, nil, nil, "test seed"); err != nil {
+		t.Fatalf("seed wallet balance: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = f.pool.Exec(ctx, `DELETE FROM wallet_transactions WHERE user_id = $1::uuid`, f.customer)
+		_, _ = f.pool.Exec(ctx, `DELETE FROM wallets WHERE user_id = $1::uuid`, f.customer)
+	})
 }
 
 // seedPilotRosterPro adds one approved roster pro to PilotLocality so the
@@ -100,11 +137,12 @@ func seedPilotRosterPro(t *testing.T, f *capFixture) {
 // cancelled.
 func TestASAP_Success(t *testing.T) {
 	f := newCapFixture(t, 1)
+	seedWalletBalance(t, f, 100000) // funds the wallet (already-paid) rail
 	fa := &fakeAssigner{result: &matching.AssignResult{HelperID: f.helperIDs[0], HelperName: "Asha", EtaMin: 8}}
 	s := asapService(t, f, fa)
 
 	res, err := s.CreateInstantBookingFromCart(
-		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "direct",
+		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "wallet",
 	)
 	if err != nil {
 		t.Fatalf("CreateInstantBookingFromCart: %v", err)
@@ -149,12 +187,13 @@ func TestASAP_Success(t *testing.T) {
 // a PilotLocality roster pro (and clean it up) to guarantee a non-nil slot.
 func TestASAP_NoPro(t *testing.T) {
 	f := newCapFixture(t, 0)
-	seedPilotRosterPro(t, f) // PilotLocality capacity → non-nil earliest slot
+	seedWalletBalance(t, f, 100000) // wallet rail reaches the assigner
+	seedPilotRosterPro(t, f)        // PilotLocality capacity → non-nil earliest slot
 	fa := &fakeAssigner{err: matching.ErrNoEligiblePro}
 	s := asapService(t, f, fa)
 
 	res, err := s.CreateInstantBookingFromCart(
-		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "direct",
+		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "wallet",
 	)
 	if res != nil {
 		t.Fatalf("expected nil result on no-pro, got %+v", res)
@@ -247,14 +286,95 @@ func TestASAP_LegacyCashfreeDoesNotDispatchBeforePayment(t *testing.T) {
 // TestASAP_NilAssigner: an unconfigured assigner is treated as no-pro — the
 // synchronous answer is honest (ErrNoProsAvailable) rather than a 500.
 func TestASAP_NilAssigner(t *testing.T) {
-	f := newCapFixture(t, 0)    // no roster → earliest slot may be nil; that's fine
+	f := newCapFixture(t, 0) // no roster → earliest slot may be nil; that's fine
+	seedWalletBalance(t, f, 100000)
 	s := asapService(t, f, nil) // explicitly no assigner
 
 	_, err := s.CreateInstantBookingFromCart(
-		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "direct",
+		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "wallet",
 	)
 	var noPros *ErrNoProsAvailable
 	if !errors.As(err, &noPros) {
 		t.Fatalf("err = %v, want *ErrNoProsAvailable", err)
+	}
+}
+
+// TestASAP_CartDirectDefersToPayment: the cart ASAP path (CreateInstantBookingFromCart)
+// with payment_source='direct'/Cashfree must NOT force-assign before payment —
+// mirrors the legacy CreateBooking gate. The result is Assigned=false, the
+// assigner is never called, and the row stays pending with payment_method='cashfree'
+// so the 60s cron (ClaimDue, payment-gated) places it once the webhook stamps paid.
+func TestASAP_CartDirectDefersToPayment(t *testing.T) {
+	f := newCapFixture(t, 1)
+	fa := &fakeAssigner{result: &matching.AssignResult{HelperID: f.helperIDs[0], HelperName: "Asha", EtaMin: 8}}
+	s := asapService(t, f, fa)
+
+	res, err := s.CreateInstantBookingFromCart(
+		context.Background(), f.customer, f.addressID, f.slotID("10:00"), "", asapCart(f), "", "direct",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstantBookingFromCart (direct): %v", err)
+	}
+	if res.Assigned {
+		t.Fatal("res.Assigned = true, want false — unpaid Cashfree must not dispatch before payment")
+	}
+	if fa.calledOnce {
+		t.Fatal("assigner was called for an unpaid Cashfree cart booking — a pro was dispatched before payment")
+	}
+
+	bk, ok := res.Booking.(*ScheduledBooking)
+	if !ok {
+		t.Fatalf("res.Booking is %T, want *ScheduledBooking", res.Booking)
+	}
+	var status string
+	var paymentMethod, paymentStatus *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT status, payment_method, payment_status FROM bookings WHERE id = $1::uuid`,
+		bk.ID,
+	).Scan(&status, &paymentMethod, &paymentStatus); err != nil {
+		t.Fatalf("load booking: %v", err)
+	}
+	if status != "pending" {
+		t.Fatalf("booking status = %q, want pending (cron places it post-payment)", status)
+	}
+	if paymentMethod == nil || *paymentMethod != "cashfree" {
+		t.Fatalf("payment_method = %v, want cashfree", paymentMethod)
+	}
+	if paymentStatus != nil && *paymentStatus == "paid" {
+		t.Fatal("payment_status = paid before the webhook ran")
+	}
+}
+
+// TestASAP_EmptySlotID: the real handler path (POST /bookings/instant) passes an
+// EMPTY time_slot_id. The repo must NOT run the time_slots UUID lookup with "" —
+// that throws 22P02 and 500s every in-app ASAP booking. With the wallet rail the
+// booking is created (time_slot_id NULL) and force-assigned. Regression guard for
+// the empty-string-into-UUID bug.
+func TestASAP_EmptySlotID(t *testing.T) {
+	f := newCapFixture(t, 1)
+	seedWalletBalance(t, f, 100000)
+	fa := &fakeAssigner{result: &matching.AssignResult{HelperID: f.helperIDs[0], HelperName: "Asha", EtaMin: 8}}
+	s := asapService(t, f, fa)
+
+	res, err := s.CreateInstantBookingFromCart(
+		context.Background(), f.customer, f.addressID, "", "", asapCart(f), "", "wallet",
+	)
+	if err != nil {
+		t.Fatalf("CreateInstantBookingFromCart (empty slot id): %v", err)
+	}
+	if !res.Assigned {
+		t.Fatal("res.Assigned = false, want true for the empty-slot ASAP path")
+	}
+	bk, ok := res.Booking.(*ScheduledBooking)
+	if !ok {
+		t.Fatalf("res.Booking is %T, want *ScheduledBooking", res.Booking)
+	}
+	var timeSlotID *string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT time_slot_id::text FROM bookings WHERE id = $1::uuid`, bk.ID).Scan(&timeSlotID); err != nil {
+		t.Fatalf("load booking time_slot_id: %v", err)
+	}
+	if timeSlotID != nil {
+		t.Fatalf("time_slot_id = %v, want NULL for ASAP", *timeSlotID)
 	}
 }

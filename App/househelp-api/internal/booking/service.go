@@ -1446,6 +1446,15 @@ func (s *Service) CreateInstantBookingFromCart(
 	})
 
 	netPaise := totalPriceCents - discountCents
+
+	// unpaidCashfree mirrors the legacy CreateBooking gate: a direct/Cashfree
+	// booking is NOT paid until the SDK sheet completes and the webhook stamps
+	// payment_status='paid'. Such a row MUST NOT be force-assigned synchronously
+	// — a pro would be dispatched before the customer pays (and stranded if they
+	// abandon the sheet). Stamp payment_method='cashfree' so the customer-facing
+	// list hides it until paid and the 60s assigner cron's payment gate (ClaimDue,
+	// payment_method <> 'cashfree' OR payment_status='paid') places it post-webhook.
+	unpaidCashfree := false
 	if paymentSource == "wallet" {
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
 			if cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0); cancelErr != nil {
@@ -1458,7 +1467,9 @@ func (s *Service) CreateInstantBookingFromCart(
 			return nil, fmt.Errorf("wallet payment failed: %w", err)
 		}
 	} else {
+		s.stampBookingDirectPay(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+		unpaidCashfree = true
 	}
 
 	matching.TrackDemand(ctx, s.rdb, lat, lng)
@@ -1471,8 +1482,17 @@ func (s *Service) CreateInstantBookingFromCart(
 		Float64("lat", roundLogCoord(lat)).Float64("lng", roundLogCoord(lng)).
 		Msg("ASAP booking created via cart")
 
-	// Synchronous force-assign. Success → arrival promise; no pro → the row is
-	// cancelled (no_pros_found) and ErrNoProsAvailable carries the earliest slot.
+	// Cashfree-pending: do NOT dispatch a pro before payment. Return a
+	// not-yet-assigned result; the post-payment cron (ClaimDue, which keeps the
+	// payment gate) places this row once the webhook stamps it paid. The mobile
+	// app then opens the Cashfree sheet; only paid wallet bookings dispatch inline.
+	if unpaidCashfree {
+		return &ASAPResult{Booking: booking, Assigned: false}, nil
+	}
+
+	// Paid (wallet) → synchronous force-assign. Success → arrival promise; no pro
+	// → the row is cancelled (no_pros_found) and ErrNoProsAvailable carries the
+	// earliest slot.
 	result, err := s.assignASAP(ctx, booking.ID, customerID, addressID)
 	if err != nil {
 		return nil, err

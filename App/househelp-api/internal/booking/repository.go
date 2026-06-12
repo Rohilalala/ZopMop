@@ -694,25 +694,33 @@ func (r *Repository) CreateScheduledBooking(
 	// unaffected and the lock auto-releases on commit/rollback. Capacity is
 	// enforced only for the scheduled flow (enforceCapacity); the instant/cart
 	// path passes false.
+	// ASAP bookings carry no slot (timeSlotID==""): scheduled_time is "now" and
+	// the slot row is irrelevant, so skip the time_slots lookup entirely and
+	// store NULL for time_slot_id (the column is a UUID — binding "" would throw
+	// 22P02). The capacity gate below never runs for ASAP (enforceCapacity=false).
 	var slotDate string
-	var isActive bool
-	err = tx.QueryRow(queryCtx,
-		`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active
-		 FROM time_slots
-		 WHERE id = $1`,
-		timeSlotID,
-	).Scan(&slotDate, &isActive)
-	if err != nil {
-		if err == pgx.ErrNoRows {
+	var timeSlotIDArg any // nil for ASAP, the uuid string for a real slot
+	if timeSlotID != "" {
+		var isActive bool
+		err = tx.QueryRow(queryCtx,
+			`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active
+			 FROM time_slots
+			 WHERE id = $1`,
+			timeSlotID,
+		).Scan(&slotDate, &isActive)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return nil, ErrSlotUnavailable
+			}
+			return nil, fmt.Errorf("failed to load time slot: %w", err)
+		}
+		if !isActive {
 			return nil, ErrSlotUnavailable
 		}
-		return nil, fmt.Errorf("failed to load time slot: %w", err)
-	}
-	if !isActive {
-		return nil, ErrSlotUnavailable
+		timeSlotIDArg = timeSlotID
 	}
 
-	if enforceCapacity && locality != nil && *locality != "" {
+	if enforceCapacity && timeSlotID != "" && locality != nil && *locality != "" {
 		lockKey := *locality + "|" + slotDate
 		if _, err := tx.Exec(queryCtx,
 			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
@@ -751,7 +759,7 @@ func (r *Repository) CreateScheduledBooking(
 		           total_duration_minutes, status, amount_paise, discount_paise, promo_code, created_at`,
 		customerID, legacyServiceID, StatusPending,
 		totalPriceCents, discountCents, promoCode,
-		addressID, timeSlotID, scheduledTime, totalDuration,
+		addressID, timeSlotIDArg, scheduledTime, totalDuration,
 		isStealthInstant, fireAt, locality,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,
