@@ -461,9 +461,14 @@ func (s *Service) NotifyCustomerHelperReassigned(ctx context.Context, customerID
 	if token == "" {
 		return nil
 	}
+	// At this point the booking has been returned to the assigner (helper
+	// cleared, status pending) and a replacement is NOT yet placed — the
+	// next assigner tick picks a new pro and fires booking_assigned. Don't
+	// claim "confirmed": the interim state is unassigned and may still end
+	// unfilled. Tell the customer we're re-matching instead.
 	return s.sendToToken(ctx, token,
-		"Helper updated",
-		"Your service provider has changed. Your booking is confirmed.",
+		"Finding you a new pro",
+		"Your previous pro became unavailable. We're matching you with a new one now.",
 		map[string]string{
 			"type":       "helper_reassigned",
 			"booking_id": bookingID,
