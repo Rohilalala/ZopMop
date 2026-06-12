@@ -36,6 +36,7 @@ import { PostHogProvider } from 'posthog-react-native';
 import { posthog } from './src/config/posthog';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bootstrapLocale } from './src/i18n';
+import { getNeedsWelcome, onPendingAuthChange } from './src/utils/pendingAuthStore';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -95,6 +96,16 @@ function Navigation() {
   const needsName =
     isAuthenticated && user?.role === 'customer' && !user?.name?.trim();
 
+  // Users who just set their name still get one Welcome beat before the
+  // app. Keeping the AuthNavigator mounted while this flag is set is what
+  // makes Welcome reachable; saving the name flips `needsName` to false,
+  // which alone would swap to MainNavigator and unmount it.
+  const needsWelcome = React.useSyncExternalStore(
+    onPendingAuthChange,
+    getNeedsWelcome,
+    getNeedsWelcome,
+  );
+
   if (isLoading) return null;
   return (
     <ErrorBoundary>
@@ -127,7 +138,7 @@ function Navigation() {
               doesn't lock initialRouteName='Tabs' when /me returns
               'pro' a moment later — React remounts the stack and
               the gate re-evaluates with the fresh role. */}
-          {isAuthenticated && !needsName
+          {isAuthenticated && !needsName && !needsWelcome
             ? <MainNavigator key={`main-${user?.role ?? 'unknown'}`} />
             : <AuthNavigator needsName={needsName} phone={user?.phone} />}
         </PostHogProvider>

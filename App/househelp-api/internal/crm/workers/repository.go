@@ -434,9 +434,26 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest) (*CreateResu
 	`, phone, strings.TrimSpace(req.Name)).Scan(&userID)
 	if err != nil {
 		if strings.Contains(err.Error(), "users_phone_key") || strings.Contains(err.Error(), "duplicate key") {
-			return nil, ErrPhoneInUse
+			// Phone already registered. The CRM is the only place a number
+			// becomes a pro, so promote the existing customer account
+			// instead of bouncing the admin. A name the user set themselves
+			// wins over the admin-supplied one. Numbers that are already
+			// pro/admin still conflict (and so does an existing helpers row,
+			// via its PK below).
+			promoteErr := tx.QueryRow(ctx, `
+				UPDATE users SET role = 'pro', name = COALESCE(NULLIF(name, ''), $2), updated_at = now()
+				WHERE phone = $1 AND role = 'customer'
+				RETURNING id::text
+			`, phone, strings.TrimSpace(req.Name)).Scan(&userID)
+			if errors.Is(promoteErr, pgx.ErrNoRows) {
+				return nil, ErrPhoneInUse
+			}
+			if promoteErr != nil {
+				return nil, fmt.Errorf("promote user: %w", promoteErr)
+			}
+		} else {
+			return nil, fmt.Errorf("insert user: %w", err)
 		}
-		return nil, fmt.Errorf("insert user: %w", err)
 	}
 
 	weekly := req.WeeklyHoursTarget
@@ -545,6 +562,10 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest) (*CreateResu
 		// Surface the CHECK constraint as a 400-worthy validation error.
 		if strings.Contains(err.Error(), "helpers_gender_check") {
 			return nil, fmt.Errorf("invalid gender (want male|female|other): %w", err)
+		}
+		// Promoted user that already has a worker record.
+		if strings.Contains(err.Error(), "helpers_pkey") {
+			return nil, ErrPhoneInUse
 		}
 		return nil, fmt.Errorf("insert helper: %w", err)
 	}
@@ -672,10 +693,18 @@ func (r *Repository) ListDeductions(ctx context.Context, proID string) ([]Deduct
 	return out, rows.Err()
 }
 
-// Approve flips approval_status to 'approved'.
+// Approve flips approval_status to 'approved' and promotes the linked user
+// to role 'pro'. Legacy self-onboarded helpers were created with the user
+// still role 'customer', which left them locked out of the pro side even
+// after approval — the role is the single source of truth the app routes on.
 func (r *Repository) Approve(ctx context.Context, workerID string) error {
 	res, err := r.write.Exec(ctx, `
-		UPDATE helpers SET approval_status = 'approved' WHERE id = $1::uuid
+		WITH h AS (
+			UPDATE helpers SET approval_status = 'approved' WHERE id = $1::uuid
+			RETURNING id
+		)
+		UPDATE users SET role = 'pro', updated_at = now()
+		WHERE id IN (SELECT id FROM h) AND role <> 'admin'
 	`, workerID)
 	if err != nil {
 		return fmt.Errorf("approve: %w", err)

@@ -25,9 +25,9 @@ export type AuthStackParamList = {
     phone: string;
     name?: string;
   };
-  RoleSelection: {
-    phone: string;
-  };
+  // Kept for ProOnboardingScreen's prop types only — the screen is no
+  // longer registered in AuthNavigator. Roles are assigned in the DB via
+  // the CRM; the app never asks customer-vs-pro.
   ProOnboarding: {
     phone: string;
   };

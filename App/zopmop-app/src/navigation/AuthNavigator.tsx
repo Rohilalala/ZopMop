@@ -9,8 +9,6 @@ import PhoneEntryScreen from '../screens/auth/PhoneEntryScreen';
 import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
 import NameEntryScreen from '../screens/auth/NameEntryScreen';
 import WelcomeScreen from '../screens/auth/WelcomeScreen';
-import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
-import ProOnboardingScreen from '../screens/pro/ProOnboardingScreen';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
@@ -60,16 +58,6 @@ export default function AuthNavigator({ needsName = false, phone }: AuthNavigato
         name="Welcome"
         component={WelcomeScreen}
         options={{ animation: 'fade' }}
-      />
-      <Stack.Screen
-        name="RoleSelection"
-        component={RoleSelectionScreen}
-        options={{ animation: 'slide_from_right' }}
-      />
-      <Stack.Screen
-        name="ProOnboarding"
-        component={ProOnboardingScreen}
-        options={{ animation: 'slide_from_right' }}
       />
     </Stack.Navigator>
   );

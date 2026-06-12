@@ -19,7 +19,7 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'BookingRate', 'Chat', 'HelpSupport', 'HiZop', 'InstantMatching',
 	'Location', 'ManageHousehold', 'NameEntry', 'NotServiceable',
 	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry', 'ReferralEarn',
-	'RoleSelection', 'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup',
+	'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup',
 	'RoomiesWelcome', 'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
 	'YourExperts', 'ZopIntro',
 	// Pro flows (also gated per-screen via useProRoleGate from C-9).

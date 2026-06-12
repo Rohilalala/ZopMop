@@ -21,6 +21,7 @@ import { lightColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { updateMe } from '../../api/users';
 import { useAuth } from '../../context/AuthContext';
+import { setNeedsWelcome } from '../../utils/pendingAuthStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NameEntry'>;
@@ -102,11 +103,13 @@ export default function NameEntryScreen({ navigation, route }: Props) {
 
     try {
       const updatedUser = await updateMe(token, sanitized);
-      // Persisting the name flips App.tsx `needsName` to false, which swaps
-      // the root from AuthNavigator to MainNavigator — so no manual navigation
-      // is needed. NameEntry only lives in the auth tree while the user is
-      // authenticated-but-nameless.
+      // Raise the welcome flag BEFORE persisting the name: updateUser()
+      // flips App.tsx `needsName` to false, and only this flag keeps the
+      // AuthNavigator mounted long enough for Welcome to play before the
+      // root swaps to MainNavigator.
+      setNeedsWelcome(true);
       updateUser(updatedUser);
+      navigation.replace('Welcome', { phone: route.params.phone, name: updatedUser.name });
     } catch {
       setError('Couldn’t save your name. Please try again.');
       setLoading(false);
