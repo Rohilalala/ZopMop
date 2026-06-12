@@ -52,7 +52,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise,
-		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
+		        scheduled_time, cancelled_at, cancelled_by, cancellation_fee_applied, cancellation_fee_cents,
 		        accepted_at, en_route_at, arrived_at, started_at, completed_at,
 		        pro_earnings_paise, actual_duration_minutes, customer_rating_pending,
 		        created_at, updated_at
@@ -62,7 +62,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
 		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
 		&b.DiscountPaise,
-		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
+		&b.ScheduledTime, &b.CancelledAt, &b.CancelledBy, &b.CancellationFeeApplied, &b.CancellationFeeCents,
 		&b.AcceptedAt, &b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
 		&b.ProEarningsPaise, &b.ActualDurationMinutes, &b.CustomerRatingPending,
 		&b.CreatedAt, &b.UpdatedAt,

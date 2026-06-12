@@ -33,6 +33,11 @@ type Booking struct {
 	DiscountPaise          int           `json:"discount_paise"`
 	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
+	// CancelledBy records who/what terminated the booking: 'customer', 'system',
+	// or 'no_pros_found' (the assigner's unfilled-at-slot-start terminal state).
+	// The customer app branches on 'no_pros_found' to show the rebook panel
+	// instead of the generic cancelled UI.
+	CancelledBy            *string       `json:"cancelled_by,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
 	CancellationFeeCents   int           `json:"cancellation_fee_paise"`
 	// Phase 10 lifecycle timestamps. NULL until the pro reaches that step.
