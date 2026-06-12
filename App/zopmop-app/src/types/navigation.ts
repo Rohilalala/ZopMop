@@ -49,7 +49,16 @@ export type MainStackParamList = {
   Wallet: undefined;
   // Cashfree Drop Checkout entry point. Pushed from CartScreen when the
   // customer chooses Pay-now (direct) at confirm-booking time.
-  Payment: { booking_id: string; amount_paise: number; bookingType: 'instant' | 'scheduled' };
+  // etaMinutes/helperName carry the ASAP arrival promise through to
+  // BookingConfirmed so card/UPI ASAP bookings render "arriving by HH:MM"
+  // too (the wallet path threads them directly).
+  Payment: {
+    booking_id: string;
+    amount_paise: number;
+    bookingType: 'instant' | 'scheduled';
+    etaMinutes?: number;
+    helperName?: string;
+  };
   Offers: undefined;
   HelpSupport: undefined;
   YourExperts: undefined;

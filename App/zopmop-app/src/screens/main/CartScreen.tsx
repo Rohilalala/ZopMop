@@ -347,6 +347,11 @@ export default function CartScreen() {
           // migration 065). No * 100 conversion needed.
           amount_paise: created.price_paise,
           bookingType: isAsap ? 'instant' : 'scheduled',
+          // Thread the ASAP arrival promise so PaymentScreen can pass it on to
+          // BookingConfirmed — card/UPI ASAP renders "arriving by HH:MM" too.
+          ...(isAsap && asapAssigned
+            ? { helperName: asapHelperName, etaMinutes: asapEtaMinutes }
+            : {}),
         });
         return;
       }
