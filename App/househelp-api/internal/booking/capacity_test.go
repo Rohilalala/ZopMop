@@ -179,6 +179,34 @@ func (f *capFixture) slotID(hhmm string) string {
 	return id
 }
 
+// nearSlotSeq hands each near-future slot a distinct minute offset so concurrent
+// fixtures never collide on time_slots' UNIQUE(slot_date, start_time).
+var nearSlotSeq int64
+
+// nearSlot creates a 30-minute time_slots row anchored within the bookable
+// window (≥ MinSlotLeadMin and ≤ 2-day cap), so RescheduleBooking's
+// validateSlotTime accepts the target. It returns the slot id and the RFC3339
+// IST scheduled time. Each call advances nearSlotSeq to dodge the slot-uniqueness
+// constraint, and the slot is registered for fixture cleanup.
+func (f *capFixture) nearSlot() (string, string) {
+	off := atomic.AddInt64(&nearSlotSeq, 1)
+	// ~2h out plus a per-call minute nudge: comfortably past the 45-min floor and
+	// well inside the 2-day horizon, with a unique start time.
+	start := time.Now().In(istLoc).Add(2*time.Hour + time.Duration(off)*time.Minute).Truncate(time.Minute)
+	date := start.Format("2006-01-02")
+	startHHMM := start.Format("15:04")
+	endHHMM := start.Add(30 * time.Minute).Format("15:04")
+	var id string
+	if err := f.pool.QueryRow(context.Background(),
+		`INSERT INTO time_slots (slot_date, start_time, end_time) VALUES ($1, $2, $3) RETURNING id::text`,
+		date, startHHMM, endHHMM,
+	).Scan(&id); err != nil {
+		f.t.Fatalf("insert near slot %s: %v", startHHMM, err)
+	}
+	f.slotIDs = append(f.slotIDs, id)
+	return id, start.Format(time.RFC3339)
+}
+
 // instant returns the IST wall-clock instant for hhmm on the fixture's date.
 func (f *capFixture) instant(hhmm string) time.Time {
 	ts, err := time.ParseInLocation("2006-01-02 15:04", f.dateStr+" "+hhmm, istLoc)
@@ -198,6 +226,12 @@ func (f *capFixture) book(hhmm string, durationMin int, enforce bool) (*Schedule
 func (f *capFixture) bookAs(customerID, addressID, hhmm string, durationMin int, enforce bool) (*ScheduledBooking, error) {
 	slotID := f.slotID(hhmm)
 	sched := f.instant(hhmm).Format(time.RFC3339)
+	return f.bookSlot(customerID, addressID, slotID, sched, durationMin, enforce)
+}
+
+// bookSlot books a given (slotID, scheduledTime) pair — used by reschedule tests
+// that need the original/filler booking on an explicit near-future slot.
+func (f *capFixture) bookSlot(customerID, addressID, slotID, sched string, durationMin int, enforce bool) (*ScheduledBooking, error) {
 	items := []BookingServiceItem{{ServiceID: f.serviceID, DurationMinutes: durationMin, PriceCents: 100}}
 	loc := f.locality
 	return f.repo.CreateScheduledBooking(

@@ -1870,8 +1870,22 @@ func (s *Service) RescheduleBooking(
 	if err != nil {
 		return nil, err
 	}
-	if b.Status == StatusCompleted || b.Status == StatusCancelled {
+	// Terminal states and already-started jobs cannot be rescheduled. A job is
+	// "started" once the pro has arrived (arrived_at) or service is in_progress —
+	// yanking it back to pending would clear the pro mid-service and orphan the
+	// in-flight job. Only a not-yet-started (pending / accepted-pre-arrival)
+	// booking is reschedulable (spec §7 re-dispatch).
+	if b.Status == StatusCompleted || b.Status == StatusCancelled ||
+		b.Status == StatusInProgress || b.ArrivedAt != nil {
 		return nil, fmt.Errorf("booking cannot be rescheduled in current status")
+	}
+
+	// Enforce the same time-window rules as a fresh booking (spec §3.1/§3.3):
+	// not in the past, ≥ MinSlotLeadMin out, ≤ 2-day horizon. Without this a
+	// reschedule could move a booking into the past (the assigner then claims and
+	// terminally cancels it) or beyond the planning window (polluting capacity).
+	if err := s.validateSlotTime(newScheduledTime); err != nil {
+		return nil, err
 	}
 
 	newScheduled, err := time.Parse(time.RFC3339, newScheduledTime)
@@ -1928,23 +1942,29 @@ func (s *Service) RescheduleBooking(
 	// deliberately excluded; overlapping windows cross slot boundaries — audit
 	// fix b939794). No old-slot release is needed: the old booking drops out of
 	// the live committed re-count the instant its scheduled_time moves.
+	//
+	// Fall back to PilotLocality when the booking carries no locality (e.g. an
+	// ASAP-origin row), mirroring resolveGateLocality so the gate always applies
+	// during the pilot and reschedule/create enforce identical capacity rules.
+	gateLocality := PilotLocality
 	if bookingLocality != nil && *bookingLocality != "" {
-		lockKey := *bookingLocality + "|" + slotDate
-		if _, err := tx.Exec(queryCtx,
-			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
-			lockKey,
-		); err != nil {
-			return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
-		}
-		// Exclude this booking from the recount so its own not-yet-moved old
-		// window can't block a move into an overlapping (e.g. adjacent) slot.
-		avail, err := s.repo.availableForSlotExcluding(queryCtx, tx, *bookingLocality, newTimeSlotID, slotDate, bookingID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
-		}
-		if avail <= 0 {
-			return nil, ErrSlotUnavailable
-		}
+		gateLocality = *bookingLocality
+	}
+	lockKey := gateLocality + "|" + slotDate
+	if _, err := tx.Exec(queryCtx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		lockKey,
+	); err != nil {
+		return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
+	}
+	// Exclude this booking from the recount so its own not-yet-moved old
+	// window can't block a move into an overlapping (e.g. adjacent) slot.
+	avail, err := s.repo.availableForSlotExcluding(queryCtx, tx, gateLocality, newTimeSlotID, slotDate, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
+	}
+	if avail <= 0 {
+		return nil, ErrSlotUnavailable
 	}
 
 	// Move the booking. If it was already assigned, release the pro and reset to
