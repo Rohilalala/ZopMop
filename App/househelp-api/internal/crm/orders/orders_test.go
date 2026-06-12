@@ -67,6 +67,7 @@ func TestList_CancelledByFilter(t *testing.T) {
 
 	makeCancelledBooking(t, pool, customerID, locality, "no_pros_found")
 	makeCancelledBooking(t, pool, customerID, locality, "customer")
+	makeCancelledBooking(t, pool, customerID, locality, "system")
 	makeCancelledBooking(t, pool, customerID, locality, "admin")
 	makeCancelledBooking(t, pool, customerID, locality, "admin:ops@zopmop.in")
 
@@ -89,20 +90,25 @@ func TestList_CancelledByFilter(t *testing.T) {
 	if n, total := list("customer"); n != 1 || total != 1 {
 		t.Fatalf("customer filter: items=%d total=%d, want 1/1", n, total)
 	}
+	// system → exactly the one auto-expire / dispatch-rollback row.
+	if n, total := list("system"); n != 1 || total != 1 {
+		t.Fatalf("system filter: items=%d total=%d, want 1/1", n, total)
+	}
 	// admin → both 'admin' and 'admin:<email>' (prefix match).
 	if n, total := list("admin"); n != 2 || total != 2 {
 		t.Fatalf("admin filter: items=%d total=%d, want 2/2", n, total)
 	}
-	// helper → none seeded for this customer.
-	if n, total := list("helper"); n != 0 || total != 0 {
-		t.Fatalf("helper filter: items=%d total=%d, want 0/0", n, total)
+	// helper is not a valid filter value (no writer persists it), so it is
+	// treated as an unrecognised value and ignored → all five rows returned.
+	if n, total := list("helper"); n != 5 || total != 5 {
+		t.Fatalf("helper filter (unknown, ignored): items=%d total=%d, want 5/5", n, total)
 	}
-	// Unrecognised value is ignored → all four rows returned.
-	if n, total := list("bogus_value"); n != 4 || total != 4 {
-		t.Fatalf("unrecognised filter: items=%d total=%d, want 4/4 (filter ignored)", n, total)
+	// Unrecognised value is ignored → all five rows returned.
+	if n, total := list("bogus_value"); n != 5 || total != 5 {
+		t.Fatalf("unrecognised filter: items=%d total=%d, want 5/5 (filter ignored)", n, total)
 	}
-	// Empty value → no filter → all four rows.
-	if n, total := list(""); n != 4 || total != 4 {
-		t.Fatalf("empty filter: items=%d total=%d, want 4/4", n, total)
+	// Empty value → no filter → all five rows.
+	if n, total := list(""); n != 5 || total != 5 {
+		t.Fatalf("empty filter: items=%d total=%d, want 5/5", n, total)
 	}
 }

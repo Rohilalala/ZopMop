@@ -29,13 +29,18 @@ import (
 var ErrNotFound = errors.New("order not found")
 
 // validCancelledBy is the allow-list for the cancelled_by orders filter.
-// Mirrors the values writers actually persist (internal/booking, admin,
-// matching dispatch — spec §5.5 'no_pros_found'). An unrecognised value is
-// ignored rather than errored, matching the other List filters' best-effort
-// query-param handling.
+// Mirrors the values writers actually persist: 'customer' (internal/booking
+// self-cancel), 'system' (internal/booking auto-expire / dispatch-rollback,
+// also counted as auto_expired_bookings in analytics), 'admin' (internal/admin
+// bare 'admin' plus the CRM cancel path's 'admin:<email>' form), and
+// 'no_pros_found' (matching dispatch — spec §5.5). 'helper' is intentionally
+// absent: no code path writes it (it lives only in doc comments), so filtering
+// by it would always return zero rows. An unrecognised value is ignored rather
+// than errored, matching the other List filters' best-effort query-param
+// handling.
 var validCancelledBy = map[string]bool{
 	"customer":      true,
-	"helper":        true,
+	"system":        true,
 	"admin":         true,
 	"no_pros_found": true,
 }
