@@ -3,7 +3,7 @@
 // endpoint; bookings snapshot a locality at create time. Backend:
 // internal/crm/localities/localities.go.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, BarChart3, Plus, Trash2 } from 'lucide-react';
 
@@ -210,6 +210,14 @@ export function LocalitiesPage() {
 // chosen IST date (spec §14.2). Date defaults to today IST.
 function CapacityModal({ locality, onClose }: { locality: Locality | null; onClose: () => void }) {
   const [date, setDate] = useState(todayIST());
+
+  // The modal stays mounted and is toggled via `locality` — reset the date
+  // to today whenever a (different) locality is opened so a date picked for
+  // locality A doesn't leak into locality B's drill-down (spec §14: defaults
+  // to today IST).
+  useEffect(() => {
+    if (locality) setDate(todayIST());
+  }, [locality?.id]);
 
   const q = useQuery({
     queryKey: ['capacity', locality?.name, date],
