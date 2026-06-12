@@ -39,10 +39,6 @@ const { height: SCREEN_H } = Dimensions.get('window');
 // SCHEDULING_LEAD_DAYS — hard cap matches backend booking.scheduledBookingMaxLeadDays.
 const SCHEDULING_LEAD_DAYS = 2;
 
-// IST cutoff hour. Past this, today + tomorrow become non-selectable —
-// only day-after slots remain so we don't drop into the stealth-instant path.
-const IST_CUTOFF_HOUR = 20;
-
 // All scheduling math runs in IST — the backend slots and the cutoff are IST.
 // We shift the epoch by +5:30 and then read/write ONLY UTC fields, so the
 // shifted instant's UTC calendar values equal the IST wall-clock, regardless of
@@ -79,15 +75,18 @@ function isSlotTooSoon(dayIso: string, startTime: string): boolean {
 function buildDays(): { iso: string; label: string; dayName: string; disabled: boolean }[] {
   const days = [];
   const base = istNow();
-  const pastCutoff = base.getUTCHours() >= IST_CUTOFF_HOUR;
   for (let i = 0; i <= SCHEDULING_LEAD_DAYS; i++) {
     const d = new Date(base);
     d.setUTCDate(base.getUTCDate() + i);
     const iso = d.toISOString().split('T')[0];
     const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'UTC' });
     const label = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-    const disabled = pastCutoff && i < 2;
-    days.push({ iso, label, dayName, disabled });
+    // No 8 PM cutoff (spec §9/§13.3 deleted schedulingCutoffHourIST): the backend
+    // accepts any slot that is not past, ≥45 min out, and ≤2 days ahead, so day
+    // chips stay enabled across the whole window. Individual slots in the
+    // 30–45-min gap are disabled by the per-slot isSlotTooSoon check; a day with
+    // no remaining bookable slots simply shows every period as "Full".
+    days.push({ iso, label, dayName, disabled: false });
   }
   return days;
 }
