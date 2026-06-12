@@ -149,8 +149,6 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 			})
 		}
 
-		log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
-
 		status := fiber.StatusInternalServerError
 		message := "failed to create booking"
 		if err.Error() == "service category not found" {
@@ -159,6 +157,15 @@ func (h *Handler) CreateBooking(c *fiber.Ctx) error {
 		} else if err.Error() == "maximum active bookings limit reached" || err.Error() == "service category is not available" {
 			status = fiber.StatusBadRequest
 			message = err.Error()
+		} else if strings.HasPrefix(err.Error(), "invalid promo code: ") {
+			status = fiber.StatusBadRequest
+			message = "invalid promo code"
+		}
+
+		// Only genuine server faults (the default 500) reach the ERR stream;
+		// expected client-side rejections mapped above stay out of it.
+		if status == fiber.StatusInternalServerError {
+			log.Error().Err(err).Str("customer_id", customerID).Msg("failed to create booking")
 		}
 
 		return c.Status(status).JSON(fiber.Map{
@@ -269,7 +276,6 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 
 	booking, err := h.service.CreateScheduledBooking(c.UserContext(), userID, &req, items, scheduledTime)
 	if err != nil {
-		log.Error().Err(err).Str("user_id", userID).Msg("failed to create scheduled booking")
 		if errors.Is(err, ErrAddressNotOwned) {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
 		}
@@ -318,6 +324,13 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 		} else if strings.HasPrefix(err.Error(), "invalid promo code: ") {
 			status = fiber.StatusBadRequest
 			message = "invalid promo code"
+		}
+
+		// Log only genuine server faults; the typed/mapped 4xx rejections above
+		// (slot_too_soon, slot_full, cart empty, promo, etc.) are expected and
+		// must not pollute the ERR stream.
+		if status == fiber.StatusInternalServerError {
+			log.Error().Err(err).Str("user_id", userID).Msg("failed to create scheduled booking")
 		}
 		return c.Status(status).JSON(fiber.Map{"error": message})
 	}
@@ -520,11 +533,6 @@ func (h *Handler) RescheduleBooking(c *fiber.Ctx) error {
 
 	resp, err := h.service.RescheduleBooking(c.UserContext(), bookingID, userID, req.TimeSlotID, req.ScheduledTime)
 	if err != nil {
-		log.Error().Err(err).
-			Str("booking_id", bookingID).
-			Str("user_id", userID).
-			Msg("failed to reschedule booking")
-
 		status := fiber.StatusInternalServerError
 		message := "failed to reschedule booking"
 		switch err.Error() {
@@ -542,9 +550,33 @@ func (h *Handler) RescheduleBooking(c *fiber.Ctx) error {
 			status = fiber.StatusConflict
 			message = "requested slot is fully booked"
 		}
+		// The reschedule path re-validates the new slot against the same
+		// window rules as a fresh booking (validateSlotTime). Those typed
+		// sentinels are expected client-side rejections, not server faults —
+		// map each to a clean 400, mirroring CreateScheduledBooking.
+		if errors.Is(err, ErrSlotInPast) {
+			status = fiber.StatusBadRequest
+			message = "selected time slot is in the past — please pick another"
+		}
+		if errors.Is(err, ErrSlotTooSoon) {
+			status = fiber.StatusBadRequest
+			message = "slots open 45 minutes out — use ASAP for now"
+		}
+		if errors.Is(err, ErrSlotTooFar) {
+			status = fiber.StatusBadRequest
+			message = "Bookings can only be made up to 2 days in advance."
+		}
 		if strings.HasPrefix(err.Error(), "invalid scheduled time") {
 			status = fiber.StatusBadRequest
 			message = "invalid scheduled time"
+		}
+
+		// Log only genuine server faults; mapped 4xx rejections are expected.
+		if status == fiber.StatusInternalServerError {
+			log.Error().Err(err).
+				Str("booking_id", bookingID).
+				Str("user_id", userID).
+				Msg("failed to reschedule booking")
 		}
 
 		return c.Status(status).JSON(fiber.Map{"error": message})
