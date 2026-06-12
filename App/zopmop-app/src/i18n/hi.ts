@@ -129,6 +129,8 @@ const hi: LangDict = {
     activeTap: 'विवरण देखें',
     completedSummary: '{count} सेवा · {minutes}min · ₹{earnings}',
     secondsShort: '{n}s',
+    newBadge: 'नई',
+    gotIt: 'समझ गया',
   },
   profile: {
     assignedArea: 'आपका असाइन्ड एरिया',

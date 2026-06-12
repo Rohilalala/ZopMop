@@ -30,7 +30,7 @@ type FcmMessageData = Record<string, string> | undefined;
 // ProScheduledInvite). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
 // REBOOK_AVAILABLE are customer-facing toasts/redirects and stay open.
 // When new Pro-targeted types are added, append them here.
-const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE', 'booking_offer'];
+const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE', 'booking_offer', 'booking_assigned'];
 
 export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) {
   if (!data || !data.type) return;
@@ -130,6 +130,17 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       // on the same emit but is a no-op if the screen is already
       // mounted.
       navigate('JobOffer', { booking_id: bookingId });
+      return;
+    }
+
+    case 'booking_assigned': {
+      // Force-assigned roster job (no offer/accept). Mark the row as newly
+      // arrived (drives the NEW badge + "Got it" ack in JobsList) and trigger
+      // a roster refetch via the shared status-change event, then surface a
+      // high-visibility in-app toast on top of the FCM tray notification.
+      if (bookingId) emitShiftEvent({ type: 'booking_assigned', booking_id: bookingId });
+      emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId });
+      showSuccess('New job added to your roster', { title: 'Job assigned' });
       return;
     }
 

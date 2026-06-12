@@ -17,17 +17,13 @@ import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { listActiveJobs, listPendingOffers } from '../../api/jobs';
+import { listActiveJobs } from '../../api/jobs';
 import { getHelperToday, type HelperBooking } from '../../api/pro';
-import { onShiftEvent, type OfferPayload } from '../../utils/shiftEvents';
+import { onShiftEvent } from '../../utils/shiftEvents';
+import { loadAcknowledgedJobs, markJobAcknowledged } from '../../utils/assignedAckStore';
 import { t } from '../../i18n';
 
 const ACTIVE_STATUSES = new Set(['accepted', 'arrived', 'in_progress']);
-
-interface OfferState extends OfferPayload {
-  // expiresAtMs derived from received_at_ms + time_remaining_sec*1000
-  expiresAtMs: number;
-}
 
 export default function JobsListScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
@@ -35,17 +31,21 @@ export default function JobsListScreen() {
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
 
-  const [offers, setOffers] = useState<Record<string, OfferState>>({});
   const [active, setActive] = useState<HelperBooking[]>([]);
   const [completed, setCompleted] = useState<HelperBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [, forceTick] = useState(0);
+
+  // Booking ids that landed via a booking_assigned push since this screen
+  // opened, and the ids already acknowledged ("Got it") in prior sessions.
+  // A row shows the NEW badge + Got it button when it is newly-assigned and
+  // not yet acknowledged.
+  const [newlyAssigned, setNewlyAssigned] = useState<Set<string>>(new Set());
+  const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
-    const [activeRes, pendingRes, todayRes] = await Promise.allSettled([
+    const [activeRes, todayRes] = await Promise.allSettled([
       listActiveJobs(),
-      listPendingOffers(),
       getHelperToday(token ?? ''),
     ]);
     if (activeRes.status === 'fulfilled') {
@@ -54,72 +54,50 @@ export default function JobsListScreen() {
     if (todayRes.status === 'fulfilled') {
       setCompleted(todayRes.value.filter((b) => b.status === 'completed'));
     }
-    // For pending offers we only have IDs from the server; rich offer
-    // metadata comes via FCM push (booking_offer event). Prune stale
-    // local cache entries whose IDs are no longer in the pending set
-    // — handles server-side auto-decline cleanly.
-    if (pendingRes.status === 'fulfilled') {
-      const liveIds = new Set(pendingRes.value);
-      setOffers((prev) => {
-        const next: Record<string, OfferState> = {};
-        for (const id of Object.keys(prev)) {
-          if (liveIds.has(id)) next[id] = prev[id];
-        }
-        return next;
-      });
-    }
     setLoading(false);
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Subscribe to push events: append new offers, refresh on status change.
+  // Hydrate the acknowledged set once on mount.
+  useEffect(() => {
+    let alive = true;
+    loadAcknowledgedJobs().then((s) => { if (alive) setAcknowledged(s); });
+    return () => { alive = false; };
+  }, []);
+
+  // Subscribe to push events: flag new assignments, refresh on status change.
   useEffect(() => {
     return onShiftEvent((ev) => {
-      if (ev.type === 'booking_offer') {
-        const p = ev.payload;
-        setOffers((prev) => ({
-          ...prev,
-          [p.booking_id]: {
-            ...p,
-            expiresAtMs: p.received_at_ms + (p.time_remaining_sec ?? 25) * 1000,
-          },
-        }));
+      if (ev.type === 'booking_assigned') {
+        // Flag the row as newly arrived; the paired booking_status_change
+        // emit (from pushRouter) drives the actual refetch below.
+        setNewlyAssigned((prev) => {
+          const next = new Set(prev);
+          next.add(ev.booking_id);
+          return next;
+        });
       } else if (ev.type === 'booking_status_change') {
         load();
       }
     });
   }, [load]);
 
-  // Tick every 1s so countdowns update + expired offers drop out.
-  useEffect(() => {
-    const id = setInterval(() => {
-      forceTick((n) => n + 1);
-      setOffers((prev) => {
-        const now = Date.now();
-        let changed = false;
-        const next: Record<string, OfferState> = {};
-        for (const [id, o] of Object.entries(prev)) {
-          if (now >= o.expiresAtMs) {
-            changed = true;
-            continue;
-          }
-          next[id] = o;
-        }
-        return changed ? next : prev;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load().finally(() => setRefreshing(false));
   }, [load]);
 
-  const offerList = Object.values(offers);
+  const onAck = useCallback((bookingId: string) => {
+    markJobAcknowledged(bookingId);
+    setAcknowledged((prev) => {
+      const next = new Set(prev);
+      next.add(bookingId);
+      return next;
+    });
+  }, []);
 
-  const isEmpty = !loading && offerList.length === 0 && active.length === 0 && completed.length === 0;
+  const isEmpty = !loading && active.length === 0 && completed.length === 0;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.background }]} edges={['top']}>
@@ -134,20 +112,6 @@ export default function JobsListScreen() {
           <View style={styles.center}><ActivityIndicator color={c.accent} /></View>
         )}
 
-        {offerList.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('jobs.sectionNewOffer')}</Text>
-            {offerList.map((o) => (
-              <OfferRow
-                key={o.booking_id}
-                offer={o}
-                colors={c}
-                onPress={() => navigation.navigate('JobOffer', { booking_id: o.booking_id })}
-              />
-            ))}
-          </View>
-        )}
-
         {active.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('jobs.sectionActive')}</Text>
@@ -156,6 +120,8 @@ export default function JobsListScreen() {
                 key={b.id}
                 booking={b}
                 colors={c}
+                isNew={newlyAssigned.has(b.id) && !acknowledged.has(b.id)}
+                onAck={() => onAck(b.id)}
                 onPress={() => navigation.navigate('JobDetail', { booking_id: b.id })}
               />
             ))}
@@ -190,60 +156,55 @@ export default function JobsListScreen() {
   );
 }
 
-function OfferRow({
-  offer, colors, onPress,
-}: { offer: OfferState; colors: ReturnType<typeof useColors>; onPress: () => void }) {
-  const remainingSec = Math.max(0, Math.ceil((offer.expiresAtMs - Date.now()) / 1000));
-  return (
-    <TouchableOpacity onPress={onPress} style={[localCard(colors), { borderColor: colors.accent }]}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: colors.text }}>
-          {offer.customer_first_name ?? 'Customer'}
-        </Text>
-        <View style={{
-          paddingHorizontal: 10, paddingVertical: 4,
-          borderRadius: Radius.full, backgroundColor: colors.accent,
-        }}>
-          <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: '#1a1a1a' }}>
-            {t('jobs.secondsShort', { n: remainingSec })}
-          </Text>
-        </View>
-      </View>
-      {offer.address_summary && (
-        <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: colors.textSecondary, marginTop: 4 }}>
-          {offer.address_summary}
-        </Text>
-      )}
-      <View style={{ flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.sm }}>
-        {offer.estimated_duration_minutes != null && (
-          <Text style={{ fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: colors.text }}>
-            {t('offer.minutesShort', { n: offer.estimated_duration_minutes })}
-          </Text>
-        )}
-        {offer.estimated_earnings_paise != null && (
-          <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.base, color: colors.accent }}>
-            ₹{Math.round(offer.estimated_earnings_paise / 100)}
-          </Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
 function ActiveRow({
-  booking, colors, onPress,
-}: { booking: HelperBooking; colors: ReturnType<typeof useColors>; onPress: () => void }) {
+  booking, colors, isNew, onAck, onPress,
+}: {
+  booking: HelperBooking;
+  colors: ReturnType<typeof useColors>;
+  isNew: boolean;
+  onAck: () => void;
+  onPress: () => void;
+}) {
   return (
-    <TouchableOpacity onPress={onPress} style={localCard(colors)}>
+    <TouchableOpacity
+      onPress={onPress}
+      style={[localCard(colors), isNew && { borderColor: colors.accent }]}
+    >
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: colors.accent, textTransform: 'uppercase' }}>
-          {booking.status}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+          <Text style={{ fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: colors.accent, textTransform: 'uppercase' }}>
+            {booking.status}
+          </Text>
+          {isNew && (
+            <View style={{
+              paddingHorizontal: 8, paddingVertical: 2,
+              borderRadius: Radius.full, backgroundColor: colors.accent,
+            }}>
+              <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.xs, color: '#1a1a1a' }}>
+                {t('jobs.newBadge')}
+              </Text>
+            </View>
+          )}
+        </View>
         <Feather name="chevron-right" size={18} color={colors.textMuted} />
       </View>
       <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.base, color: colors.text, marginTop: 4 }}>
         {booking.address}
       </Text>
+      {isNew && (
+        <TouchableOpacity
+          onPress={onAck}
+          style={{
+            marginTop: Spacing.sm, alignSelf: 'flex-start',
+            paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
+            borderRadius: Radius.full, backgroundColor: colors.accent,
+          }}
+        >
+          <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.sm, color: '#1a1a1a' }}>
+            {t('jobs.gotIt')}
+          </Text>
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 }

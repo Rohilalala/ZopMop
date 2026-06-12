@@ -111,6 +111,8 @@ const en: Dict = {
     activeTap: 'View details',
     completedSummary: '{count} service · {minutes}min · ₹{earnings}',
     secondsShort: '{n}s',
+    newBadge: 'NEW',
+    gotIt: 'Got it',
   },
   profile: {
     assignedArea: 'Your assigned area',
