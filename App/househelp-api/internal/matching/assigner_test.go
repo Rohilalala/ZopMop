@@ -373,6 +373,57 @@ func indexOf(ids []string, id string) int {
 	return -1
 }
 
+// ── nearest-first tiebreak within the same shift end (spec §5.2) ─────────────
+
+// sortByShiftEndThenDistance is the in-Go tiebreak applied after the SQL's
+// shift_ends_at ASC ordering: within an equal shift end the nearer pro (by
+// haversine to the booking) ranks first, and a pro with no live location loses
+// the tie to any located pro. No DB needed — exercises the pure ordering helper.
+func TestAssigner_NearestFirstTiebreak(t *testing.T) {
+	bookingLat, bookingLng := 28.45, 77.05
+	end := time.Now().Add(2 * time.Hour)
+
+	// Three pros, identical shift end. `near` is ~0.5 km away, `far` ~5 km,
+	// `noLoc` has no live location. Seeded in worst-first order to prove the sort
+	// reorders rather than relying on input order.
+	pool := []Candidate{
+		{ID: "noLoc", ShiftEndsAt: end, HasLocation: false},
+		{ID: "far", ShiftEndsAt: end, HasLocation: true, Lat: 28.49, Lng: 77.09},
+		{ID: "near", ShiftEndsAt: end, HasLocation: true, Lat: 28.454, Lng: 77.053},
+	}
+
+	sortByShiftEndThenDistance(pool, bookingLat, bookingLng)
+
+	got := []string{pool[0].ID, pool[1].ID, pool[2].ID}
+	want := []string{"near", "far", "noLoc"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("nearest-first order = %v, want %v (nearer wins; missing location loses)", got, want)
+		}
+	}
+}
+
+// A nearer pro whose shift ends LATER must still rank behind a farther pro whose
+// shift ends sooner — shift end is the primary key, distance only breaks ties.
+func TestAssigner_ShiftEndBeatsDistance(t *testing.T) {
+	bookingLat, bookingLng := 28.45, 77.05
+	soonEnd := time.Now().Add(1 * time.Hour)
+	lateEnd := time.Now().Add(3 * time.Hour)
+
+	pool := []Candidate{
+		// Nearer but ends later.
+		{ID: "nearLate", ShiftEndsAt: lateEnd, HasLocation: true, Lat: 28.451, Lng: 77.051},
+		// Farther but ends sooner — must rank first.
+		{ID: "farSoon", ShiftEndsAt: soonEnd, HasLocation: true, Lat: 28.49, Lng: 77.09},
+	}
+
+	sortByShiftEndThenDistance(pool, bookingLat, bookingLng)
+
+	if pool[0].ID != "farSoon" {
+		t.Fatalf("order = [%s, %s], want farSoon first (shift end is primary)", pool[0].ID, pool[1].ID)
+	}
+}
+
 // ── exclusion honored ───────────────────────────────────────────────────────
 
 func TestAssigner_ExclusionHonored(t *testing.T) {

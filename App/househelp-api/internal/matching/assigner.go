@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -138,7 +139,9 @@ type assignerBooking struct {
 type Candidate struct {
 	ID          string
 	ShiftEndsAt time.Time
-	HasLocation bool // a live Redis GEO position exists → nearest-first is meaningful
+	HasLocation bool    // a live Redis GEO position exists → nearest-first is meaningful
+	Lat         float64 // live Redis GEO latitude (valid only when HasLocation)
+	Lng         float64 // live Redis GEO longitude (valid only when HasLocation)
 }
 
 // ── ClaimDue ────────────────────────────────────────────────────────────────
@@ -316,12 +319,19 @@ func (a *Assigner) EligibleCandidates(ctx context.Context, b *assignerBooking, e
 	// falls open.
 	a.markLiveLocations(ctx, pool, ids)
 
+	// Nearest-first tiebreak (spec §5.2): within the same shift_ends_at, order
+	// located candidates by haversine distance to the booking, ascending;
+	// candidates with no live location sort after located ones in that tier. The
+	// SQL already ordered by shift_ends_at ASC, so a STABLE sort preserves the
+	// shift-end tiers and only reorders within each tier.
+	sortByShiftEndThenDistance(pool, b.Lat, b.Lng)
+
 	return a.pullPreferredToFront(ctx, b.CustomerID, pool, excludeProID), nil
 }
 
-// markLiveLocations sets HasLocation on each candidate that has a Redis GEO
-// position. Failure is non-fatal — leaves HasLocation false (degrades to the
-// query's shift-end ordering + fail-open travel).
+// markLiveLocations sets HasLocation (and Lat/Lng) on each candidate that has a
+// Redis GEO position. Failure is non-fatal — leaves HasLocation false (degrades
+// to the query's shift-end ordering + fail-open travel).
 func (a *Assigner) markLiveLocations(ctx context.Context, pool []Candidate, ids []string) {
 	if a.rdb == nil || len(ids) == 0 {
 		return
@@ -333,8 +343,37 @@ func (a *Assigner) markLiveLocations(ctx context.Context, pool []Candidate, ids 
 	for i := range pool {
 		if positions[i] != nil {
 			pool[i].HasLocation = true
+			pool[i].Lat = positions[i].Latitude
+			pool[i].Lng = positions[i].Longitude
 		}
 	}
+}
+
+// sortByShiftEndThenDistance stably orders the pool by shift end ascending, then
+// (within an equal shift end) nearest-first by haversine distance to the booking
+// lat/lng. Candidates without a live location (HasLocation false) sort after
+// located ones in the same shift-end tier — they keep the query's order among
+// themselves. Stable so equal keys preserve the SQL's shift-end ordering.
+func sortByShiftEndThenDistance(pool []Candidate, bookingLat, bookingLng float64) {
+	if len(pool) < 2 {
+		return
+	}
+	sort.SliceStable(pool, func(i, j int) bool {
+		ci, cj := pool[i], pool[j]
+		if !ci.ShiftEndsAt.Equal(cj.ShiftEndsAt) {
+			return ci.ShiftEndsAt.Before(cj.ShiftEndsAt)
+		}
+		// Same shift end → located-before-unlocated, then nearer-first.
+		if ci.HasLocation != cj.HasLocation {
+			return ci.HasLocation // located (true) sorts before unlocated (false)
+		}
+		if !ci.HasLocation {
+			return false // both unlocated → keep SQL order (stable)
+		}
+		di := HaversineKm(ci.Lat, ci.Lng, bookingLat, bookingLng)
+		dj := HaversineKm(cj.Lat, cj.Lng, bookingLat, bookingLng)
+		return di < dj
+	})
 }
 
 // pullPreferredToFront reorders pool so the customer's preferred pros (in their
