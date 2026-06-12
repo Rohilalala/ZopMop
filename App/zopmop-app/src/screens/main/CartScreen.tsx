@@ -729,7 +729,6 @@ export default function CartScreen() {
         visible={schedulingVisible}
         token={token ?? ''}
         addressId={selectedAddress?.id}
-        durationMinutes={items.reduce((sum, it) => sum + (it.duration_minutes ?? 0), 0)}
         onClose={() => setSchedulingVisible(false)}
         onConfirm={(sel: ScheduleSelection) => {
           if (sel.kind === 'asap') {

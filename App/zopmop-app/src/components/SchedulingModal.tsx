@@ -30,9 +30,6 @@ interface Props {
   // /bookings/availability endpoint (live headroom). When absent, the modal
   // falls back to the plain /slots feed and capacity degrades to Available/Full.
   addressId?: string;
-  // Cart total duration (minutes). Sent to the availability endpoint so a slot
-  // is only shown open if a job this long can actually be booked there.
-  durationMinutes?: number;
   onClose: () => void;
   onConfirm: (selection: ScheduleSelection) => void;
 }
@@ -138,7 +135,7 @@ function capView(slot: ApiTimeSlot, c: ScreenColors, dayIso: string): CapView {
   return { fill: 0.3, color: c.green, label: 'Available', bookable: true };
 }
 
-export default function SchedulingModal({ visible, token, addressId, durationMinutes, onClose, onConfirm }: Props) {
+export default function SchedulingModal({ visible, token, addressId, onClose, onConfirm }: Props) {
   const c = useC();
   const { isDark } = useTheme();
   const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
@@ -161,14 +158,14 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
     }
   }, [visible]);
 
-  // Cache availability per (day, duration, address) so switching dates is
-  // instant after the first load — no loading-bar flash. The cache is cleared
-  // each time the modal (re)opens or duration/address changes, so capacity is
-  // at most a few seconds stale within one open.
+  // Cache availability per (day, address) so switching dates is instant after
+  // the first load — no loading-bar flash. The cache is cleared each time the
+  // modal (re)opens or the address changes, so capacity is at most a few
+  // seconds stale within one open.
   const cacheRef = useRef<Map<string, ApiSlotPeriod[]>>(new Map());
   const cacheKey = useCallback(
-    (iso: string) => `${iso}|${durationMinutes ?? 0}|${addressId ?? ''}`,
-    [durationMinutes, addressId],
+    (iso: string) => `${iso}|${addressId ?? ''}`,
+    [addressId],
   );
 
   // Prefetch every other selectable day on open so the first date switch is
@@ -179,12 +176,12 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
     let cancelled = false;
     const current = firstSelectableIso(DAYS);
     DAYS.filter(d => !d.disabled && d.iso !== current).forEach(d => {
-      getSlotAvailability(token, addressId, d.iso, durationMinutes)
+      getSlotAvailability(token, addressId, d.iso)
         .then(data => { if (!cancelled) cacheRef.current.set(cacheKey(d.iso), data); })
         .catch(() => {});
     });
     return () => { cancelled = true; };
-  }, [visible, token, addressId, durationMinutes, DAYS, cacheKey]);
+  }, [visible, token, addressId, DAYS, cacheKey]);
 
   // Render the selected day: serve from cache instantly (no loader); only show
   // the loading bars on a genuine cache miss (the very first time a day loads).
@@ -195,12 +192,12 @@ export default function SchedulingModal({ visible, token, addressId, durationMin
     if (cached) { setPeriods(cached); setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
-    getSlotAvailability(token, addressId, selectedDay, durationMinutes)
+    getSlotAvailability(token, addressId, selectedDay)
       .then(data => { if (!cancelled) { cacheRef.current.set(cacheKey(selectedDay), data); setPeriods(data); } })
       .catch(() => { if (!cancelled) setPeriods([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [visible, selectedDay, token, addressId, durationMinutes, cacheKey]);
+  }, [visible, selectedDay, token, addressId, cacheKey]);
 
   // Canonical-ordered tabs with a live open-count, derived from the loaded
   // periods. A period with zero bookable slots renders disabled + "Full".
