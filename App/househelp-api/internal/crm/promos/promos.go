@@ -193,6 +193,20 @@ func validateCreateRequest(req CreateRequest) error {
 	default:
 		return fmt.Errorf("discount_type must be 'percent' or 'fixed'")
 	}
+	// Redemption caps and min-order must be non-negative. A negative
+	// max_uses / max_per_user would weaken (or invert) the redemption
+	// limits enforced at booking time — a money-exposure gap — and a
+	// negative min_order is nonsensical. Mirrored by DB CHECK
+	// promotions_caps_nonneg (migration 131).
+	if req.MinOrderCents < 0 {
+		return fmt.Errorf("min_order must be >= 0")
+	}
+	if req.MaxUses < 0 {
+		return fmt.Errorf("max_uses must be >= 0")
+	}
+	if req.MaxPerUser < 0 {
+		return fmt.Errorf("max_per_user must be >= 0")
+	}
 	return nil
 }
 
@@ -232,6 +246,11 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 func (r *Repository) Update(ctx context.Context, id string, req CreateRequest) error {
 	if err := validateCreateRequest(req); err != nil {
 		return err
+	}
+	// Same future-expiry guard as Create — editing a promo must not be a
+	// back door to set expires_at in the past (which silently kills it).
+	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
+		return fmt.Errorf("expires_at must be in the future")
 	}
 	req.AudienceUserIDs = nonNilSlice(req.AudienceUserIDs)
 	req.Categories = nonNilSlice(req.Categories)

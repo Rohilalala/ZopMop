@@ -142,12 +142,14 @@ func (s *Service) CreateDispute(ctx context.Context, req DisputeRequest) (string
 func (s *Service) ResolveDispute(ctx context.Context, id, resolution string) error {
 	res, err := s.write.Exec(ctx, `
 		UPDATE crm_disputes SET status='resolved', resolution=$2, resolved_at=now(), updated_at=now()
-		WHERE id = $1::uuid
+		WHERE id = $1::uuid AND status NOT IN ('resolved','closed')
 	`, id, resolution)
 	if err != nil {
 		return fmt.Errorf("resolve dispute: %w", err)
 	}
 	if res.RowsAffected() == 0 {
+		// Either the id does not exist or the dispute is already
+		// resolved/closed — both must not silently overwrite the outcome.
 		return ErrNotFound
 	}
 	return nil

@@ -18,6 +18,7 @@ export const PERMISSIONS = {
   'workers.force_offline': 'admin',
   'workers.set_categories': 'admin',
   'workers.add_note': 'support',
+  'workers.read_pii': 'superadmin',
   'workers.deduct': 'admin',
   'workers.update': 'admin',
 

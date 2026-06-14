@@ -239,6 +239,14 @@ func (r *Repository) CreateDraft(ctx context.Context, rec ConfigRecord) (*Config
 	)
 	out, err := scanConfig(row)
 	if err != nil {
+		// (page_id, version, env) is UNIQUE; surface a duplicate-version draft
+		// as a typed conflict so the handler returns 409 instead of leaking a
+		// raw 23505 constraint string to the UI toast. Mirrors
+		// InsertAllowedAction's handling.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("create draft: %w", err)
 	}
 	log.Info().

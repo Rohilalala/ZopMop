@@ -40,7 +40,14 @@ type PushMsg struct {
 	ScheduledAt    *time.Time `json:"scheduled_at,omitempty"`
 	SentAt         *time.Time `json:"sent_at,omitempty"`
 	Status         string     `json:"status"`
-	CreatedAt      time.Time  `json:"created_at"`
+	// Delivery stats written by SendPush (migrations 044/045). Without these
+	// the SPA's Sent/Delivered/Failed line and the failure reason were always
+	// undefined — operators retried sent/failed pushes blind.
+	SentCount      int       `json:"sent_count"`
+	DeliveredCount int       `json:"delivered_count"`
+	FailedCount    int       `json:"failed_count"`
+	ErrorMessage   *string   `json:"error_message,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type PushCreateRequest struct {
@@ -134,7 +141,8 @@ func (s *Service) ListPush(ctx context.Context, limit int) ([]PushMsg, error) {
 	}
 	rows, err := s.read.Query(ctx, `
 		SELECT id::text, title, body, image_url, deep_link, target_kind,
-		       estimated_reach, scheduled_at, sent_at, status, created_at
+		       estimated_reach, scheduled_at, sent_at, status,
+		       sent_count, delivered_count, failed_count, error_message, created_at
 		FROM crm_push_messages ORDER BY created_at DESC LIMIT $1
 	`, limit)
 	if err != nil {
@@ -145,7 +153,8 @@ func (s *Service) ListPush(ctx context.Context, limit int) ([]PushMsg, error) {
 	for rows.Next() {
 		var m PushMsg
 		if err := rows.Scan(&m.ID, &m.Title, &m.Body, &m.ImageURL, &m.DeepLink, &m.TargetKind,
-			&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status, &m.CreatedAt); err != nil {
+			&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status,
+			&m.SentCount, &m.DeliveredCount, &m.FailedCount, &m.ErrorMessage, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -212,10 +221,12 @@ func (s *Service) GetPush(ctx context.Context, id string) (*PushMsg, error) {
 	var m PushMsg
 	err := s.read.QueryRow(ctx, `
 		SELECT id::text, title, body, image_url, deep_link, target_kind,
-		       estimated_reach, scheduled_at, sent_at, status, created_at
+		       estimated_reach, scheduled_at, sent_at, status,
+		       sent_count, delivered_count, failed_count, error_message, created_at
 		FROM crm_push_messages WHERE id = $1::uuid
 	`, id).Scan(&m.ID, &m.Title, &m.Body, &m.ImageURL, &m.DeepLink, &m.TargetKind,
-		&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status, &m.CreatedAt)
+		&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status,
+		&m.SentCount, &m.DeliveredCount, &m.FailedCount, &m.ErrorMessage, &m.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("not found")
 	}

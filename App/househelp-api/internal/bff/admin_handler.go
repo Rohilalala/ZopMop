@@ -165,6 +165,9 @@ func (a *AdminHandler) createDraft(c *fiber.Ctx) error {
 	}
 	out, err := a.repo.CreateDraft(c.UserContext(), rec)
 	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			return c.Status(409).JSON(fiber.Map{"error": "a draft with this version already exists for this env"})
+		}
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	_ = a.repo.AppendAuditLog(c.UserContext(), pageID, &out.ID, "created", a.actor(c), "", out.ConfigJSON)

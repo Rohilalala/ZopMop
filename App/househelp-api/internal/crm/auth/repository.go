@@ -165,6 +165,22 @@ func (r *Repository) CreateSession(ctx context.Context, s *Session) error {
 	return nil
 }
 
+// ConsumeChallenge records a TOTP challenge jti as used. Returns true if this
+// call consumed it (fresh), false if it was already used (replay). The
+// INSERT ... ON CONFLICT DO NOTHING is atomic, so two concurrent replays of
+// the same challenge yield exactly one fresh==true.
+func (r *Repository) ConsumeChallenge(ctx context.Context, jti, adminID string, expiresAt time.Time) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO crm_used_challenges (jti, admin_id, expires_at)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (jti) DO NOTHING
+	`, jti, adminID, expiresAt)
+	if err != nil {
+		return false, fmt.Errorf("consume challenge: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // GetSessionByHash looks up an active-leg session (not revoked, not
 // expired, not yet rotated). Used by Logout — a logout against a stale
 // (rotated) hash should be a no-op.

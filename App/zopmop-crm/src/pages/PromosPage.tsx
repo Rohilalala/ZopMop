@@ -73,6 +73,25 @@ export function PromosPage() {
             ))}
           </tbody>
         </table>
+        {q.data && q.data.total_count > params.limit && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border text-sm">
+            <span className="text-text-muted tabular-nums">
+              {params.offset + 1}–{Math.min(params.offset + params.limit, q.data.total_count)} of {q.data.total_count}
+            </span>
+            <div className="flex gap-2">
+              <button
+                className="btn-ghost"
+                disabled={params.offset === 0}
+                onClick={() => setParams((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
+              >Prev</button>
+              <button
+                className="btn-ghost"
+                disabled={params.offset + params.limit >= q.data.total_count}
+                onClick={() => setParams((p) => ({ ...p, offset: p.offset + p.limit }))}
+              >Next</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {(creating || editing) && (

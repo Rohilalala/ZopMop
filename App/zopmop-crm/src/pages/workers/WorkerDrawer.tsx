@@ -35,6 +35,8 @@ import {
   suspendWorker,
   unsuspendWorker,
   workerActiveJob,
+  workerPII,
+  type WorkerPII,
   workerKeys,
   type Status,
   type WorkerDetail,
@@ -308,6 +310,18 @@ function ProfileTab({
 }) {
   const [showAadhaar, setShowAadhaar] = useState(false);
   const [showBank, setShowBank] = useState(false);
+  // Unmasked PII is never shipped in the worker detail payload (C7) — it is
+  // fetched on demand from the superadmin-only, server-audited reveal endpoint.
+  const [pii, setPii] = useState<WorkerPII | null>(null);
+  const piiMut = useMutation({
+    mutationFn: () => workerPII(worker.id),
+    onSuccess: (data) => setPii(data),
+  });
+  function toggleReveal(which: 'aadhaar' | 'bank') {
+    if (!pii && !piiMut.isPending) piiMut.mutate(); // one audited fetch
+    if (which === 'aadhaar') setShowAadhaar((v) => !v);
+    else setShowBank((v) => !v);
+  }
   const [editLoc, setEditLoc] = useState(false);
   const [editCats, setEditCats] = useState(false);
 
@@ -366,8 +380,23 @@ function ProfileTab({
       setConfirm(null);
       invalidate();
     },
-    onError: () =>
-      showToast({ kind: 'error', message: 'Action failed — try again' }),
+    onError: (err: unknown) => {
+      // Server errors that carry a message (e.g. the force-offline
+      // active-job 409) are already toasted by the axios interceptor — don't
+      // mask them with a generic toast. Only fall back for network errors.
+      const data = (err as { response?: { data?: { message?: string; error?: string } } })?.response?.data;
+      if (!data?.message && !data?.error) {
+        showToast({ kind: 'error', message: 'Action failed — try again' });
+      }
+    },
+  });
+
+  // When the force-offline confirm is open, check for an in-flight job so we
+  // can warn the admin up front (the server also blocks it with a 409).
+  const activeJobQ = useQuery({
+    queryKey: ['worker-active-job', worker.id],
+    queryFn: () => workerActiveJob(worker.id),
+    enabled: confirm === 'offline',
   });
 
   const [catDraft, setCatDraft] = useState<string[]>(worker.categories);
@@ -527,20 +556,23 @@ function ProfileTab({
             <span className="text-text-muted">Aadhaar</span>
             <span className="flex items-center gap-2 text-text-primary font-mono">
               {showAadhaar
-                ? worker.aadhaar_number || '—'
+                ? pii?.aadhaar_number || '—'
                 : maskTail(worker.aadhaar_number, [4, 4])}
               {worker.aadhaar_number && (
-                <button
-                  onClick={() => setShowAadhaar((v) => !v)}
-                  className="text-text-muted hover:text-text-primary"
-                  aria-label="toggle aadhaar"
-                >
-                  {showAadhaar ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
+                <Can perm="workers.read_pii">
+                  <button
+                    onClick={() => toggleReveal('aadhaar')}
+                    disabled={piiMut.isPending}
+                    className="text-text-muted hover:text-text-primary"
+                    aria-label="reveal aadhaar"
+                  >
+                    {showAadhaar ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </Can>
               )}
               {worker.aadhaar_verified ? (
                 <CheckCircle2 className="w-4 h-4 text-success" />
@@ -559,20 +591,23 @@ function ProfileTab({
             <span className="text-text-muted">Bank account</span>
             <span className="flex items-center gap-2 text-text-primary font-mono">
               {showBank
-                ? worker.bank_account_number || '—'
+                ? pii?.bank_account_number || '—'
                 : maskTail(worker.bank_account_number, [3, 4])}
               {worker.bank_account_number && (
-                <button
-                  onClick={() => setShowBank((v) => !v)}
-                  className="text-text-muted hover:text-text-primary"
-                  aria-label="toggle bank account"
-                >
-                  {showBank ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
+                <Can perm="workers.read_pii">
+                  <button
+                    onClick={() => toggleReveal('bank')}
+                    disabled={piiMut.isPending}
+                    className="text-text-muted hover:text-text-primary"
+                    aria-label="reveal bank account"
+                  >
+                    {showBank ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </Can>
               )}
               {worker.bank_verified ? (
                 <CheckCircle2 className="w-4 h-4 text-success" />
@@ -709,7 +744,9 @@ function ProfileTab({
             ? 'Worker can start receiving jobs immediately.'
             : confirm === 'unsuspend'
               ? 'Worker returns to active and can be matched again.'
-              : 'Worker is pushed offline and drops out of matching until they re-open the app.'
+              : activeJobQ.data?.has_active
+                ? `⚠ This worker has an active job${activeJobQ.data.booking_id ? ` (booking ${activeJobQ.data.booking_id})` : ''}. Forcing them offline is blocked until that job is reassigned or completed.`
+                : 'Worker is pushed offline and drops out of matching until they re-open the app.'
         }
         confirmLabel="Confirm"
         destructive={confirm === 'offline'}

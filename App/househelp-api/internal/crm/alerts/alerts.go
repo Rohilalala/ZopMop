@@ -140,7 +140,11 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // RegisterRoutes mounts /alerts/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	r.Get("/alerts", middleware.RequirePermission("alerts.read"), h.List)
-	r.Post("/alerts/read-all", h.MarkAllRead)
+	// Was unguarded — the only write in the authed group with no
+	// RequirePermission. read-all only appends the caller's own admin id to
+	// each alert's read_by (per-admin read-state), so viewer-tier is correct,
+	// but it must still pass through the RBAC middleware like every other route.
+	r.Post("/alerts/read-all", middleware.RequirePermission("alerts.mark_read"), h.MarkAllRead)
 }
 
 // List returns recent alerts.

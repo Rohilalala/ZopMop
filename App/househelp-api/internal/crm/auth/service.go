@@ -196,6 +196,25 @@ func (s *Service) VerifyTOTPAndIssue(ctx context.Context, req TOTPVerifyRequest,
 		}
 	}
 
+	// Single-use challenge: record the jti so the same challenge_token + a
+	// still-valid TOTP code cannot be replayed to mint multiple sessions
+	// within the 5-minute challenge TTL. fresh==false means it was already
+	// consumed (replay) — reject. Tokens issued before jti existed
+	// (cc.ID == "") skip this during the deploy window.
+	if cc.ID != "" {
+		exp := time.Now().Add(5 * time.Minute)
+		if cc.ExpiresAt != nil {
+			exp = cc.ExpiresAt.Time
+		}
+		fresh, err := s.repo.ConsumeChallenge(ctx, cc.ID, admin.ID, exp)
+		if err != nil {
+			return nil, err
+		}
+		if !fresh {
+			return nil, ErrInvalidChallenge
+		}
+	}
+
 	plaintext, hash, err := GenerateRefreshToken()
 	if err != nil {
 		return nil, err

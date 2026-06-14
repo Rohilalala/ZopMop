@@ -22,6 +22,17 @@ import (
 
 var ErrNotFound = errors.New("banner not found")
 
+// ErrReorderMismatch is returned when a reorder list does not cover exactly
+// the current set of banners (missing, extra, or duplicate ids). Applying a
+// partial list would leave un-listed banners at their old display_order,
+// producing duplicate orders.
+var ErrReorderMismatch = errors.New("reorder list must contain exactly the current banner ids, once each")
+
+// bannersReorderLockKey is an arbitrary constant key for pg_advisory_xact_lock
+// so concurrent reorders serialize instead of interleaving into a corrupt
+// (duplicated / non-sequential) display_order.
+const bannersReorderLockKey int64 = 0x7A4D_4252 // 'zMBR'
+
 type Banner struct {
 	ID           string     `json:"id"`
 	Title        string     `json:"title"`
@@ -179,13 +190,53 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// Reorder updates display_order for each id in the slice (index = order).
+// Reorder sets display_order=index for the given ids. The list must cover
+// exactly the current banner set; the write is serialized by an advisory lock
+// so concurrent/stale reorders cannot interleave into duplicate orders.
 func (r *Repository) Reorder(ctx context.Context, ids []string) error {
 	tx, err := r.write.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin reorder: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serialize concurrent reorders for the whole transaction.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, bannersReorderLockKey); err != nil {
+		return fmt.Errorf("lock banners: %w", err)
+	}
+
+	// Load the current set and require the submitted ids to match it exactly
+	// (same membership, no missing/extra/duplicate). A partial or stale list
+	// is rejected rather than corrupting display_order.
+	rows, err := tx.Query(ctx, `SELECT id::text FROM banners`)
+	if err != nil {
+		return fmt.Errorf("load banners: %w", err)
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(ids) != len(existing) {
+		return ErrReorderMismatch
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !existing[id] || seen[id] {
+			return ErrReorderMismatch
+		}
+		seen[id] = true
+	}
+
 	for i, id := range ids {
 		if _, err := tx.Exec(ctx,
 			`UPDATE banners SET display_order = $2, updated_at = now() WHERE id = $1::uuid`, id, i,

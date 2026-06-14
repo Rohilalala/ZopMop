@@ -128,18 +128,32 @@ type Summary struct {
 
 func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, error) {
 	var sum Summary
+	// Order COUNTs are creation-based (orders placed in the window).
 	err := s.db.QueryRow(ctx, `
 		SELECT
 		  COUNT(*),
 		  COUNT(*) FILTER (WHERE status = 'completed'),
-		  COUNT(*) FILTER (WHERE status = 'cancelled'),
-		  COALESCE(SUM(amount_paise) FILTER (WHERE status = 'completed'), 0),
-		  COALESCE(AVG(amount_paise) FILTER (WHERE status = 'completed'), 0)::bigint
+		  COUNT(*) FILTER (WHERE status = 'cancelled')
 		FROM bookings
 		WHERE created_at >= $1 AND created_at <= $2
-	`, from, to).Scan(&sum.Orders, &sum.CompletedOrders, &sum.CancelledOrders, &sum.RevenueCents, &sum.AvgOrderCents)
+	`, from, to).Scan(&sum.Orders, &sum.CompletedOrders, &sum.CancelledOrders)
 	if err != nil {
 		return nil, fmt.Errorf("summary bookings: %w", err)
+	}
+	// Revenue is recognised on the COMPLETION date, windowed on completed_at
+	// — identical basis to RevenueDaily — so the Revenue KPI card and the
+	// sum of the Revenue/day chart reconcile. (Filtering completed revenue
+	// by created_at made the two disagree whenever a booking was created in
+	// one window but completed in another.)
+	err = s.db.QueryRow(ctx, `
+		SELECT
+		  COALESCE(SUM(amount_paise), 0),
+		  COALESCE(AVG(amount_paise), 0)::bigint
+		FROM bookings
+		WHERE status = 'completed' AND completed_at >= $1 AND completed_at <= $2
+	`, from, to).Scan(&sum.RevenueCents, &sum.AvgOrderCents)
+	if err != nil {
+		return nil, fmt.Errorf("summary revenue: %w", err)
 	}
 	if err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FILTER (WHERE role = 'customer'), COUNT(*) FILTER (WHERE role = 'pro')

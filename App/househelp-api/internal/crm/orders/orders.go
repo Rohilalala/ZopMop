@@ -406,17 +406,24 @@ func (r *Repository) Cancel(ctx context.Context, id, reason, adminEmail string) 
 }
 
 // MarkComplete forces an order into 'completed' state. Pro Mode only.
+//
+// Only an order a helper has actually picked up ('accepted' or 'in_progress')
+// may be force-completed. A 'pending' order has no helper assigned, so
+// completing it would stamp completed_at — and fire downstream
+// earnings/ratings — on a helper-less booking, bypassing the entire
+// dispatch/accept lifecycle. The SPA disables the button for non-completable
+// states, but that is client-only; this whitelist is the authoritative guard.
 func (r *Repository) MarkComplete(ctx context.Context, id string) error {
 	res, err := r.write.Exec(ctx, `
 		UPDATE bookings
 		SET status = 'completed', completed_at = now(), updated_at = now()
-		WHERE id = $1::uuid AND status NOT IN ('completed','cancelled')
+		WHERE id = $1::uuid AND status IN ('accepted','in_progress')
 	`, id)
 	if err != nil {
 		return fmt.Errorf("mark complete: %w", err)
 	}
 	if res.RowsAffected() == 0 {
-		return errors.New("order is already completed or cancelled")
+		return errors.New("order is not in a completable state (must be accepted or in_progress)")
 	}
 	return nil
 }

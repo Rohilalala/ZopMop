@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -125,33 +126,57 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest) (string, err
 // "%!w(<nil>)" string from wrapping a nil error.
 var ErrNotActionable = errors.New("payout not found or not in an actionable state")
 
-func (r *Repository) MarkPaid(ctx context.Context, id, externalRef string) error {
-	res, err := r.write.Exec(ctx, `
+// MarkPaid flips a payout to 'paid', stamps the acting admin on the row
+// (paid_by_admin_id) for row-level accountability, and writes the audit row
+// in the SAME transaction so a money state change can never land without its
+// audit trail (the previous best-effort, after-the-UPDATE audit call could be
+// lost if the process died between commit and the audit insert). rec/entry
+// carry the audit payload built by the handler from request locals.
+func (r *Repository) MarkPaid(ctx context.Context, id, externalRef, adminID string, rec *audit.Recorder, entry audit.Entry) error {
+	tx, err := r.write.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	res, err := tx.Exec(ctx, `
 		UPDATE crm_payouts
-		SET status='paid', paid_at=now(), external_ref=NULLIF($2, ''), updated_at=now()
+		SET status='paid', paid_at=now(), external_ref=NULLIF($2, ''),
+		    paid_by_admin_id=NULLIF($3, '')::uuid, updated_at=now()
 		WHERE id = $1::uuid AND status IN ('pending','processing')
-	`, id, externalRef)
+	`, id, externalRef, adminID)
 	if err != nil {
 		return fmt.Errorf("mark paid: %w", err)
 	}
 	if res.RowsAffected() == 0 {
 		return ErrNotActionable
 	}
-	return nil
+	if err := rec.LogTx(ctx, tx, entry); err != nil {
+		return fmt.Errorf("audit log: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
-func (r *Repository) MarkFailed(ctx context.Context, id, notes string) error {
-	res, err := r.write.Exec(ctx, `
-		UPDATE crm_payouts SET status='failed', notes=NULLIF($2, ''), updated_at=now()
+func (r *Repository) MarkFailed(ctx context.Context, id, notes, adminID string, rec *audit.Recorder, entry audit.Entry) error {
+	tx, err := r.write.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	res, err := tx.Exec(ctx, `
+		UPDATE crm_payouts SET status='failed', notes=NULLIF($2, ''),
+		    failed_by_admin_id=NULLIF($3, '')::uuid, updated_at=now()
 		WHERE id = $1::uuid AND status IN ('pending','processing')
-	`, id, notes)
+	`, id, notes, adminID)
 	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)
 	}
 	if res.RowsAffected() == 0 {
 		return ErrNotActionable
 	}
-	return nil
+	if err := rec.LogTx(ctx, tx, entry); err != nil {
+		return fmt.Errorf("audit log: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 type Handler struct {
@@ -201,14 +226,17 @@ func (h *Handler) MarkPaid(c *fiber.Ctx) error {
 	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.repo.MarkPaid(c.UserContext(), id, body.ExternalRef); err != nil {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	// Audit row is written inside the repo transaction (atomic with the
+	// status change) — do NOT also call h.audit here or it double-logs.
+	entry := h.auditEntry(c, "payout.paid", id, nil, body.ExternalRef)
+	if err := h.repo.MarkPaid(c.UserContext(), id, body.ExternalRef, adminID, h.recorder, entry); err != nil {
 		if errors.Is(err, ErrNotActionable) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payout not found or already paid/failed"})
 		}
 		log.Error().Err(err).Str("payout_id", id).Msg("[crm.payouts] mark paid failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	h.audit(c, "payout.paid", id, nil, body.ExternalRef)
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -218,26 +246,34 @@ func (h *Handler) MarkFailed(c *fiber.Ctx) error {
 	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
-	if err := h.repo.MarkFailed(c.UserContext(), id, body.Notes); err != nil {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	entry := h.auditEntry(c, "payout.failed", id, nil, body.Notes)
+	if err := h.repo.MarkFailed(c.UserContext(), id, body.Notes, adminID, h.recorder, entry); err != nil {
 		if errors.Is(err, ErrNotActionable) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payout not found or already paid/failed"})
 		}
 		log.Error().Err(err).Str("payout_id", id).Msg("[crm.payouts] mark failed failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	h.audit(c, "payout.failed", id, nil, body.Notes)
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// auditEntry builds the audit payload from request locals. Used directly for
+// the create path (best-effort Log) and passed into MarkPaid/MarkFailed for
+// the transactional LogTx.
+func (h *Handler) auditEntry(c *fiber.Ctx, action, target string, before, after any) audit.Entry {
+	adminID, _ := c.Locals("crmAdminID").(string)
+	adminEmail, _ := c.Locals("crmAdminEmail").(string)
+	return audit.Entry{
+		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "payouts",
+		TargetType: "payout", TargetID: target, Before: before, After: after,
+		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),
+	}
 }
 
 func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) {
 	if h.recorder == nil {
 		return
 	}
-	adminID, _ := c.Locals("crmAdminID").(string)
-	adminEmail, _ := c.Locals("crmAdminEmail").(string)
-	h.recorder.Log(c.UserContext(), audit.Entry{
-		AdminID: adminID, AdminEmail: adminEmail, Action: action, Module: "payouts",
-		TargetType: "payout", TargetID: target, Before: before, After: after,
-		IPAddress: c.IP(), UserAgent: c.Get("User-Agent"), RequestID: c.Get("X-Request-ID"),
-	})
+	h.recorder.Log(c.UserContext(), h.auditEntry(c, action, target, before, after))
 }

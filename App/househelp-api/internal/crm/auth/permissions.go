@@ -35,6 +35,7 @@ var permissions = map[string]string{
 	"workers.force_offline":  RoleAdmin,
 	"workers.set_categories": RoleAdmin,
 	"workers.add_note":       RoleSupport,
+	"workers.read_pii":       RoleSuperadmin, // unmasked Aadhaar/bank reveal — superadmin only, audited
 	"workers.deduct":         RoleAdmin, // manual fortnight deduction
 	"workers.update":         RoleAdmin, // generic update gate (leave allocate, etc.)
 
@@ -148,6 +149,7 @@ var permissions = map[string]string{
 	// Mechanism landed in commit e6c9f32; tightening landed in the
 	// follow-up commit that closes A5-001.
 	"alerts.read":        RoleViewer,
+	"alerts.mark_read":   RoleViewer, // per-admin read-state; explicit key so the write is RBAC-gated like every other route (was unguarded)
 	"analytics.read":     RoleViewer,
 	"app_version.read":   RoleViewer,
 	"audit.read":         RoleAdmin, // forensic logs + indirect PII via JSONB

@@ -23,6 +23,11 @@ import (
 
 var ErrNotFound = errors.New("experiment not found")
 
+// ErrInvalidTransition is returned when SetStatus is asked to move an
+// experiment between states the state machine does not allow (or the row
+// no longer matches the expected source state).
+var ErrInvalidTransition = errors.New("invalid status transition from current state")
+
 type Variant struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -157,7 +162,23 @@ func (r *Repository) Create(ctx context.Context, req CreateRequest, createdBy st
 }
 
 func (r *Repository) SetStatus(ctx context.Context, id, status, winner string) error {
-	args := []any{id, status}
+	// State-machine guard: only allow transitions that make sense. Without
+	// this the UPDATE is unconditional, so a direct API call (or a stale
+	// tab) can jump an experiment into a nonsensical state — e.g.
+	// draft -> rolled_out (started_at still NULL) or completed -> running.
+	// The FE only hides buttons; this is the authoritative guard. The status
+	// predicate below makes an illegal transition affect 0 rows.
+	allowedFrom := map[string][]string{
+		"running":    {"draft", "paused"},
+		"paused":     {"running"},
+		"completed":  {"running", "paused"},
+		"rolled_out": {"running", "paused", "completed"},
+	}
+	sources, ok := allowedFrom[status]
+	if !ok {
+		return fmt.Errorf("invalid target status %q", status)
+	}
+	args := []any{id, status, sources}
 	sql := `UPDATE crm_experiments SET status = $2, updated_at = now()`
 	switch status {
 	case "running":
@@ -169,13 +190,14 @@ func (r *Repository) SetStatus(ctx context.Context, id, status, winner string) e
 			sql += fmt.Sprintf(", winner_variant = $%d", len(args))
 		}
 	}
-	sql += ` WHERE id = $1::uuid`
+	sql += ` WHERE id = $1::uuid AND status = ANY($3::text[])`
 	res, err := r.write.Exec(ctx, sql, args...)
 	if err != nil {
 		return fmt.Errorf("set status: %w", err)
 	}
 	if res.RowsAffected() == 0 {
-		return ErrNotFound
+		// Missing id OR an illegal transition from the current state.
+		return ErrInvalidTransition
 	}
 	return nil
 }
@@ -247,6 +269,26 @@ func (h *Handler) Rollout(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "winner variant id required"})
 	}
 	id := c.Params("id")
+	// The winner must be one of the experiment's own variant ids — without
+	// this any arbitrary string is persisted into winner_variant, a
+	// data-integrity hole the rollout/engine later trusts.
+	exp, err := h.repo.Get(c.UserContext(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "experiment not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+	validWinner := false
+	for _, v := range exp.Variants {
+		if v.ID == body.Winner {
+			validWinner = true
+			break
+		}
+	}
+	if !validWinner {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "winner is not a valid variant id for this experiment"})
+	}
 	if err := h.repo.SetStatus(c.UserContext(), id, "rolled_out", body.Winner); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}

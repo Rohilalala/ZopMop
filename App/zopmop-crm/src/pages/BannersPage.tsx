@@ -31,6 +31,10 @@ export function BannersPage() {
 
   function move(idx: number, dir: -1 | 1) {
     if (!q.data) return;
+    // Block overlapping reorders: a rapid second click (or a click while the
+    // previous POST is in flight) would send a stale ordering and race the
+    // server, corrupting display_order. One reorder at a time.
+    if (reorder.isPending) return;
     const next = [...q.data];
     const j = idx + dir;
     if (j < 0 || j >= next.length) return;
@@ -78,7 +82,7 @@ export function BannersPage() {
                         }
                         move(i, -1);
                       }}
-                      disabled={i === 0 || !canReorder}
+                      disabled={i === 0 || !canReorder || reorder.isPending}
                       title={!canReorder ? 'Insufficient permissions' : undefined}
                     ><ArrowUp className="w-4 h-4" /></button>
                     <button
@@ -90,7 +94,7 @@ export function BannersPage() {
                         }
                         move(i, 1);
                       }}
-                      disabled={i === (q.data!.length - 1) || !canReorder}
+                      disabled={i === (q.data!.length - 1) || !canReorder || reorder.isPending}
                       title={!canReorder ? 'Insufficient permissions' : undefined}
                     ><ArrowDown className="w-4 h-4" /></button>
                     <button className="btn-ghost !py-1 !px-2" onClick={() => setEditing(b)}>Edit</button>
