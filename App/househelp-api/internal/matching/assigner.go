@@ -219,7 +219,7 @@ func (a *Assigner) EligibleCandidates(ctx context.Context, b *assignerBooking, e
 	scheduledDate := b.ScheduledTime.In(istLocation()).Format("2006-01-02")
 
 	// Padded window upper bound built the SAME way as the GiST index expression
-	// (132_assigner_indexes.up.sql): add the pad in the UTC wall-clock domain so
+	// (137_assigner_indexes.up.sql): add the pad in the UTC wall-clock domain so
 	// the && probe hits the index. duration + pad mirrors capacityTravelPadMin.
 	rows, err := a.db.Query(ctx, `
 		WITH params AS (

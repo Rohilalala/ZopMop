@@ -1,4 +1,4 @@
--- 134_assigner_clash_arrived.up.sql
+-- 138_assigner_clash_arrived.up.sql (renumbered from 134 to clear the fix/pro-crm-audit-sweep collision)
 -- Forward-only follow-up to migration 132 (spec §5.3, plan Task 3 review).
 --
 -- Migration 132's idx_bookings_helper_window_gist partial predicate covered

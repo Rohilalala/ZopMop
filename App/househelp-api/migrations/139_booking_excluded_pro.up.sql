@@ -1,10 +1,12 @@
--- 135_booking_excluded_pro.up.sql
+-- 139_booking_excluded_pro.up.sql
 -- Re-dispatch exclusion (spec §7). Forward-only by repo policy (cmd/migrate/main.go).
 --
--- Plan Task 6 calls this "migration 133", but a Task-3 review follow-up already
--- consumed 133/134 (134_assigner_clash_arrived) and the local + test DBs are at
--- head 134, so a 133 would land below the applied head and never run. Forward-
--- only convention → this takes the next free number above the head: 135.
+-- Renumbered 135 → 139 to clear a cross-branch collision: branch
+-- fix/pro-crm-audit-sweep also ships migrations 131–135 with different content.
+-- Per the agreed merge order (audit branch first), the unified-slot-dispatch
+-- migrations move above the audit branch's head (135), so this file and its
+-- siblings now occupy 136–139; this one follows 138_assigner_clash_arrived.
+-- Idempotent (IF NOT EXISTS) so a DB already at the old head re-runs it safely.
 --
 -- When a pro cancels an assigned booking or declares leave, the booking returns
 -- to 'pending' (helper_id cleared) and the assigner re-claims it on the next

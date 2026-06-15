@@ -1,4 +1,4 @@
--- 131_slot_capacity_gating.up.sql
+-- 136_slot_capacity_gating.up.sql (renumbered from 131 to clear the fix/pro-crm-audit-sweep collision)
 -- Slot capacity gating (pilot: single society, Orchid Island Gurugram).
 --
 -- Capacity is LIVE-derived at read/booking time — there is no counter column.

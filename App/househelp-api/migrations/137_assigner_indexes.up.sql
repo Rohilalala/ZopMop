@@ -1,4 +1,4 @@
--- 132_assigner_indexes.up.sql
+-- 137_assigner_indexes.up.sql (renumbered from 132 to clear the fix/pro-crm-audit-sweep collision)
 -- Unified assigner hot paths (spec §11.1). Forward-only by repo policy
 -- (cmd/migrate/main.go): no .down.sql.
 
