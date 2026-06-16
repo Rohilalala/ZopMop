@@ -28,7 +28,7 @@ export const ALLOWED_SCREENS = new Set<string>([
 	// replaced by JobDetail. JobOffer removed under unified-slot-dispatch
 	// (offer/accept flow deleted; jobs are force-assigned to the roster).
 	'ProDashboard', 'ProDeclareLeave', 'ProLeaveHistory',
-	'ProOnboarding', 'ProProfile', 'JobDetail', 'JobOffer',
+	'ProOnboarding', 'ProProfile', 'JobDetail',
 	// Roomies (feature-gated off for launch — routes unregistered while
 	// ROOMIES_ENABLED is false; re-add automatically via the spread).
 	...(ROOMIES_ENABLED

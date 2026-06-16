@@ -20,7 +20,8 @@ type LangDict = {
     sectionToday: string;
     activeTap: string;
     completedSummary: string;
-    secondsShort: string;
+    newBadge: string;
+    gotIt: string;
   };
   profile: Record<string, string>;
   language: Record<string, string>;

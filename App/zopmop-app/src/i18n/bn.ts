@@ -91,7 +91,8 @@ const bn: Dict = {
     sectionNewOffer: 'নতুন বুকিং', sectionActive: 'চলমান কাজ', sectionToday: 'আজ শেষ হয়েছে',
     activeTap: 'বিস্তারিত দেখুন',
     completedSummary: '{count}টি পরিষেবা · {minutes}min · ₹{earnings}',
-    secondsShort: '{n}s',
+    newBadge: 'নতুন',
+    gotIt: 'বুঝেছি',
   },
   profile: {
     assignedArea: 'আপনার নির্ধারিত এলাকা', noZone: 'কোনো জোন নির্ধারিত নেই', thisFortnight: 'এই পক্ষকাল',
@@ -108,11 +109,6 @@ const bn: Dict = {
     confirmTitle: 'ভাষা পরিবর্তন করবেন?',
     confirmBody: 'আপনি কি নিশ্চিতভাবে অ্যাপের ভাষা পরিবর্তন করতে চান?',
     confirmCta: 'হ্যাঁ, পরিবর্তন করুন',
-  },
-  offer: {
-    title: 'নতুন বুকিং', earningsLabel: 'আনুমানিক আয়', durationLabel: 'মোট সময়',
-    minutesShort: '{n} মিনিট', accept: 'গ্রহণ করুন', decline: 'প্রত্যাখ্যান করুন', expired: 'অফারের সময় শেষ',
-    busyWarning: 'আপনার আগে থেকেই একটি চলমান কাজ আছে', serviceLine: '{name} · {qty}',
   },
   jobDetail: {
     headerStepAccepted: 'গ্রাহকের কাছে যান', headerStepEnRoute: 'পথে আছি', headerStepArrived: 'পৌঁছে গেছি',
