@@ -123,6 +123,12 @@ func TestRunPolicy_DryRunDoesNotDelete(t *testing.T) {
 // is nullable. A booking with NULL completed_at must NOT be swept even
 // when its created_at is ancient — the time anchor is completed_at,
 // and NULL means "never reached terminal state".
+//
+// Asserted via the dry-run would-delete count rather than a real sweep:
+// a real global DELETE on bookings would trip the wallet_transactions FK
+// (ON DELETE NO ACTION) against unrelated rows that already exist in a
+// shared test DB. The NULL-skip contract is fully observable through the
+// count — inserting a NULL-anchor row must not raise it.
 func TestRunPolicy_NullableTimeAnchorSkipsNullRows(t *testing.T) {
 	pool := openComplianceTestDB(t)
 	r := NewRegistry()
@@ -142,7 +148,14 @@ func TestRunPolicy_NullableTimeAnchorSkipsNullRows(t *testing.T) {
 		t.Skipf("no service_categories: %v", err)
 	}
 
-	// Booking with NULL completed_at — must survive sweep.
+	// Baseline would-delete count (other test/seed rows may contribute; we
+	// only care about the delta our NULL-anchor row introduces).
+	base := svc.RunRetentionPass(context.Background(), true /*dryRun*/)
+	if base[0].Err != nil {
+		t.Fatalf("baseline dry-run err: %v", base[0].Err)
+	}
+
+	// Booking with NULL completed_at — must never be eligible for sweeping.
 	nullID := uuid.NewString()
 	mustExec(t, pool, `
 		INSERT INTO bookings (id, customer_id, service_category_id, status,
@@ -154,15 +167,21 @@ func TestRunPolicy_NullableTimeAnchorSkipsNullRows(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM bookings WHERE id=$1::uuid`, nullID)
 	})
 
-	results := svc.RunRetentionPass(context.Background(), false)
-	if results[0].Err != nil {
-		t.Fatalf("sweep err: %v", results[0].Err)
+	after := svc.RunRetentionPass(context.Background(), true /*dryRun*/)
+	if after[0].Err != nil {
+		t.Fatalf("post-insert dry-run err: %v", after[0].Err)
 	}
+	if after[0].RowsDeleted != base[0].RowsDeleted {
+		t.Errorf("NULL completed_at booking changed the would-delete count: base=%d after=%d (NULL-anchor rows must be skipped)",
+			base[0].RowsDeleted, after[0].RowsDeleted)
+	}
+
+	// And it must still physically exist (dry-run never deletes).
 	var n int
 	pool.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM bookings WHERE id=$1::uuid`, nullID).Scan(&n)
 	if n != 1 {
-		t.Errorf("nullable-anchor row was swept (count=%d, want 1)", n)
+		t.Errorf("nullable-anchor row missing (count=%d, want 1)", n)
 	}
 }
 
