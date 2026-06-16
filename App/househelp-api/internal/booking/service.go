@@ -1843,39 +1843,40 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		return fmt.Errorf("failed to complete booking: %w", err)
 	}
 
-	// Compute actual duration + earnings snapshot. If started_at is
-	// nil (data drift), fall back to total_duration_minutes from the
-	// booking row so the pro is never under-paid.
+	// Actual elapsed time — recorded for analytics/disputes only. Pay is
+	// based on BOOKED duration, not actual: a pro booked for 30 min is paid
+	// for 30 even if the job took 19. There is no per-booking piece-rate /
+	// peak / weekend snapshot anymore — the only pay basis is time (online +
+	// working minutes), aggregated by the payroll engine.
 	actualMin := 0
 	if startedAt != nil {
 		actualMin = int(completedAt.Sub(*startedAt).Minutes())
 	}
-	if actualMin <= 0 {
-		_ = tx.QueryRow(txCtx,
-			`SELECT COALESCE(total_duration_minutes, 60) FROM bookings WHERE id = $1`,
-			bookingID,
-		).Scan(&actualMin)
-	}
-	earnings := ComputeBookingEarnings(actualMin, completedAt)
-	if _, err := tx.Exec(txCtx,
-		`UPDATE bookings
-		    SET actual_duration_minutes = $2,
-		        pro_earnings_paise      = $3
-		  WHERE id = $1`,
-		bookingID, actualMin, earnings.TotalPaise,
-	); err != nil {
-		return fmt.Errorf("failed to write earnings snapshot: %w", err)
+	if actualMin < 0 {
+		actualMin = 0
 	}
 
-	// Credit the worked minutes to the pro's open shift session —
-	// payroll's AggregateActivity reads shift_sessions.job_minutes for
-	// the work bonus, and nothing else ever wrote it (audit LB-4: every
-	// payout's bonus was ₹0). The credit is capped at the session's
-	// elapsed online time so job_minutes can never exceed the session's
-	// eventual online_minutes (payroll skips pros violating working ⊆
-	// online). Non-fatal: a missing open session (offline race) must
-	// not block completion — the booking earnings snapshot above is the
-	// money source of truth.
+	// Booked duration = the working-minutes the pro is credited for this job.
+	bookedMin := 0
+	_ = tx.QueryRow(txCtx,
+		`SELECT COALESCE(total_duration_minutes, 60) FROM bookings WHERE id = $1`,
+		bookingID,
+	).Scan(&bookedMin)
+
+	if _, err := tx.Exec(txCtx,
+		`UPDATE bookings SET actual_duration_minutes = $2 WHERE id = $1`,
+		bookingID, actualMin,
+	); err != nil {
+		return fmt.Errorf("failed to write actual duration: %w", err)
+	}
+
+	// Credit the BOOKED minutes to the pro's open shift session as working
+	// time — payroll's AggregateActivity reads shift_sessions.job_minutes for
+	// the ₹80/hr work bonus, and nothing else writes it. The credit is capped
+	// at the session's elapsed online time so job_minutes can never exceed
+	// online_minutes (working ⊆ online; payroll also caps defensively).
+	// Non-fatal: a missing open session (offline race) must not block
+	// completion — the pro simply accrues no working-minutes for this job.
 	if tag, jmErr := tx.Exec(txCtx,
 		`UPDATE shift_sessions ss
 		    SET job_minutes = ss.job_minutes + LEAST(
@@ -1888,7 +1889,7 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		         ORDER BY ss2.online_at DESC
 		         LIMIT 1
 		  )`,
-		helperID, actualMin,
+		helperID, bookedMin,
 	); jmErr != nil {
 		return fmt.Errorf("failed to credit job minutes: %w", jmErr)
 	} else if tag.RowsAffected() == 0 {

@@ -676,11 +676,11 @@ func (d *Dispatcher) fetchOfferEnrichment(ctx context.Context, bookingID, custom
 		out["task_list_json"] = string(encoded)
 	}
 
-	// Earnings preview: base rate × duration, no surcharges at offer
-	// time. Mirrors booking.ComputeBookingEarnings base path — integer
-	// multiply-first / truncate-once so the preview ties to the snapshot.
-	const baseRatePaisePerHour = 8000
-	estEarnings := int64(durationMin) * baseRatePaisePerHour / 60
+	// Earnings preview = booked duration × ₹160/hr — the gross a pro earns
+	// during a job in the time-based model (₹80/hr online + ₹80/hr working,
+	// and on a job they are both). Integer multiply-first / truncate-once.
+	const onAndWorkingRatePaisePerHour = 16000 // ₹160/hr = ₹80 online + ₹80 working
+	estEarnings := int64(durationMin) * onAndWorkingRatePaisePerHour / 60
 	out["estimated_earnings_paise"] = fmt.Sprintf("%d", estEarnings)
 	out["estimated_duration_minutes"] = fmt.Sprintf("%d", durationMin)
 

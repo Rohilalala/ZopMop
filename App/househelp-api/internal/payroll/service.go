@@ -129,9 +129,8 @@ func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle Cycl
 	if err != nil {
 		return PayBreakdown{}, fmt.Errorf("aggregate activity: %w", err)
 	}
-	if workingMin > onlineMin {
-		return PayBreakdown{}, ErrInvalidActivity
-	}
+	// ComputePay caps working at online — a working>online aggregate no
+	// longer errors out the recompute; the pro is paid the capped amount.
 	pay, err := ComputePay(onlineMin, workingMin)
 	if err != nil {
 		return PayBreakdown{}, err
@@ -174,16 +173,15 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			continue
 		}
 
-		// Working > online violates the working⊆online invariant. Log
-		// loudly and skip rather than write nonsense pay.
+		// Working > online: ComputePay caps working at online — the pro is
+		// still paid (online + capped working), never skipped. Warn for
+		// visibility since it can signal a session-tracking edge.
 		if workingMin > onlineMin {
-			log.Error().
+			log.Warn().
 				Str("pro_id", proID).
 				Int("online_min", onlineMin).
 				Int("working_min", workingMin).
-				Msg("[payroll] working minutes exceed online minutes — data integrity bug, skipping pro")
-			out.Errors++
-			continue
+				Msg("[payroll] working minutes exceed online — capping working at online")
 		}
 
 		pay, err := ComputePay(onlineMin, workingMin)

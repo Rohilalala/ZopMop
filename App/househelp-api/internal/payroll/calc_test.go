@@ -1,7 +1,6 @@
 package payroll
 
 import (
-	"errors"
 	"testing"
 	"time"
 )
@@ -48,10 +47,21 @@ func TestComputePay_PartialMidJoin(t *testing.T) {
 	}
 }
 
-func TestComputePay_WorkingExceedsOnline(t *testing.T) {
-	_, err := ComputePay(60, 90)
-	if !errors.Is(err, ErrInvalidActivity) {
-		t.Fatalf("want ErrInvalidActivity, got %v", err)
+func TestComputePay_WorkingExceedsOnline_Caps(t *testing.T) {
+	// 60 online, 90 working → working is capped at online (60). Both legs
+	// pay ₹80/hr: base 60min=8000, bonus 60min=8000, gross 16000. No error.
+	p, err := ComputePay(60, 90)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.WorkingMinutes != 60 {
+		t.Fatalf("working: want capped to 60, got %d", p.WorkingMinutes)
+	}
+	if p.BasePayPaise != 8000 || p.BonusPayPaise != 8000 {
+		t.Fatalf("pay: want base 8000 / bonus 8000, got base %d / bonus %d", p.BasePayPaise, p.BonusPayPaise)
+	}
+	if p.GrossPayPaise != 16000 {
+		t.Fatalf("gross: want 16000, got %d", p.GrossPayPaise)
 	}
 }
 

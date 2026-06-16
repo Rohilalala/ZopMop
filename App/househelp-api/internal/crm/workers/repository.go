@@ -186,7 +186,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		  h.current_lat, h.current_lng,
 		  u.suspend_reason, u.ban_reason,
 		  COALESCE(stats.completed_30d, 0),
-		  COALESCE(stats.earnings_30d_cents, 0),
+		  COALESCE(shift.online_min_30d, 0),
+		  COALESCE(shift.job_min_30d, 0),
 		  COALESCE(stats.cancellation_rate, 0),
 		  h.locality,
 		  to_char(h.dob, 'YYYY-MM-DD'),
@@ -213,7 +214,6 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days') AS completed_30d,
-		    COALESCE(SUM(COALESCE(b.pro_earnings_paise, 0)) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
 		    CASE
 		      WHEN COUNT(*) = 0 THEN 0
 		      ELSE COUNT(*) FILTER (WHERE b.status = 'cancelled')::float / COUNT(*)
@@ -221,14 +221,33 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		  FROM bookings b
 		  WHERE b.helper_id = u.id
 		) stats ON TRUE
+		-- earnings_30d is time-based pay over the trailing 30 days, derived from
+		-- shift activity — NOT a per-booking sum. bookings.pro_earnings_paise is
+		-- no longer written under the time-based pay model (C1), so the old
+		-- SUM(pro_earnings_paise) read ₹0 for every worker. Minutes are
+		-- aggregated here (mirroring payroll AggregateActivity's shift_date
+		-- attribution) and converted to paise by payroll.ComputePay below, so
+		-- the rate + working≤online cap stay single-sourced (the ONE pro-pay
+		-- formula — see internal/payroll/calc.go).
+		LEFT JOIN LATERAL (
+		  SELECT COALESCE(SUM(ss.online_minutes), 0)::int AS online_min_30d,
+		         COALESCE(SUM(ss.job_minutes),    0)::int AS job_min_30d
+		    FROM shift_sessions ss
+		    JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		   WHERE ss.pro_id = u.id
+		     AND ss.offline_at IS NOT NULL
+		     AND sc.shift_date >= ((now() AT TIME ZONE 'Asia/Kolkata')::date - 30)
+		) shift ON TRUE
 		WHERE u.id = $1::uuid AND u.role = 'pro' AND u.deleted_at IS NULL
 	`, statusExpr)
 
 	var (
-		d      Detail
-		status string
-		lat    *float64
-		lng    *float64
+		d            Detail
+		status       string
+		lat          *float64
+		lng          *float64
+		onlineMin30d int
+		jobMin30d    int
 	)
 	// TODO Phase 12: when row.AdminID's role is not 'superadmin', null out
 	// AadhaarNumber + BankAccountNumber before returning, and audit the read.
@@ -238,7 +257,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		&d.JoinedAt, &d.LastActiveAt,
 		&d.Address, &lat, &lng,
 		&d.SuspendReason, &d.BanReason,
-		&d.CompletedJobs30d, &d.Earnings30dCents, &d.CancellationRate,
+		&d.CompletedJobs30d, &onlineMin30d, &jobMin30d, &d.CancellationRate,
 		&d.Locality,
 		&d.DOB, &d.Gender, &d.Languages, &d.AltPhone,
 		&d.EmergencyContactName, &d.EmergencyContactPhone, &d.PhotoURL,
@@ -254,6 +273,12 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	d.Status = Status(status)
 	d.CurrentLat = lat
 	d.CurrentLng = lng
+	// Convert the 30-day shift minutes to paise through the single pro-pay
+	// formula. ComputePay caps working ≤ online and applies the ₹80/hr online
+	// + ₹80/hr working rates; its error path only fires never (it caps rather
+	// than erroring), so ignoring it is safe.
+	pay, _ := payroll.ComputePay(onlineMin30d, jobMin30d)
+	d.Earnings30dCents = pay.GrossPayPaise
 	return &d, nil
 }
 

@@ -101,8 +101,14 @@ func (p PayBreakdown) applyDeductions(deductionsPaise int64) PayBreakdown {
 // the end. Both calls are bounded — at 24h × 14d = 20160 min,
 // 20160 * 8000 fits comfortably in int64.
 func ComputePay(onlineMinutes, workingMinutes int) (PayBreakdown, error) {
+	// Working ⊆ online by contract. If the aggregate reports more working
+	// than online (multi-session edges, or booked-minute crediting that
+	// outran the pro's online time), CAP working at online rather than
+	// erroring — the pro is still paid, just never for working-minutes
+	// beyond the time they were actually online. Pay model: ₹80/hr online +
+	// ₹80/hr working, so a working hour pays ₹160.
 	if workingMinutes > onlineMinutes {
-		return PayBreakdown{}, ErrInvalidActivity
+		workingMinutes = onlineMinutes
 	}
 	base := int64(onlineMinutes) * BaseRatePaisePerHour / 60
 	bonus := int64(workingMinutes) * BonusRatePaisePerHour / 60
