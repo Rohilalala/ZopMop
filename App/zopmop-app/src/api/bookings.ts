@@ -60,8 +60,12 @@ export interface CreateBookingPayload {
    *     to launch the SDK.
    *   - "wallet" → backend debits the closed-loop wallet inline. Returns
    *     402 INSUFFICIENT_WALLET_BALANCE on short balance.
+   *   - "cod" → pay-after: no payment row charged at create; assigned inline.
+   *   - "split" → wallet partial + online remainder; `wallet_apply_paise`
+   *     carries the wallet portion the backend debits inline.
    */
-  payment_source?: 'direct' | 'wallet';
+  payment_source?: 'direct' | 'wallet' | 'cod' | 'split';
+  wallet_apply_paise?: number; // only sent with 'split'
 }
 
 export async function createScheduledBooking(
@@ -145,7 +149,7 @@ export class SlotTooSoonError extends Error {
 
 export async function createInstantCartBooking(
   token: string,
-  payload: { address_id: string; promo_code?: string; payment_source?: 'direct' | 'wallet' },
+  payload: { address_id: string; promo_code?: string; payment_source?: 'direct' | 'wallet' | 'cod' | 'split'; wallet_apply_paise?: number },
 ): Promise<ASAPResult> {
   const res = await apiFetch(`${BASE_URL}/bookings/instant`, {
     method: 'POST',

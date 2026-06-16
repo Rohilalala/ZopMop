@@ -16,12 +16,9 @@ import { useTheme } from '../context/ThemeContext';
 import { Bloom } from './home/Bloom';
 import { getSlotAvailability, type ApiTimeSlot, type ApiSlotPeriod } from '../api/slots';
 
-// What the user picked: ASAP (earliest slot — pro leaves now) or a specific
-// regular slot. CartScreen routes ASAP to the instant-create path and a slot to
-// the scheduled-create path.
-export type ScheduleSelection =
-  | { kind: 'asap' }
-  | { kind: 'slot'; slotId: string; label: string };
+// What the user picked: a specific regular slot. The instant/scheduled choice
+// now lives on the cart's ModeToggle; this modal is slot-only.
+export type ScheduleSelection = { kind: 'slot'; slotId: string; label: string };
 
 interface Props {
   visible: boolean;
@@ -145,15 +142,11 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
   const [activePeriod, setActivePeriod] = useState<string>('Morning');
   const [loading, setLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
-  // ASAP ("pro at your door in ~15 min") is the first, default-highlighted
-  // option. Picking a regular slot clears it and vice-versa.
-  const [asapSelected, setAsapSelected] = useState(true);
 
   useEffect(() => {
     if (visible) {
       setSelectedDay(firstSelectableIso(DAYS));
       setSelectedSlot(null);
-      setAsapSelected(true);
     }
   }, [visible]);
 
@@ -224,20 +217,14 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
   );
 
   const handleConfirm = useCallback(() => {
-    if (asapSelected) {
-      onConfirm({ kind: 'asap' });
-      return;
-    }
     if (!selectedSlot) return;
     const day = DAYS.find(d => d.iso === selectedDay);
     const label = `${day?.dayName ?? selectedDay}, ${selectedSlot.start_time} – ${selectedSlot.end_time}`;
     onConfirm({ kind: 'slot', slotId: selectedSlot.id, label });
-  }, [asapSelected, selectedSlot, selectedDay, DAYS, onConfirm]);
+  }, [selectedSlot, selectedDay, DAYS, onConfirm]);
 
-  const canConfirm = asapSelected || !!selectedSlot;
-  const confirmLabel = asapSelected
-    ? 'Confirm · ASAP'
-    : selectedSlot
+  const canConfirm = !!selectedSlot;
+  const confirmLabel = selectedSlot
     ? `Confirm · ${DAYS.find(d => d.iso === selectedDay)?.dayName ?? ''} ${selectedSlot.start_time}`.trim()
     : 'Select a time';
 
@@ -264,27 +251,6 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
               <Feather name="x" size={16} color={c.text} />
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={[s.asapCard, asapSelected && s.asapCardActive]}
-            onPress={() => { setAsapSelected(true); setSelectedSlot(null); }}
-          >
-            <View style={[s.asapIcon, asapSelected && s.asapIconActive]}>
-              <Feather name="zap" size={16} color={asapSelected ? c.ink : c.amber} />
-            </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={[s.asapTitle, asapSelected && s.asapTitleActive]}>ASAP</Text>
-              <Text style={[s.asapSub, asapSelected && s.asapSubActive]}>
-                Pro at your door in ~15 min
-              </Text>
-            </View>
-            <View style={[s.asapRadio, asapSelected && s.asapRadioActive]}>
-              {asapSelected && <Feather name="check" size={12} color={c.ink} />}
-            </View>
-          </TouchableOpacity>
-
-          <Text style={s.orLabel}>or schedule for later</Text>
 
           <ScrollView
             horizontal
@@ -364,7 +330,7 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
                 <View style={s.slotsGrid}>
                   {activeSlots.map(slot => {
                     const cap = capView(slot, c, selectedDay);
-                    const active = !asapSelected && selectedSlot?.id === slot.id;
+                    const active = selectedSlot?.id === slot.id;
                     return (
                       <TouchableOpacity
                         key={slot.id}
@@ -375,7 +341,7 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
                         ]}
                         activeOpacity={0.78}
                         disabled={!cap.bookable}
-                        onPress={() => { setSelectedSlot(slot); setAsapSelected(false); }}
+                        onPress={() => { setSelectedSlot(slot); }}
                       >
                         <Text style={[s.slotTime, active && s.slotTimeActive, !cap.bookable && s.slotTimeDisabled]}>
                           {slot.start_time}
@@ -462,59 +428,6 @@ const makeStyles = (c: ScreenColors, isDark: boolean) => {
       backgroundColor: c.glassHi,
       borderWidth: 0.5, borderColor: c.glassBorderHi,
       alignItems: 'center', justifyContent: 'center',
-    },
-
-    asapCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      marginHorizontal: 16,
-      marginTop: 14,
-      paddingHorizontal: 14,
-      paddingVertical: 13,
-      borderRadius: 16,
-      backgroundColor: c.glass,
-      borderWidth: 0.5,
-      borderColor: c.glassBorder,
-    },
-    asapCardActive: {
-      backgroundColor: c.amberSoft,
-      borderColor: c.amberLine,
-    },
-    asapIcon: {
-      width: 36, height: 36, borderRadius: 11,
-      alignItems: 'center', justifyContent: 'center',
-      backgroundColor: c.amberSoft,
-    },
-    asapIconActive: { backgroundColor: c.amber },
-    asapTitle: {
-      fontFamily: FontFamily.bold,
-      fontSize: 14,
-      color: c.text,
-      letterSpacing: -0.1,
-    },
-    asapTitleActive: { color: c.amberLo },
-    asapSub: {
-      fontFamily: FontFamily.medium,
-      fontSize: 11.5,
-      color: c.textMuted,
-      marginTop: 2,
-    },
-    asapSubActive: { color: c.amberLo },
-    asapRadio: {
-      width: 22, height: 22, borderRadius: 11,
-      borderWidth: 1.5, borderColor: c.glassBorderHi,
-      alignItems: 'center', justifyContent: 'center',
-    },
-    asapRadioActive: { backgroundColor: c.amber, borderColor: c.amber },
-    orLabel: {
-      fontFamily: FontFamily.semibold,
-      fontSize: 11,
-      color: c.textMuted,
-      letterSpacing: 0.3,
-      marginTop: 14,
-      marginBottom: 2,
-      marginLeft: 20,
     },
 
     dateScrollView: {

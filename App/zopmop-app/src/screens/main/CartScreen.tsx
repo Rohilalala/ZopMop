@@ -45,6 +45,8 @@ import {
 import { UnpaidBookingsError } from '../../api/users';
 import { getWalletBalance } from '../../api/wallet';
 import SchedulingModal, { type ScheduleSelection } from '../../components/SchedulingModal';
+import { ModeToggle } from '../../components/ModeToggle';
+import { PaymentPicker, planFor } from '../../components/PaymentPicker';
 import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
@@ -105,11 +107,11 @@ export default function CartScreen() {
   const [hydrating, setHydrating] = useState(cartMemCache.addresses.length === 0);
   const [addressPickerVisible, setAddressPickerVisible] = useState(false);
   const [schedulingVisible, setSchedulingVisible] = useState(false);
-  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
-  const [selectedSlotLabel, setSelectedSlotLabel] = useState<string | null>(null);
-  // true when the customer chose ASAP (no specific slot) — routes checkout to
-  // the instant-create path instead of the scheduled-create path.
-  const [asapSelected, setAsapSelected] = useState(false);
+  // Timing lives on the cart's ModeToggle now. 'instant' → ASAP create path
+  // (no slot); 'scheduled' → a picked slot drives the scheduled-create path.
+  type Timing = 'instant' | 'scheduled';
+  const [timing, setTiming] = useState<Timing>('instant');
+  const [slot, setSlot] = useState<{ id: string; label: string } | null>(null);
   // Earliest-slot fallback offered when ASAP finds no free pro (409). Drives an
   // inline "book it instead" sheet.
   const [noProsEarliest, setNoProsEarliest] = useState<EarliestSlot | null>(null);
@@ -120,9 +122,10 @@ export default function CartScreen() {
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(new Set());
 
-  // Payment-source picker state. Direct = Cashfree drop sheet via Payment
-  // route. Wallet = backend debits inline at booking-create time.
-  const [paymentSource, setPaymentSource] = useState<'direct' | 'wallet'>('direct');
+  // Payment picker state — wallet applicator + when (pay now / pay after).
+  // `planFor` collapses these into the funding rail mapped onto payment_source.
+  const [useWallet, setUseWallet] = useState(false);
+  const [payWhen, setPayWhen] = useState<'now' | 'after'>('now');
   // null = haven't fetched yet; treat as unknown for UI gating purposes.
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
@@ -166,6 +169,16 @@ export default function CartScreen() {
   const feeCents = PLATFORM_FEE_CENTS;
   const totalCents = subtotalCents + feeCents;
   const myShareCents = splitCount > 1 ? Math.ceil(totalCents / splitCount) : totalCents;
+
+  // Resolved funding rail from the picker. Drives the payment_source mapping in
+  // checkout and gates the Roomies split (no split under pay-after, D-edge).
+  const plan = planFor(useWallet, payWhen, totalCents, walletBalance);
+  const splitAllowed = plan.kind !== 'pay_after';
+
+  // Pay-after can't be bill-split — force the toggle off when it's selected.
+  useEffect(() => {
+    if (plan.kind === 'pay_after') setSplitEnabled(false);
+  }, [plan.kind]);
 
   function toggleMember(userId: string) {
     setSelectedMemberIds((prev) => {
@@ -248,18 +261,28 @@ export default function CartScreen() {
   const handleCheckout = useCallback(async (slotOverride?: string) => {
     if (!token) return;
     if (!selectedAddress) { showError('Please select a delivery address.', { title: 'No address' }); return; }
-    // ASAP needs no slot; a scheduled booking needs one. slotOverride is set by
-    // the "book the earliest slot instead" tap from the no-pros sheet.
-    const slotId = slotOverride ?? selectedSlotId;
-    const isAsap = asapSelected && !slotOverride;
-    if (!isAsap && !slotId) { showError('Please pick a date and time slot.', { title: 'No time selected' }); return; }
+    // Instant needs no slot; a scheduled booking needs one. slotOverride is set
+    // by the "book the earliest slot instead" tap from the no-pros sheet — that
+    // path is always a scheduled create.
+    const slotId = slotOverride ?? slot?.id;
+    const isAsap = timing === 'instant' && !slotOverride;
+    if (timing === 'scheduled' && !slot && !slotOverride) {
+      showError('Please pick a date and time slot.', { title: 'No time selected' });
+      return;
+    }
     if (itemCount === 0) return;
     if (bookingInFlight.current) return;
 
-    // Wallet pre-flight: defense in depth. Card B disables itself when
-    // balance < total, but a stale balance + race on the focus refetch
-    // could let the user submit anyway — catch here too.
-    if (paymentSource === 'wallet') {
+    // Resolve the funding rail. Wallet (full/split) debits inline; cod is
+    // pay-after; direct hands off to Cashfree.
+    const plan = planFor(useWallet, payWhen, totalCents, walletBalance);
+    const applied = Math.min(walletBalance ?? 0, totalCents);
+    const paymentSource = ({ wallet_full: 'wallet', wallet_split: 'split', online: 'direct', pay_after: 'cod' } as const)[plan.kind];
+
+    // Wallet pre-flight: defense in depth. Only a full-wallet pay needs the
+    // balance to cover the total — split uses whatever is there and tops up
+    // online, so it never blocks on balance.
+    if (plan.kind === 'wallet_full') {
       if (walletBalance == null || walletBalance < totalCents) {
         showError('Insufficient wallet balance.', { title: 'Top up first' });
         return;
@@ -296,6 +319,7 @@ export default function CartScreen() {
           address_id: selectedAddress.id,
           ...(promoCode ? { promo_code: promoCode } : {}),
           payment_source: paymentSource,
+          ...(plan.kind === 'wallet_split' ? { wallet_apply_paise: applied } : {}),
         });
         created = asap.booking;
         asapAssigned = asap.assigned;
@@ -307,6 +331,7 @@ export default function CartScreen() {
           time_slot_id: slotId!,
           ...(promoCode ? { promo_code: promoCode } : {}),
           payment_source: paymentSource,
+          ...(plan.kind === 'wallet_split' ? { wallet_apply_paise: applied } : {}),
         });
       }
 
@@ -334,18 +359,21 @@ export default function CartScreen() {
       promoStore.clear();
       await refreshCart();
 
-      if (paymentSource === 'direct') {
-        // Booking exists in 'pending'. Hand off to the Cashfree drop
-        // sheet flow — PaymentScreen owns order creation + SDK launch.
+      if (plan.kind === 'online' || plan.kind === 'wallet_split') {
+        // Online (full) or wallet-split (remainder): booking exists with an
+        // amount still due online. Hand off to the Cashfree drop sheet flow —
+        // PaymentScreen owns order creation + SDK launch. For split, the wallet
+        // portion was debited inline; charge only the remainder.
+        const amountDue = plan.kind === 'wallet_split' ? created.price_paise - applied : created.price_paise;
         posthog.capture('booking_payment_initiated', {
           booking_id: created.id,
-          amount_paise: created.price_paise,
+          amount_paise: amountDue,
         });
         navigation.replace('Payment', {
           booking_id: created.id,
           // JSON field is back-compat; value is paise (see backend
           // migration 065). No * 100 conversion needed.
-          amount_paise: created.price_paise,
+          amount_paise: amountDue,
           bookingType: isAsap ? 'instant' : 'scheduled',
           // Thread the ASAP arrival promise so PaymentScreen can pass it on to
           // BookingConfirmed — card/UPI ASAP renders "arriving by HH:MM" too.
@@ -356,14 +384,14 @@ export default function CartScreen() {
         return;
       }
 
-      // payment_source === 'wallet': backend has already debited the
-      // wallet inside the same tx as the booking insert + booking.paid
-      // outbox emit. Skip Cashfree entirely.
+      // plan.kind === 'wallet_full' (debited inline) or 'pay_after' (cod,
+      // assigned immediately): nothing more to charge now. Go straight to the
+      // confirmation screen.
       navigation.replace('BookingConfirmed', {
         bookingId: created.id,
         totalCents,
         bookingType: isAsap ? 'instant' : 'scheduled',
-        slot: isAsap ? undefined : selectedSlotLabel ?? undefined,
+        slot: isAsap ? undefined : slot?.label ?? undefined,
         addressLine: selectedAddress.full_address ?? selectedAddress.title ?? undefined,
         // ASAP arrival promise — the confirmation screen turns these into
         // "<Name> is on the way — arriving by <now + eta>" (spec §6).
@@ -417,7 +445,7 @@ export default function CartScreen() {
         err?.message ??
         'Something went wrong. Please try again.';
 
-      if (paymentSource === 'wallet' && code === 'INSUFFICIENT_WALLET_BALANCE') {
+      if ((paymentSource === 'wallet' || paymentSource === 'split') && code === 'INSUFFICIENT_WALLET_BALANCE') {
         // Race: balance dropped below required between focus-refetch and
         // submit. Don't auto-flip selection — that's hostile UX. Tell the
         // user, refresh balance, leave them on Cart.
@@ -434,9 +462,9 @@ export default function CartScreen() {
       bookingInFlight.current = false;
     }
   }, [
-    token, selectedAddress, selectedSlotId, asapSelected, itemCount, refreshCart, navigation,
-    splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore, selectedSlotLabel,
-    paymentSource, walletBalance, refetchWalletBalance, subtotalCents, posthog,
+    token, selectedAddress, timing, slot, itemCount, refreshCart, navigation,
+    splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore,
+    useWallet, payWhen, walletBalance, refetchWalletBalance, subtotalCents, posthog,
   ]);
 
   if (hydrating) {
@@ -520,7 +548,7 @@ export default function CartScreen() {
             </Card>
           </TouchableOpacity>
 
-          {isRoomiesAddress && (
+          {isRoomiesAddress && splitAllowed && (
             <>
               <SectionHeader>Roomies split</SectionHeader>
               <Card>
@@ -613,30 +641,42 @@ export default function CartScreen() {
             </>
           )}
 
-          <SectionHeader>Schedule</SectionHeader>
-          <TouchableOpacity activeOpacity={0.85} onPress={() => setSchedulingVisible(true)}>
-            <Card>
-              <View style={s.addrRow}>
-                <View style={[s.addrPin, { backgroundColor: c.amberSoft }]}>
-                  <Feather name="calendar" size={16} color={c.amber} />
+          <SectionHeader>When</SectionHeader>
+          {itemCount > 0 && (
+            <ModeToggle
+              mode={timing === 'instant' ? 'instant' : 'schedule'}
+              onChange={(m) => {
+                setTiming(m === 'instant' ? 'instant' : 'scheduled');
+                if (m === 'instant') setSlot(null);
+                else setSchedulingVisible(true); // open slot picker for scheduled
+              }}
+            />
+          )}
+          {timing === 'scheduled' && (
+            <TouchableOpacity activeOpacity={0.85} onPress={() => setSchedulingVisible(true)} style={{ marginTop: 12 }}>
+              <Card>
+                <View style={s.addrRow}>
+                  <View style={[s.addrPin, { backgroundColor: c.amberSoft }]}>
+                    <Feather name="calendar" size={16} color={c.amber} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    {slot?.label ? (
+                      <>
+                        <Text style={[s.addrTitle, { color: c.text }]}>{slot.label}</Text>
+                        <Text style={[s.addrSub, { color: c.textMuted }]}>Tap to change</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={[s.addrTitle, { color: c.text }]}>Pick a date & time</Text>
+                        <Text style={[s.addrSub, { color: c.textMuted }]}>Required to confirm booking</Text>
+                      </>
+                    )}
+                  </View>
+                  <Text style={[s.changeLink, { color: c.amber }]}>{slot?.label ? 'Change' : 'Select'}</Text>
                 </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  {selectedSlotLabel ? (
-                    <>
-                      <Text style={[s.addrTitle, { color: c.text }]}>{selectedSlotLabel}</Text>
-                      <Text style={[s.addrSub, { color: c.textMuted }]}>Tap to change</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={[s.addrTitle, { color: c.text }]}>Pick a date & time</Text>
-                      <Text style={[s.addrSub, { color: c.textMuted }]}>Required to confirm booking</Text>
-                    </>
-                  )}
-                </View>
-                <Text style={[s.changeLink, { color: c.amber }]}>{selectedSlotLabel ? 'Change' : 'Select'}</Text>
-              </View>
-            </Card>
-          </TouchableOpacity>
+              </Card>
+            </TouchableOpacity>
+          )}
 
           <SectionHeader>Services</SectionHeader>
           <Card>
@@ -712,11 +752,11 @@ export default function CartScreen() {
           </Card>
 
           <SectionHeader>Pay with</SectionHeader>
-          <PaymentSourcePicker
-            selected={paymentSource}
-            onChange={setPaymentSource}
-            walletBalanceCents={walletBalance}
-            requiredCents={totalCents}
+          <PaymentPicker
+            totalPaise={totalCents}
+            walletBalancePaise={walletBalance}
+            value={{ useWallet, payWhen }}
+            onChange={(v) => { setUseWallet(v.useWallet); setPayWhen(v.payWhen); }}
           />
         </ScrollView>
 
@@ -736,15 +776,8 @@ export default function CartScreen() {
         addressId={selectedAddress?.id}
         onClose={() => setSchedulingVisible(false)}
         onConfirm={(sel: ScheduleSelection) => {
-          if (sel.kind === 'asap') {
-            setAsapSelected(true);
-            setSelectedSlotId(null);
-            setSelectedSlotLabel('ASAP · pro on the way in ~15 min');
-          } else {
-            setAsapSelected(false);
-            setSelectedSlotId(sel.slotId);
-            setSelectedSlotLabel(sel.label);
-          }
+          setTiming('scheduled');
+          setSlot({ id: sel.slotId, label: sel.label });
           setSchedulingVisible(false);
         }}
       />
@@ -778,13 +811,15 @@ export default function CartScreen() {
                   : 'Book earliest slot'
               }
               onPress={() => {
-                const slot = noProsEarliest;
-                if (!slot) return;
+                const earliest = noProsEarliest;
+                if (!earliest) return;
                 setNoProsEarliest(null);
-                setAsapSelected(false);
-                setSelectedSlotId(slot.slot_id);
-                setSelectedSlotLabel(`${prettyTime(slot.start_time)} – ${prettyTime(slot.end_time)}`);
-                handleCheckout(slot.slot_id);
+                setTiming('scheduled');
+                setSlot({
+                  id: earliest.slot_id,
+                  label: `${prettyTime(earliest.start_time)} – ${prettyTime(earliest.end_time)}`,
+                });
+                handleCheckout(earliest.slot_id);
               }}
               showChevron
             />
@@ -1045,147 +1080,3 @@ function FloatingZop() {
     </Animated.View>
   );
 }
-
-// PaymentSourcePicker — two-card chooser between Cashfree drop checkout
-// ("Pay now") and the closed-loop wallet ("Use wallet"). Wallet card
-// disables itself when the loaded balance is below the booking total.
-function PaymentSourcePicker({
-  selected,
-  onChange,
-  walletBalanceCents,
-  requiredCents,
-}: {
-  selected: 'direct' | 'wallet';
-  onChange: (next: 'direct' | 'wallet') => void;
-  walletBalanceCents: number | null;
-  requiredCents: number;
-}) {
-  const balanceKnown = walletBalanceCents != null;
-  const sufficient = balanceKnown && walletBalanceCents! >= requiredCents;
-  const walletDisabled = !sufficient;
-
-  const walletSubtitle = !balanceKnown
-    ? 'Checking balance…'
-    : sufficient
-    ? `Balance: ₹${(walletBalanceCents! / 100).toFixed(0)}`
-    : `Insufficient — ₹${(walletBalanceCents! / 100).toFixed(0)} available, ₹${(requiredCents / 100).toFixed(0)} needed`;
-
-  return (
-    <View style={pickerStyles.row}>
-      <PaymentSourceCard
-        selected={selected === 'direct'}
-        title="Pay now"
-        subtitle="Cards, UPI, netbanking"
-        icons={['credit-card', 'smartphone', 'briefcase']}
-        onPress={() => onChange('direct')}
-      />
-      <PaymentSourceCard
-        selected={selected === 'wallet'}
-        title="Use wallet"
-        subtitle={walletSubtitle}
-        icons={['zap']}
-        disabled={walletDisabled}
-        onPress={() => {
-          if (walletDisabled) return;
-          onChange('wallet');
-        }}
-      />
-    </View>
-  );
-}
-
-function PaymentSourceCard({
-  selected,
-  title,
-  subtitle,
-  icons,
-  disabled,
-  onPress,
-}: {
-  selected: boolean;
-  title: string;
-  subtitle: string;
-  icons: Array<keyof typeof Feather.glyphMap>;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  const c = useC();
-  const { isDark } = useTheme();
-  const tint = disabled
-    ? (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.20)')
-    : '#F5A300';
-  return (
-    <TouchableOpacity
-      activeOpacity={disabled ? 1 : 0.85}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected, disabled: !!disabled }}
-      accessibilityLabel={`${title}. ${subtitle}.`}
-      style={[
-        pickerStyles.card,
-        {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
-          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.06)',
-        },
-        selected && [
-          pickerStyles.cardSelected,
-          !isDark && {
-            backgroundColor: 'rgba(245,163,0,0.08)',
-            borderColor: 'rgba(245,163,0,0.40)',
-          },
-        ],
-        disabled && pickerStyles.cardDisabled,
-      ]}
-    >
-      <View style={pickerStyles.iconRow}>
-        {icons.map((name) => (
-          <Feather key={name} name={name} size={14} color={tint} />
-        ))}
-        {selected ? (
-          <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            <Feather name="check-circle" size={16} color={tint} />
-          </View>
-        ) : null}
-      </View>
-      <Text style={[pickerStyles.title, { color: c.text }, disabled && { color: c.textMuted }]}>
-        {title}
-      </Text>
-      <Text style={[pickerStyles.subtitle, { color: c.textSecondary }]} numberOfLines={2}>
-        {subtitle}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-const pickerStyles = StyleSheet.create({
-  row: { flexDirection: 'row', gap: 10 },
-  card: {
-    flex: 1,
-    minHeight: 92,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    gap: 6,
-  },
-  cardSelected: {
-    borderColor: 'rgba(245,163,0,0.55)',
-    backgroundColor: 'rgba(245,163,0,0.10)',
-    shadowColor: '#F5A300',
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  cardDisabled: { opacity: 0.55 },
-  iconRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title: {
-    fontFamily: FontFamily.bold,
-    fontSize: 14,
-    letterSpacing: -0.1,
-  },
-  subtitle: {
-    fontFamily: FontFamily.medium,
-    fontSize: 11.5,
-    lineHeight: 15,
-  },
-});
