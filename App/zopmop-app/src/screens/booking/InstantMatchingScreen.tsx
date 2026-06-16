@@ -26,6 +26,7 @@ import { serviceIcon } from '../../components/home/serviceIcon';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
+import { NoProsAvailableError } from '../../api/bookings';
 import { UnpaidBookingsError } from '../../api/users';
 import { apiFetch } from '../../api/client';
 import { BASE_URL } from '../../api/config';
@@ -240,7 +241,13 @@ export default function InstantMatchingScreen({ route }: Props) {
           priceCentsRef.current = booking.price_paise ?? 0;
           if (!cancelled) setPriceCents(booking.price_paise ?? 0);
         } catch (err) {
-          if (err instanceof UnpaidBookingsError && !cancelled) {
+          if (err instanceof NoProsAvailableError && !cancelled) {
+            // No pro free right now — the backend already cancelled the row
+            // (spec §5.5). Show the no-pros state (offering the earliest slot)
+            // instead of polling a booking that no longer exists.
+            progress.stopAnimation();
+            setScreenState('no_pros');
+          } else if (err instanceof UnpaidBookingsError && !cancelled) {
             const totalRupees = (err.totalPaise / 100).toFixed(2);
             Alert.alert(
               'Settle pending payments',

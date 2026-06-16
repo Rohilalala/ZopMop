@@ -160,6 +160,7 @@ var permissions = map[string]string{
 	"audit.read":         RoleAdmin, // forensic logs + indirect PII via JSONB
 	"banners.read":       RoleViewer,
 	"blacklist.read":     RoleViewer,
+	"capacity.read":      RoleViewer, // slot-capacity grid (drill-down from localities)
 	"catalog.read":       RoleViewer,
 	"changelog.read":     RoleViewer,
 	"dashboard.read":     RoleViewer,

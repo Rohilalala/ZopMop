@@ -1,0 +1,19 @@
+-- 139_booking_excluded_pro.up.sql
+-- Re-dispatch exclusion (spec §7). Forward-only by repo policy (cmd/migrate/main.go).
+--
+-- Renumbered 135 → 139 to clear a cross-branch collision: branch
+-- fix/pro-crm-audit-sweep also ships migrations 131–135 with different content.
+-- Per the agreed merge order (audit branch first), the unified-slot-dispatch
+-- migrations move above the audit branch's head (135), so this file and its
+-- siblings now occupy 136–139; this one follows 138_assigner_clash_arrived.
+-- Idempotent (IF NOT EXISTS) so a DB already at the old head re-runs it safely.
+--
+-- When a pro cancels an assigned booking or declares leave, the booking returns
+-- to 'pending' (helper_id cleared) and the assigner re-claims it on the next
+-- tick. excluded_pro_id records the pro that just dropped it so EligibleCandidates
+-- skips them and the same booking is not immediately re-offered to that pro.
+--
+-- Single-pro exclusion is enough for the pilot: a booking only ever has one
+-- recently-dropping pro at a time. A multi-pro exclusion (array / side table)
+-- can replace this column post-pilot if churn warrants it.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS excluded_pro_id UUID;

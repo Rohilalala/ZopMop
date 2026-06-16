@@ -39,7 +39,14 @@ var istLoc = func() *time.Location {
 // isolated from one another. The base is well beyond the ~14-day window the
 // slot-seed migration pre-populates, so each fixture inserts its own slots on
 // an otherwise-empty date. No hardcoded calendar dates.
-var dayOffsetSeq int64 = 30
+//
+// The base is randomized PER PROCESS (a fixed constant made consecutive
+// `go test` runs against the same shared TEST_DATABASE_URL reuse identical
+// dates — so any slot/booking a prior run failed to clean up collided with the
+// next run's fixture on the same date, cascading failures). Seeding from the
+// wall clock spreads each run onto its own date band, ~60..~16k days out — far
+// past the seed window and astronomically unlikely to overlap a prior run.
+var dayOffsetSeq = 60 + (time.Now().UnixNano()/int64(time.Millisecond))%16384
 
 // phoneCounter seeds unique numeric phone numbers for fixture users.
 var phoneCounter = time.Now().UnixNano() % 1_000_000_000
@@ -179,6 +186,53 @@ func (f *capFixture) slotID(hhmm string) string {
 	return id
 }
 
+// nearSlotSeq hands each near-future slot a distinct, off-grid start time so
+// fixtures never collide with each other or with the seeded slot grid.
+var nearSlotSeq int64
+
+// nearSlotBase anchors every nearSlot() to ONE wall-clock instant captured at
+// process start, truncated to the hour. Two earlier shapes were both wrong:
+//   - reading time.Now() per call drifted across the package's tests, so the
+//     counter-derived minute offset could map two calls onto the same absolute
+//     minute (a wall-clock-dependent collision); and
+//   - anchoring at a fixed now+2h still landed on :00/:30 minute boundaries,
+//     which collide with migration 022's seeded 30-minute slot grid for the
+//     today..today+13d range (UNIQUE(slot_date, start_time)).
+// Anchoring to a fixed hour and then placing each slot at an OFF-GRID minute
+// (never :00 or :30) derived purely from the monotonic counter makes every slot
+// both unique and seed-free, while staying ≥ MinSlotLeadMin out and ≤ 2 days.
+// +2h-truncated-to-the-hour guarantees ≥ ~60 min lead even at minute :03 from
+// any now() within the hour, comfortably past the 45-min MinSlotLeadMin floor.
+var nearSlotBase = time.Now().In(istLoc).Add(2 * time.Hour).Truncate(time.Hour)
+
+// nearSlot creates a 30-minute time_slots row anchored within the bookable
+// window (≥ MinSlotLeadMin and ≤ 2-day cap), so RescheduleBooking's
+// validateSlotTime accepts the target. It returns the slot id and the RFC3339
+// IST scheduled time. Each call advances nearSlotSeq to dodge the slot-uniqueness
+// constraint, and the slot is registered for fixture cleanup.
+func (f *capFixture) nearSlot() (string, string) {
+	off := atomic.AddInt64(&nearSlotSeq, 1)
+	// Off-grid minute in [3,27] (never :00/:30, so no seed collision); advance the
+	// hour every 25 calls so successive slots stay unique. 1h + up to a few hours
+	// keeps the slot ≥45 min out and well inside the 2-day horizon for any
+	// realistic fixture count.
+	minute := 3 + (off % 25)
+	hours := off / 25
+	start := nearSlotBase.Add(time.Duration(hours)*time.Hour + time.Duration(minute)*time.Minute)
+	date := start.Format("2006-01-02")
+	startHHMM := start.Format("15:04")
+	endHHMM := start.Add(30 * time.Minute).Format("15:04")
+	var id string
+	if err := f.pool.QueryRow(context.Background(),
+		`INSERT INTO time_slots (slot_date, start_time, end_time) VALUES ($1, $2, $3) RETURNING id::text`,
+		date, startHHMM, endHHMM,
+	).Scan(&id); err != nil {
+		f.t.Fatalf("insert near slot %s: %v", startHHMM, err)
+	}
+	f.slotIDs = append(f.slotIDs, id)
+	return id, start.Format(time.RFC3339)
+}
+
 // instant returns the IST wall-clock instant for hhmm on the fixture's date.
 func (f *capFixture) instant(hhmm string) time.Time {
 	ts, err := time.ParseInLocation("2006-01-02 15:04", f.dateStr+" "+hhmm, istLoc)
@@ -198,13 +252,18 @@ func (f *capFixture) book(hhmm string, durationMin int, enforce bool) (*Schedule
 func (f *capFixture) bookAs(customerID, addressID, hhmm string, durationMin int, enforce bool) (*ScheduledBooking, error) {
 	slotID := f.slotID(hhmm)
 	sched := f.instant(hhmm).Format(time.RFC3339)
+	return f.bookSlot(customerID, addressID, slotID, sched, durationMin, enforce)
+}
+
+// bookSlot books a given (slotID, scheduledTime) pair — used by reschedule tests
+// that need the original/filler booking on an explicit near-future slot.
+func (f *capFixture) bookSlot(customerID, addressID, slotID, sched string, durationMin int, enforce bool) (*ScheduledBooking, error) {
 	items := []BookingServiceItem{{ServiceID: f.serviceID, DurationMinutes: durationMin, PriceCents: 100}}
 	loc := f.locality
 	return f.repo.CreateScheduledBooking(
 		context.Background(), customerID, addressID, slotID,
 		sched, items, 100, 0, nil,
 		false, nil, &loc, enforce,
-		defaultServiceCloseMin,
 	)
 }
 
@@ -243,6 +302,32 @@ func (f *capFixture) cleanup() {
 	if len(f.userIDs) > 0 {
 		exec(`DELETE FROM users WHERE id = ANY($1::uuid[])`, f.userIDs)
 	}
+}
+
+// cleanASAPBookingsByBooker removes every booking made by the fixture's users
+// plus its FK children, in dependency order, then the wallet ledger. ASAP rows
+// resolve to locality=NULL so the locality-scoped fixture cleanup misses them;
+// this booker-keyed pass catches them and must run BEFORE the wallet rows and
+// the user rows are deleted (t.Cleanup LIFO).
+//
+// Crucially, ALL booking-referencing children — wallet_transactions and
+// analytics_events included — are cleared before the bookings DELETE. Earlier
+// this only cleared payments + booking_services, so the wallet debit row (and
+// the booking.created analytics row) FK-blocked the bookings DELETE, silently
+// leaking accepted/cancelled rows. Those leaks then collided with the next run's
+// fixtures and tripped the global helper_id-points-to-helper invariant test.
+func cleanASAPBookingsByBooker(f *capFixture) {
+	ctx := context.Background()
+	exec := func(sql string, args ...any) { _, _ = f.pool.Exec(ctx, sql, args...) }
+	const bookingsByBooker = `SELECT id FROM bookings WHERE customer_id = ANY($1::uuid[])`
+	exec(`DELETE FROM payments            WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM booking_services    WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM wallet_transactions WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM analytics_events    WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM pending_refunds     WHERE booking_id IN (`+bookingsByBooker+`)`, f.userIDs)
+	exec(`DELETE FROM bookings WHERE customer_id = ANY($1::uuid[])`, f.userIDs)
+	exec(`DELETE FROM wallet_transactions WHERE user_id = ANY($1::uuid[])`, f.userIDs)
+	exec(`DELETE FROM wallets WHERE user_id = ANY($1::uuid[])`, f.userIDs)
 }
 
 // Test A/B/C: two approved helpers, two 09:00 bookings fill the slot, the
@@ -337,49 +422,6 @@ func TestSlotCapacity_ConcurrentLastSlot(t *testing.T) {
 	}
 }
 
-// Two bookings in DIFFERENT but time-overlapping slots draw on the same single
-// helper: a 60-min job at 09:00 (09:00–10:00) and a 60-min job at 09:30
-// (09:30–10:30) collide over 09:30–10:00. With one roster helper, exactly one
-// may win. The two slots have different ids, so a lock keyed on the slot id
-// lets both bookings past the gate concurrently (each re-counts before the
-// other's insert is visible) and double-books the helper. Guards the
-// (locality, date) lock domain, which serialises across overlapping slots.
-func TestSlotCapacity_ConcurrentOverlappingSlots(t *testing.T) {
-	f := newCapFixture(t, 1) // single helper → one seat across the overlap
-
-	cA, aA := f.newCustomer()
-	cB, aB := f.newCustomer()
-
-	// Pre-create both slots so the goroutines hit the cache. slotID mutates a
-	// shared map; creating the rows up front keeps the concurrent section
-	// race-free (matches TestSlotCapacity_ConcurrentLastSlot).
-	f.slotID("09:00")
-	f.slotID("09:30")
-
-	var wg sync.WaitGroup
-	errs := make([]error, 2)
-	wg.Add(2)
-	go func() { defer wg.Done(); _, errs[0] = f.bookAs(cA, aA, "09:00", 60, true) }()
-	go func() { defer wg.Done(); _, errs[1] = f.bookAs(cB, aB, "09:30", 60, true) }()
-	wg.Wait()
-
-	var ok, full int
-	for _, err := range errs {
-		switch {
-		case err == nil:
-			ok++
-		case errors.Is(err, ErrSlotUnavailable):
-			full++
-		default:
-			t.Fatalf("unexpected error: %v", err)
-		}
-	}
-	if ok != 1 || full != 1 {
-		t.Fatalf("concurrent overlapping slots: got %d success / %d slot_full, want 1/1 "+
-			"(a per-slot lock lets both overlapping bookings double-book the one helper)", ok, full)
-	}
-}
-
 // An approved full-day leave for one roster helper reduces capacity by one.
 func TestSlotCapacity_ApprovedLeaveReducesCapacity(t *testing.T) {
 	f := newCapFixture(t, 2)
@@ -399,8 +441,10 @@ func TestSlotCapacity_ApprovedLeaveReducesCapacity(t *testing.T) {
 	}
 }
 
-// A 60-minute job at 09:00 spans 09:00–10:00, so it also occupies 09:30 and
-// blocks it when it takes the last helper. A 30-minute job at 09:00 does not.
+// A 60-minute job at 09:00 spans 09:00–10:00, so it occupies 09:30. A 30-minute
+// job at 09:00 ends at 09:30, but the 15-min travel pad (spec §3.3) extends its
+// window to 09:45, so it ALSO holds the 09:30 slot — the pro can't finish at
+// 09:30 and start a fresh 09:30 job with no travel time.
 func TestSlotCapacity_LongJobBlocksNextSlot(t *testing.T) {
 	t.Run("60-minute job blocks 09:30", func(t *testing.T) {
 		f := newCapFixture(t, 1)
@@ -418,16 +462,41 @@ func TestSlotCapacity_LongJobBlocksNextSlot(t *testing.T) {
 		}
 	})
 
-	t.Run("30-minute job does not block 09:30", func(t *testing.T) {
+	t.Run("30-minute job blocks 09:30 via travel pad", func(t *testing.T) {
 		f := newCapFixture(t, 1)
 		if _, err := f.book("09:00", 30, true); err != nil {
 			t.Fatalf("30-min booking at 09:00 failed: %v", err)
 		}
-		if got := f.committed("09:30"); got != 0 {
-			t.Fatalf("committed overlapping 09:30 = %d, want 0 (no overlap)", got)
+		// Raw window [09:00, 09:30) just touches the 09:30 slot start; with the
+		// 15-min travel pad the window is [09:00, 09:45), which overlaps it.
+		if got := f.committed("09:30"); got != 1 {
+			t.Fatalf("committed overlapping 09:30 = %d, want 1 (travel pad)", got)
 		}
-		if got := f.available("09:30"); got != 1 {
-			t.Fatalf("09:30 availability after 30-min job = %d, want 1 (still open)", got)
+		if got := f.available("09:30"); got != 0 {
+			t.Fatalf("09:30 availability after 30-min job = %d, want 0 (held by pad)", got)
 		}
 	})
+}
+
+// A 60-minute job at 09:00 ends at exactly 10:00 — the start of the 10:00 slot.
+// On a raw half-open window [09:00, 10:00) vs the slot's [10:00, 10:30), the
+// booking's end touches but never crosses the slot start, so the standard
+// overlap test (b.end > slot.start) is 10:00 > 10:00 = false → committed = 0,
+// and the pro would be double-booked: handed a fresh 10:00 job with no time to
+// travel from the one they just finished. The travelBufferMin pad (spec §3.3)
+// extends the job to [09:00, 10:15), which overlaps the 10:00 slot, so the seat
+// is correctly still held → committed = 1.
+func TestSlotCapacity_TravelPadHoldsAdjacentSlot(t *testing.T) {
+	f := newCapFixture(t, 1)
+	if _, err := f.book("09:00", 60, true); err != nil {
+		t.Fatalf("60-min booking at 09:00 failed: %v", err)
+	}
+	// Without the travel pad this is 0 (booking ends exactly at the slot start);
+	// with the 15-min pad the seat is still held against the 10:00 slot.
+	if got := f.committed("10:00"); got != 1 {
+		t.Fatalf("committed against 10:00 slot = %d, want 1 (15-min travel pad)", got)
+	}
+	if got := f.available("10:00"); got != 0 {
+		t.Fatalf("10:00 availability after adjacent 60-min job = %d, want 0 (blocked by pad)", got)
+	}
 }

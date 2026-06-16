@@ -113,7 +113,8 @@ const en: Dict = {
     sectionToday: 'Completed today',
     activeTap: 'View details',
     completedSummary: '{count} service · {minutes}min · ₹{earnings}',
-    secondsShort: '{n}s',
+    newBadge: 'NEW',
+    gotIt: 'Got it',
   },
   profile: {
     assignedArea: 'Your assigned area',
@@ -144,17 +145,6 @@ const en: Dict = {
     confirmTitle: 'Change language?',
     confirmBody: 'Are you sure you want to change the app language?',
     confirmCta: 'Yes, change',
-  },
-  offer: {
-    title: 'New booking',
-    earningsLabel: 'Estimated earnings',
-    durationLabel: 'Total duration',
-    minutesShort: '{n} min',
-    accept: 'Accept',
-    decline: 'Decline',
-    expired: 'Offer expired',
-    busyWarning: 'You already have an active job',
-    serviceLine: '{name} · {qty}',
   },
   jobDetail: {
     headerStepAccepted: 'Head to customer',

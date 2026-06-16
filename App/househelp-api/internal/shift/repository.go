@@ -818,6 +818,38 @@ func (r *Repository) MarkBookingCancelled(ctx context.Context, bookingID, proID 
 	return customerID, err
 }
 
+// BookingScheduledTime returns the booking's scheduled_time. Used by the cancel
+// flow to decide whether a still-future booking should be re-dispatched
+// (Unassign) or, once its slot has passed, simply cancelled.
+func (r *Repository) BookingScheduledTime(ctx context.Context, bookingID string) (time.Time, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var t time.Time
+	err := r.db.QueryRow(ctx,
+		`SELECT scheduled_time FROM bookings WHERE id = $1`, bookingID).Scan(&t)
+	return t, err
+}
+
+// UnassignBooking returns an assigned booking to the assigner: clears the
+// helper, resets it to 'pending', wipes matched_at so the claim index re-picks
+// it, and stamps excluded_pro_id so the dropping pro is skipped on the next tick
+// (spec §7, migration 135). The status guard means a booking already moved on
+// (in_progress/completed/cancelled) is left untouched.
+func (r *Repository) UnassignBooking(ctx context.Context, bookingID, excludedProID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := r.db.Exec(ctx, `
+		UPDATE bookings
+		SET helper_id       = NULL,
+		    status          = 'pending',
+		    matched_at      = NULL,
+		    excluded_pro_id = $2,
+		    updated_at      = now()
+		WHERE id = $1 AND status = 'accepted'`,
+		bookingID, excludedProID)
+	return err
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 func isUniqueViolation(err error) bool {

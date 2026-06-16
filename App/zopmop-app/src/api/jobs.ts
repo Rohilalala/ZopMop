@@ -49,22 +49,6 @@ export async function listActiveJobs(): Promise<HelperBooking[]> {
   return data.bookings ?? [];
 }
 
-export async function listPendingOffers(): Promise<string[]> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/pending`);
-  const data = await expectOk<{ booking_ids: string[] }>(res, 'list pending offers');
-  return data.booking_ids ?? [];
-}
-
-export async function acceptJob(bookingID: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/accept`, { method: 'POST' });
-  await expectOk<{ message: string }>(res, 'accept job');
-}
-
-export async function declineJob(bookingID: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/decline`, { method: 'POST' });
-  await expectOk<{ message: string }>(res, 'decline job');
-}
-
 export async function jobEnRoute(bookingID: string, lat?: number, lng?: number): Promise<void> {
   const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/en-route`, {
     method: 'POST',

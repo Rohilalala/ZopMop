@@ -43,7 +43,16 @@ export type MainStackParamList = {
   Wallet: undefined;
   // Cashfree Drop Checkout entry point. Pushed from CartScreen when the
   // customer chooses Pay-now (direct) at confirm-booking time.
-  Payment: { booking_id: string; amount_paise: number; bookingType: 'instant' | 'scheduled' };
+  // etaMinutes/helperName carry the ASAP arrival promise through to
+  // BookingConfirmed so card/UPI ASAP bookings render "arriving by HH:MM"
+  // too (the wallet path threads them directly).
+  Payment: {
+    booking_id: string;
+    amount_paise: number;
+    bookingType: 'instant' | 'scheduled';
+    etaMinutes?: number;
+    helperName?: string;
+  };
   Offers: undefined;
   HelpSupport: undefined;
   YourExperts: undefined;
@@ -83,10 +92,10 @@ export type MainStackParamList = {
   };
   ProMoney: undefined;
   LanguageToggle: undefined;
-  JobOffer: { booking_id: string };
   JobDetail: { booking_id: string };
   // ProMatched / ProActive / ProScheduledInvite retired in Phase 10.
-  // Replaced by JobDetail + JobOffer below. Screens archived at
+  // Replaced by JobDetail. The offer/accept JobOffer flow was deleted
+  // under the unified-slot-dispatch design. Screens archived at
   // _legacy/pro_legacy_screens/.
   RoomiesSetup: undefined;
   RoomiesCodeShare: { groupId: string; code: string; groupName: string };

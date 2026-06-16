@@ -261,8 +261,15 @@ func (s *Service) AdminGrantLeave(ctx context.Context, proID string, date time.T
 }
 
 // reassignAffected pulls all of the on-leave pro's bookings for the date and
-// either reassigns them to a free pro or cancels + notifies the customer +
-// fires a CRM coverage-gap alert.
+// returns each one to the assigner (spec §7): unassign → 'pending' with the
+// on-leave pro excluded, so the next dispatch tick re-places it on a free pro
+// (which then gets the booking_assigned push). The customer is told the helper
+// changed up front; the new pro's identity arrives when the assigner places it.
+//
+// This replaces the old synchronous FindReplacementPro → ReassignBooking force
+// pick (and its no-coverage cancel branch): the assigner already evaluates the
+// full eligibility matrix (leave, clash, runway, locality, travel), so a manual
+// replacement scan here would just duplicate — and diverge from — that logic.
 func (s *Service) reassignAffected(ctx context.Context, leavingProID string, date time.Time) ([]ReassignOutcome, error) {
 	bookings, err := s.repo.ListProBookingsOnDate(ctx, leavingProID, date)
 	if err != nil {
@@ -278,67 +285,21 @@ func (s *Service) reassignAffected(ctx context.Context, leavingProID string, dat
 			ScheduledAt:  b.ScheduledTime.In(IST).Format("2006-01-02 15:04 MST"),
 		}
 
-		newProID, err := s.repo.FindReplacementPro(ctx, leavingProID, b.TimeSlotID, date)
-		if err != nil {
-			log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: replacement lookup failed")
+		if err := s.repo.UnassignBooking(ctx, b.ID, leavingProID); err != nil {
+			log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: unassign failed")
 			out = append(out, oc)
 			continue
 		}
 
-		if newProID != "" {
-			if err := s.repo.ReassignBooking(ctx, b.ID, newProID); err != nil {
-				log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: reassign failed")
-				out = append(out, oc)
-				continue
-			}
-			oc.NewProID = newProID
-			if s.cust != nil {
-				if err := s.cust.NotifyHelperReassigned(ctx, b.CustomerID, b.ID); err != nil {
-					log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: customer reassign push failed")
-				}
-			}
-			// Tell the replacement pro they now hold this job — previously
-			// the new pro was force-assigned silently and never learned.
-			if s.pro != nil {
-				if err := s.pro.NotifyProBookingAssigned(ctx, newProID, b.ID, b.ServiceName); err != nil {
-					log.Warn().Err(err).Str("booking_id", b.ID).Str("new_pro_id", newProID).Msg("leave: new-pro assign push failed")
-				}
-			}
-			out = append(out, oc)
-			continue
-		}
-
-		// No replacement — cancel + notify customer with alternatives + alert CRM.
-		if err := s.repo.CancelBookingNoCoverage(ctx, b.ID); err != nil {
-			log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: cancel failed")
-			out = append(out, oc)
-			continue
-		}
-		oc.Cancelled = true
-
-		alts := []string{}
-		if slots, err := s.repo.FindNearestOpenSlots(ctx, b.ServiceCategoryID, time.Now(), 3); err == nil {
-			for _, sl := range slots {
-				alts = append(alts, sl.StartTime.In(IST).Format("Mon Jan 2, 3:04 PM"))
-			}
-		}
-		when := b.ScheduledTime.In(IST).Format("Mon Jan 2 at 3:04 PM")
-
+		// Tell the customer their helper changed; the assigner places the new pro
+		// on its next tick and that pro receives the booking_assigned push. We
+		// deliberately do NOT mark the booking confirmed or notify a new pro here:
+		// at this point the booking is unassigned ('pending'), and the customer
+		// push (NotifyCustomerHelperReassigned) tells them we're re-matching
+		// rather than claiming a pro is already locked in.
 		if s.cust != nil {
-			if err := s.cust.NotifyBookingCancelledNoCoverage(ctx, b.CustomerID, b.ID, when, alts); err != nil {
-				log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: customer cancel push failed")
-			}
-		}
-		if s.crm != nil {
-			if err := s.crm.NotifyCoverageGap(ctx, CoverageGapPayload{
-				BookingID:    b.ID,
-				CustomerID:   b.CustomerID,
-				CustomerName: b.CustomerName,
-				ServiceName:  b.ServiceName,
-				ScheduledAt:  b.ScheduledTime,
-				OnLeaveProID: leavingProID,
-			}); err != nil {
-				log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: CRM coverage-gap notify failed")
+			if err := s.cust.NotifyHelperReassigned(ctx, b.CustomerID, b.ID); err != nil {
+				log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: customer reassign push failed")
 			}
 		}
 		out = append(out, oc)

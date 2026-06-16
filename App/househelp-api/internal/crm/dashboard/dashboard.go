@@ -6,6 +6,8 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -23,7 +25,18 @@ type KPIs struct {
 	PendingRefunds      int `json:"pending_refunds"`
 	PendingApplications int `json:"pending_applications"`
 	OpenDisputes        int `json:"open_disputes"`
+	BookingsAtRisk      int `json:"bookings_at_risk"`
 }
+
+// dispatchLeadConfigKey is the app_config key holding the assigner's lead
+// window in minutes (spec §2 dispatchLeadMin). Mirrors
+// config_manager.ConfigDispatchLeadMin; duplicated here so the crm-api
+// dashboard doesn't depend on config_manager wiring it does not otherwise use.
+const dispatchLeadConfigKey = "dispatch.lead_min"
+
+// defaultDispatchLeadMin is the fallback used when the config row is missing
+// or unparseable (spec §2 default).
+const defaultDispatchLeadMin = 30
 
 // LiveOrder is one row of the live-orders feed.
 type LiveOrder struct {
@@ -68,8 +81,17 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 	}{
 		{
 			"active_orders",
+			// Live booking statuses under the unified assigner: a booking is
+			// 'pending' until placed, 'accepted' once a pro is force-assigned and
+			// through en-route/arrival (those are timestamps on an 'accepted' row —
+			// see repository MarkArrived, which keeps status='accepted'), then
+			// 'in_progress' once started, plus 'arrived' for the per-line arrived
+			// state. There is no 'assigned'/'en_route' booking status in the CHECK
+			// constraint (migrations 004/054) — listing them counted nothing while
+			// dropping the entire 'accepted' bucket, i.e. every assigned-but-not-
+			// started job.
 			`SELECT COUNT(*) FROM bookings
-			 WHERE status IN ('pending','searching','dispatching','accepted','arrived','in_progress')`,
+			 WHERE status IN ('pending','accepted','in_progress','arrived')`,
 			&out.ActiveOrders,
 		},
 		{
@@ -108,7 +130,43 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 			*q.dest = 0
 		}
 	}
+
+	// Bookings-at-risk: pending + unassigned bookings whose assignment window
+	// has already opened (now ≥ scheduled_time − dispatchLeadMin) — the assigner
+	// is actively failing to place them (spec §14.1). Lead minutes come from the
+	// dispatch config; on miss/parse-fail it falls back to defaultDispatchLeadMin.
+	lead := s.dispatchLeadMin(ctx)
+	if err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM bookings
+		WHERE status = 'pending'
+		  AND helper_id IS NULL
+		  AND now() >= scheduled_time - make_interval(mins => $1)
+		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+	`, lead).Scan(&out.BookingsAtRisk); err != nil {
+		log.Warn().Err(err).Msg("[crm.dashboard] bookings_at_risk query failed — defaulting to 0")
+		out.BookingsAtRisk = 0
+	}
 	return out, nil
+}
+
+// dispatchLeadMin reads the dispatch lead window (minutes) from app_config,
+// the same row config_manager serves. crm-api does not wire config_manager,
+// so the dashboard reads the row directly off its own pool. A missing row,
+// DB error, or unparseable value falls back to defaultDispatchLeadMin.
+func (s *Service) dispatchLeadMin(ctx context.Context) int {
+	var raw string
+	if err := s.db.QueryRow(ctx,
+		`SELECT value FROM app_config WHERE key = $1`, dispatchLeadConfigKey,
+	).Scan(&raw); err != nil {
+		return defaultDispatchLeadMin
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		log.Warn().Str("value", raw).Int("default", defaultDispatchLeadMin).
+			Msg("[crm.dashboard] invalid dispatch.lead_min — using default")
+		return defaultDispatchLeadMin
+	}
+	return n
 }
 
 // LiveOrders returns the N most recent orders. Best-effort.
