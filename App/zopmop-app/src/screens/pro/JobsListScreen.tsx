@@ -21,7 +21,7 @@ import { listActiveJobs, listPendingOffers } from '../../api/jobs';
 import { getHelperToday, type HelperBooking } from '../../api/pro';
 import { onShiftEvent, type OfferPayload } from '../../utils/shiftEvents';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 const ACTIVE_STATUSES = new Set(['accepted', 'arrived', 'in_progress']);
 
@@ -31,6 +31,7 @@ interface OfferState extends OfferPayload {
 }
 
 export default function JobsListScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
@@ -301,9 +302,6 @@ function CompletedRow({
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: colors.textSecondary }}>
           {booking.address}
-        </Text>
-        <Text style={{ fontFamily: FontFamily.bold, fontSize: FontSize.base, color: colors.text }}>
-          ₹{Math.round((booking.pro_earnings_paise ?? 0) / 100)}
         </Text>
       </View>
     </TouchableOpacity>

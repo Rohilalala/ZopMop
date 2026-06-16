@@ -24,7 +24,6 @@ import Feather from '@expo/vector-icons/Feather';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { posthog } from '../../config/posthog';
 import { sendOTP, verifyOTP, AuthError } from '../../services/auth';
-import { setNeedsRoleSelection } from '../../utils/pendingAuthStore';
 
 // Public-facing policy URLs. Kept inline rather than from env because they're
 // the same across builds — the Privacy Policy link in the new-user consent
@@ -114,33 +113,16 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         return;
       }
 
-      // Brand-new signup: every new account starts as a customer role,
-      // but the user hasn't yet chosen customer-vs-pro. Keep them in the
-      // AuthNavigator (via the role-selection flag) so Welcome →
-      // RoleSelection → ProOnboarding is reachable. We still sign in so
-      // the downstream authed calls (/me/onboard-pro) have a session;
-      // the flag — not isAuthenticated — gates the navigator swap.
-      // Previously signIn() flipped straight to MainNavigator and the
-      // Welcome auto-advance to RoleSelection never fired, so in-app pro
-      // signup was dead and every signup became a customer.
-      if (data.is_new_user) {
-        setNeedsRoleSelection(true);
-        signIn(data.access_token, data.refresh_token, data.user);
-        navigation.replace('Welcome', { phone, name: data.user.name });
-        return;
-      }
-
-      // Returning customer: anyone without a name on file must set one
-      // before entering the app. Gating on is_new_user alone let nameless
-      // returning users slip straight in, landing on a default name that's
-      // never collected.
+      // Roles are decided server-side: every signup is created as a
+      // customer and only the CRM can promote a number to pro — the user
+      // is never asked. Anyone without a name on file (brand-new signup
+      // or a legacy nameless account) must set one before entering the
+      // app; NameEntry then routes through Welcome. signIn comes first so
+      // the profile-setup PUT /me call has a session — App.tsx `needsName`
+      // (not isAuthenticated) keeps the AuthNavigator mounted.
+      signIn(data.access_token, data.refresh_token, data.user);
       const hasName = data.user.name && data.user.name.trim().length > 0;
-      if (hasName) {
-        signIn(data.access_token, data.refresh_token, data.user);
-      } else {
-        // Stash tokens via signIn THEN route to NameEntry so the
-        // user is authenticated for the profile-setup PUT /me call.
-        signIn(data.access_token, data.refresh_token, data.user);
+      if (!hasName) {
         navigation.replace('NameEntry', { phone });
       }
     } catch (err: any) {

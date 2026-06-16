@@ -47,8 +47,9 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
   // inset edge and soft drop shadow, amber text on top. On iOS 26+ GlassView
   // supplies the fill + refraction; elsewhere a hand-built translucent
   // recipe approximates the same look.
-  const earnBg = liquidGlass ? 'transparent' : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.05)';
-  const earnBorder = liquidGlass ? 'transparent' : isDark ? 'rgba(255,255,255,0.28)' : 'rgba(13,13,15,0.14)';
+  // Light mode: solid ink pill (no glass) — amber text pops on black.
+  const earnBg = isDark ? (liquidGlass ? 'transparent' : 'rgba(255,255,255,0.08)') : '#0D0D0F';
+  const earnBorder = isDark ? (liquidGlass ? 'transparent' : 'rgba(255,255,255,0.28)') : 'transparent';
   const earnTextColor = '#F5A300';
 
   // Household pill reuses the same inversion logic
@@ -72,8 +73,9 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
     ) : null;
 
   // Untinted glass for the earn button — clear refraction, no amber cast.
+  // Dark mode only: in light mode the pill is solid ink and glass would wash it out.
   const clearGlass = (radius: number) =>
-    liquidGlass ? (
+    liquidGlass && isDark ? (
       <GlassView
         glassEffectStyle="regular"
         style={{

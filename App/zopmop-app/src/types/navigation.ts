@@ -25,12 +25,6 @@ export type AuthStackParamList = {
     phone: string;
     name?: string;
   };
-  RoleSelection: {
-    phone: string;
-  };
-  ProOnboarding: {
-    phone: string;
-  };
 };
 
 export type MainStackParamList = {

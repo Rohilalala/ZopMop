@@ -29,6 +29,7 @@ import { ThemeProvider, useColors } from './src/context/ThemeContext';
 import { RoomiesProvider } from './src/context/RoomiesContext';
 import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import UpdateGate from './src/components/UpdateGate';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
 import { addConnectivityListener, isConnected } from './src/utils/netInfo';
 import Toast from 'react-native-toast-message';
@@ -36,7 +37,7 @@ import { PostHogProvider } from 'posthog-react-native';
 import { posthog } from './src/config/posthog';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { bootstrapLocale } from './src/i18n';
-import { getNeedsRoleSelection, onPendingAuthChange } from './src/utils/pendingAuthStore';
+import { getNeedsWelcome, onPendingAuthChange } from './src/utils/pendingAuthStore';
 
 SplashScreenNative.preventAutoHideAsync();
 
@@ -96,14 +97,14 @@ function Navigation() {
   const needsName =
     isAuthenticated && user?.role === 'customer' && !user?.name?.trim();
 
-  // Brand-new signups are signed in but must still finish Welcome →
-  // RoleSelection (→ ProOnboarding) before entering the app. Keeping the
-  // AuthNavigator mounted while this flag is set is what makes that flow
-  // reachable; signIn() alone would swap to MainNavigator and unmount it.
-  const needsRoleSelection = React.useSyncExternalStore(
+  // Users who just set their name still get one Welcome beat before the
+  // app. Keeping the AuthNavigator mounted while this flag is set is what
+  // makes Welcome reachable; saving the name flips `needsName` to false,
+  // which alone would swap to MainNavigator and unmount it.
+  const needsWelcome = React.useSyncExternalStore(
     onPendingAuthChange,
-    getNeedsRoleSelection,
-    getNeedsRoleSelection,
+    getNeedsWelcome,
+    getNeedsWelcome,
   );
 
   if (isLoading) return null;
@@ -138,7 +139,7 @@ function Navigation() {
               doesn't lock initialRouteName='Tabs' when /me returns
               'pro' a moment later — React remounts the stack and
               the gate re-evaluates with the fresh role. */}
-          {isAuthenticated && !needsName && !needsRoleSelection
+          {isAuthenticated && !needsName && !needsWelcome
             ? <MainNavigator key={`main-${user?.role ?? 'unknown'}`} />
             : <AuthNavigator needsName={needsName} phone={user?.phone} />}
         </PostHogProvider>
@@ -240,6 +241,9 @@ function App() {
               </RoomiesProvider>
             </PrefetchProvider>
           </AuthProvider>
+          {/* Force/optional-update overlay — sits above the whole app, inside
+              ThemeProvider + SafeAreaProvider so it can theme + inset itself. */}
+          <UpdateGate />
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

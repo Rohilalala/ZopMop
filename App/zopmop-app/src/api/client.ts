@@ -1,5 +1,13 @@
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
 import { reportBackendDown } from '../hooks/useBackendHealth';
 import { refreshAccessToken } from '../services/auth';
+
+/** Installed app version + platform, sent on every request so the backend can
+ *  enforce its min-version policy (force-update). Resolved once at module load. */
+export const CLIENT_VERSION = (Constants.expoConfig?.version as string | undefined) ?? '0.0.0';
+export const CLIENT_PLATFORM = Platform.OS; // 'ios' | 'android'
 
 // Global callbacks registered by AuthProvider on mount. apiFetch reads
 // the current access/refresh pair through these so it can attach the
@@ -28,6 +36,15 @@ export function registerTokenAccessors(opts: {
 /** Call this to trigger a global sign-out (e.g. user deleted from DB). */
 export function triggerSignOut() {
   _signOut?.();
+}
+
+// Force-update hook. Registered by the app root; apiFetch calls it when any
+// request returns 426 Upgrade Required (a forced version policy), so a
+// force-update takes effect mid-session, not just at launch.
+export type ForceUpdateInfo = { message?: string; store_url?: string; min_version?: string };
+let _onForceUpdate: ((info: ForceUpdateInfo) => void) | null = null;
+export function registerForceUpdateCallback(fn: (info: ForceUpdateInfo) => void) {
+  _onForceUpdate = fn;
 }
 
 /** Default network timeout in milliseconds. */
@@ -110,10 +127,15 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
   const incoming = (options?.headers ?? {}) as Record<string, string>;
   const hasRequestId = Object.keys(incoming).some((k) => k.toLowerCase() === 'x-request-id');
   const hasIdempotencyKey = Object.keys(incoming).some((k) => k.toLowerCase() === 'idempotency-key');
+  const hasClientVersion = Object.keys(incoming).some((k) => k.toLowerCase() === 'x-client-version');
   const baseHeaders: Record<string, string> = {
     ...incoming,
     ...(hasRequestId ? {} : { 'X-Request-ID': generateRequestId() }),
     ...(hasIdempotencyKey ? {} : { 'Idempotency-Key': generateIdempotencyKey() }),
+    // Version/platform on every request so the backend force-update gate can
+    // 426 a stale build. Don't clobber a caller that set its own version header.
+    ...(hasClientVersion ? {} : { 'X-Client-Version': CLIENT_VERSION }),
+    'X-Client-Platform': CLIENT_PLATFORM,
   };
 
   let refreshed = false;
@@ -127,6 +149,18 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
       const headers = withAuthHeader(baseHeaders, accessToken);
       const res = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
+
+      // 426 Upgrade Required — a forced version policy. Surface the update
+      // screen and return; never retry (the build can't satisfy it).
+      if (res.status === 426) {
+        try {
+          const info = await res.clone().json();
+          _onForceUpdate?.({ message: info?.message, store_url: info?.store_url, min_version: info?.min_version });
+        } catch {
+          _onForceUpdate?.({});
+        }
+        return res;
+      }
 
       if (res.status >= 500 && res.status < 600 && attempt < MAX_RETRIES) {
         await sleep(RETRY_BACKOFF_MS[attempt]);

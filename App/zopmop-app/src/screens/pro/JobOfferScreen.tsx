@@ -21,7 +21,7 @@ import { onShiftEvent, type OfferPayload } from '../../utils/shiftEvents';
 import { showError, showInfo } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 interface OfferTask {
   service_name: string;
@@ -33,6 +33,7 @@ interface OfferTask {
 const DEFAULT_TTL_SEC = 25;
 
 export default function JobOfferScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'JobOffer'>>();

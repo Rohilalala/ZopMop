@@ -21,7 +21,7 @@ import { useAuth } from '../../context/AuthContext';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { getCurrentZone, getFortnightProgress, type ZoneInfo, type FortnightProgress } from '../../api/shifts';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
 
@@ -48,6 +48,7 @@ function paiseToRupeesShort(p: number): string {
 }
 
 export default function ProProfileScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user, signOut } = useAuth();

@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { useAuth } from './AuthContext';
 import * as RoomiesAPI from '../api/roomies';
+import { ROOMIES_ENABLED } from '../config/features';
 import type {
   BookGroupChorePayload,
   BookGroupChoreResponse,
@@ -60,7 +61,7 @@ export function RoomiesProvider({ children }: { children: React.ReactNode }) {
 
   // Load the user's group membership once on auth.
   const refresh = useCallback(async () => {
-    if (!token) {
+    if (!ROOMIES_ENABLED || !token) {
       setMyGroup(null);
       return;
     }
@@ -133,7 +134,7 @@ export function RoomiesProvider({ children }: { children: React.ReactNode }) {
   refreshRef.current = refresh;
 
   useEffect(() => {
-    if (!token) return;
+    if (!ROOMIES_ENABLED || !token) return;
     const id = setInterval(() => refreshRef.current(), 30_000);
     return () => clearInterval(id);
   }, [token]);

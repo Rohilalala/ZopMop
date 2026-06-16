@@ -16,7 +16,7 @@ import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { getFortnightProgress, getActiveShift, type FortnightProgress } from '../../api/shifts';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 function minutesToHours(m: number): number {
   return Math.round((m / 60) * 10) / 10;
@@ -36,6 +36,7 @@ function fmtDate(ymd: string): string {
 }
 
 export default function ProMoneyScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation();
   const c = useColors();

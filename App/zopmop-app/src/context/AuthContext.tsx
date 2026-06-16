@@ -6,7 +6,7 @@ import { registerSignOutCallback, registerTokenAccessors, apiFetch } from '../ap
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { BASE_URL } from '../api/config';
 import { promoStore } from '../utils/promoStore';
-import { setNeedsRoleSelection } from '../utils/pendingAuthStore';
+import { setNeedsWelcome } from '../utils/pendingAuthStore';
 import { posthog } from '../config/posthog';
 import { setUser as sentrySetUser } from '../config/sentry';
 import { logout as logoutHTTP, refreshAccessToken, type AuthUser as ServiceAuthUser } from '../services/auth';
@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY).catch(() => {});
     SecureStore.deleteItemAsync(SIGNUP_COMPLETED_KEY).catch(() => {});
     promoStore.clear();
-    setNeedsRoleSelection(false);
+    setNeedsWelcome(false);
     AsyncStorage.multiRemove(['pendingReferralCode', 'pendingReferralCodeAt']).catch(() => {});
   }, []);
 

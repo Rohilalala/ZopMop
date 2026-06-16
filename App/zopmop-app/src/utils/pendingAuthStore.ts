@@ -1,22 +1,19 @@
-// pendingAuthStore — in-memory flag tracking whether a freshly-signed-up
-// user still needs to complete the Welcome → RoleSelection (→ ProOnboarding)
-// flow.
+// pendingAuthStore — in-memory flag tracking whether a freshly-named user
+// still needs to see the Welcome screen before entering the main app.
 //
-// Why this exists: a new user signs in (signIn() flips isAuthenticated)
-// BEFORE choosing customer-vs-pro. Without this flag, App.tsx immediately
-// swaps AuthNavigator → MainNavigator, unmounting Welcome before its
-// auto-advance timer can navigate to RoleSelection — so in-app pro signup
-// was unreachable and every signup silently became a customer.
+// Why this exists: saving the name on NameEntry (updateUser) flips App.tsx
+// `needsName` to false, which would immediately swap AuthNavigator →
+// MainNavigator and unmount Welcome before it can render. This flag keeps
+// the AuthNavigator mounted for the one Welcome beat after naming.
 //
-// Keeping the user signed in (rather than deferring signIn) is deliberate:
-// RoleSelection and ProOnboarding both make authenticated API calls
-// (/me/onboard-pro), so they need a live session. This flag just keeps the
-// AuthNavigator mounted until role selection completes.
+// Roles are never chosen in-app: every signup is a customer and only the
+// CRM can promote a number to pro, so there is no role-selection step to
+// gate anymore.
 //
 // In-memory only — never persisted. A relaunch mid-flow lands the user in
 // the app per their backend role, which is the correct fallback.
 
-let needsRoleSelection = false;
+let needsWelcome = false;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -25,16 +22,16 @@ function emit() {
   });
 }
 
-/** Marks that the current session must finish role selection before
- *  entering the main app. Called from OTPVerification for new users. */
-export function setNeedsRoleSelection(value: boolean) {
-  if (needsRoleSelection === value) return;
-  needsRoleSelection = value;
+/** Marks that the current session must show Welcome before entering the
+ *  main app. Set from NameEntry after the name is saved. */
+export function setNeedsWelcome(value: boolean) {
+  if (needsWelcome === value) return;
+  needsWelcome = value;
   emit();
 }
 
-export function getNeedsRoleSelection(): boolean {
-  return needsRoleSelection;
+export function getNeedsWelcome(): boolean {
+  return needsWelcome;
 }
 
 /** Subscribe to changes. Returns an unsubscribe fn. */

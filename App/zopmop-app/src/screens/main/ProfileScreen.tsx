@@ -22,9 +22,6 @@ import Reanimated, {
   useAnimatedScrollHandler,
   interpolate,
   Extrapolation,
-  withRepeat,
-  withTiming,
-  Easing as REasing,
   type SharedValue,
 } from 'react-native-reanimated';
 import Constants from 'expo-constants';
@@ -55,9 +52,9 @@ import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
-import { ZopFlyer } from '../../components/home/ZopFlyer';
 import { useTheme } from '../../context/ThemeContext';
 import { useC, C } from '../../theme/screen';
+import { ROOMIES_ENABLED } from '../../config/features';
 
 // Brand legal URLs — matched with auth/OTPVerificationScreen.tsx.
 const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
@@ -291,13 +288,15 @@ export default function ProfileScreen() {
               chev
               onPress={() => navigation.navigate('Addresses')}
             />
-            <Row
-              icon={<AppIcon name="home" size={17} color={C.amber} />}
-              label="Roomies"
-              meta={roomiesMeta}
-              chev
-              onPress={() => navigation.navigate('RoomiesSetup')}
-            />
+            {ROOMIES_ENABLED && (
+              <Row
+                icon={<AppIcon name="home" size={17} color={C.amber} />}
+                label="Roomies"
+                meta={roomiesMeta}
+                chev
+                onPress={() => navigation.navigate('RoomiesSetup')}
+              />
+            )}
             <Row
               icon={<AppIcon name="users" size={17} color={C.amber} />}
               label="Your Experts"
@@ -402,22 +401,6 @@ function HeroCard({
     };
   });
 
-  // Idle bob for the peeking Zop — same cadence as the home hero.
-  const float = useSharedValue(0);
-  useEffect(() => {
-    float.value = withRepeat(
-      withTiming(1, { duration: 3000, easing: REasing.inOut(REasing.sin) }),
-      -1,
-      true,
-    );
-  }, []);
-  const mascotStyle = useAnimatedStyle(() => {
-    'worklet';
-    return { transform: [{ translateY: -float.value * 6 }, { rotate: '-12deg' }] };
-  });
-  const eyeOpen = useSharedValue(1);
-  const noWink = useSharedValue(0);
-
   return (
     <View style={s.heroWrap}>
       <GlassCard radius={28} hero style={s.hero}>
@@ -435,11 +418,6 @@ function HeroCard({
             </Svg>
           </Reanimated.View>
         </View>
-
-        {/* Zop mascot peeking from the top-right, as on the home hero */}
-        <Reanimated.View pointerEvents="none" style={[s.heroZop, mascotStyle]}>
-          <ZopFlyer size={104} eyeOpacity={eyeOpen} winkProgress={noWink} />
-        </Reanimated.View>
 
         <View style={s.heroTop}>
           <Text style={s.heroEyebrow} numberOfLines={1}>
@@ -493,6 +471,7 @@ function HeroCard({
             hitSlop={12}
             style={[
               s.heroEdit,
+              { alignSelf: 'flex-end' },
               {
                 backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.05)',
                 borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.08)',
@@ -824,14 +803,6 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: '-25%', left: '-25%',
     width: '150%', height: '150%',
-  },
-  heroZop: {
-    position: 'absolute',
-    top: -8,
-    right: -12,
-    width: 104,
-    height: 104,
-    zIndex: 5,
   },
   heroTop: {
     flexDirection: 'row',

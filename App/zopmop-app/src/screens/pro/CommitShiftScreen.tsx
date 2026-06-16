@@ -25,7 +25,7 @@ import {
   type Commitment,
 } from '../../api/shifts';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 // 30-min increments, 24h day → 48 slots.
 function buildTimeSlots(): string[] {
@@ -78,6 +78,7 @@ function isEditableForDate(dateYMD: string): boolean {
 }
 
 export default function CommitShiftScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const c = useColors();

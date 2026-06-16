@@ -13,7 +13,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { LoadingBars } from '../../components/ui/LoadingBars';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
@@ -29,10 +29,15 @@ type Props = {
 };
 
 const COUNTRY_CODE = '+91';
+// Keep in sync with styles.bottom.paddingBottom — the CTA already sits this far
+// above the bottom safe-area inset, so it's subtracted from the keyboard lift.
+const BTN_PAD_BOTTOM = 16;
+const KB_GAP = 12; // breathing room left between the CTA and the keyboard top
 
 export default function PhoneEntryScreen({ navigation }: Props) {
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
   const c = authColors;
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(c), [c]);
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -62,8 +67,15 @@ export default function PhoneEntryScreen({ navigation }: Props) {
     const showSub = Keyboard.addListener(showEv, (e) => {
       setKbOpen(true);
       const kbH = e.endCoordinates.height;
+      // Lift the CTA only as far as it takes to clear the keyboard. The button
+      // already rests above the bottom safe-area inset + its own padding, so we
+      // lift by the actual overlap with the keyboard (plus a small gap). Clamp
+      // at 0 so a short or floating keyboard can never push the button DOWN and
+      // off the bottom of the screen.
+      const overlap = kbH - insets.bottom - BTN_PAD_BOTTOM;
+      const lift = overlap > 0 ? overlap + KB_GAP : 0;
       Animated.timing(btnLift, {
-        toValue: -kbH + 32,
+        toValue: -lift,
         duration: Platform.OS === 'ios' ? e.duration ?? 250 : 200,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
@@ -82,7 +94,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       showSub.remove();
       hideSub.remove();
     };
-  }, [btnLift]);
+  }, [btnLift, insets.bottom]);
 
   const isValid = phone.replace(/\s/g, '').length === 10;
 

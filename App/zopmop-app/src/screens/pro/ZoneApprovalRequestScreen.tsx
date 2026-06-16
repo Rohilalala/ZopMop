@@ -23,11 +23,12 @@ import { showError } from '../../utils/toast';
 import { requestZoneApproval } from '../../api/shifts';
 import { captureSelfieForApproval, type CapturedPhoto } from '../../utils/photoCapture';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
 
 export default function ZoneApprovalRequestScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'ZoneApprovalRequest'>>();

@@ -39,15 +39,9 @@ import { haptics } from '../../utils/haptics';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
 import { useLocationPublisher } from '../../hooks/useLocationPublisher';
 import { useProRoleGate } from '../../hooks/useRoleGate';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 
 const ARRIVED_RADIUS_METERS = 100;
-
-// Render full paise to two decimals so sub-rupee earnings are not rounded
-// off (the finish toast + summary previously dropped the paise component).
-function paiseToRupees(p: number): string {
-  return `₹${(p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 interface JobDetail {
   id: string;
@@ -76,6 +70,7 @@ function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng:
 }
 
 export default function JobDetailScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'JobDetail'>>();
@@ -268,9 +263,11 @@ export default function JobDetailScreen() {
           if (!detail || busy) return;
           setBusy(true);
           try {
-            const res = await jobComplete(bookingID);
+            await jobComplete(bookingID);
             haptics.success();
-            showSuccess(paiseToRupees(res.pro_earnings_paise));
+            // Pay is time-based (hours online + working), not per-job — show a
+            // plain completion confirmation, no per-job rupee figure.
+            showSuccess(t('jobDetail.headerStepCompleted'));
             await refresh();
           } catch (e: any) {
             showError(e?.message ?? t('common.error'));
@@ -533,12 +530,6 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
         <View style={styles.summaryRow}>
           <Text style={styles.summaryLabel}>{t('jobDetail.summaryServices')}</Text>
           <Text style={styles.summaryValue}>{services.length}</Text>
-        </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>{t('jobDetail.summaryEarnings')}</Text>
-          <Text style={[styles.summaryValue, { color: c.accent }]}>
-            {paiseToRupees(detail.pro_earnings_paise ?? 0)}
-          </Text>
         </View>
         {detail.customer_rating_pending && (
           <Text style={styles.awaiting}>{t('jobDetail.awaitingRating')}</Text>

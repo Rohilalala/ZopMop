@@ -33,7 +33,7 @@ import {
   type GoOnlineResult,
 } from '../../api/shifts';
 import { getHelperActive, type HelperBooking } from '../../api/pro';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 import { onShiftEvent } from '../../utils/shiftEvents';
 
 type DashState =
@@ -96,6 +96,7 @@ function isPast3amIST(): boolean {
 }
 
 export default function ProDashboardScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user, token, signOut } = useAuth();
@@ -372,12 +373,8 @@ export default function ProDashboardScreen() {
           <View style={[styles.cardGlass, styles.jobCard]}>
             <Text style={styles.jobHeader}>{t('dashboard.activeJob')}</Text>
             <Text style={styles.jobAddress}>{b.address}</Text>
-            {/* Pro earnings, never the customer gross (price_paise is
-                4–6× higher). Earnings are snapshotted at completion, so
-                an in-flight job has none yet — omit rather than mislead. */}
-            {(b.pro_earnings_paise ?? 0) > 0 && (
-              <Text style={styles.jobMeta}>₹{Math.round((b.pro_earnings_paise ?? 0) / 100)}</Text>
-            )}
+            {/* No per-job earnings — pay is time-based (hours online +
+                working), shown on the Money tab, not per booking. */}
           </View>
           <TouchableOpacity
             style={styles.primaryBtn}
