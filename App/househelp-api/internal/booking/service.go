@@ -612,16 +612,10 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 		return nil, fmt.Errorf("booking cannot be cancelled in current status")
 	}
 
-	start := CancellationStartTime(booking)
+	// Cancellation is always free — no fee on any cancel, regardless of timing
+	// (product policy; see IsFreeCancellation, which always reports free). The
+	// free-cancel window/deadline are retained only for GetBooking's display copy.
 	feeCents := 0
-	if !IsFreeCancellation(start, time.Now()) {
-		feeCents = DefaultCancellationFeeCents
-		log.Info().
-			Str("booking_id", bookingID).
-			Str("user_id", userID).
-			Int("fee_cents", feeCents).
-			Msg("booking cancelled outside free window; fee applied")
-	}
 
 	if err := s.repo.CancelBookingWithFee(ctx, bookingID, "customer", feeCents); err != nil {
 		return nil, err
