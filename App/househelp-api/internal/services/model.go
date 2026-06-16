@@ -78,6 +78,7 @@ type ServiceDetails struct {
 type AdminUpdateServiceRequest struct {
 	Name           string  `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
 	BasePriceCents *int    `json:"base_price_paise,omitempty" validate:"omitempty,gt=0"`
+	MrpCents       *int    `json:"mrp_paise,omitempty" validate:"omitempty,gt=0"`
 	IsActive       *bool   `json:"is_active,omitempty"`
 	DisplayOrder   *int    `json:"display_order,omitempty"`
 	BgColor        string  `json:"bg_color,omitempty"`

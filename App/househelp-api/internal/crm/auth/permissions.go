@@ -55,6 +55,11 @@ var permissions = map[string]string{
 	"promos.update": RoleAdmin,
 	"promos.toggle": RoleAdmin,
 
+	// catalog (service categories — price/MRP/active toggle). Edits are
+	// business-critical (they change what customers pay), so writes are
+	// admin-gated like promos/localities.
+	"catalog.update": RoleAdmin,
+
 	// banners
 	"banners.create":  RoleAdmin,
 	"banners.update":  RoleAdmin,
@@ -155,6 +160,7 @@ var permissions = map[string]string{
 	"audit.read":         RoleAdmin, // forensic logs + indirect PII via JSONB
 	"banners.read":       RoleViewer,
 	"blacklist.read":     RoleViewer,
+	"catalog.read":       RoleViewer,
 	"changelog.read":     RoleViewer,
 	"dashboard.read":     RoleViewer,
 	"disputes.read":      RoleViewer,

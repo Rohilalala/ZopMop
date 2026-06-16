@@ -112,6 +112,11 @@ func (r *Repository) Update(ctx context.Context, id string, req AdminUpdateServi
 		args = append(args, *req.BasePriceCents)
 		i++
 	}
+	if req.MrpCents != nil && *req.MrpCents > 0 {
+		setClauses = append(setClauses, fmt.Sprintf("mrp_cents = $%d", i))
+		args = append(args, *req.MrpCents)
+		i++
+	}
 	if req.IsActive != nil {
 		setClauses = append(setClauses, fmt.Sprintf("is_active = $%d", i))
 		args = append(args, *req.IsActive)
