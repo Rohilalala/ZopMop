@@ -306,6 +306,140 @@ func (s *Service) payBookingFromWallet(ctx context.Context, bookingID, userID st
 	})
 }
 
+// payBookingSplit debits min(walletBalance, netPaise) from the customer's
+// wallet inside one tx, records the wallet payment row, stamps
+// wallet_applied_paise + payment_method='cashfree' (the remainder is charged
+// via the Cashfree order, which subtracts wallet_applied_paise). payment_status
+// stays unpaid until the gateway webhook confirms the remainder. Returns the
+// applied paise. If the wallet balance is 0 it applies 0 and the caller falls
+// back to the plain direct/Cashfree path. requestedApply (the client's
+// wallet_apply hint) caps the applied amount when > 0.
+func (s *Service) payBookingSplit(ctx context.Context, bookingID, userID string, netPaise, requestedApply int64) (int64, error) {
+	if s.wallet == nil || s.ledger == nil {
+		return 0, fmt.Errorf("wallet payment not configured")
+	}
+	if s.walletRepo == nil {
+		return 0, fmt.Errorf("wallet repository not configured")
+	}
+	var applied int64
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		bal, err := s.walletRepo.GetBalanceTx(ctx, tx, userID) // FOR UPDATE inside the tx
+		if err != nil {
+			return fmt.Errorf("read wallet balance: %w", err)
+		}
+		applied = min64(bal, netPaise)
+		if requestedApply > 0 {
+			applied = min64(applied, requestedApply)
+		}
+		if applied <= 0 {
+			return nil // nothing to apply; caller treats as plain direct
+		}
+		bid := bookingID
+		if err := s.wallet.DebitTx(ctx, tx, userID, applied, "spend", &bid, "Booking "+bookingID+" (partial)"); err != nil {
+			if isInsufficientBalance(err) { // should not happen — applied<=bal
+				return ErrInsufficientWalletBalance
+			}
+			return fmt.Errorf("wallet debit (split): %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO payments (booking_id, user_id, amount_paise, gateway, gateway_status, webhook_received_at, reconciled)
+			VALUES ($1::uuid, $2::uuid, $3, 'wallet', 'success', NOW(), TRUE)
+		`, bookingID, userID, applied); err != nil {
+			return fmt.Errorf("insert split wallet payment row: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE bookings SET wallet_applied_paise = $2, payment_method = 'cashfree', updated_at = NOW()
+			WHERE id = $1::uuid
+		`, bookingID, applied); err != nil {
+			return fmt.Errorf("stamp split booking: %w", err)
+		}
+		return nil
+	})
+	return applied, err
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// markSplitFullyPaid handles the split full-cover edge: when payBookingSplit's
+// applied amount reached the whole net (the wallet covered it all), there is no
+// Cashfree remainder, so the booking is fully paid. Flip payment_status='paid'
+// and emit booking.paid (mirroring payBookingFromWallet's tail) so the row
+// dispatches like a wallet-only booking. Errors are logged, never propagated —
+// the wallet was already debited; failing here would strand a paid booking.
+func (s *Service) markSplitFullyPaid(ctx context.Context, bookingID string) {
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE bookings SET payment_status = 'paid', updated_at = NOW() WHERE id = $1::uuid
+		`, bookingID); err != nil {
+			return fmt.Errorf("mark split paid: %w", err)
+		}
+		payload, err := json.Marshal(map[string]any{
+			"booking_id": bookingID,
+			"gateway":    "wallet",
+			"paid_at":    time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			return fmt.Errorf("marshal booking.paid payload: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO event_outbox (event_type, aggregate_id, payload)
+			VALUES ($1, $2::uuid, $3::jsonb)
+		`, "booking.paid", bookingID, payload); err != nil {
+			return fmt.Errorf("insert booking.paid event: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		log.Error().Err(err).Str("booking_id", bookingID).Msg("failed to mark split booking fully paid")
+	}
+}
+
+// refundSplitWalletOnCancel credits back the wallet portion of a split booking
+// whose Cashfree remainder never settled. The plain refund rail
+// (wallet.RecordBookingRefundTx) only moves money when payment_status='paid',
+// so an unpaid split would otherwise strand the wallet_applied_paise the
+// customer already spent at create time — this returns it. Idempotent: it
+// zeroes wallet_applied_paise under the row lock so a re-cancel can't
+// double-refund, and no-ops once the booking is fully paid (the gateway refund
+// path owns the paid case).
+func (s *Service) refundSplitWalletOnCancel(ctx context.Context, bookingID string) error {
+	if s.walletRepo == nil {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var customerID string
+		var applied int64
+		var status *string
+		if err := tx.QueryRow(ctx, `
+			SELECT customer_id::text, COALESCE(wallet_applied_paise, 0), payment_status
+			FROM bookings WHERE id = $1::uuid FOR UPDATE`, bookingID).Scan(&customerID, &applied, &status); err != nil {
+			return err
+		}
+		if applied <= 0 || (status != nil && *status == "paid") {
+			return nil // nothing to refund, or fully paid (the gateway refund path handles paid)
+		}
+		bid := bookingID
+		if _, err := s.walletRepo.ApplyTransactionTx(ctx, tx, wallet.WalletTx{
+			UserID:      customerID,
+			AmountPaise: applied,
+			Kind:        wallet.KindRefundCredit,
+			BookingID:   &bid,
+			Note:        "Split booking cancelled — wallet portion returned",
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE bookings SET wallet_applied_paise = 0, updated_at = NOW() WHERE id = $1::uuid`, bookingID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // isInsufficientBalance unwraps the wallet package's ErrInsufficientBalance.
 // Implemented as a string match instead of errors.Is to avoid importing
 // internal/wallet (which would flip the dependency direction).
@@ -511,6 +645,14 @@ func (s *Service) markASAPNoPro(ctx context.Context, bookingID string) {
 
 	if cErr := tx.Commit(ctx); cErr != nil {
 		log.Warn().Err(cErr).Str("booking_id", bookingID).Msg("[booking] asap no-pro: commit failed")
+		return
+	}
+
+	// Return the wallet portion of an unpaid split booking. RecordNoProRefund
+	// above only moves money for paid rows, so a split (payment_status NULL,
+	// wallet_applied_paise > 0) needs this separate, idempotent credit-back.
+	if rErr := s.refundSplitWalletOnCancel(ctx, bookingID); rErr != nil {
+		log.Warn().Err(rErr).Str("booking_id", bookingID).Msg("[booking] asap no-pro: split wallet refund failed")
 	}
 }
 
@@ -734,6 +876,26 @@ func (s *Service) CreateBooking(ctx context.Context, req *CreateBookingRequest, 
 		// stays false and the pro is dispatched immediately.
 		s.stampBookingCOD(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	case "split":
+		// Partial wallet + Cashfree remainder: debit min(balance, net) inline,
+		// stamp wallet_applied_paise + payment_method='cashfree'. If the wallet
+		// happened to cover the whole net, treat it as wallet-only (paid +
+		// dispatch); otherwise leave the remainder unpaid so the Cashfree gate
+		// holds dispatch until the webhook confirms it.
+		applied, err := s.payBookingSplit(ctx, booking.ID, customerID, int64(netPaise), req.WalletApplyPaise)
+		if err != nil {
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).Msg("rollback after split wallet debit failed")
+			}
+			return nil, fmt.Errorf("split payment failed: %w", err)
+		}
+		if applied >= int64(netPaise) {
+			// Wallet covered the whole net — treat as wallet-only: stamp paid, dispatch.
+			s.markSplitFullyPaid(ctx, booking.ID)
+		} else {
+			s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise-int(applied))
+			unpaidCashfree = true
+		}
 	default:
 		// Default / "direct" path: stamp payment_method='cashfree' so the
 		// customer-facing bookings list filters this row out until the
@@ -860,6 +1022,12 @@ func (s *Service) CancelBooking(ctx context.Context, bookingID, userID string) (
 	appliedFee, err := s.repo.CancelBookingWithFee(ctx, bookingID, "customer", feeCents, s.walletRepo)
 	if err != nil {
 		return nil, err
+	}
+
+	// Return the wallet portion of an unpaid split booking (the plain refund
+	// rail above only moves money for paid rows). No-ops for non-split rows.
+	if rErr := s.refundSplitWalletOnCancel(ctx, bookingID); rErr != nil {
+		log.Warn().Err(rErr).Str("booking_id", bookingID).Msg("split wallet refund on customer cancel failed")
 	}
 
 	s.analytics.Track(ctx, analytics.EventBookingCancelled, userID, bookingID, map[string]string{
@@ -1331,7 +1499,8 @@ func (s *Service) CreateScheduledBooking(
 	})
 
 	netPaise := totalPriceCents - discountCents
-	if req.PaymentSource == "wallet" {
+	switch req.PaymentSource {
+	case "wallet":
 		if err := s.payBookingFromWallet(ctx, booking.ID, customerID, int64(netPaise)); err != nil {
 			// Rollback after a failed wallet debit: nothing was collected, so
 			// there is no refund to route (nil walletRepo) and fee is 0.
@@ -1344,7 +1513,25 @@ func (s *Service) CreateScheduledBooking(
 			}
 			return nil, fmt.Errorf("wallet payment failed: %w", err)
 		}
-	} else {
+	case "split":
+		// Partial wallet + Cashfree remainder. Scheduled bookings don't
+		// sync-assign — the JIT cron + ClaimDue payment gate (which requires
+		// payment_status='paid' for cashfree rows) holds dispatch until the
+		// webhook confirms the remainder, so no unpaidCashfree flag is needed.
+		// If the wallet covered the whole net, mark it paid so the gate clears.
+		applied, err := s.payBookingSplit(ctx, booking.ID, customerID, int64(netPaise), req.WalletApplyPaise)
+		if err != nil {
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).Msg("rollback after split wallet debit failed")
+			}
+			return nil, fmt.Errorf("split payment failed: %w", err)
+		}
+		if applied >= int64(netPaise) {
+			s.markSplitFullyPaid(ctx, booking.ID)
+		} else {
+			s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise-int(applied))
+		}
+	default:
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
 	}
 
@@ -1523,6 +1710,23 @@ func (s *Service) CreateInstantBookingFromCart(
 		// router treats it as nothing-collected. unpaidCashfree stays false.
 		s.stampBookingCOD(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
+	case "split":
+		// Partial wallet + Cashfree remainder (see CreateBooking's split case).
+		// This entrypoint carries no wallet_apply hint, so apply whatever balance
+		// is available up to net (requestedApply=0).
+		applied, err := s.payBookingSplit(ctx, booking.ID, customerID, int64(netPaise), 0)
+		if err != nil {
+			if _, cancelErr := s.repo.CancelBookingWithFee(ctx, booking.ID, "system", 0, nil); cancelErr != nil {
+				log.Error().Err(cancelErr).Str("booking_id", booking.ID).Msg("rollback after split wallet debit failed")
+			}
+			return nil, fmt.Errorf("split payment failed: %w", err)
+		}
+		if applied >= int64(netPaise) {
+			s.markSplitFullyPaid(ctx, booking.ID)
+		} else {
+			s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise-int(applied))
+			unpaidCashfree = true
+		}
 	default:
 		s.stampBookingDirectPay(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)

@@ -141,7 +141,8 @@ type CreateBookingRequest struct {
 	Lat               float64 `json:"lat" validate:"required,latitude"`
 	Lng               float64 `json:"lng" validate:"required,longitude"`
 	PromoCode         string  `json:"promo_code,omitempty" validate:"omitempty,max=50"`
-	PaymentSource     string  `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod"`
+	PaymentSource     string  `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise  int64   `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // CancelBookingRequest is the input for cancelling a booking.
@@ -181,7 +182,8 @@ type CreateScheduledBookingRequest struct {
 	AddressID     string `json:"address_id"  validate:"required,uuid_format"`
 	TimeSlotID    string `json:"time_slot_id" validate:"required,uuid_format"`
 	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
-	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise int64 `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // CreateInstantBookingRequest is the input for POST /bookings/instant.
@@ -189,7 +191,8 @@ type CreateScheduledBookingRequest struct {
 type CreateInstantBookingRequest struct {
 	AddressID     string `json:"address_id" validate:"required,uuid_format"`
 	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
-	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise int64 `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // MatchStatusResponse is returned by GET /bookings/:id/match-status.
