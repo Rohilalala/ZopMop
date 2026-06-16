@@ -10,7 +10,6 @@ import { setNeedsWelcome } from '../utils/pendingAuthStore';
 import { posthog } from '../config/posthog';
 import { setUser as sentrySetUser } from '../config/sentry';
 import { logout as logoutHTTP, refreshAccessToken, type AuthUser as ServiceAuthUser } from '../services/auth';
-import { setNeedsWelcome } from '../utils/pendingAuthStore';
 
 // MSG91-backed auth state. Two tokens are persisted in expo-secure-store:
 //
