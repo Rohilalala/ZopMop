@@ -1,4 +1,6 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { ApiService } from '../api/services';
+import type { ProTabParamList } from '../navigation/ProNavigator';
 
 export type AuthStackParamList = {
   ZopIntro: undefined;
@@ -23,12 +25,6 @@ export type AuthStackParamList = {
     phone: string;
     name?: string;
   };
-  RoleSelection: {
-    phone: string;
-  };
-  ProOnboarding: {
-    phone: string;
-  };
 };
 
 export type MainStackParamList = {
@@ -47,13 +43,13 @@ export type MainStackParamList = {
   Wallet: undefined;
   // Cashfree Drop Checkout entry point. Pushed from CartScreen when the
   // customer chooses Pay-now (direct) at confirm-booking time.
-  Payment: { booking_id: string; amount_paise: number };
+  Payment: { booking_id: string; amount_paise: number; bookingType: 'instant' | 'scheduled' };
   Offers: undefined;
   HelpSupport: undefined;
   YourExperts: undefined;
   BookingRate: { bookingId: string; helperId?: string; helperName?: string };
   ReportIssue: { bookingId: string; serviceName?: string };
-  InstantMatching: { serviceId: string; serviceName: string };
+  InstantMatching: { serviceId: string; serviceName: string; durationMinutes?: number };
   ActiveBooking: {
     bookingId: string;
     serviceName: string;
@@ -63,8 +59,11 @@ export type MainStackParamList = {
     helperLng?: number;
     etaMinutes: number;
   };
-  /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile). */
-  Pro: undefined;
+  /** Pro umbrella — bottom-tab navigator (Home/Shift/Jobs/Money/Profile).
+   *  Accepts a nested `{ screen }` param so callers can jump to a specific
+   *  pro tab (e.g. `navigate('Pro', { screen: 'ProHome' })`) while keeping
+   *  the tab bar mounted. */
+  Pro: NavigatorScreenParams<ProTabParamList> | undefined;
   /** Legacy single-screen routes kept for back-compat with anything that
    *  still calls navigation.navigate('ProDashboard', ...). They point at
    *  the same components but live on the parent stack so the tab bar
@@ -127,8 +126,7 @@ export type MainStackParamList = {
     paymentLabel?: string;     // e.g. "Paid · GPay" or "Paid · HDFC •••• 4521"
     discountCents?: number;
     promoCode?: string;
-    /** If true, render the instant-booking variant; else scheduled. */
-    instant?: boolean;
+    bookingType: 'instant' | 'scheduled';
     /** Initial ETA (minutes) for the "When" tile on instant bookings. */
     etaMinutes?: number;
   };

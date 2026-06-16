@@ -32,6 +32,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
 import ZopFull from '../../assets/zop/zop-full.svg';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { clearZopHistory, sendZopMessage } from '../services/zopService';
 import ZopChatBubble from './ZopChatBubble';
 import ZopBookingCard, { type ZopBookingData } from './ZopBookingCard';
@@ -169,6 +170,7 @@ async function clearStorage() {
 
 export default function ZopChat({ visible, onClose }: ZopChatProps) {
   const { token } = useAuth();
+  const { isDark, colors: c } = useTheme();
   const sessionIdRef = useRef<string>('');
   const listRef = useRef<FlatList<UIMessage>>(null);
 
@@ -414,8 +416,17 @@ export default function ZopChat({ visible, onClose }: ZopChatProps) {
           animStyle,
         ]}
       >
-        <View style={styles.glass}>
-            {/* Glass background — base gradient */}
+        <View style={[
+          styles.glass,
+          !isDark && {
+            // Near-solid so chat text stays readable over busy content (0.75
+            // let the home screen bleed through too much).
+            backgroundColor: 'rgba(255,255,255,0.985)',
+            borderColor: 'rgba(13,13,15,0.08)',
+          },
+        ]}>
+            {/* Glass background — base gradient (dark only; light uses solid bg) */}
+            {isDark && (
             <Svg
               width="100%"
               height="100%"
@@ -430,22 +441,35 @@ export default function ZopChat({ visible, onClose }: ZopChatProps) {
               </Defs>
               <Rect width="100%" height="100%" fill="url(#zopGlassBg)" />
             </Svg>
+            )}
 
             {/* Floating controls — trash on left, close on right. No header
                 bar, no title. */}
             <Pressable
               onPress={handleClearChat}
               hitSlop={10}
-              style={styles.cornerLeft}
+              style={[
+                styles.cornerLeft,
+                !isDark && {
+                  backgroundColor: 'rgba(13,13,15,0.05)',
+                  borderColor: 'rgba(13,13,15,0.08)',
+                },
+              ]}
             >
-              <Feather name="trash-2" size={16} color="rgba(255,255,255,0.55)" />
+              <Feather name="trash-2" size={16} color={isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.45)'} />
             </Pressable>
             <Pressable
               onPress={onClose}
               hitSlop={10}
-              style={styles.cornerRight}
+              style={[
+                styles.cornerRight,
+                !isDark && {
+                  backgroundColor: 'rgba(13,13,15,0.05)',
+                  borderColor: 'rgba(13,13,15,0.08)',
+                },
+              ]}
             >
-              <Feather name="x" size={18} color="#FFFFFF" />
+              <Feather name="x" size={18} color={isDark ? '#FFFFFF' : c.text} />
             </Pressable>
 
             {/* Messages */}
@@ -538,16 +562,16 @@ export default function ZopChat({ visible, onClose }: ZopChatProps) {
             {/* Input */}
             <View style={styles.inputBar}>
               <TextInput
-                style={styles.input}
+                style={[styles.input, !isDark && { color: c.text }]}
                 placeholder="Ask Zop anything…"
-                placeholderTextColor="rgba(255,255,255,0.35)"
+                placeholderTextColor={isDark ? 'rgba(255,255,255,0.35)' : c.textMuted}
                 value={inputText}
                 onChangeText={setInputText}
                 onSubmitEditing={handleSend}
                 returnKeyType="send"
                 editable={!isTyping}
                 multiline
-                keyboardAppearance="dark"
+                keyboardAppearance={isDark ? 'dark' : 'light'}
               />
               <Pressable
                 onPress={handleSend}

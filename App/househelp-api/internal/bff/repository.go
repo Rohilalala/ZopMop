@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -21,6 +22,7 @@ var (
 	ErrNotFound       = errors.New("config not found")
 	ErrETagMismatch   = errors.New("etag mismatch")
 	ErrInvalidStatus  = errors.New("invalid status transition")
+	ErrConflict       = errors.New("resource already exists")
 )
 
 // ConfigRecord mirrors one row of sdui_page_configs plus a derived ETag.
@@ -237,6 +239,14 @@ func (r *Repository) CreateDraft(ctx context.Context, rec ConfigRecord) (*Config
 	)
 	out, err := scanConfig(row)
 	if err != nil {
+		// (page_id, version, env) is UNIQUE; surface a duplicate-version draft
+		// as a typed conflict so the handler returns 409 instead of leaking a
+		// raw 23505 constraint string to the UI toast. Mirrors
+		// InsertAllowedAction's handling.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("create draft: %w", err)
 	}
 	log.Info().
@@ -257,7 +267,7 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 	if err != nil {
 		return nil, err
 	}
-	if current.Status != string(StatusDraft) {
+	if current.Status != string(StatusDraft) && current.Status != string(StatusArchived) {
 		return nil, ErrInvalidStatus
 	}
 	if ifMatch != "" && ifMatch != current.ETag {
@@ -282,7 +292,9 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 		add("change_notes", *patch.ChangeNotes)
 	}
 	if patch.ExperimentID != nil {
-		add("experiment_id", *patch.ExperimentID)
+		// An empty string is a deliberate "unlink from experiment" — store NULL
+		// so the draft no longer carries an experiment association.
+		add("experiment_id", nullableStr(*patch.ExperimentID))
 	}
 	if len(patch.ConfigJSON) > 0 {
 		add("config_json", patch.ConfigJSON)
@@ -293,7 +305,7 @@ func (r *Repository) UpdateDraft(ctx context.Context, pageID, version, env, ifMa
 	args = append(args, pageID, version, env)
 	q := fmt.Sprintf(
 		`UPDATE sdui_page_configs SET %s
-		   WHERE page_id = $%d AND version = $%d AND env = $%d AND status = 'draft'
+		   WHERE page_id = $%d AND version = $%d AND env = $%d AND status IN ('draft', 'archived')
 		   RETURNING `+configSelectCols,
 		strings.Join(sets, ", "), argN, argN+1, argN+2,
 	)
@@ -312,7 +324,7 @@ func (r *Repository) DeleteDraft(ctx context.Context, pageID, version, env strin
 
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM sdui_page_configs
-		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status = 'draft'`,
+		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status IN ('draft', 'archived')`,
 		pageID, version, env,
 	)
 	if err != nil {
@@ -336,15 +348,16 @@ func (r *Repository) Stage(ctx context.Context, pageID, version, env, actor stri
 	row := r.db.QueryRow(ctx,
 		`UPDATE sdui_page_configs
 		    SET status = 'staged', staged_by = $4, staged_at = now()
-		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status = 'draft'
+		   WHERE page_id = $1 AND version = $2 AND env = $3 AND status IN ('draft', 'archived')
 		   RETURNING `+configSelectCols,
 		pageID, version, env, actor,
 	)
 	out, err := scanConfig(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			// Disambiguate: maybe exists but not draft.
-			if rec, gerr := r.GetByVersion(ctx, pageID, version, env); gerr == nil && rec.Status != string(StatusDraft) {
+			// Disambiguate: exists but not re-stageable (active/staged already).
+			if rec, gerr := r.GetByVersion(ctx, pageID, version, env); gerr == nil &&
+				rec.Status != string(StatusDraft) && rec.Status != string(StatusArchived) {
 				return nil, ErrInvalidStatus
 			}
 			return nil, ErrNotFound
@@ -617,6 +630,12 @@ func (r *Repository) InsertAllowedAction(ctx context.Context, endpoint string, m
 	)
 	var a AllowedActionRecord
 	if err := row.Scan(&a.ID, &a.Endpoint, &a.Methods, &a.IsActive, &a.CreatedBy, &a.CreatedAt); err != nil {
+		// The endpoint column is UNIQUE; surface a duplicate as a typed conflict
+		// so the handler returns 409 instead of leaking a raw 23505 to the UI.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrConflict
+		}
 		return nil, fmt.Errorf("insert allowed action: %w", err)
 	}
 	return &a, nil

@@ -109,6 +109,18 @@ export async function getWorkerJobs(id: string): Promise<Job[]> {
 export async function workerActiveJob(id: string): Promise<{ has_active: boolean; booking_id?: string | null }> {
   return (await api.get<{ has_active: boolean; booking_id?: string | null }>(`/admin/workers/${id}/active-job`)).data;
 }
+
+export interface WorkerPII {
+  aadhaar_number?: string | null;
+  bank_account_number?: string | null;
+  bank_account_holder_name?: string | null;
+  bank_ifsc?: string | null;
+}
+// Superadmin-only, server-audited unmasked PII reveal. The worker detail
+// payload only carries last-4-masked values; full numbers come from here.
+export async function workerPII(id: string): Promise<WorkerPII> {
+  return (await api.get<WorkerPII>(`/admin/workers/${id}/pii`)).data;
+}
 export async function getLivePins(): Promise<LivePin[]> {
   return (await api.get<{ pins: LivePin[] }>('/admin/workers/live')).data.pins;
 }

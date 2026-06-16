@@ -1,11 +1,14 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { SkeletonBox } from '../SkeletonBox';
-import { C } from '../../theme/screen';
+import { useC } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 
 export function CartScreenSkeleton() {
+  const c = useC();
+  const { isDark } = useTheme();
   return (
-    <View style={s.root}>
+    <View style={[s.root, { backgroundColor: c.bg }]}>
       <SkeletonBox width="35%" height={11} borderRadius={4} style={s.sectionHeader} />
       <View style={s.card}>
         <View style={s.row}>
@@ -45,7 +48,7 @@ export function CartScreenSkeleton() {
           <SkeletonBox width="38%" height={12} borderRadius={5} />
           <SkeletonBox width="18%" height={12} borderRadius={5} />
         </View>
-        <View style={[s.billRow, s.totalRow]}>
+        <View style={[s.billRow, s.totalRow, { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
           <SkeletonBox width="28%" height={14} borderRadius={5} />
           <SkeletonBox width="22%" height={16} borderRadius={5} />
         </View>
@@ -55,7 +58,7 @@ export function CartScreenSkeleton() {
 }
 
 const s = StyleSheet.create({
-  root: { paddingTop: 4, backgroundColor: C.bg, flex: 1 },
+  root: { paddingTop: 4, flex: 1 },
   sectionHeader: { marginHorizontal: 24, marginTop: 22, marginBottom: 12 },
   card: {
     marginHorizontal: 20,
@@ -66,7 +69,7 @@ const s = StyleSheet.create({
   billRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
   totalRow: {
     paddingTop: 12, marginTop: 6,
-    borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: 'rgba(255,255,255,0.08)',
+    borderTopWidth: 1, borderStyle: 'dashed',
   },
 });
 

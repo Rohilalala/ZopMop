@@ -24,7 +24,7 @@ export const api = axios.create({
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   // Refresh proactively if near expiry — but never for the auth endpoints
   // themselves (login/refresh/logout would recurse / don't carry a token).
-  if (!(config.url ?? '').includes('/admin/auth/')) {
+  if (!isAuthBootstrapEndpoint(config.url ?? '')) {
     await ensureFreshToken();
   }
   const token = getAccessToken();
@@ -35,12 +35,31 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+// Endpoints that must NOT carry a Bearer token / trigger refresh-on-401:
+// login, TOTP verify, the refresh call itself, and logout. The authed
+// `/admin/auth/sessions` routes are NOT in this set — they need the token and
+// the 401-retry like any other authed endpoint, otherwise the Sessions page
+// silently dies the moment the access token expires.
+function isAuthBootstrapEndpoint(url: string): boolean {
+  return /\/admin\/auth\/(login|totp|refresh|logout)\b/.test(url);
+}
+
 // Silent refresh on 401. Single-flight: concurrent 401s share one /refresh
 // call so we don't race the cookie rotation.
 let refreshInFlight: Promise<string | null> | null = null;
 
+// Logout epoch. Bumped on explicit sign-out so a /refresh that was already
+// in flight (e.g. fired by a 401 just before the user clicked Sign Out) can
+// detect it resolved after logout and discard its result instead of silently
+// re-authenticating the user.
+let logoutEpoch = 0;
+export function markLoggedOut(): void {
+  logoutEpoch += 1;
+}
+
 async function silentRefresh(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
+  const startedEpoch = logoutEpoch;
   refreshInFlight = (async () => {
     // Up to 4 attempts. 429 (rate-limited) and transient network/5xx errors
     // are retried with exponential backoff and NEVER clear the session — a
@@ -48,19 +67,37 @@ async function silentRefresh(): Promise<string | null> {
     // definitive auth failure (401/403 = refresh cookie invalid/expired)
     // clears the session and sends the SPA to /login.
     const backoffMs = [2_000, 4_000, 8_000];
+    let raceRetried = false;
     try {
       for (let attempt = 0; ; attempt++) {
         try {
           const res = await axios.post(
             `${baseURL}/admin/auth/refresh`,
             {},
-            { withCredentials: true },
+            // Bare axios.post() has no default timeout (0 = wait forever). Every
+            // request awaits this, so a stalled /refresh would freeze the whole
+            // CRM. Cap it like the shared `api` instance does.
+            { withCredentials: true, timeout: 20_000 },
           );
+          // If the user signed out while this refresh was in flight, do not
+          // re-authenticate them — discard the freshly-minted session.
+          if (logoutEpoch !== startedEpoch) return null;
           const { access_token, expires_at, admin } = res.data;
           useAuth.getState().setSession(access_token, expires_at, admin);
           return access_token as string;
         } catch (err) {
           const status = (err as AxiosError).response?.status;
+          // 409 = benign multi-tab rotation race. The winning tab just
+          // rotated the shared cookie; retry once after a short delay to
+          // pick up the fresh cookie. Never clear the session.
+          if (status === 409) {
+            if (!raceRetried) {
+              raceRetried = true;
+              await sleep(500);
+              continue;
+            }
+            return null; // stay logged in; caller fails soft, next request recovers
+          }
           if (status === 401 || status === 403) {
             useAuth.getState().clear();
             return null;
@@ -95,7 +132,7 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
     const url = original?.url ?? '';
-    const isAuthEndpoint = url.includes('/admin/auth/');
+    const isAuthEndpoint = isAuthBootstrapEndpoint(url);
     const status = error.response?.status;
 
     if (status === 401 && !original?._retry && !isAuthEndpoint) {

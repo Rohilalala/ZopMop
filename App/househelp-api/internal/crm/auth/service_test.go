@@ -188,10 +188,13 @@ func TestRefresh_GraceWindow(t *testing.T) {
 		t.Fatalf("first refresh failed: %v", err)
 	}
 
-	// Replay the same plaintext within the grace window.
+	// Replay the same plaintext within the grace window. This is a benign
+	// rotation race (the successor cookie was just issued), so the service
+	// returns ErrSessionRotationRace — NOT ErrSessionExpired — so the client
+	// keeps its fresh cookie instead of being logged out.
 	_, err := svc.Refresh(context.Background(), plaintext, "ua", "127.0.0.1", "req-2")
-	if !errors.Is(err, ErrSessionExpired) {
-		t.Fatalf("grace-window replay should return ErrSessionExpired, got %v", err)
+	if !errors.Is(err, ErrSessionRotationRace) {
+		t.Fatalf("grace-window replay should return ErrSessionRotationRace, got %v", err)
 	}
 
 	// Family must NOT be killed (no replay_detected_at on old row).
@@ -264,7 +267,7 @@ func TestRefresh_ConcurrentRotate(t *testing.T) {
 	var (
 		wg        sync.WaitGroup
 		successes atomic.Int64
-		expired   atomic.Int64
+		races     atomic.Int64
 		other     atomic.Int64
 	)
 	for i := 0; i < N; i++ {
@@ -275,8 +278,8 @@ func TestRefresh_ConcurrentRotate(t *testing.T) {
 			switch {
 			case err == nil:
 				successes.Add(1)
-			case errors.Is(err, ErrSessionExpired):
-				expired.Add(1)
+			case errors.Is(err, ErrSessionRotationRace):
+				races.Add(1)
 			default:
 				other.Add(1)
 			}
@@ -284,12 +287,15 @@ func TestRefresh_ConcurrentRotate(t *testing.T) {
 	}
 	wg.Wait()
 
+	// Exactly one goroutine wins the CAS rotation; the rest lose it (or read
+	// the row already-rotated within the grace window) and get the benign
+	// ErrSessionRotationRace — never ErrSessionExpired, never a hard error.
 	if successes.Load() != 1 {
-		t.Fatalf("expected exactly 1 successful refresh, got successes=%d expired=%d other=%d",
-			successes.Load(), expired.Load(), other.Load())
+		t.Fatalf("expected exactly 1 successful refresh, got successes=%d races=%d other=%d",
+			successes.Load(), races.Load(), other.Load())
 	}
-	if expired.Load() != N-1 {
-		t.Fatalf("expected %d ErrSessionExpired, got %d", N-1, expired.Load())
+	if races.Load() != N-1 {
+		t.Fatalf("expected %d ErrSessionRotationRace, got %d", N-1, races.Load())
 	}
 	if other.Load() != 0 {
 		t.Fatalf("unexpected non-sentinel errors: %d", other.Load())

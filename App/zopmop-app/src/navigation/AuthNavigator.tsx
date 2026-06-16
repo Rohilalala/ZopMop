@@ -9,16 +9,22 @@ import PhoneEntryScreen from '../screens/auth/PhoneEntryScreen';
 import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
 import NameEntryScreen from '../screens/auth/NameEntryScreen';
 import WelcomeScreen from '../screens/auth/WelcomeScreen';
-import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
-import ProOnboardingScreen from '../screens/pro/ProOnboardingScreen';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
-export default function AuthNavigator() {
+type AuthNavigatorProps = {
+  // When an already-authenticated customer still has no name, the app keeps
+  // this navigator mounted and opens it straight on NameEntry instead of the
+  // cold onboarding start (ZopIntro). See App.tsx `needsName`.
+  needsName?: boolean;
+  phone?: string;
+};
+
+export default function AuthNavigator({ needsName = false, phone }: AuthNavigatorProps) {
   return (
     <Stack.Navigator
-      initialRouteName="ZopIntro"
-      screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: '#0A0A0A' } }}
+      initialRouteName={needsName ? 'NameEntry' : 'ZopIntro'}
+      screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: '#FAF7F2' } }}
     >
       <Stack.Screen
         name="ZopIntro"
@@ -46,21 +52,12 @@ export default function AuthNavigator() {
         name="NameEntry"
         component={NameEntryScreen}
         options={{ animation: 'slide_from_right' }}
+        initialParams={{ phone: phone ?? '' }}
       />
       <Stack.Screen
         name="Welcome"
         component={WelcomeScreen}
         options={{ animation: 'fade' }}
-      />
-      <Stack.Screen
-        name="RoleSelection"
-        component={RoleSelectionScreen}
-        options={{ animation: 'slide_from_right' }}
-      />
-      <Stack.Screen
-        name="ProOnboarding"
-        component={ProOnboardingScreen}
-        options={{ animation: 'slide_from_right' }}
       />
     </Stack.Navigator>
   );

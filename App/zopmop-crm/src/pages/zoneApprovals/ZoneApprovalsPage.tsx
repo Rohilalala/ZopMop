@@ -13,7 +13,7 @@ import {
 import { Drawer } from '@/components/ui/Drawer';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { GoogleMapWrapper } from '@/components/maps/GoogleMapWrapper';
 import { usePermission } from '@/auth/usePermission';
 
@@ -58,6 +58,8 @@ export function ZoneApprovalsPage() {
 
       {q.isLoading ? (
         <Card><Skeleton className="h-40" /></Card>
+      ) : q.isError ? (
+        <Card><ErrorState title="Could not load zone approvals" onRetry={() => q.refetch()} /></Card>
       ) : items.length === 0 ? (
         <Card>
           <EmptyState

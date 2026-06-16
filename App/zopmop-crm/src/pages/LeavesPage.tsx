@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, ExternalLink, Loader2 } from 'lucide-react';
@@ -10,7 +10,7 @@ import {
   type LeaveRow,
   type ReassignmentOutcome,
 } from '@/api/leaves';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { showToast } from '@/components/ui/Toast';
 
 const OUTCOME_TONE: Record<ReassignmentOutcome, 'success' | 'warning' | 'danger' | 'neutral'> = {
@@ -27,6 +27,10 @@ const OUTCOME_LABEL: Record<ReassignmentOutcome, string> = {
   none: 'None',
 };
 
+// Full canonical UUID. The leaves endpoint casts pro_id to ::uuid, so a
+// partial string (every keystroke) would 500. Only send a complete UUID.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
@@ -42,12 +46,21 @@ export function LeavesPage() {
   const [to, setTo] = useState('');
   const [proIdFilter, setProIdFilter] = useState('');
 
+  // Debounce + validate: only query with pro_id once the input is a complete
+  // UUID, so partial keystrokes never hit the ::uuid cast (500 + toast spam).
+  const [debouncedProId, setDebouncedProId] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedProId(proIdFilter.trim()), 300);
+    return () => clearTimeout(t);
+  }, [proIdFilter]);
+  const validProId = UUID_RE.test(debouncedProId) ? debouncedProId : undefined;
+
   const leavesQ = useQuery({
-    queryKey: ['leaves', { from, to, proIdFilter }],
+    queryKey: ['leaves', { from, to, validProId }],
     queryFn: () => listLeaves({
       from: from || undefined,
       to: to || undefined,
-      pro_id: proIdFilter || undefined,
+      pro_id: validProId,
       limit: 100,
     }),
     placeholderData: keepPreviousData,
@@ -55,8 +68,8 @@ export function LeavesPage() {
   });
 
   const balancesQ = useQuery({
-    queryKey: ['leaves', 'balances', proIdFilter],
-    queryFn: () => getBalances(proIdFilter || undefined),
+    queryKey: ['leaves', 'balances', validProId],
+    queryFn: () => getBalances(validProId),
   });
 
   // Map pro_id → balance, for inline lookup in the action column.
@@ -111,6 +124,8 @@ export function LeavesPage() {
       <Card className="!p-0 overflow-hidden">
         {leavesQ.isLoading ? (
           <div className="p-5"><Skeleton className="h-32" /></div>
+        ) : leavesQ.isError ? (
+          <ErrorState title="Could not load leaves" onRetry={() => leavesQ.refetch()} />
         ) : (leavesQ.data?.items.length ?? 0) === 0 ? (
           <EmptyState title="No leaves found" body="Try widening the date range." />
         ) : (
@@ -162,7 +177,7 @@ function Row({ row, balance }: { row: LeaveRow; balance?: LeaveBalance }) {
               {row.cancelled_booking_ids.map((bid) => (
                 <Link
                   key={bid}
-                  to={`/orders?id=${bid}`}
+                  to={`/orders/${bid}`}
                   className="inline-flex items-center gap-1 text-[11px] text-danger hover:underline"
                 >
                   <ExternalLink className="w-3 h-3" />

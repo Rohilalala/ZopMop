@@ -8,8 +8,9 @@
 // Idle state still floats up/down on its own.
 
 import React, { useEffect, useMemo } from 'react';
-import { View, Text, type TextStyle } from 'react-native';
+import { View, Text, type TextStyle, type LayoutChangeEvent } from 'react-native';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -20,12 +21,19 @@ import Animated, {
 } from 'react-native-reanimated';
 import { GlassCard } from './GlassCard';
 import { ZopFlyer } from './ZopFlyer';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontBold: TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
 type Props = {
   name?: string;
+  /** SDUI override for the kicker line; falls back to the time-of-day greeting. */
+  greeting?: string;
+  /** SDUI override for the headline; joined with newlines. Falls back to time-of-day copy. */
+  titleLines?: string[];
+  /** When false, the Zop mascot is hidden. Defaults to shown. */
+  showMascot?: boolean;
   /** Egg translate X in px. */
   eggTranslateX?: SharedValue<number>;
   /** Egg translate Y in px. Added to the idle bob. */
@@ -40,6 +48,10 @@ type Props = {
   winkProgress?: SharedValue<number>;
   /** When false, Zop renders body-only (no eyes/mouth). */
   showFace?: boolean;
+  /** Ref to the root view so a parent can measureInWindow() the card. */
+  viewRef?: React.Ref<View>;
+  /** Forwarded to the root view (so the parent can re-measure on layout). */
+  onLayout?: (e: LayoutChangeEvent) => void;
 };
 
 function greetingFor(name?: string) {
@@ -68,6 +80,9 @@ function headlineFor(): string {
 
 export function HomeHero({
   name,
+  greeting,
+  titleLines,
+  showMascot,
   eggTranslateX,
   eggTranslateY,
   eggScale,
@@ -75,19 +90,34 @@ export function HomeHero({
   eyeOpacity,
   winkProgress,
   showFace = true,
+  viewRef,
+  onLayout,
 }: Props) {
-  const kicker = useMemo(() => greetingFor(name), [name]);
-  const headline = useMemo(() => headlineFor(), []);
+  const { isDark, colors: c } = useTheme();
+  const kicker = useMemo(() => greeting ?? greetingFor(name), [greeting, name]);
+  const headline = useMemo(() => (titleLines && titleLines.length ? titleLines.join('\n') : headlineFor()), [titleLines]);
 
-  // Idle bob — always running.
+  // Idle bob. Re-armed FROM REST (0) whenever the mascot (re)appears. After a
+  // carousel refresh the mascot remounts; we want the hover to RESUME from the
+  // fly's landing point (rest), not jump to an arbitrary mid-bob phase.
   const float = useSharedValue(0);
   useEffect(() => {
+    if (showMascot === false) {
+      // Park at rest while hidden. Leaving the repeat running meant the first
+      // frame after re-show could paint at a stale mid-bob phase (≤6px off the
+      // overlay's landing point) before this effect re-armed — the handoff
+      // jitter. Cancel + zero so re-show ALWAYS starts exactly at rest.
+      cancelAnimation(float);
+      float.value = 0;
+      return;
+    }
+    float.value = 0;
     float.value = withRepeat(
       withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.sin) }),
       -1,
       true,
     );
-  }, []);
+  }, [showMascot]);
 
   // Fallback shared values when the parent doesn't drive the easter egg.
   const noTransX  = useSharedValue(0);
@@ -118,36 +148,38 @@ export function HomeHero({
   const winkRef = useDerivedValue(() => wP.value);
 
   return (
-    <View style={{ marginHorizontal: 20, marginTop: 14 }}>
+    <View ref={viewRef} onLayout={onLayout} style={{ marginHorizontal: 20, marginTop: 14 }}>
       <GlassCard radius={28} hero style={{ padding: 22 }}>
         {/* Zop mascot — animatable for the pull-to-refresh easter egg */}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            containerStyle,
-            {
-              position: 'absolute',
-              top: -6,
-              right: -14,
-              width: 130,
-              height: 130,
-              zIndex: 5,
-            },
-          ]}
-        >
-          <ZopFlyer
-            eyeOpacity={eyeRef}
-            winkProgress={winkRef}
-            showFace={showFace}
-          />
-        </Animated.View>
+        {showMascot !== false ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              containerStyle,
+              {
+                position: 'absolute',
+                top: -6,
+                right: -14,
+                width: 130,
+                height: 130,
+                zIndex: 5,
+              },
+            ]}
+          >
+            <ZopFlyer
+              eyeOpacity={eyeRef}
+              winkProgress={winkRef}
+              showFace={showFace}
+            />
+          </Animated.View>
+        ) : null}
 
         <Text
           style={[
             fontBold,
             {
               fontSize: 11,
-              color: '#F5A300',
+              color: c.accentOnSurface,
               letterSpacing: 1.2,
               textTransform: 'uppercase',
             },
@@ -162,7 +194,7 @@ export function HomeHero({
             {
               fontSize: 26,
               lineHeight: 30,
-              color: '#FFFFFF',
+              color: isDark ? '#FFFFFF' : c.text,
               letterSpacing: -0.6,
               marginTop: 6,
               maxWidth: 240,

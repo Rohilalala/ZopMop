@@ -20,6 +20,15 @@ export interface CapturedPhoto {
   sizeBytes: number;
 }
 
+// The backend mounts Fiber with a 4 MB BodyLimit (cmd/api/main.go). The
+// selfie is sent inline as base64 inside a JSON body, so the raw image
+// must stay well under that after the ~33% base64 expansion + JSON
+// overhead. Cap the raw bytes at ~2.6 MB so the encoded payload lands
+// safely below 4 MB. (Proper ~1080px downscale via expo-image-manipulator
+// is deferred — that module isn't in the binary and adding it needs a
+// native prebuild.)
+const MAX_SELFIE_BYTES = 2_600_000;
+
 /**
  * Returns a captured selfie or null. Handles the permission prompt and
  * the cancellation path. Rejected permissions trigger a settings-deeplink
@@ -34,7 +43,9 @@ export async function captureSelfieForApproval(): Promise<CapturedPhoto | null> 
   }
 
   const result = await ImagePicker.launchCameraAsync({
-    quality: 0.6,
+    // Lower quality (0.4) shrinks the JPEG so a high-res front camera is
+    // far less likely to exceed the backend BodyLimit and 413.
+    quality: 0.4,
     base64: true,
     allowsEditing: false,
     cameraType: ImagePicker.CameraType.front,
@@ -50,6 +61,14 @@ export async function captureSelfieForApproval(): Promise<CapturedPhoto | null> 
   const dataUrl = `data:${mime};base64,${base64}`;
   // base64 expands the source by ~33% — bytes ≈ base64.length × 3/4.
   const sizeBytes = Math.floor((base64.length * 3) / 4);
+
+  // Guard against the 413: if the still-large image would blow the
+  // BodyLimit, fail with a clear message instead of a confusing network
+  // error after the POST is rejected server-side.
+  if (sizeBytes > MAX_SELFIE_BYTES) {
+    Alert.alert(t('zoneApproval.photoRequired'), t('zoneApproval.photoTooLarge'));
+    return null;
+  }
 
   return { uri: asset.uri, dataUrl, sizeBytes };
 }

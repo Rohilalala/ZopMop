@@ -38,6 +38,9 @@ export interface GoOnlineResult {
   location_ok: boolean;
   requires_manual_approval: boolean;
   distance_meters?: number;
+  // A zone-approval request is already queued — route to the waiting
+  // state instead of asking for another selfie (resubmit 409s).
+  approval_pending?: boolean;
 }
 
 export interface FortnightProgress {

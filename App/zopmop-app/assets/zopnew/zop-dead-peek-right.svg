@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zopnew/zop-dead-peek-right.svg — one X, peeking right -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395.32 395.32" fill="none">
+  <path d="M178.1,26.44c1.39-5.53,10.07-5.53,11.46,0,24.18,96.14,68.9,141.13,165.61,165.5,5.53,1.39,5.53,10.05,0,11.44-96.73,24.37-141.45,69.36-165.61,165.5-1.39,5.53-10.07,5.53-11.46,0-24.18-96.14-68.9-141.15-165.59-165.5-5.53-1.39-5.53-10.05,0-11.44,96.72-24.37,141.44-69.36,165.6-165.5h-.01Z" fill="#FFBA03"/>
+  <path d="M149 137 L 175 163 M175 137 L 149 163" stroke="#1F1F1F" stroke-width="11" stroke-linecap="round"/><circle cx="234" cy="150" r="20" fill="#FFF" stroke="#1F1F1F" stroke-width="5.5"/><circle cx="241" cy="153" r="8" fill="#1F1F1F"/><circle cx="238.4" cy="150.4" r="2.6" fill="#FFF"/><line x1="172" y1="240" x2="216" y2="240" stroke="#1F1F1F" stroke-width="12" stroke-linecap="round"/>
+</svg>

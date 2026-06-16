@@ -81,10 +81,12 @@ type BookingDetailHelper struct {
 // per-service status. display_order is the canonical sort key for the
 // task checklist UI.
 type BookingDetailService struct {
+	ID              string     `json:"id"` // booking_services row PK — the pro app's per-service start/complete/skip calls key on this
 	ServiceID       string     `json:"service_id"`
 	ServiceName     string     `json:"service_name"`
 	DurationMinutes int        `json:"duration_minutes"`
 	PricePaise      int        `json:"price_paise"`
+	Quantity        int        `json:"quantity"`
 	Status          string     `json:"status"` // pending | in_progress | completed | skipped
 	DisplayOrder    int        `json:"display_order"`
 	StartedAt       *time.Time `json:"started_at,omitempty"`

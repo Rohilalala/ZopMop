@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, type TextStyle } from 'react-native';
 import { PressFx } from './PressFx';
+import { useColors } from '../../context/ThemeContext';
 
 type Props = {
   title?: string;
@@ -12,6 +13,7 @@ type Props = {
 };
 
 export function Header({ title, subtitle, onBack, trailing, large = false, className = '' }: Props) {
+  const c = useColors();
   const titleStyle: TextStyle = {
     fontFamily: large ? 'PlusJakartaSans_700Bold' : 'PlusJakartaSans_600SemiBold',
   };
@@ -32,7 +34,7 @@ export function Header({ title, subtitle, onBack, trailing, large = false, class
               height: 9,
               borderLeftWidth: 2,
               borderBottomWidth: 2,
-              borderColor: '#111827',
+              borderColor: c.text,
               transform: [{ rotate: '45deg' }],
               marginLeft: 4,
             }}

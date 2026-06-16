@@ -4,6 +4,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useColors } from '../../context/ThemeContext';
 
 type Props = {
   size?: 'small' | 'large';
@@ -13,9 +14,11 @@ type Props = {
 
 export function LoadingBars({
   size = 'small',
-  color = '#FFFFFF',
+  color,
   style,
 }: Props) {
+  const themeColors = useColors();
+  const resolvedColor = color ?? themeColors.primary;
   const dim =
     size === 'large'
       ? { w: 4, h: 22, gap: 5 }
@@ -64,7 +67,7 @@ export function LoadingBars({
         width: dim.w,
         height: dim.h,
         borderRadius: dim.w / 2,
-        backgroundColor: color,
+        backgroundColor: resolvedColor,
         marginHorizontal: dim.gap / 2,
         opacity: val,
       }}

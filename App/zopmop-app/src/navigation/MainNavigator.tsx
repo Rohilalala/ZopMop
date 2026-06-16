@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../types/navigation';
 import { BottomTabBar } from '../components/home/BottomTabBar';
@@ -30,6 +30,7 @@ import JobOfferScreen from '../screens/pro/JobOfferScreen';
 import JobDetailScreen from '../screens/pro/JobDetailScreen';
 import ProNavigator from './ProNavigator';
 import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
+import { IosZopButton } from '../components/home/IosZopButton';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
 import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
@@ -43,6 +44,7 @@ import ReferralEarnScreen from '../screens/main/ReferralEarnScreen';
 import ReferralInviteScreen from '../screens/main/ReferralInviteScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { ROOMIES_ENABLED } from '../config/features';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
@@ -106,7 +108,13 @@ export default function MainNavigator() {
         <Stack.Screen
           name="ServiceAbout"
           component={ServiceAboutScreen}
-          options={{ animation: 'slide_from_bottom' }}
+          options={{
+            // Renders as a bottom sheet over the dimmed catalog — keep the
+            // previous screen visible behind and let the sheet animate itself.
+            presentation: 'transparentModal',
+            animation: 'fade',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
         />
         <Stack.Screen
           name="Cart"
@@ -216,31 +224,35 @@ export default function MainNavigator() {
           component={JobDetailScreen}
           options={{ animation: 'slide_from_right' }}
         />
-        <Stack.Screen
-          name="RoomiesSetup"
-          component={RoomiesSetupScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesCodeShare"
-          component={RoomiesCodeShareScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesJoin"
-          component={RoomiesJoinScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesWelcome"
-          component={RoomiesWelcomeScreen}
-          options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="ManageHousehold"
-          component={ManageHouseholdScreen}
-          options={{ animation: 'slide_from_bottom' }}
-        />
+        {ROOMIES_ENABLED && (
+          <>
+            <Stack.Screen
+              name="RoomiesSetup"
+              component={RoomiesSetupScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesCodeShare"
+              component={RoomiesCodeShareScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesJoin"
+              component={RoomiesJoinScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesWelcome"
+              component={RoomiesWelcomeScreen}
+              options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
+            />
+            <Stack.Screen
+              name="ManageHousehold"
+              component={ManageHouseholdScreen}
+              options={{ animation: 'slide_from_bottom' }}
+            />
+          </>
+        )}
         <Stack.Screen
           name="BookingConfirmed"
           component={BookingConfirmedScreen}
@@ -272,7 +284,9 @@ export default function MainNavigator() {
           options={{ gestureEnabled: false, animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
-      <PersistentTabBar />
+      {/* iOS: native UITabBar (TabsNavigator) + an independent floating Zop
+          button. Android: the custom branded bar (Zop mascot lives in it). */}
+      {Platform.OS === 'ios' ? <IosZopButton /> : <PersistentTabBar />}
       <ZoneDriftOverlay />
       </View>
     </CartProvider>

@@ -40,7 +40,7 @@ export function FlagsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['flags'] });
       qc.invalidateQueries({ queryKey: ['snapshots'] });
-      showToast({ kind: 'success', message: 'Flag updated. Changes propagate within 60 seconds.' });
+      showToast({ kind: 'success', message: 'Flag value saved (and snapshotted for rollback).' });
       setPending(null);
     },
     onError: () => {
@@ -54,7 +54,9 @@ export function FlagsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Feature Flags</h1>
           <p className="text-sm text-text-secondary mt-1">
-            Toggle behaviour without a deploy. Every change is snapshotted for rollback.
+            Values are stored and snapshotted for rollback. Note: these flags are not yet
+            wired into the live app config (config_manager / app_config) — changes here do
+            not affect production behaviour until that integration ships.
           </p>
         </div>
         <button className="btn-ghost" onClick={() => setSnapsOpen(true)}>
@@ -110,7 +112,8 @@ export function FlagsPage() {
               <code className="font-mono text-text-primary">{JSON.stringify(pending?.next)}</code>
             </p>
             <p className="text-xs text-text-muted">
-              Changes propagate to the user app within 60 seconds. Reversible from history.
+              Saved to the flag store and reversible from history. Not yet consumed by the
+              live app engine — this does not change production behaviour.
             </p>
           </div>
         }

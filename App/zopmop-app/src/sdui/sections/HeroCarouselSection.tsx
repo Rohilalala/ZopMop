@@ -31,7 +31,6 @@ export function HeroCarouselSection({ data, onAction, height }: Props) {
               cta: slide.cta,
               bg: slide.bg,
               accent: slide.accent,
-              emoji: slide.emoji,
               onPress: slide.action ? () => onAction(slide.action) : undefined,
             }}
           />

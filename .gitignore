@@ -86,3 +86,12 @@ App/zopmop-crm/tsconfig.tsbuildinfo
 # PostHog wizard setup reports
 **/posthog-setup-report.md
 zopmop-pr7-review.patch
+
+# Generated code-graph analysis output (graphify) — regenerable, large
+/graphify-out/
+
+# Playwright-MCP browser session artifacts (snapshots, console logs)
+/.playwright-mcp/
+
+# JetBrains IDE project config (machine/user-specific)
+/.idea/

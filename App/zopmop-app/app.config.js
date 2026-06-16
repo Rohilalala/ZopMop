@@ -52,6 +52,8 @@ module.exports = ({ config }) => ({
   },
   plugins: [
     ...(config.plugins ?? []),
+    // Native bottom tab bar (real UITabBar / liquid-glass on iOS 26).
+    'react-native-bottom-tabs',
     [
       'react-native-maps',
       {

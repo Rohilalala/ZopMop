@@ -178,6 +178,12 @@ func (h *JobsHandler) Arrived(c *fiber.Ctx) error {
 				"code":  "OUTSIDE_ARRIVED_RADIUS",
 			})
 		}
+		// Stale/duplicate Arrived tap (booking already advanced past
+		// 'accepted', reassigned, or cancelled) — 409 like the sibling
+		// EnRoute path, so the app retry-storm + "backend down" never fires.
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to mark arrived"})
 	}
 	return c.JSON(fiber.Map{"message": "arrived"})
@@ -190,6 +196,9 @@ func (h *JobsHandler) Start(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"message": "in_progress"})
@@ -202,6 +211,9 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 	}
 	helperID, _ := c.Locals("userID").(string)
 	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	// Read back the earnings snapshot for the response.
@@ -315,6 +327,8 @@ func mapAcceptError(c *fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, ErrAlreadyAccepted), errors.Is(err, ErrBookingNotPending):
 		status, message = fiber.StatusConflict, "booking already accepted by another helper"
+	case errors.Is(err, ErrHelperAtMaxActive):
+		status, message = fiber.StatusConflict, "you already have the maximum number of active jobs"
 	case errors.Is(err, ErrTooFarAway):
 		status, message = fiber.StatusBadRequest, "too far from booking location"
 	case err != nil && err.Error() == "booking not found":
@@ -446,13 +460,13 @@ func (s *Service) MarkBookingServiceSkipped(ctx context.Context, bookingID, serv
 		UPDATE booking_services
 		   SET status      = 'skipped',
 		       completed_at = COALESCE(completed_at, now()),
-		       skip_reason  = NULLIF($5, '')
+		       skip_reason  = NULLIF($4, '')
 		 WHERE id = $1 AND booking_id = $2
 		   AND EXISTS (
 		       SELECT 1 FROM bookings b
-		        WHERE b.id = $2 AND b.helper_id = $4 AND b.status IN ('accepted','arrived','in_progress')
+		        WHERE b.id = $2 AND b.helper_id = $3 AND b.status IN ('accepted','arrived','in_progress')
 		   )
-	`, serviceLineID, bookingID, "skipped", helperID, reason)
+	`, serviceLineID, bookingID, helperID, reason)
 	if err != nil {
 		return fmt.Errorf("skip booking_service: %w", err)
 	}

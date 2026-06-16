@@ -40,7 +40,14 @@ type PushMsg struct {
 	ScheduledAt    *time.Time `json:"scheduled_at,omitempty"`
 	SentAt         *time.Time `json:"sent_at,omitempty"`
 	Status         string     `json:"status"`
-	CreatedAt      time.Time  `json:"created_at"`
+	// Delivery stats written by SendPush (migrations 044/045). Without these
+	// the SPA's Sent/Delivered/Failed line and the failure reason were always
+	// undefined — operators retried sent/failed pushes blind.
+	SentCount      int       `json:"sent_count"`
+	DeliveredCount int       `json:"delivered_count"`
+	FailedCount    int       `json:"failed_count"`
+	ErrorMessage   *string   `json:"error_message,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type PushCreateRequest struct {
@@ -72,11 +79,11 @@ type LostUserCampaign struct {
 // ── Loyalty ────────────────────────────────────────────────────────────
 
 type LoyaltyConfig struct {
-	IsEnabled            bool            `json:"is_enabled"`
-	PointsPer100INR      int             `json:"points_per_100_inr"`
-	PointsPerRedeemINR   int             `json:"points_per_redeem_inr"`
-	BonusRules           json.RawMessage `json:"bonus_rules"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	IsEnabled          bool            `json:"is_enabled"`
+	PointsPer100INR    int             `json:"points_per_100_inr"`
+	PointsPerRedeemINR int             `json:"points_per_redeem_inr"`
+	BonusRules         json.RawMessage `json:"bonus_rules"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // ── Waitlist ───────────────────────────────────────────────────────────
@@ -134,7 +141,8 @@ func (s *Service) ListPush(ctx context.Context, limit int) ([]PushMsg, error) {
 	}
 	rows, err := s.read.Query(ctx, `
 		SELECT id::text, title, body, image_url, deep_link, target_kind,
-		       estimated_reach, scheduled_at, sent_at, status, created_at
+		       estimated_reach, scheduled_at, sent_at, status,
+		       sent_count, delivered_count, failed_count, error_message, created_at
 		FROM crm_push_messages ORDER BY created_at DESC LIMIT $1
 	`, limit)
 	if err != nil {
@@ -145,7 +153,8 @@ func (s *Service) ListPush(ctx context.Context, limit int) ([]PushMsg, error) {
 	for rows.Next() {
 		var m PushMsg
 		if err := rows.Scan(&m.ID, &m.Title, &m.Body, &m.ImageURL, &m.DeepLink, &m.TargetKind,
-			&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status, &m.CreatedAt); err != nil {
+			&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status,
+			&m.SentCount, &m.DeliveredCount, &m.FailedCount, &m.ErrorMessage, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -212,10 +221,12 @@ func (s *Service) GetPush(ctx context.Context, id string) (*PushMsg, error) {
 	var m PushMsg
 	err := s.read.QueryRow(ctx, `
 		SELECT id::text, title, body, image_url, deep_link, target_kind,
-		       estimated_reach, scheduled_at, sent_at, status, created_at
+		       estimated_reach, scheduled_at, sent_at, status,
+		       sent_count, delivered_count, failed_count, error_message, created_at
 		FROM crm_push_messages WHERE id = $1::uuid
 	`, id).Scan(&m.ID, &m.Title, &m.Body, &m.ImageURL, &m.DeepLink, &m.TargetKind,
-		&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status, &m.CreatedAt)
+		&m.EstimatedReach, &m.ScheduledAt, &m.SentAt, &m.Status,
+		&m.SentCount, &m.DeliveredCount, &m.FailedCount, &m.ErrorMessage, &m.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("not found")
 	}
@@ -239,8 +250,29 @@ func (s *Service) SendPush(ctx context.Context, id string) error {
 		return fmt.Errorf("push is %s, cannot resend", msg.Status)
 	}
 
+	// Claim the row BEFORE dispatching so two concurrent dispatchers can't both
+	// deliver. The CAS to 'sending' is the authoritative dedup: the loser sees
+	// RowsAffected==0 and aborts before any FCM call. The terminal status is
+	// written after dispatch (WHERE status='sending').
+	claim, err := s.write.Exec(ctx, `
+		UPDATE crm_push_messages
+		SET status='sending'
+		WHERE id = $1::uuid AND status IN ('draft','scheduled')
+	`, id)
+	if err != nil {
+		return fmt.Errorf("claim push: %w", err)
+	}
+	if claim.RowsAffected() == 0 {
+		return errors.New("push already claimed by another dispatcher")
+	}
+
 	tokens, err := s.collectTargetTokens(ctx, msg.TargetKind, id)
 	if err != nil {
+		// Release the claim so the row isn't wedged in 'sending'.
+		_, _ = s.write.Exec(ctx, `
+			UPDATE crm_push_messages SET status='failed', error_message=$2
+			WHERE id = $1::uuid AND status='sending'
+		`, id, "collect tokens: "+err.Error())
 		return fmt.Errorf("collect tokens: %w", err)
 	}
 
@@ -294,7 +326,7 @@ func (s *Service) SendPush(ctx context.Context, id string) error {
 		UPDATE crm_push_messages
 		SET status=$2, sent_at=now(),
 		    sent_count=$3, delivered_count=$4, failed_count=$5
-		WHERE id = $1::uuid AND status IN ('draft','scheduled')
+		WHERE id = $1::uuid AND status = 'sending'
 	`, id, finalStatus, sentCount, deliveredCount, failedCount)
 	if err != nil {
 		return fmt.Errorf("mark sent: %w", err)
@@ -568,10 +600,16 @@ func (s *Service) CreateLostUser(ctx context.Context, req LostUserRequest, creat
 	return id, err
 }
 
+// ErrCampaignNotFound means no lost-user campaign matched the given id.
+var ErrCampaignNotFound = errors.New("lost-user campaign not found")
+
 func (s *Service) ToggleLostUser(ctx context.Context, id string, active bool) error {
 	res, err := s.write.Exec(ctx, `UPDATE crm_lost_user_campaigns SET is_active = $2 WHERE id = $1::uuid`, id, active)
-	if err != nil || res.RowsAffected() == 0 {
+	if err != nil {
 		return fmt.Errorf("toggle lost-user: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrCampaignNotFound
 	}
 	return nil
 }
@@ -671,19 +709,19 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/growth")
 	read := middleware.RequirePermission("growth.read")
-	g.Get("/push",                read, h.ListPush)
-	g.Post("/push",               middleware.RequirePermission("push.create"), h.CreatePush)
-	g.Get("/push/reach",          middleware.RequirePermission("push.create"), h.PushReach)
-	g.Post("/push/:id/send",      middleware.RequirePermission("push.send"), h.SendPush)
-	g.Post("/push/:id/cancel",    middleware.RequirePermission("push.create"), h.CancelPush)
-	g.Post("/push/:id/retry",     middleware.RequirePermission("push.send"), h.RetryPush)
-	g.Get("/lost-user",           read, h.ListLostUser)
-	g.Post("/lost-user",          middleware.RequirePermission("lost_user.create"), h.CreateLostUser)
+	g.Get("/push", read, h.ListPush)
+	g.Post("/push", middleware.RequirePermission("push.create"), h.CreatePush)
+	g.Get("/push/reach", middleware.RequirePermission("push.create"), h.PushReach)
+	g.Post("/push/:id/send", middleware.RequirePermission("push.send"), h.SendPush)
+	g.Post("/push/:id/cancel", middleware.RequirePermission("push.create"), h.CancelPush)
+	g.Post("/push/:id/retry", middleware.RequirePermission("push.send"), h.RetryPush)
+	g.Get("/lost-user", read, h.ListLostUser)
+	g.Post("/lost-user", middleware.RequirePermission("lost_user.create"), h.CreateLostUser)
 	g.Post("/lost-user/:id/toggle", middleware.RequirePermission("lost_user.toggle"), h.ToggleLostUser)
-	g.Get("/loyalty",             read, h.GetLoyalty)
-	g.Put("/loyalty",             middleware.RequirePermission("loyalty.update"), h.SetLoyalty)
-	g.Get("/waitlist",            read, h.ListWaitlists)
-	g.Post("/waitlist",           middleware.RequirePermission("waitlist.create"), h.CreateWaitlist)
+	g.Get("/loyalty", read, h.GetLoyalty)
+	g.Put("/loyalty", middleware.RequirePermission("loyalty.update"), h.SetLoyalty)
+	g.Get("/waitlist", read, h.ListWaitlists)
+	g.Post("/waitlist", middleware.RequirePermission("waitlist.create"), h.CreateWaitlist)
 }
 
 func (h *Handler) ListPush(c *fiber.Ctx) error {
@@ -765,11 +803,16 @@ func (h *Handler) CreateLostUser(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ToggleLostUser(c *fiber.Ctx) error {
-	var body struct{ Active bool `json:"active"` }
+	var body struct {
+		Active bool `json:"active"`
+	}
 	_ = c.BodyParser(&body)
 	id := c.Params("id")
 	if err := h.svc.ToggleLostUser(c.UserContext(), id, body.Active); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if errors.Is(err, ErrCampaignNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "lost-user campaign not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 	h.audit(c, "growth.lost_user.toggle", id, nil, body.Active)
 	return c.JSON(fiber.Map{"ok": true})

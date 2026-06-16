@@ -26,6 +26,13 @@ import { topupWallet } from '../../api/wallet';
 import { useCashfreePayment, PollTimeoutError } from '../../hooks/useCashfreePayment';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
+
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors).
+// Dark keeps the original near-black sheet (#101012) + white text; light renders
+// a white sheet on cream with ink text. Amber CTA + ink label are the same in
+// both themes (the app's standard CTA fork).
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -46,6 +53,9 @@ type UiState = 'idle' | 'creating_order' | 'sdk_open' | 'polling';
 
 export default function WalletTopupSheet({ visible, onClose, onSuccess, token }: Props) {
   const { startPayment, pollStatus } = useCashfreePayment();
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
 
   // Raw text driven by the input. Stripped to digits on every keystroke so
   // the parsed amount always reflects what the user sees.
@@ -176,7 +186,7 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess, token }:
       <View style={s.sheet}>
         <View style={s.header}>
           <View style={s.iconWrap}>
-            <Feather name="plus-circle" size={20} color="#F5A300" />
+            <Feather name="plus-circle" size={20} color={c.amber} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Add money to wallet</Text>
@@ -195,7 +205,7 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess, token }:
               onChangeText={onChangeAmount}
               keyboardType="number-pad"
               placeholder="0"
-              placeholderTextColor="rgba(255,255,255,0.3)"
+              placeholderTextColor={c.textMuted}
               maxLength={6}
               editable={state === 'idle'}
               returnKeyType="done"
@@ -216,7 +226,7 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess, token }:
           style={[s.cta, ctaDisabled && s.ctaDisabled]}
         >
           {state !== 'idle' ? (
-            <ActivityIndicator size="small" color="#0D0D0F" />
+            <ActivityIndicator size="small" color="#0D0D0F" accessibilityLabel="processing" />
           ) : (
             <Text style={s.ctaText}>{ctaLabel}</Text>
           )}
@@ -230,94 +240,104 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess, token }:
   );
 }
 
-const s = StyleSheet.create({
-  sheet: {
-    paddingHorizontal: 22,
-    paddingTop: 22,
-    paddingBottom: 28,
-    gap: 18,
-    backgroundColor: '#101012',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    flex: 1,
-  },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.14)',
-  },
-  title: { ...fontExtra, fontSize: 18, color: '#FFFFFF', letterSpacing: -0.3 },
-  subtitle: { ...fontMed, fontSize: 12.5, color: 'rgba(255,255,255,0.55)', marginTop: 2 },
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Sheet surface: keep the original near-black in dark; white sheet in light.
+  const surface = isDark ? '#101012' : c.white;
+  // Input fill: faint white film in dark; cream inset on the white sheet in light.
+  const inputBg = isDark ? 'rgba(255,255,255,0.05)' : c.bg;
+  // Soft error red kept exact in dark; light uses the danger token (reads on white).
+  const danger = isDark ? '#FF8E8E' : c.danger;
 
-  inputBlock: { gap: 8 },
-  inputLabel: {
-    ...fontSemi,
-    fontSize: 11,
-    letterSpacing: 1.3,
-    textTransform: 'uppercase',
-    color: 'rgba(255,255,255,0.45)',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  inputCurrency: {
-    ...fontSemi,
-    fontSize: 22,
-    color: 'rgba(255,255,255,0.65)',
-  },
-  input: {
-    ...fontExtra,
-    flex: 1,
-    fontSize: 28,
-    color: '#FFFFFF',
-    padding: 0,
-    letterSpacing: -0.6,
-  },
-  errorText: {
-    ...fontSemi,
-    fontSize: 12,
-    color: '#FF8E8E',
-    marginTop: 2,
-  },
-  helperText: {
-    ...fontMed,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.4)',
-    marginTop: 2,
-  },
+  return StyleSheet.create({
+    sheet: {
+      paddingHorizontal: 22,
+      paddingTop: 22,
+      paddingBottom: 28,
+      gap: 18,
+      backgroundColor: surface,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      flex: 1,
+    },
+    header: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    iconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.amberSoft,
+    },
+    title: { ...fontExtra, fontSize: 18, color: c.text, letterSpacing: -0.3 },
+    subtitle: { ...fontMed, fontSize: 12.5, color: c.textSecondary, marginTop: 2 },
 
-  cta: {
-    height: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F5A300',
-  },
-  ctaDisabled: { backgroundColor: 'rgba(245,163,0,0.35)' },
-  ctaText: {
-    ...fontExtra,
-    fontSize: 15,
-    color: '#0D0D0F',
-    letterSpacing: -0.2,
-  },
+    inputBlock: { gap: 8 },
+    inputLabel: {
+      ...fontSemi,
+      fontSize: 11,
+      letterSpacing: 1.3,
+      textTransform: 'uppercase',
+      color: c.textMuted,
+    },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 4,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 14,
+      backgroundColor: inputBg,
+      borderWidth: 1,
+      borderColor: c.glassBorder,
+    },
+    inputCurrency: {
+      ...fontSemi,
+      fontSize: 22,
+      color: c.textSecondary,
+    },
+    input: {
+      ...fontExtra,
+      flex: 1,
+      fontSize: 28,
+      color: c.text,
+      padding: 0,
+      letterSpacing: -0.6,
+    },
+    errorText: {
+      ...fontSemi,
+      fontSize: 12,
+      color: danger,
+      marginTop: 2,
+    },
+    helperText: {
+      ...fontMed,
+      fontSize: 12,
+      color: c.textMuted,
+      marginTop: 2,
+    },
 
-  legal: {
-    ...fontMed,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
-    lineHeight: 15,
-    textAlign: 'center',
-  },
-});
+    cta: {
+      height: 52,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: c.amber,
+    },
+    ctaDisabled: { backgroundColor: 'rgba(245,163,0,0.35)' },
+    // Ink on the amber CTA — same in both themes.
+    ctaText: {
+      ...fontExtra,
+      fontSize: 15,
+      color: '#0D0D0F',
+      letterSpacing: -0.2,
+    },
+
+    legal: {
+      ...fontMed,
+      fontSize: 11,
+      color: c.textMuted,
+      lineHeight: 15,
+      textAlign: 'center',
+    },
+  });
+}

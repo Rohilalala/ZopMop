@@ -17,7 +17,11 @@ export function ExperimentsPage() {
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">A/B Tests</h1>
-          <p className="text-sm text-text-secondary mt-1">Variants, traffic split, lifecycle.</p>
+          <p className="text-sm text-text-secondary mt-1">
+            Record-keeping for variants, traffic split and lifecycle. Note: there is no live
+            bucketing engine yet — Start does not assign users and Roll out winner records the
+            decision but does not auto-apply the value to the target.
+          </p>
         </div>
         <Can perm="experiments.create">
           <button className="btn-primary" onClick={() => setCreating(true)}><Plus className="w-4 h-4" />New experiment</button>
@@ -114,13 +118,16 @@ function ExpCard({ exp }: { exp: Experiment }) {
         title="Roll out a winner?"
         impact={
           <div className="space-y-3">
-            <p>Pick the winning variant. Its value will be applied to 100% of the audience for {exp.target_key ?? 'the target'}.</p>
+            <p>Record the winning variant for {exp.target_key ?? 'the target'}. This marks the
+              experiment <span className="font-medium">rolled out</span>; it does not yet
+              auto-apply the value to the target — set that manually for now.</p>
             <select className="input" value={winner} onChange={(e) => setWinner(e.target.value)}>
               <option value="">— pick variant —</option>
               {exp.variants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </div>
         }
+        confirmDisabled={winner === ''}
         confirmLabel="Roll out"
       />
     </Card>

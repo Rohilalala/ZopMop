@@ -3,7 +3,7 @@
 //   • No group → setup options (create with my address, join with code)
 //   • Active group → group hero (name, members, invite code) + leave/delete
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   
   Alert,
@@ -29,6 +29,8 @@ import type { ApiAddress } from '../../api/addresses';
 import { createGroup } from '../../api/roomies';
 import { showError } from '../../utils/toast';
 
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -41,6 +43,9 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 const H_PAD = 20;
 
 export default function RoomiesSetupScreen() {
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
@@ -132,15 +137,18 @@ export default function RoomiesSetupScreen() {
 
   const isHost = myGroup?.my_role === 'host';
 
+  // Danger red kept exact in dark; light uses the readable token red.
+  const dangerColor = isDark ? '#EF4444' : c.danger;
+
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>
         <View style={s.headRow}>
           <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
-            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            <Feather name="chevron-left" size={18} color={c.text} />
           </PressFx>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Roomies</Text>
@@ -158,7 +166,7 @@ export default function RoomiesSetupScreen() {
 
               <View style={s.groupCardRow}>
                 <View style={s.groupCardChip}>
-                  <Feather name="users" size={11} color="#FFFFFF" />
+                  <Feather name="users" size={11} color={c.text} />
                   <Text style={s.groupCardChipText}>
                     {myGroup.members.length} member{myGroup.members.length !== 1 ? 's' : ''}
                   </Text>
@@ -167,7 +175,7 @@ export default function RoomiesSetupScreen() {
                   <Feather
                     name={isHost ? 'star' : 'user'}
                     size={11}
-                    color="#FFFFFF"
+                    color={c.text}
                   />
                   <Text style={s.groupCardChipText}>{isHost ? 'Host' : 'Member'}</Text>
                 </View>
@@ -185,12 +193,12 @@ export default function RoomiesSetupScreen() {
 
             <View style={s.dangerRow}>
               <PressFx style={s.dangerBtn} onPress={handleLeave}>
-                <Feather name="log-out" size={14} color="#EF4444" />
+                <Feather name="log-out" size={14} color={dangerColor} />
                 <Text style={s.dangerBtnText}>Leave</Text>
               </PressFx>
               {isHost && (
                 <PressFx style={s.dangerBtn} onPress={handleDelete}>
-                  <Feather name="trash-2" size={14} color="#EF4444" />
+                  <Feather name="trash-2" size={14} color={dangerColor} />
                   <Text style={s.dangerBtnText}>Delete</Text>
                 </PressFx>
               )}
@@ -216,7 +224,7 @@ export default function RoomiesSetupScreen() {
                 <Text style={s.optionTitle}>Enable for my address</Text>
                 <Text style={s.optionSub}>Create a household and share an invite code</Text>
               </View>
-              <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.35)" />
+              <Feather name="chevron-right" size={16} color={c.textMuted} />
             </PressFx>
 
             <PressFx
@@ -230,7 +238,7 @@ export default function RoomiesSetupScreen() {
                 <Text style={s.optionTitle}>Join with a code</Text>
                 <Text style={s.optionSub}>Enter a 6-digit code from your housemate</Text>
               </View>
-              <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.35)" />
+              <Feather name="chevron-right" size={16} color={c.textMuted} />
             </PressFx>
           </>
         )}
@@ -288,25 +296,57 @@ export default function RoomiesSetupScreen() {
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors).
+// useC() keeps dark pixel-identical (#0A0A0A bg / #F5A300 amber) and carries
+// the cream + amber light palette, matching the other migrated screens.
+// Amber fills (#F5A300) are identical in both themes, so ink-on-amber and amber
+// icons stay literal. Raised surfaces (sheet) and danger fork explicitly below.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised sheet surface (#141414) has no useC equivalent → documented literal
+  // in dark (keeps it identical); white card in light. Light card gets a subtle
+  // border + soft shadow so it reads on the cream bg (dark stays as-is).
+  const sheet = isDark ? '#141414' : c.white;
+  const lightCard = isDark
+    ? null
+    : {
+        shadowColor: '#000',
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 1,
+      };
+  // Modal scrim + amber-card inset: dark-on-dark fills kept exact in dark,
+  // ink-tinted equivalents in light.
+  const scrim = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(13,13,15,0.35)';
+  const codeBlockBg = isDark ? 'rgba(0,0,0,0.28)' : 'rgba(13,13,15,0.05)';
+  // Chip fill is brighter than glassHi (0.08 vs 0.06) → keep dark exact, light
+  // uses the glassHi token.
+  const chipFill = isDark ? 'rgba(255,255,255,0.08)' : c.glassHi;
+  // Sheet drag handle is brighter than any token (0.18) → keep dark exact, ink
+  // equivalent in light.
+  const handleBg = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.18)';
+  // Danger red kept exact in dark; light uses the readable token red.
+  const danger = isDark ? '#EF4444' : c.danger;
+
+  return StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.bg },
 
   head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconBtn: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: c.glassHi,
+    borderWidth: 0.5, borderColor: c.glassBorderHi,
   },
   title: {
     ...fontExtra,
-    fontSize: 24, color: '#FFFFFF',
+    fontSize: 24, color: c.text,
     letterSpacing: -0.6, lineHeight: 28,
   },
   sub: {
     ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    fontSize: 12, color: c.textMuted,
     marginTop: 2,
   },
 
@@ -315,7 +355,7 @@ const s = StyleSheet.create({
   secH: {
     ...fontBold,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
+    color: c.textMuted,
     letterSpacing: 1.3,
     textTransform: 'uppercase',
     paddingTop: 18,
@@ -331,26 +371,26 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.045)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
     marginBottom: 10,
   },
   optionIcon: {
     width: 42, height: 42, borderRadius: 14,
-    backgroundColor: 'rgba(245,163,0,0.12)',
+    backgroundColor: c.amberSoft,
     alignItems: 'center', justifyContent: 'center',
   },
   optionTitle: {
     ...fontSemi,
     fontSize: 14,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.1,
   },
   optionSub: {
     ...fontMed,
     fontSize: 11.5,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
     marginTop: 2,
   },
 
@@ -362,7 +402,7 @@ const s = StyleSheet.create({
   groupCardLabel: {
     ...fontBold,
     fontSize: 10,
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     letterSpacing: 1.3,
     textTransform: 'uppercase',
     marginBottom: 6,
@@ -370,7 +410,7 @@ const s = StyleSheet.create({
   groupCardName: {
     ...fontExtra,
     fontSize: 22,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.5,
     marginBottom: 12,
   },
@@ -379,7 +419,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: chipFill,
     borderRadius: 99,
     paddingVertical: 5,
     paddingHorizontal: 10,
@@ -387,11 +427,11 @@ const s = StyleSheet.create({
   groupCardChipText: {
     ...fontSemi,
     fontSize: 11,
-    color: '#FFFFFF',
+    color: c.text,
   },
   codeBlock: {
     marginTop: 16,
-    backgroundColor: 'rgba(0,0,0,0.28)',
+    backgroundColor: codeBlockBg,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -401,7 +441,7 @@ const s = StyleSheet.create({
   codeLabel: {
     ...fontBold,
     fontSize: 9,
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     letterSpacing: 1.3,
     textTransform: 'uppercase',
     marginBottom: 6,
@@ -409,7 +449,7 @@ const s = StyleSheet.create({
   codeValue: {
     ...fontExtra,
     fontSize: 28,
-    color: '#F5A300',
+    color: c.amber,
     letterSpacing: 6,
   },
 
@@ -423,37 +463,38 @@ const s = StyleSheet.create({
     paddingVertical: 13,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.35)',
-    backgroundColor: 'rgba(239,68,68,0.08)',
+    borderColor: c.dangerBorder,
+    backgroundColor: c.dangerSoft,
   },
   dangerBtnText: {
     ...fontBold,
     fontSize: 13,
-    color: '#EF4444',
+    color: danger,
     letterSpacing: 0.1,
   },
 
   // Address picker sheet
-  modal: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modal: { flex: 1, backgroundColor: scrim, justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: '#141414',
+    backgroundColor: sheet,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingTop: 12,
     maxHeight: '70%',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
+    ...(lightCard || {}),
   },
   sheetHandle: {
     width: 36, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: handleBg,
     alignSelf: 'center',
     marginBottom: 14,
   },
   sheetTitle: {
     ...fontBold,
     fontSize: 16,
-    color: '#FFFFFF',
+    color: c.text,
     paddingHorizontal: 20,
     marginBottom: 8,
     letterSpacing: -0.2,
@@ -465,27 +506,28 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
+    borderBottomColor: c.divider,
   },
   addrIcon: {
     width: 38, height: 38, borderRadius: 12,
-    backgroundColor: 'rgba(245,163,0,0.12)',
+    backgroundColor: c.amberSoft,
     alignItems: 'center', justifyContent: 'center',
   },
   addrTitle: {
     ...fontSemi,
-    fontSize: 14, color: '#FFFFFF',
+    fontSize: 14, color: c.text,
   },
   addrSub: {
     ...fontMed,
     fontSize: 12,
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     marginTop: 2,
   },
   emptyAddr: { paddingVertical: 40, alignItems: 'center' },
   emptyAddrText: {
     ...fontMed,
     fontSize: 13,
-    color: 'rgba(255,255,255,0.45)',
+    color: c.textMuted,
   },
-});
+  });
+}

@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { payoutsApi, type Payout } from '@/api/all';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { usePermission } from '@/auth/usePermission';
 
-const fmt = (c: number) => '₹' + (c / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+const fmt = (paise: number | null | undefined) =>
+  '₹' + ((paise ?? 0) / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
 export function PayoutsPage() {
   const [tab, setTab] = useState('pending');
@@ -22,7 +23,7 @@ export function PayoutsPage() {
         <p className="text-sm text-text-secondary mt-1">Mark-paid records intent + audit. The actual UPI/bank transfer is invoked by the payment worker.</p>
       </div>
       <div className="flex gap-1 border-b border-border">
-        {['pending', 'processing', 'paid', 'failed'].map((s) => (
+        {['pending', 'paid', 'failed'].map((s) => (
           <button key={s} onClick={() => setTab(s)} className={`px-4 py-2 text-sm capitalize border-b-2 transition ${tab === s ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
             {s}
           </button>
@@ -30,6 +31,7 @@ export function PayoutsPage() {
       </div>
       <Card className="!p-0 overflow-hidden">
         {q.isLoading ? <div className="p-5"><Skeleton className="h-32" /></div> :
+          q.isError ? <ErrorState title="Could not load payouts" onRetry={() => q.refetch()} /> :
           (q.data?.items.length ?? 0) === 0 ? <EmptyState title={`No ${tab} payouts`} /> :
             <table className="w-full text-sm">
               <thead className="bg-surface-elevated text-text-muted text-xs uppercase tracking-wider">
@@ -42,7 +44,7 @@ export function PayoutsPage() {
                 </tr>
               </thead>
               <tbody>
-                {q.data?.items.map((p) => <PayoutRow key={p.id} p={p} canAct={tab === 'pending' || tab === 'processing'} />)}
+                {q.data?.items.map((p) => <PayoutRow key={p.id} p={p} canAct={tab === 'pending'} />)}
               </tbody>
             </table>
         }
@@ -70,7 +72,7 @@ function PayoutRow({ p, canAct }: { p: Payout; canAct: boolean }) {
         <td className="px-4 py-3 text-text-secondary">
           {new Date(p.period_start).toLocaleDateString()} – {new Date(p.period_end).toLocaleDateString()}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">{fmt(p.amount_cents)}</td>
+        <td className="px-4 py-3 text-right tabular-nums">{fmt(p.amount_paise)}</td>
         <td className="px-4 py-3">
           <StatusPill tone={p.status === 'paid' ? 'success' : p.status === 'failed' ? 'danger' : p.status === 'processing' ? 'warning' : 'neutral'}>{p.status}</StatusPill>
           {p.external_ref && <span className="text-[10px] font-mono text-text-muted ml-2">{p.external_ref}</span>}
@@ -106,7 +108,7 @@ function PayoutRow({ p, canAct }: { p: Payout; canAct: boolean }) {
       </tr>
       <ConfirmModal open={open === 'paid'} onClose={() => setOpen(null)} onConfirm={() => paid.mutateAsync()}
         title="Mark paid?"
-        impact={<div className="space-y-3"><p>{fmt(p.amount_cents)} → {p.worker_name ?? p.worker_phone}</p><input className="input" placeholder="External ref (UTR, txn id)" value={ref} onChange={(e) => setRef(e.target.value)} /></div>}
+        impact={<div className="space-y-3"><p>{fmt(p.amount_paise)} → {p.worker_name ?? p.worker_phone}</p><input className="input" placeholder="External ref (UTR, txn id)" value={ref} onChange={(e) => setRef(e.target.value)} /></div>}
         confirmLabel="Mark paid" />
       <ConfirmModal open={open === 'failed'} onClose={() => setOpen(null)} onConfirm={() => failed.mutateAsync()}
         title="Mark failed?"

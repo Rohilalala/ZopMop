@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   Animated,
   TouchableOpacity,
@@ -17,10 +18,13 @@ import type { RouteProp } from '@react-navigation/native';
 import type { MainStackParamList } from '../../types/navigation';
 import * as Location from 'expo-location';
 import { FontFamily } from '../../theme';
-import { C } from '../../theme/screen';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
-import { GlassCard } from '../../components/home/GlassCard';
+import Zop from '../../components/Zop';
+import { serviceIcon } from '../../components/home/serviceIcon';
 import { useAuth } from '../../context/AuthContext';
+import { useCart } from '../../context/CartContext';
 import { createInstantBooking, getMatchStatus } from '../../api/matching';
 import { UnpaidBookingsError } from '../../api/users';
 import { apiFetch } from '../../api/client';
@@ -30,17 +34,20 @@ import { readLastKnownLocation } from '../../utils/locationCache';
 
 const { width: W } = Dimensions.get('window');
 
-const MATCH_DURATION = 30000;
-const PHASES = [
-  { at: 0,    label: 'Most bookings confirm in under 30 seconds' },
-  { at: 0.35, label: 'Checking availability & ratings…' },
-  { at: 0.65, label: 'Almost there — locking in your pro…' },
-  { at: 0.88, label: 'Finalising match…' },
-];
+// Visual completion bar fills toward (but never reaches) 92% over this window —
+// the soft "usually under 30s" expectation. Matching itself is NOT bounded by
+// this; the backend invite chain drives the real terminal state via polling.
+const COMPLETION_WINDOW = 30000;
+// After this many seconds with no match, the "Switch to scheduled instead"
+// escape appears and the copy shifts to the calmer "still searching" state.
+const SWITCH_AFTER_S = 30;
+// Hard safety net: if polling never resolves (network black hole), fall back to
+// the busy screen so the user is never stuck on an endless spinner.
+const SAFETY_TIMEOUT = 90000;
 
-// 'busy' = generic dispatch failure (timeout, network).
-// 'no_pros' = backend confirmed invite chain exhausted (booking_status
-// 'no_pro_available'). Different copy + CTAs per spec.
+const HERO = Math.min(280, W * 0.7);
+const RING_BASE = 80;
+
 type ScreenState = 'searching' | 'busy' | 'no_pros' | 'matched';
 
 type Props = {
@@ -48,9 +55,15 @@ type Props = {
 };
 
 export default function InstantMatchingScreen({ route }: Props) {
-  const { serviceId, serviceName } = route.params;
+  const { serviceId, serviceName, durationMinutes } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { token } = useAuth();
+  const { addItem } = useCart();
+  const c = useC();
+  const { isDark } = useTheme();
+  const ringPeak = isDark ? 0.6 : 0.45;
+  const s = useMemo(() => makeStyles(c), [c]);
+
   // Mirror live deps into refs so the long-running match effect (which is
   // intentionally mount-only — restarting it would cancel and recreate the
   // booking) always reads the freshest value without re-running.
@@ -64,18 +77,22 @@ export default function InstantMatchingScreen({ route }: Props) {
   useEffect(() => { serviceNameRef.current = serviceName; }, [serviceName]);
 
   const [screenState, setScreenState] = useState<ScreenState>('searching');
-  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [priceCents, setPriceCents] = useState(0);
+  const [addressLabel, setAddressLabel] = useState<string | null>(null);
+
+  const longWait = elapsed >= SWITCH_AFTER_S;
 
   const progress = useRef(new Animated.Value(0)).current;
-  const dot1 = useRef(new Animated.Value(0)).current;
-  const dot2 = useRef(new Animated.Value(0)).current;
-  const dot3 = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
+  const zopRot = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0)).current;
+  // Four expanding pulse rings, staggered.
+  const rings = useRef([0, 1, 2, 3].map(() => new Animated.Value(0))).current;
 
   const bookingIdRef = useRef<string | null>(null);
   const priceCentsRef = useRef<number>(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const safetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const matchedRef = useRef(false);
   const userCancelledRef = useRef(false);
   const matchedHelperRef = useRef<{
@@ -87,48 +104,49 @@ export default function InstantMatchingScreen({ route }: Props) {
     eta_minutes: number;
   } | null>(null);
 
+  // ── Looping decorative animations ──────────────────────────────────────────
   useEffect(() => {
-    function bounce(val: Animated.Value, delay: number) {
-      return Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(val, { toValue: -8, duration: 320, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration: 320, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-          Animated.delay(400),
-        ]),
-      );
-    }
-    const a1 = bounce(dot1, 0);
-    const a2 = bounce(dot2, 160);
-    const a3 = bounce(dot3, 320);
-    a1.start(); a2.start(); a3.start();
-
-    const pulseLoop = Animated.loop(
+    const zopLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
+        Animated.timing(zopRot, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(zopRot, { toValue: -1, duration: 1500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(zopRot, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
     );
-    pulseLoop.start();
-
-    return () => {
-      a1.stop(); a2.stop(); a3.stop();
-      pulseLoop.stop();
-    };
-  }, [dot1, dot2, dot3, pulse]);
-
-  useEffect(() => {
-    const timers = PHASES.slice(1).map((p, i) =>
-      setTimeout(() => setPhaseIdx(i + 1), p.at * MATCH_DURATION),
+    const shimmerLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 1100, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.delay(350),
+      ]),
     );
-    return () => timers.forEach(clearTimeout);
-  }, []);
+    const ringLoops = rings.map((r, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 500),
+          Animated.timing(r, { toValue: 1, duration: 2000, easing: Easing.bezier(0.22, 1, 0.36, 1), useNativeDriver: true }),
+          Animated.timing(r, { toValue: 0, duration: 0, useNativeDriver: true }),
+        ]),
+      ),
+    );
+    zopLoop.start();
+    shimmerLoop.start();
+    ringLoops.forEach((l) => l.start());
+    return () => {
+      zopLoop.stop();
+      shimmerLoop.stop();
+      ringLoops.forEach((l) => l.stop());
+    };
+  }, [zopRot, shimmer, rings]);
 
+  // ── Elapsed-seconds counter (drives the "Searching for Ns" pill + switch CTA) ─
+  useEffect(() => {
+    if (screenState !== 'searching') return;
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [screenState]);
+
+  // ── Booking + match poll (mount-only — see comment) ─────────────────────────
   const pendingTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  // Intentionally mount-only: re-running this effect would cancel the
-  // in-flight booking and recreate a new one (charging the user twice on the
-  // backend). We use refs (above) for token / navigation / serviceId /
-  // serviceName so every async tick reads the latest value without retrigger.
   useEffect(() => {
     let cancelled = false;
     const safeTimeout = (fn: () => void, ms: number) => {
@@ -138,14 +156,19 @@ export default function InstantMatchingScreen({ route }: Props) {
     };
 
     async function run() {
-      Animated.timing(progress, {
-        toValue: 1,
-        duration: MATCH_DURATION,
-        easing: Easing.bezier(0.4, 0, 0.2, 1),
-        useNativeDriver: false,
-      }).start();
+      // Optimistic progress (Uber/Rapido feel): sprint early, decelerate, and
+      // creep asymptotically toward ~97% — never completes/stalls until the
+      // real match navigates away. The bar reflects confidence, not a timer.
+      Animated.sequence([
+        Animated.timing(progress, { toValue: 0.7, duration: 7000, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+        Animated.timing(progress, { toValue: 0.9, duration: 14000, easing: Easing.out(Easing.quad), useNativeDriver: false }),
+        Animated.timing(progress, { toValue: 0.985, duration: 40000, easing: Easing.linear, useNativeDriver: false }),
+      ]).start();
 
-      timeoutRef.current = safeTimeout(() => {
+      // Safety net only — NOT the matching deadline. Searching continues past
+      // 30s (with the switch CTA shown); this just prevents an infinite spinner
+      // if polling never resolves.
+      safetyRef.current = safeTimeout(() => {
         if (cancelled || matchedRef.current) return;
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
         progress.stopAnimation();
@@ -158,11 +181,11 @@ export default function InstantMatchingScreen({ route }: Props) {
           }).catch(() => {});
         }
         setScreenState('busy');
-      }, MATCH_DURATION);
+      }, SAFETY_TIMEOUT);
 
       const initialToken = tokenRef.current;
       if (!initialToken || initialToken === '__guest__') {
-        safeTimeout(() => { if (!cancelled) setScreenState('busy'); }, MATCH_DURATION);
+        safeTimeout(() => { if (!cancelled) setScreenState('busy'); }, COMPLETION_WINDOW);
         return;
       }
 
@@ -204,6 +227,7 @@ export default function InstantMatchingScreen({ route }: Props) {
             cached?.name && cached.name.trim().length > 0
               ? cached.name
               : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+          if (!cancelled) setAddressLabel(addressLine);
           const booking = await createInstantBooking(
             tokenRef.current!,
             serviceIdRef.current,
@@ -214,6 +238,7 @@ export default function InstantMatchingScreen({ route }: Props) {
           bookingId = booking.id;
           bookingIdRef.current = bookingId;
           priceCentsRef.current = booking.price_paise ?? 0;
+          if (!cancelled) setPriceCents(booking.price_paise ?? 0);
         } catch (err) {
           if (err instanceof UnpaidBookingsError && !cancelled) {
             const totalRupees = (err.totalPaise / 100).toFixed(2);
@@ -257,7 +282,7 @@ export default function InstantMatchingScreen({ route }: Props) {
               eta_minutes: status.helper.eta_minutes,
             };
             if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-            if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+            if (safetyRef.current) { clearTimeout(safetyRef.current); safetyRef.current = null; }
             progress.stopAnimation();
             if (!cancelled && !userCancelledRef.current) {
               navigationRef.current.replace('BookingConfirmed', {
@@ -268,11 +293,12 @@ export default function InstantMatchingScreen({ route }: Props) {
                 helperName: status.helper.name || 'Your Pro',
                 helperPhone: status.helper.phone,
                 helperRating: status.helper.rating,
-                instant: true,
+                bookingType: 'instant',
               });
             }
           } else if (status.status === 'failed' || (status.status === 'matched' && !status.helper)) {
             if (pollRef.current) clearInterval(pollRef.current);
+            if (safetyRef.current) { clearTimeout(safetyRef.current); safetyRef.current = null; }
             if (!cancelled) {
               progress.stopAnimation();
               // Backend marks chain-exhausted bookings with booking_status
@@ -291,7 +317,7 @@ export default function InstantMatchingScreen({ route }: Props) {
     return () => {
       cancelled = true;
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      if (safetyRef.current) { clearTimeout(safetyRef.current); safetyRef.current = null; }
       pendingTimers.current.forEach(clearTimeout);
       pendingTimers.current = [];
       const bid = bookingIdRef.current;
@@ -305,6 +331,24 @@ export default function InstantMatchingScreen({ route }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only: see comment above; deps read via refs
   }, []);
+
+  // Cancel the in-flight instant search: stop polling, kill the safety net, and
+  // hit /cancel so the backend clears the Redis match keys and stops dispatch
+  // (no orphaned pro invite). Idempotent — safe to call more than once.
+  function cancelInstant() {
+    userCancelledRef.current = true;
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (safetyRef.current) { clearTimeout(safetyRef.current); safetyRef.current = null; }
+    progress.stopAnimation();
+    const bid = bookingIdRef.current;
+    const tkn = tokenRef.current;
+    if (bid && tkn && tkn !== '__guest__') {
+      apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tkn}` },
+      }).catch(() => {});
+    }
+  }
 
   function handleCancel() {
     const helper = matchedHelperRef.current;
@@ -327,7 +371,7 @@ export default function InstantMatchingScreen({ route }: Props) {
                 helperName: helper.name,
                 helperPhone: helper.phone,
                 helperRating: helper.rating,
-                instant: true,
+                bookingType: 'instant',
               });
             },
           },
@@ -346,13 +390,30 @@ export default function InstantMatchingScreen({ route }: Props) {
         ],
       );
     } else {
+      // Cancel the instant search, then return to wherever they came from
+      // (Cart/confirm) — back-navigation, not a hardcoded "home".
+      cancelInstant();
       navigation.goBack();
     }
   }
 
+  // Switch to scheduled. ORDER MATTERS: cancel the instant search FIRST (stop
+  // dispatch, clear Redis match keys) so no pro can match an abandoned booking,
+  // THEN seed the cart with this service and hand off to the Cart screen, which
+  // owns the full scheduled flow (address → slot → pay).
+  async function handleSwitchToScheduled() {
+    cancelInstant();
+    // min_duration_minutes carried via route params; fall back defensively.
+    const dur = durationMinutes ?? 60;
+    try {
+      await addItem(serviceId, dur, serviceName, priceCentsRef.current);
+    } catch { /* CartContext rolls back its optimistic add on failure */ }
+    navigation.navigate('Cart');
+  }
+
   const progressWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
-  const pulseOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
+  const zopSpin = zopRot.interpolate({ inputRange: [-1, 1], outputRange: ['-5deg', '5deg'] });
+  const shimmerX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-60, 240] });
 
   if (screenState === 'busy') {
     return <BusyScreen onRetry={() => navigation.goBack()} onBack={() => navigation.goBack()} />;
@@ -367,8 +428,6 @@ export default function InstantMatchingScreen({ route }: Props) {
             'Reschedule coming soon. Use the Bookings tab to manage existing bookings.',
             { title: 'Reschedule unavailable' },
           );
-          // TODO Phase X: wire a dedicated reschedule flow for instant
-          // bookings. Today the only path is cancel + rebook from cart.
         }}
         onCancelRefund={() => {
           const bid = bookingIdRef.current;
@@ -381,8 +440,6 @@ export default function InstantMatchingScreen({ route }: Props) {
               {
                 text: 'OK',
                 onPress: () => {
-                  // Best-effort cancel — server may have already done it on
-                  // invite exhaustion. Idempotent either way.
                   if (bid && tkn && tkn !== '__guest__') {
                     apiFetch(`${BASE_URL}/bookings/${bid}/cancel`, {
                       method: 'POST',
@@ -403,53 +460,116 @@ export default function InstantMatchingScreen({ route }: Props) {
     return <MatchedFlash />;
   }
 
+  const iconSrc = serviceIcon({ id: serviceId, name: serviceName });
+
+  // Fixed full-screen — NO scroll. Sections distribute within the viewport.
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <Bloom />
       <View style={s.container}>
 
-        <View style={s.iconArea}>
-          <View style={s.iconWrap}>
+        {/* Topbar */}
+        <View style={s.topbar}>
+          <TouchableOpacity style={s.iconBtn} activeOpacity={0.7} onPress={handleCancel} accessibilityLabel="Cancel matching">
+            <Feather name="chevron-left" size={18} color={c.text} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Hero + copy (flexes to absorb slack) */}
+        <View style={s.hero}>
+          <View style={s.ringField}>
+            {rings.map((r, i) => (
+              <Animated.View
+                key={i}
+                pointerEvents="none"
+                style={[
+                  s.ring,
+                  {
+                    opacity: r.interpolate({ inputRange: [0, 1], outputRange: [ringPeak, 0] }),
+                    transform: [{ scale: r.interpolate({ inputRange: [0, 1], outputRange: [1, 3.5] }) }],
+                  },
+                ]}
+              />
+            ))}
+            <Animated.View style={{ transform: [{ rotate: zopSpin }] }}>
+              <Zop mode="custom" size={84} autoEnter={false} />
+            </Animated.View>
+          </View>
+
+          <Text style={s.title}>{longWait ? 'Still searching…' : 'Finding your pro…'}</Text>
+          <Text style={s.subtitle}>
+            {longWait
+              ? "It's busier than usual. We're finding a great pro for you."
+              : "We're matching you with the best available pro nearby"}
+          </Text>
+
+          <View style={s.completion}>
+            <Animated.View style={[s.fill, longWait && s.fillWarn, { width: progressWidth }]} />
+            {/* Optimistic sweeping highlight — bar always looks alive (Uber/Rapido feel) */}
             <Animated.View
               pointerEvents="none"
-              style={[
-                s.pulseRing,
-                { transform: [{ scale: pulseScale }], opacity: pulseOpacity },
-              ]}
+              style={[s.shimmer, { transform: [{ translateX: shimmerX }] }]}
             />
-            <GlassCard radius={64} hero style={s.iconCircle}>
-              <Feather name="zap" size={44} color={C.amber} />
-            </GlassCard>
-          </View>
-          <View style={s.dotsRow}>
-            {[dot1, dot2, dot3].map((d, i) => (
-              <Animated.View key={i} style={[s.dot, { transform: [{ translateY: d }] }]} />
-            ))}
           </View>
         </View>
 
-        <Text style={s.title}>Finding your pro...</Text>
-        <Text style={s.phaseLabel}>{PHASES[phaseIdx].label}</Text>
+        {/* Booking summary */}
+        <View style={s.summary}>
+          <View style={s.summaryTop}>
+            <View style={s.svcIcon}>
+              {iconSrc ? (
+                <Image source={iconSrc} style={s.svcImg} resizeMode="contain" />
+              ) : (
+                <Feather name="package" size={22} color={c.amber} />
+              )}
+            </View>
+            <View style={s.svcMeta}>
+              <Text style={s.svcName} numberOfLines={1}>{serviceName}</Text>
+            </View>
+            {priceCents > 0 && (
+              <View style={s.price}>
+                <Text style={s.priceText}>₹{Math.round(priceCents / 100)}</Text>
+              </View>
+            )}
+          </View>
 
-        <View style={s.serviceChip}>
-          <Text style={s.serviceChipText}>{serviceName}</Text>
+          {!!addressLabel && (
+            <>
+              <View style={s.divider} />
+              <View style={s.addrRow}>
+                <View style={s.pin}>
+                  <Feather name="map-pin" size={15} color={c.amber} />
+                </View>
+                <View style={s.addr}>
+                  <Text style={s.addrLabel}>SERVICE AT</Text>
+                  <Text style={s.addrVal} numberOfLines={1}>{addressLabel}</Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
-        <View style={s.progressTrack}>
-          <Animated.View style={[s.progressFill, { width: progressWidth }]} />
+        {/* Cancel row — switch CTA appears only after 30s */}
+        <View style={s.cancelRow}>
+          {longWait && (
+            <TouchableOpacity activeOpacity={0.7} onPress={handleSwitchToScheduled}>
+              <Text style={s.switchText}>Switch to scheduled instead</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity activeOpacity={0.7} onPress={handleCancel}>
+            <Text style={s.ghostText}>Cancel matching</Text>
+          </TouchableOpacity>
         </View>
 
-        <Text style={s.progressHint}>Usually takes less than 30 seconds</Text>
-
-        <TouchableOpacity style={s.cancelBtn} activeOpacity={0.7} onPress={handleCancel}>
-          <Text style={s.cancelText}>Cancel</Text>
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
+// ── Terminal states (busy / no pros / matched) ───────────────────────────────
 function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
+  const c = useC();
+  const s = useMemo(() => makeStyles(c), [c]);
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -458,20 +578,19 @@ function BusyScreen({ onRetry, onBack }: { onRetry: () => void; onBack: () => vo
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <Bloom />
-      <Animated.View style={[s.container, { opacity: fadeIn }]}>
-        <GlassCard radius={64} hero style={s.iconCircle}>
-          <Feather name="clock" size={44} color={C.amber} />
-        </GlassCard>
-        <View style={{ height: 28 }} />
+      <Animated.View style={[s.stateContainer, { opacity: fadeIn }]}>
+        <View style={s.stateIcon}>
+          <Feather name="clock" size={40} color={c.amber} />
+        </View>
         <Text style={s.title}>All our pros are busy</Text>
-        <Text style={s.busySub}>
+        <Text style={s.stateSub}>
           Our professionals are all on jobs right now. Please try again in a few minutes.
         </Text>
         <TouchableOpacity style={s.retryBtn} activeOpacity={0.88} onPress={onRetry}>
           <Text style={s.retryBtnText}>Try Again</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={onBack}>
-          <Text style={s.backBtnText}>Go Back</Text>
+          <Text style={s.ghostText}>Go Back</Text>
         </TouchableOpacity>
       </Animated.View>
     </SafeAreaView>
@@ -487,6 +606,8 @@ function NoProsScreen({
   onReschedule: () => void;
   onCancelRefund: () => void;
 }) {
+  const c = useC();
+  const s = useMemo(() => makeStyles(c), [c]);
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }).start();
@@ -494,13 +615,12 @@ function NoProsScreen({
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <Bloom />
-      <Animated.View style={[s.container, { opacity: fadeIn }]}>
-        <GlassCard radius={64} hero style={s.iconCircle}>
-          <Feather name="users" size={44} color={C.amber} />
-        </GlassCard>
-        <View style={{ height: 28 }} />
+      <Animated.View style={[s.stateContainer, { opacity: fadeIn }]}>
+        <View style={s.stateIcon}>
+          <Feather name="users" size={40} color={c.amber} />
+        </View>
         <Text style={s.title}>No pros available right now</Text>
-        <Text style={s.busySub}>Try again in a few minutes or reschedule for later</Text>
+        <Text style={s.stateSub}>Try again in a few minutes or reschedule for later</Text>
         <TouchableOpacity style={s.retryBtn} activeOpacity={0.88} onPress={onWaitAndRetry}>
           <Text style={s.retryBtnText}>Wait and retry</Text>
         </TouchableOpacity>
@@ -508,7 +628,7 @@ function NoProsScreen({
           <Text style={s.secondaryBtnText}>Reschedule</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.backBtn} activeOpacity={0.7} onPress={onCancelRefund}>
-          <Text style={s.backBtnText}>Cancel and refund</Text>
+          <Text style={s.ghostText}>Cancel and refund</Text>
         </TouchableOpacity>
       </Animated.View>
     </SafeAreaView>
@@ -516,6 +636,8 @@ function NoProsScreen({
 }
 
 function MatchedFlash() {
+  const c = useC();
+  const s = useMemo(() => makeStyles(c), [c]);
   const scale = useRef(new Animated.Value(0.4)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -528,159 +650,188 @@ function MatchedFlash() {
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <Bloom />
-      <Animated.View style={[s.container, { opacity }]}>
-        <Animated.View style={{ transform: [{ scale }] }}>
-          <GlassCard radius={64} hero style={s.iconCircle}>
-            <Feather name="check" size={48} color={C.green} />
-          </GlassCard>
+      <Animated.View style={[s.stateContainer, { opacity }]}>
+        <Animated.View style={[s.stateIcon, { transform: [{ scale }] }]}>
+          <Feather name="check" size={44} color={c.green} />
         </Animated.View>
-        <View style={{ height: 28 }} />
-        <Text style={[s.title, { color: C.green }]}>Pro Matched</Text>
-        <Text style={s.busySub}>Heading to your booking…</Text>
+        <Text style={[s.title, { color: c.green }]}>Pro Matched</Text>
+        <Text style={s.stateSub}>Heading to your booking…</Text>
       </Animated.View>
     </SafeAreaView>
   );
 }
 
-const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+// ── Styles (theme-aware via useC) ────────────────────────────────────────────
+function makeStyles(c: ScreenColors) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: c.bg },
+    container: { flex: 1, paddingHorizontal: 20, paddingBottom: 12 },
 
-  iconArea: { alignItems: 'center', marginBottom: 32 },
-  iconWrap: {
-    width: 128, height: 128,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 22,
-  },
-  iconCircle: {
-    width: 128, height: 128,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 128, height: 128, borderRadius: 64,
-    borderWidth: 1.5, borderColor: C.amberLine,
-  },
-  dotsRow: { flexDirection: 'row', gap: 10 },
-  dot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: C.amber,
-  },
+    topbar: { height: 48, justifyContent: 'center' },
+    iconBtn: {
+      width: 36, height: 36, borderRadius: 12,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glass,
+      borderWidth: 1, borderColor: c.glassBorderHi,
+    },
 
-  title: {
-    fontFamily: FontFamily.extrabold,
-    fontSize: 26,
-    color: C.white,
-    letterSpacing: -0.6,
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  phaseLabel: {
-    fontFamily: FontFamily.regular,
-    fontSize: 14.5,
-    color: C.textSecondary,
-    textAlign: 'center',
-    marginBottom: 22,
-    lineHeight: 22,
-    minHeight: 44,
-  },
-  serviceChip: {
-    backgroundColor: C.amberSoft,
-    borderRadius: 999,
-    paddingHorizontal: 18,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: C.amberLine,
-    marginBottom: 30,
-  },
-  serviceChipText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: 13.5,
-    color: C.amber,
-    letterSpacing: 0.2,
-  },
+    hero: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    ringField: {
+      width: HERO, height: HERO,
+      alignItems: 'center', justifyContent: 'center',
+      marginBottom: 24,
+    },
+    ring: {
+      position: 'absolute',
+      width: RING_BASE, height: RING_BASE, borderRadius: RING_BASE / 2,
+      borderWidth: 1.5, borderColor: c.amber,
+    },
+    title: {
+      fontFamily: FontFamily.extrabold,
+      fontSize: 26,
+      color: c.text,
+      letterSpacing: -0.6,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontFamily: FontFamily.medium,
+      fontSize: 14,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginTop: 8,
+      lineHeight: 20,
+      maxWidth: 280,
+    },
+    completion: {
+      width: 240, height: 5, borderRadius: 999,
+      backgroundColor: c.glass,
+      overflow: 'hidden',
+      marginTop: 22,
+    },
+    fill: {
+      height: '100%', borderRadius: 999,
+      backgroundColor: c.amber,
+    },
+    fillWarn: { backgroundColor: c.amberLo },
+    shimmer: {
+      position: 'absolute', top: 0, bottom: 0,
+      width: 60, borderRadius: 999,
+      backgroundColor: c.amberHi,
+      opacity: 0.55,
+    },
 
-  progressTrack: {
-    width: '100%',
-    height: 8,
-    backgroundColor: C.glass,
-    borderRadius: 999,
-    overflow: 'hidden',
-    marginBottom: 12,
-    borderWidth: 0.5,
-    borderColor: C.glassBorder,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: C.amber,
-  },
-  progressHint: {
-    fontFamily: FontFamily.regular,
-    fontSize: 12,
-    color: C.textMuted,
-    marginBottom: 36,
-  },
+    summary: {
+      borderRadius: 18, padding: 16,
+      backgroundColor: c.glass,
+      borderWidth: 1, borderColor: c.glassBorder,
+      marginTop: 8,
+    },
+    summaryTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    svcIcon: {
+      width: 48, height: 48, borderRadius: 13,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glassHi,
+      borderWidth: 1, borderColor: c.glassBorder,
+      overflow: 'hidden',
+    },
+    svcImg: { width: 30, height: 30 },
+    svcMeta: { flex: 1, minWidth: 0 },
+    svcName: {
+      fontFamily: FontFamily.bold,
+      fontSize: 16,
+      color: c.text,
+      letterSpacing: -0.2,
+    },
+    price: {
+      paddingHorizontal: 10, paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: c.amberSoft,
+    },
+    priceText: {
+      fontFamily: FontFamily.bold,
+      fontSize: 12,
+      color: c.amber,
+      letterSpacing: -0.1,
+    },
+    divider: { height: 1, backgroundColor: c.divider, marginVertical: 13, marginHorizontal: -16 },
+    addrRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    pin: {
+      width: 30, height: 30, borderRadius: 9,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amberSoft,
+    },
+    addr: { flex: 1, minWidth: 0 },
+    addrLabel: {
+      fontFamily: FontFamily.bold,
+      fontSize: 10,
+      color: c.textMuted,
+      letterSpacing: 1.2,
+    },
+    addrVal: {
+      fontFamily: FontFamily.semibold,
+      fontSize: 13,
+      color: c.text,
+      marginTop: 1,
+    },
 
-  cancelBtn: {
-    paddingVertical: 13,
-    paddingHorizontal: 36,
-    borderRadius: 999,
-    borderWidth: 0.5,
-    borderColor: C.glassBorderHi,
-    backgroundColor: C.glassHi,
-  },
-  cancelText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: 14,
-    color: C.white,
-    letterSpacing: 0.2,
-  },
+    cancelRow: { alignItems: 'center', gap: 6, marginTop: 18 },
+    switchText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: 14,
+      color: c.amber,
+      paddingVertical: 8,
+    },
+    ghostText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: 14,
+      color: c.textMuted,
+      paddingVertical: 8,
+    },
 
-  busySub: {
-    fontFamily: FontFamily.regular,
-    fontSize: 14.5,
-    color: C.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 30,
-    maxWidth: 300,
-  },
-  retryBtn: {
-    backgroundColor: C.amber,
-    borderRadius: 999,
-    paddingVertical: 16,
-    paddingHorizontal: 48,
-    marginBottom: 10,
-  },
-  retryBtnText: {
-    fontFamily: FontFamily.bold,
-    fontSize: 15,
-    color: C.ink,
-    letterSpacing: 0.3,
-  },
-  backBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-  },
-  backBtnText: {
-    fontFamily: FontFamily.medium,
-    fontSize: 14,
-    color: C.textSecondary,
-  },
-  secondaryBtn: {
-    borderRadius: 999,
-    paddingVertical: 14,
-    paddingHorizontal: 44,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: C.glassBorderHi,
-    backgroundColor: C.glassHi,
-  },
-  secondaryBtnText: {
-    fontFamily: FontFamily.semibold,
-    fontSize: 14,
-    color: C.white,
-    letterSpacing: 0.2,
-  },
-});
+    // shared terminal-state styles
+    stateContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+    stateIcon: {
+      width: 96, height: 96, borderRadius: 28,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glass,
+      borderWidth: 1, borderColor: c.glassBorder,
+      marginBottom: 26,
+    },
+    stateSub: {
+      fontFamily: FontFamily.regular,
+      fontSize: 14.5,
+      color: c.textSecondary,
+      textAlign: 'center',
+      lineHeight: 22,
+      marginTop: 10,
+      marginBottom: 30,
+      maxWidth: 300,
+    },
+    retryBtn: {
+      backgroundColor: c.amber,
+      borderRadius: 999,
+      paddingVertical: 16, paddingHorizontal: 48,
+      marginBottom: 10,
+    },
+    retryBtnText: {
+      fontFamily: FontFamily.bold,
+      fontSize: 15,
+      color: c.ink,
+      letterSpacing: 0.3,
+    },
+    secondaryBtn: {
+      borderRadius: 999,
+      paddingVertical: 14, paddingHorizontal: 44,
+      marginBottom: 10,
+      borderWidth: 1, borderColor: c.glassBorderHi,
+      backgroundColor: c.glassHi,
+    },
+    secondaryBtnText: {
+      fontFamily: FontFamily.semibold,
+      fontSize: 14,
+      color: c.text,
+      letterSpacing: 0.2,
+    },
+    backBtn: { paddingVertical: 12, paddingHorizontal: 32 },
+  });
+}

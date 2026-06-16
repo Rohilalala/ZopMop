@@ -46,15 +46,38 @@ func (r *Repository) EligibleHelpers(ctx context.Context, cycleEnd time.Time) ([
 	return ids, rows.Err()
 }
 
+// CloseStaleSessionsForCycle auto-closes sessions that are still
+// open (offline_at IS NULL) whose shift_date falls within the cycle.
+// These are app-crash orphans — the pro went offline without the
+// session being stamped. We cap them at their shift's scheduled end
+// time so the hours are counted in the correct cycle rather than
+// being lost forever.
+func (r *Repository) CloseStaleSessionsForCycle(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (closed int64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := r.db.Exec(ctx, `
+		UPDATE shift_sessions ss
+		   SET offline_at     = (sc.shift_date + sc.end_time) AT TIME ZONE 'Asia/Kolkata',
+		       online_minutes = GREATEST(0, EXTRACT(EPOCH FROM (((sc.shift_date + sc.end_time) AT TIME ZONE 'Asia/Kolkata') - ss.online_at))::int / 60)
+		  FROM shift_commitments sc
+		 WHERE sc.id = ss.commitment_id
+		   AND ss.pro_id = $1::uuid
+		   AND sc.shift_date BETWEEN $2::date AND $3::date
+		   AND ss.offline_at IS NULL
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02"))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected(), nil
+}
+
 // AggregateActivity sums closed-session online and working minutes
 // for the pro across the cycle. Sessions are attributed to the
 // shift_commitment's shift_date (a DATE column) so cycle membership
 // is unambiguous and timezone-stable.
 //
-// Open sessions (offline_at IS NULL at cycle close) are excluded —
-// their online_minutes is not yet computed. The pro will appear with
-// the full count next cycle once the session closes. The cron logs
-// a count of skipped open sessions so ops can audit.
+// Callers should run CloseStaleSessionsForCycle first so orphaned
+// sessions are included.
 func (r *Repository) AggregateActivity(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (onlineMin, workingMin int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -71,6 +94,31 @@ func (r *Repository) AggregateActivity(ctx context.Context, proID string, cycleS
 		return 0, 0, err
 	}
 	return onlineMin, workingMin, nil
+}
+
+// SumDeductionsForCycle totals non-reversed admin_pro_deductions whose
+// snapshotted fortnight_start falls inside the cycle window. Rows with a
+// NULL fortnight_start are attributed to the cycle that was open when they
+// were created (created_at within the cycle) so a deduction entered without
+// an explicit fortnight still lands on the right payout.
+func (r *Repository) SumDeductionsForCycle(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var total int64
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_paise), 0)::bigint
+		  FROM admin_pro_deductions
+		 WHERE pro_id = $1::uuid
+		   AND reversed_at IS NULL
+		   AND COALESCE(
+		         fortnight_start,
+		         (created_at AT TIME ZONE 'Asia/Kolkata')::date
+		       ) BETWEEN $2::date AND $3::date
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02")).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 // UpsertPayout writes the payouts row for (pro, cycle_start) if no
@@ -92,14 +140,14 @@ func (r *Repository) UpsertPayout(ctx context.Context, proID string, cycle Cycle
 			$1::uuid, $2::date, $3::date,
 			$4, $5,
 			$6, $7, $8,
-			0, $9, 'pending_manual_payout'
+			$9, $10, 'pending_manual_payout'
 		)
 		ON CONFLICT (pro_id, cycle_start) DO NOTHING
 	`,
 		proID, cycle.StartDate(), cycle.EndDate(),
 		p.OnlineMinutes, p.WorkingMinutes,
 		p.BasePayPaise, p.BonusPayPaise, p.GrossPayPaise,
-		p.NetPayPaise,
+		p.DeductionsPaise, p.NetPayPaise,
 	)
 	if err != nil {
 		return false, err

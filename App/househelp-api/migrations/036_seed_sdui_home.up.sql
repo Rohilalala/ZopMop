@@ -34,6 +34,18 @@ VALUES (
   "schema_version": 1,
   "sections": [
     {
+      "id": "header_promo",
+      "type": "header_promo",
+      "visible": true,
+      "data": { "label": "Earn ₹150", "action": { "trigger": "tap", "type": "navigate", "screen": "ReferralEarn" }, "visible": true }
+    },
+    {
+      "id": "hero",
+      "type": "greeting_hero",
+      "visible": true,
+      "data": { "title_lines": ["Home,", "handled."], "show_mascot": true }
+    },
+    {
       "id": "live",
       "type": "live_pill",
       "visible": true,
@@ -65,8 +77,8 @@ VALUES (
             "display_order": 1
           },
           {
-            "id": "a1000000-0000-0000-0000-000000000002",
-            "name": "Deep clean",
+            "id": "a1000000-0000-0000-0000-000000000001",
+            "name": "Sweeping and Mopping",
             "emoji": "✨",
             "bg_color": "#F0FDFA",
             "base_price_cents": 59900,
@@ -110,7 +122,7 @@ VALUES (
             "display_order": 4
           },
           {
-            "id": "a1000000-0000-0000-0000-000000000004",
+            "id": "a1000000-0000-0000-0000-000000000002",
             "name": "Bathroom",
             "emoji": "🚿",
             "bg_color": "#F0FDF4",
@@ -217,7 +229,20 @@ VALUES (
       "id": "footer",
       "type": "footer",
       "visible": true,
-      "data": {}
+      "data": {
+        "signoff": {
+          "lines": ["We mop.", "You zop."],
+          "brand": "ZopMop",
+          "badges": ["Vetted pros", "30-min support", "Refund if unhappy"],
+          "tagline": "Built in India · One home at a time"
+        }
+      }
+    },
+    {
+      "id": "upcoming_booking",
+      "type": "upcoming_booking",
+      "visible": true,
+      "data": { "visible": true }
     }
   ]
 }

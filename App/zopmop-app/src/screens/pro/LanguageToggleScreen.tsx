@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -11,25 +12,41 @@ import { Feather } from '@expo/vector-icons';
 
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
-import { getLocale, setLocale, type Locale, t } from '../../i18n';
+import { getLocale, setLocale, useLocale, type Locale, t } from '../../i18n';
 import { showSuccess } from '../../utils/toast';
+import { useProRoleGate } from '../../hooks/useRoleGate';
 
 const POP_DELAY_MS = 500;
 
 export default function LanguageToggleScreen() {
+  useProRoleGate();
+  useLocale(); // re-render this screen live when the locale switches
   const navigation = useNavigation();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
   const [selected, setSelected] = useState<Locale>(getLocale());
 
-  function pick(loc: Locale) {
-    if (loc === selected) return;
+  function apply(loc: Locale) {
     setSelected(loc);
     setLocale(loc);
     showSuccess(t('language.changed'));
     setTimeout(() => {
       if (navigation.canGoBack()) navigation.goBack();
     }, POP_DELAY_MS);
+  }
+
+  function pick(loc: Locale) {
+    if (loc === selected) return;
+    // Confirm before switching — the prompt shows in the *current* language so
+    // the user reads it in the language they already understand.
+    Alert.alert(
+      t('language.confirmTitle'),
+      t('language.confirmBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('language.confirmCta'), onPress: () => apply(loc) },
+      ],
+    );
   }
 
   return (
@@ -59,6 +76,13 @@ export default function LanguageToggleScreen() {
           subtitle={t('language.englishSubtitle')}
           selected={selected === 'en'}
           onPress={() => pick('en')}
+        />
+        <LanguageCard
+          colors={c}
+          label={t('language.bangla')}
+          subtitle={t('language.banglaSubtitle')}
+          selected={selected === 'bn'}
+          onPress={() => pick('bn')}
         />
       </View>
     </SafeAreaView>

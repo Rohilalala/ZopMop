@@ -15,9 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { haptics } from '../../utils/haptics';
 import LottieView from 'lottie-react-native';
@@ -46,7 +45,8 @@ const RESEND_SECONDS = 30;
 export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone, isNewUser = false } = route.params;
   const { signIn } = useAuth();
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
@@ -113,18 +113,17 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         return;
       }
 
-      // Customer flow: returning users with a name skip NameEntry.
+      // Roles are decided server-side: every signup is created as a
+      // customer and only the CRM can promote a number to pro — the user
+      // is never asked. Anyone without a name on file (brand-new signup
+      // or a legacy nameless account) must set one before entering the
+      // app; NameEntry then routes through Welcome. signIn comes first so
+      // the profile-setup PUT /me call has a session — App.tsx `needsName`
+      // (not isAuthenticated) keeps the AuthNavigator mounted.
+      signIn(data.access_token, data.refresh_token, data.user);
       const hasName = data.user.name && data.user.name.trim().length > 0;
-      if (hasName) {
-        signIn(data.access_token, data.refresh_token, data.user);
-        navigation.replace('Welcome', { phone, name: data.user.name });
-      } else if (data.is_new_user) {
-        // Stash tokens via signIn THEN route to NameEntry so the
-        // user is authenticated for the profile-setup PUT /me call.
-        signIn(data.access_token, data.refresh_token, data.user);
+      if (!hasName) {
         navigation.replace('NameEntry', { phone });
-      } else {
-        signIn(data.access_token, data.refresh_token, data.user);
       }
     } catch (err: any) {
       haptics.error();
@@ -226,7 +225,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
         <View style={stylesLottie.wrap} pointerEvents="none">
           <LottieView
             ref={lookAwayRef}
-            source={require('../../../assets/animation/lookaway.lottie')}
+            source={require('../../../assets/animation/lookaway.json')}
             autoPlay={false}
             loop={false}
             resizeMode="cover"
@@ -285,7 +284,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             >
               <View style={[styles.checkbox, policyAccepted && styles.checkboxChecked]}>
                 {policyAccepted ? (
-                  <Feather name="check" size={14} color="#FFFFFF" />
+                  <Feather name="check" size={14} color="#0D0D0F" />
                 ) : null}
               </View>
               <Text style={styles.consentText}>
@@ -317,7 +316,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             ) : (
               <TouchableOpacity onPress={handleResend} disabled={resending}>
                 {resending ? (
-                  <LoadingBars size="small" color={c.primary} />
+                  <LoadingBars size="small" color={c.accent} />
                 ) : (
                   <Text style={styles.resendLink}>Resend OTP</Text>
                 )}
@@ -338,7 +337,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <LoadingBars color="#FFFFFF" size="small" />
+              <LoadingBars color="#0D0D0F" size="small" />
             ) : (
               <Text style={styles.verifyButtonText}>Verify & Continue</Text>
             )}
@@ -385,7 +384,7 @@ function createStyles(c: typeof lightColors) {
       borderWidth: 1.5, borderColor: c.border, backgroundColor: c.white,
       textAlign: 'center', fontFamily: FontFamily.bold, fontSize: FontSize['2xl'], color: c.text, ...Shadow.sm,
     },
-    otpBoxFilled: { borderColor: c.primary, backgroundColor: c.primaryBg },
+    otpBoxFilled: { borderColor: c.accent, backgroundColor: 'rgba(245,163,0,0.12)' },
     otpBoxError: { borderColor: c.danger, backgroundColor: c.dangerBg },
     errorText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger, textAlign: 'center', marginTop: Spacing.md },
     consentRow: {
@@ -406,7 +405,7 @@ function createStyles(c: typeof lightColors) {
       justifyContent: 'center',
       marginTop: 2,
     },
-    checkboxChecked: { backgroundColor: c.primary, borderColor: c.primary },
+    checkboxChecked: { backgroundColor: c.accent, borderColor: c.accent },
     consentText: {
       flex: 1,
       fontFamily: FontFamily.regular,
@@ -416,17 +415,17 @@ function createStyles(c: typeof lightColors) {
     },
     consentLink: {
       fontFamily: FontFamily.medium,
-      color: c.primary,
+      color: c.accentOnSurface,
       textDecorationLine: 'underline',
     },
     resendRow: { alignItems: 'center', marginTop: Spacing.xl },
     resendCountdown: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary },
     resendCountdownNum: { fontFamily: FontFamily.semibold, color: c.text },
-    resendLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.primary, textDecorationLine: 'underline' },
+    resendLink: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: c.accentOnSurface, textDecorationLine: 'underline' },
     bottom: { paddingHorizontal: Spacing['2xl'], paddingBottom: Spacing['2xl'], gap: Spacing.md, alignItems: 'center' },
-    verifyButton: { width: '100%', height: 54, backgroundColor: c.primary, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
+    verifyButton: { width: '100%', height: 54, backgroundColor: c.accent, borderRadius: Radius.xl, alignItems: 'center', justifyContent: 'center', ...Shadow.md },
     verifyButtonDisabled: { opacity: 0.45 },
-    verifyButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#FFFFFF', letterSpacing: 0.2 },
+    verifyButtonText: { fontFamily: FontFamily.semibold, fontSize: FontSize.md, color: '#0D0D0F', letterSpacing: 0.2 },
     changeNumber: { paddingVertical: Spacing.xs },
     changeNumberText: { fontFamily: FontFamily.medium, fontSize: FontSize.sm, color: c.textSecondary },
   });

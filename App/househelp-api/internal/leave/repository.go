@@ -215,28 +215,34 @@ func (r *Repository) ListProBookingsOnDate(ctx context.Context, proID string, da
 // scheduled booking in the same time slot, no leave on that date, and
 // supporting the same service category. Returns empty string + nil when no
 // match.
-func (r *Repository) FindReplacementPro(ctx context.Context, excludeProID, serviceCategoryID, timeSlotID string, date time.Time) (string, error) {
+func (r *Repository) FindReplacementPro(ctx context.Context, excludeProID, timeSlotID string, date time.Time) (string, error) {
 	var id string
+	// role is 'pro' (renamed from 'helper' in migration 019); the old
+	// literal matched nobody. The service-category param was dropped —
+	// pros are general-purpose in this model (the matching engine filters
+	// pros by zone/availability, not by service category), and the
+	// previous query bound a $2 it never referenced, failing pgx prepare
+	// with 42P18 on every leave reassignment.
 	err := r.pool.QueryRow(ctx, `
 		SELECT u.id
 		FROM users u
 		JOIN helpers h ON h.id = u.id
-		WHERE u.role = 'helper'
+		WHERE u.role = 'pro'
 		  AND u.id <> $1
 		  AND h.is_available = true
 		  AND NOT EXISTS (
 		      SELECT 1 FROM pro_leaves pl
-		      WHERE pl.pro_id = u.id AND pl.date = $4 AND pl.status = 'approved'
+		      WHERE pl.pro_id = u.id AND pl.date = $3 AND pl.status = 'approved'
 		  )
 		  AND NOT EXISTS (
 		      SELECT 1 FROM bookings b
 		      WHERE b.helper_id = u.id
-		        AND b.time_slot_id = $3
+		        AND b.time_slot_id = $2
 		        AND b.status IN ('pending', 'accepted')
 		  )
 		ORDER BY h.rating DESC NULLS LAST, h.total_jobs DESC
 		LIMIT 1
-	`, excludeProID, serviceCategoryID, timeSlotID, date).Scan(&id)
+	`, excludeProID, timeSlotID, date).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -295,7 +301,7 @@ func (r *Repository) FindNearestOpenSlots(ctx context.Context, serviceCategoryID
 		      SELECT 1
 		      FROM users u
 		      JOIN helpers h ON h.id = u.id
-		      WHERE u.role = 'helper'
+		      WHERE u.role = 'pro'
 		        AND h.is_available = true
 		        AND NOT EXISTS (
 		            SELECT 1 FROM pro_leaves pl

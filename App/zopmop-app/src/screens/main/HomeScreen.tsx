@@ -30,14 +30,14 @@ import {
   Alert,
   Dimensions,
   Platform,
-  RefreshControl,
   ScrollView,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Location from 'expo-location';
 import { FlashList } from '@shopify/flash-list';
@@ -49,17 +49,25 @@ import { checkServiceability } from '../../api/zones';
 import { listAddresses } from '../../api/addresses';
 import { apiFetch } from '../../api/client';
 
-import LocationSelectorModal from '../../components/LocationSelectorModal';
+import { LocationSelector } from '../../components/LocationSelector';
 import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
 import { Bloom } from '../../components/home/Bloom';
+import { useTheme } from '../../context/ThemeContext';
+import { useC } from '../../theme/screen';
 import NotServiceableScreen from './NotServiceableScreen';
 import { HomeScreenSkeleton } from '../../components/skeletons/HomeScreenSkeleton';
+import { partitionHomeSections } from './homeSections';
 
 import { useSduiPage } from '../../hooks/useSduiPage';
 import { SectionRenderer } from '../../sdui/SectionRenderer';
+import { HeroPager } from '../../components/home/HeroPager';
+import { HeroRefreshFlyer } from '../../components/home/HeroRefreshFlyer';
+import { ZopRefresh } from '../../components/home/ZopRefresh';
+import { LivePillSection } from '../../sdui/sections/LivePillSection';
+import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
 import { showError, showSuccess, showInfo } from '../../utils/toast';
@@ -68,10 +76,11 @@ import { usePostHog } from 'posthog-react-native';
 import { usePrefetch } from '../../context/PrefetchContext';
 import { writeLastKnownLocation, readLastKnownLocation } from '../../utils/locationCache';
 import type { SduiAction, SduiSection } from '../../sdui/types';
-import {
+import Animated, {
   Easing,
   cancelAnimation,
   runOnJS,
+  useAnimatedStyle,
   useSharedValue,
   withDelay,
   withRepeat,
@@ -89,7 +98,18 @@ const DEFAULT_LON = 77.0763;
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
+// Top-overscroll distance (px) that triggers a custom pull-to-refresh. No native
+// RefreshControl is used, so the pull is detected from the scroll offset.
+const PULL_TRIGGER = 90;
+
+// How far the list is held down while refreshing (recreates the RefreshControl
+// rubber-band hold). The carousel fly rest adds this during refresh so the Zop
+// tracks the held card.
+const HOLD_OFFSET = 64;
+
 export default function HomeScreen() {
+  const { isDark, colors: themeColors } = useTheme();
+  const sc = useC();
   const { token, user } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -105,6 +125,10 @@ export default function HomeScreen() {
   const [locationName, setLocationName] = useState('Detecting location…');
   const [selectedAddressId, setSelectedAddressId] = useState<string | undefined>();
   const [addressTag, setAddressTag] = useState<string | undefined>();
+  // True when the user has no saved address — the header then prompts
+  // "Add a new address" and its tap opens the add-new flow directly instead of
+  // showing a reverse-geocoded GPS location.
+  const [noSavedAddress, setNoSavedAddress] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(prefetched?.coords ?? null);
   const [serviceable, setServiceable] = useState(true);
   const [bootstrapping, setBootstrapping] = useState(prefetched?.page == null);
@@ -119,8 +143,22 @@ export default function HomeScreen() {
     },
   );
 
+  // Re-fetch the page when Home regains focus (skip the initial mount focus —
+  // useSduiPage already fetches on mount). Picks up server-side config changes
+  // like a kill switch being toggled off without needing a manual pull.
+  const didMountFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!didMountFocus.current) {
+        didMountFocus.current = true;
+        return;
+      }
+      refetch();
+    }, [refetch]),
+  );
+
   // ── Pull-to-refresh easter egg ────────────────────────────────────────────
-  // Choreography (driven by RefreshControl trigger):
+  // Choreography (driven by the pull-to-refresh scroll trigger):
   //   1. eyes fade out         (180ms)
   //   2. fly up to mid-screen + spin 720°  (650ms, ease-out)
   //   3. hold mid-screen       (200ms)
@@ -131,12 +169,105 @@ export default function HomeScreen() {
   // All driven from shared values so it runs on the UI thread (60fps).
   const [refreshing, setRefreshing] = useState(false);
   const [heroShowFace, setHeroShowFace] = useState(true);
+  // Which hero-pager page is showing (0 = hero card). Drives which refresh
+  // mascot plays: full Zop fly on the home card, simple spinner on promo cards.
+  const [heroPage, setHeroPage] = useState(0);
+  // True for the whole fly+wink window (outlives `refreshing`, which flips off
+  // when the Zop lands ~before the wink) so the overlay mascot stays mounted
+  // through the wink.
+  const [heroAnimating, setHeroAnimating] = useState(false);
+  // Measured hero-card window rect — lets the carousel refresh overlay sit
+  // pixel-exact on the in-card mascot regardless of header/DEV-chip height.
+  const heroCardRef = useRef<View>(null);
+  // Live list scroll offset, mirrored into a shared value (UI thread, for the
+  // overlay's card tracking) and a plain ref (JS thread, for scroll-normalizing
+  // the measured hero rect).
+  const scrollY = useSharedValue(0);
+  const scrollYJS = useRef(0);
+
+  // Scroll-away header: hides while scrolling down, returns the moment the
+  // user scrolls up (or is near the top). translateY slides it out;
+  // the matching negative marginBottom lets the list ride up to fill the gap.
+  const headerH = useSharedValue(0);
+  const headerHidden = useSharedValue(0); // 0 = shown, 1 = off-screen
+  const headerTarget = useRef(0);
+  const lastScrollY = useRef(0);
+  // While the header is hidden or sliding, every measureInWindow on the list
+  // side is shifted by the collapse — anchors measured then are garbage
+  // (mascot flying to random spots). Measures are blocked during that window
+  // and re-taken once the header settles back.
+  const headerAnimUntil = useRef(0);
+  const setHeaderHidden = useCallback((t: 0 | 1) => {
+    if (headerTarget.current === t) return; // don't restart an in-flight timing
+    headerTarget.current = t;
+    headerAnimUntil.current = Date.now() + 280;
+    headerHidden.value = withTiming(t, {
+      duration: 240,
+      easing: Easing.bezier(0.33, 1, 0.68, 1),
+    });
+    if (t === 0) {
+      setTimeout(() => {
+        measureHeroCard();
+        measureListWrap();
+      }, 300);
+    }
+  }, [headerHidden]); // eslint-disable-line react-hooks/exhaustive-deps -- measure fns declared below, stable
+  const headerTopInset = insets.top;
+  const headerStyle = useAnimatedStyle(() => ({
+    zIndex: 10,
+    // Clear the safe-area inset too, or the bar parks inside the status-bar
+    // zone and stays visible. Layout gap (marginBottom) is just headerH.
+    transform: [{ translateY: -(headerH.value + headerTopInset) * headerHidden.value }],
+    marginBottom: -headerH.value * headerHidden.value,
+  }));
+  // heroRect.y is stored in SCROLL-0 coords (measured y + scroll offset at
+  // measure time) so the overlay can re-derive the live position from the
+  // current scroll on the UI thread.
+  const [heroRect, setHeroRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const heroAnimatingRef = useRef(false);
+  const measureHeroCard = useCallback(() => {
+    // Skip while the fly is playing — measureInWindow would bake the hold
+    // translate / mid-animation scroll into the rest anchor. Same for the
+    // scroll-away header: hidden or mid-slide shifts everything; a remeasure
+    // is scheduled when it settles (see setHeaderHidden).
+    if (heroAnimatingRef.current) return;
+    if (headerTarget.current !== 0 || Date.now() < headerAnimUntil.current) return;
+    heroCardRef.current?.measureInWindow((x, y, w, h) => {
+      if (w > 0 && h > 0) setHeroRect({ x, y: y + scrollYJS.current, w, h });
+    });
+  }, []);
+  useEffect(() => { heroAnimatingRef.current = heroAnimating; }, [heroAnimating]);
   const heroTransX  = useSharedValue(0);
   const heroTransY  = useSharedValue(0);
   const heroScale   = useSharedValue(1);
   const heroRotZ    = useSharedValue(0);
   const heroEye     = useSharedValue(1);
   const heroWink    = useSharedValue(0);
+  // Manual "hold" — recreates the RefreshControl rubber-band hold without the
+  // native control. While refreshing, the list is translated down HOLD_OFFSET
+  // (a gap opens at the top where the Zop plays); it springs back to 0 when the
+  // refresh completes. Driven from onRefresh; applied to the list wrapper.
+  const holdY = useSharedValue(0);
+  const holdStyle = useAnimatedStyle(() => ({ transform: [{ translateY: holdY.value }] }));
+  // Card-ride factor for the fly overlay: 1 = glued to the card (launch and
+  // landing), 0 = fixed screen position (mid-air hover in the hold gap above
+  // the card). Animated in lock-step with the fly choreography in onRefresh.
+  const heroRide = useSharedValue(1);
+
+  // Window top of the list area (below header/DEV chips). The fly overlay is
+  // clipped to this region so the mascot can never draw OVER the fixed header
+  // — when the card slides under the header (user scrolls mid-animation), the
+  // mascot slides under with it, exactly like the in-card mascot would.
+  const [listTop, setListTop] = useState(0);
+  const listWrapRef = useRef<View>(null);
+  const measureListWrap = useCallback(() => {
+    // Same header-settle guard as measureHeroCard — a collapsed/sliding
+    // header shifts the wrapper's window position.
+    if (headerTarget.current !== 0 || Date.now() < headerAnimUntil.current) return;
+    listWrapRef.current?.measureInWindow((_x, y) => {
+      if (y > 0) setListTop(y);
+    });
+  }, []);
 
   // Land the Zop in the same spot the other-screen ZopRefresh overlay uses:
   // horizontally centred, vertically ABOVE the content (~y=88 in screen
@@ -152,7 +283,14 @@ export default function HomeScreen() {
   // offset is -14 (extends past card right by 14). Zop right edge therefore
   // sits at SCREEN_W - 20 + 14 = SCREEN_W - 6. Centre = right - 130/2.
   const zopRestX = SCREEN_W - 6 - 130 / 2;
-  const TARGET_TOP = 60 + 56 / 2;          // = 88, matches ZopRefresh.tsx
+  // Mid-flight hover centre: a FIXED screen spot — the centre of the 64px
+  // hold gap that opens at the top of the list while refreshing. That gap is
+  // reserved empty space (the list is held down by HOLD_OFFSET), so the
+  // mascot can never collide with content or the header. Deliberately NOT
+  // derived from heroRect measurements — measured math is what sent the
+  // mascot to random places. Falls back to 88 (matches ZopRefresh.tsx)
+  // until listTop is measured.
+  const TARGET_TOP = listTop > 0 ? listTop + HOLD_OFFSET / 2 : 60 + 56 / 2;
   const flyTargetX = SCREEN_W / 2 - zopRestX;
   const flyTargetY = TARGET_TOP - zopRestY; // negative — Zop flies UP
   const FLY_SCALE  = 56 / 130;             // matches small loading Zop
@@ -160,6 +298,13 @@ export default function HomeScreen() {
   const onRefresh = useCallback(async () => {
     haptics.medium();
     setRefreshing(true);
+    setHeroAnimating(true);
+
+    // Open the hold: ease the list down so a gap appears at the top (where the
+    // Zop plays), mimicking the RefreshControl rubber-band hold. Springs back
+    // when the choreography lands (see RETURN_AT below).
+    cancelAnimation(holdY);
+    holdY.value = withTiming(HOLD_OFFSET, { duration: 220, easing: Easing.out(Easing.cubic) });
 
     // Cancel any in-flight animations so a re-trigger reads cleanly.
     cancelAnimation(heroTransX);
@@ -168,6 +313,7 @@ export default function HomeScreen() {
     cancelAnimation(heroRotZ);
     cancelAnimation(heroEye);
     cancelAnimation(heroWink);
+    cancelAnimation(heroRide);
 
     // Strip the face immediately — body-only Zop while loading. Matches the
     // other-screen ZopRefresh visual.
@@ -198,6 +344,14 @@ export default function HomeScreen() {
       withTiming(FLY_SCALE, { duration: FLY_MS, easing: Easing.out(Easing.cubic) }),
       withDelay(HOLD_MS, withSpring(1, { damping: 14, stiffness: 160, mass: 0.9 })),
     );
+    // Detach from the card for the hover (the gap doesn't move with the held
+    // card), re-attach on the same spring as the return so landing is exactly
+    // the card point. Starts at 1 (launches FROM the card's current position).
+    heroRide.value = 1;
+    heroRide.value = withSequence(
+      withTiming(0, { duration: FLY_MS, easing: Easing.out(Easing.cubic) }),
+      withDelay(HOLD_MS, withSpring(1, { damping: 14, stiffness: 160, mass: 0.9 })),
+    );
 
     // Once Zop is back home (~FLY + HOLD + ~600ms spring), continue rotation
     // FORWARD to the next 90° boundary — the body is 4-fold symmetric so
@@ -212,6 +366,9 @@ export default function HomeScreen() {
       // immediately. The rotation snap + face reveal continue independently
       // (the body keeps spinning a touch as the scroll springs back).
       runOnJS(setRefreshing)(false);
+
+      // Close the hold: spring the list back up (the rubber-band release).
+      holdY.value = withSpring(0, { damping: 16, stiffness: 170, mass: 0.9 });
 
       const current = heroRotZ.value;
       const next = Math.ceil((current + 30) / 90) * 90;
@@ -245,11 +402,12 @@ export default function HomeScreen() {
     }
   }, [
     refetch, flyTargetX, flyTargetY, FLY_SCALE,
-    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink,
+    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink, holdY, heroRide,
   ]);
 
-  // Wink AFTER the screen has scrolled back up. RefreshControl's spring
-  // returns the content to rest ~250ms after `refreshing` flips false.
+  // Wink AFTER `refreshing` flips false (the list has already rubber-banded back
+  // to rest since there's no native hold). Small delay so the wink reads as a
+  // post-landing beat.
   const prevRefreshing = useRef(false);
   useEffect(() => {
     if (prevRefreshing.current && !refreshing) {
@@ -259,8 +417,11 @@ export default function HomeScreen() {
           withDelay(100, withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) })),
         );
       }, 350);
+      // Keep the overlay mascot mounted until the wink finishes (~350 + 440ms),
+      // then hand back to the idle in-card mascot.
+      const tEnd = setTimeout(() => setHeroAnimating(false), 1000);
       prevRefreshing.current = refreshing;
-      return () => clearTimeout(t);
+      return () => { clearTimeout(t); clearTimeout(tEnd); };
     }
     prevRefreshing.current = refreshing;
   }, [refreshing, heroWink]);
@@ -333,7 +494,7 @@ export default function HomeScreen() {
 
       // If we have prefetched addresses, resolve name from them now so the
       // header shows a real address on first paint.
-      const savedAddresses = prefetched?.addresses ?? null;
+      let savedAddresses = prefetched?.addresses ?? null;
       const fromPrefetch = resolveNameFromAddresses(lat, lon, savedAddresses);
       if (fromPrefetch) name = fromPrefetch;
 
@@ -341,6 +502,20 @@ export default function HomeScreen() {
         setLocationName(name);
         setCoords({ lat, lon });
         setBootstrapping(false);
+      }
+
+      // Prefetch may omit the address list this session. Fetch the definitive
+      // list so the "Add a new address" prompt only appears when the user truly
+      // has none — otherwise we'd show it despite a saved address existing.
+      if (!savedAddresses && token && token !== '__guest__') {
+        savedAddresses = await listAddresses(token).catch(() => null);
+        if (!cancelled && savedAddresses) {
+          const resolved = resolveNameFromAddresses(lat, lon, savedAddresses);
+          if (resolved) { name = resolved; setLocationName(resolved); }
+        }
+      }
+      if (!cancelled && savedAddresses) {
+        setNoSavedAddress(savedAddresses.length === 0);
       }
 
       // ── Phase 2: upgrade location in the background ───────────────────────
@@ -364,20 +539,13 @@ export default function HomeScreen() {
             if (savedAddresses && savedAddresses.length > 0) {
               const upgraded = resolveNameFromAddresses(lat, lon, savedAddresses);
               if (upgraded) name = upgraded;
+              if (!cancelled) setNoSavedAddress(false);
             } else if (token && token !== '__guest__') {
-              try {
-                const [place] = await Location.reverseGeocodeAsync({
-                  latitude: lat,
-                  longitude: lon,
-                });
-                if (place) {
-                  const parts = [
-                    place.name,
-                    place.district ?? place.subregion ?? place.city,
-                  ].filter(Boolean);
-                  if (parts.length > 0) name = parts.join(', ');
-                }
-              } catch {}
+              // No saved address: prompt the user to add one instead of showing
+              // a reverse-geocoded GPS location they never chose. Coords are
+              // still kept for the serviceability check below.
+              if (!cancelled) setNoSavedAddress(true);
+              name = 'Add a new address';
             }
           }
         }
@@ -387,7 +555,10 @@ export default function HomeScreen() {
       setLocationName(name);
       try {
         const result = await checkServiceability(lat, lon);
-        if (!cancelled) setServiceable(result.serviceable);
+        // Only an actual server answer may flip the gate — a transient error
+        // (backend restart, dropped request) must not flash the "not in your
+        // area" screen at a user who is in zone.
+        if (!cancelled && result.authoritative) setServiceable(result.serviceable);
       } catch {}
       if (cancelled) return;
       setCoords({ lat, lon });
@@ -403,6 +574,7 @@ export default function HomeScreen() {
       const shortName = name.split(',').slice(0, 2).join(',').trim();
       setLocationName(shortName);
       setSelectedAddressId(addressId);
+      if (addressId) setNoSavedAddress(false);
       // Resolve tag for the picked address. If the user picked a saved one,
       // look it up in their list; otherwise clear so the header falls back
       // to "Current location".
@@ -417,14 +589,15 @@ export default function HomeScreen() {
       } else {
         setAddressTag(undefined);
       }
-      const result = await checkServiceability(lat, lon).catch(() => ({
-        serviceable: true,
-      }));
+      const result = await checkServiceability(lat, lon);
       posthog.capture('location_changed', {
         serviceable: result.serviceable,
         has_saved_address: !!addressId,
       });
-      setServiceable(result.serviceable);
+      // Same rule as the bootstrap check: only an authoritative server answer
+      // may flip the gate (this path previously defaulted errors to TRUE while
+      // bootstrap defaulted them to FALSE — both replaced by keep-last-state).
+      if (result.authoritative) setServiceable(result.serviceable);
       setCoords({ lat, lon });
       writeLastKnownLocation({ lat, lon, name: shortName, addressId });
     },
@@ -476,16 +649,18 @@ export default function HomeScreen() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   const locationModal = (
-    <LocationSelectorModal
+    <LocationSelector
       visible={locationModalVisible}
       onClose={() => setLocationModalVisible(false)}
       onLocationSelect={handleLocationSelect}
+      mode={noSavedAddress ? { kind: 'add-new' } : { kind: 'change-location' }}
+      theme={isDark ? 'dark' : 'light'}
     />
   );
 
   if (bootstrapping || (loading && !page)) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
         <Bloom />
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -509,61 +684,201 @@ export default function HomeScreen() {
     );
   }
 
-  // Drop the SDUI hero_carousel slot — replaced by the static HomeHero above.
-  const sections = (page?.sections ?? []).filter((s) => s.type !== 'hero_carousel');
+  // Split the SDUI sections into the scrolling feed and the blocks HomeScreen
+  // renders itself (the hero is the FlashList ListHeaderComponent below).
+  const part = partitionHomeSections(page?.sections ?? []);
+  const sections = part.feed;
+  const heroData = part.greetingHero?.data;
+  const carouselData = part.heroCarousel?.data;
+  const headerPromo = part.headerPromo?.data;
+  // Default-on: render the indicator unless the section ships and sets visible=false.
+  const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
 
-  const Header = (
+  // Hero layer: greeting hero is page 0; hero_carousel slides are pages 1..n.
+  //
+  // Refresh mascot:
+  //   • No carousel — the hero is the direct list header, so the in-card mascot
+  //     does the full fly+wink (original behaviour, never clipped).
+  //   • Carousel — the hero sits inside HeroPager's ScrollView which clips a
+  //     flying in-card mascot. So the in-card mascot stays idle (hidden while
+  //     animating) and the fly is rendered as a root overlay (HeroRefreshFlyer)
+  //     on page 0, or the simple ZopRefresh spinner on promo pages (below).
+  const hasCarousel = (carouselData?.slides?.length ?? 0) > 0;
+  // Mascot rest centre for the carousel overlay fly. Use the measured hero-card
+  // window rect directly (pixel-exact): the in-card mascot sits at the card's
+  // top-right — centre = (cardRight + 14 - 65, cardTop - 6 + 65). measureInWindow
+  // returns window coords and the overlay's absolute top is measured from the
+  // window origin too, so NO insets.top adjustment (subtracting it rendered the
+  // mascot ~insets.top too high). Falls back to the computed screen coords.
+  // heroRect is the SCROLL-0 rest anchor — a point defined on the card itself.
+  // The overlay is rendered OUTSIDE the held list wrapper, so the card's live
+  // displacement (the hold spring + any user scroll mid-animation) is applied
+  // INSIDE HeroRefreshFlyer on the UI thread via the holdY/scrollY shared
+  // values — no HOLD_OFFSET step-change here; the mascot rides the card and
+  // the hover handoff happens at exactly the landing point.
+  // No rest nudges: heroRect is measured pixel-exact, so the overlay's rest
+  // must equal the in-card mascot's centre (heroRect.y + 59) EXACTLY — any
+  // offset reads as a hop at launch and at the hover handoff (the old
+  // FLY/REST nudges, tuned for the eyeballed-coords era, caused that jitter;
+  // their mid-spring 5→4 flip when `refreshing` cleared added another 1px hop).
+  const heroFlyRest = heroRect
+    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 }
+    : { x: zopRestX, y: zopRestY };
+  const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
-      eggTranslateX={heroTransX}
-      eggTranslateY={heroTransY}
-      eggScale={heroScale}
-      eggRotation={heroRotZ}
-      eyeOpacity={heroEye}
-      winkProgress={heroWink}
-      showFace={heroShowFace}
+      greeting={heroData?.greeting}
+      titleLines={heroData?.title_lines}
+      // The hero ALWAYS lives inside HeroPager's horizontal ScrollView (even with
+      // no carousel — 1 page), which clips a flying in-card mascot. So in BOTH
+      // cases the in-card mascot stays static and is hidden while animating; the
+      // fly is the root overlay (HeroRefreshFlyer), which is never clipped.
+      showMascot={heroData?.show_mascot !== false && !heroAnimating}
+      showFace={true}
+      viewRef={heroCardRef}
+      onLayout={measureHeroCard}
+    />
+  );
+  // Live pill rides inside the hero pager's page 0 (bundled with the hero —
+  // they swipe in/out together), so it's extracted from the feed.
+  const livePillData = part.livePill?.data;
+  const livePillNode = livePillData ? (
+    <LivePillSection data={livePillData} onAction={handleAction} />
+  ) : null;
+
+  const Header = (
+    <HeroPager
+      hero={heroNode}
+      heroExtra={livePillNode}
+      slides={carouselData?.slides ?? []}
+      behavior={{
+        autoplay: carouselData?.autoplay,
+        intervalMs: carouselData?.interval_ms,
+        loop: carouselData?.loop,
+        restartOnFocus: carouselData?.restart_on_focus,
+      }}
+      onAction={handleAction}
+      onActiveChange={setHeroPage}
+      paused={heroAnimating}
     />
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
       <Bloom />
 
-      <HomeHeader
-        locationName={locationName}
-        onLocationPress={() => setLocationModalVisible(true)}
-        selectedAddressId={selectedAddressId}
-        addressTag={addressTag}
-      />
+      <Animated.View
+        style={headerStyle}
+        onLayout={(e) => { headerH.value = e.nativeEvent.layout.height; }}
+      >
+        <HomeHeader
+          locationName={locationName}
+          onLocationPress={() => setLocationModalVisible(true)}
+          selectedAddressId={selectedAddressId}
+          addressTag={addressTag}
+          promo={headerPromo}
+          onAction={handleAction}
+        />
+      </Animated.View>
 
-      <FlashList
-        data={sections}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        estimatedItemSize={200}
-        ListHeaderComponent={Header}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
-        showsVerticalScrollIndicator={false}
-        extraData={page?.config_hash}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="transparent"
-            colors={['transparent']}
-            progressBackgroundColor="transparent"
+      {/* List area wrapper — measured for listTop. NOT clipped itself: masking
+          this whole region puts the list in its own compositing layer, which
+          renders the backdrop gradient with a subtly different tint and drew a
+          full-width seam at the header boundary in light mode. Only the fly
+          overlay (below) gets a clipped container. */}
+      <View ref={listWrapRef} onLayout={measureListWrap} style={{ flex: 1 }}>
+      <Animated.View key={isDark ? 'dark' : 'light'} style={[{ flex: 1 }, holdStyle]}>
+        <SduiErrorBoundary resetKey={page?.config_hash}>
+        <FlashList
+          data={sections}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          // Keep a separate recycle pool per section type. Without this, FlashList
+          // recycles a cell from one section type into a different one on a config
+          // swap, and the mismatched native view tree trips a Fabric mount
+          // assertion (RCTComponentViewRegistry) → SIGABRT on the first swap.
+          getItemType={(item) => (item as SduiSection).type}
+          estimatedItemSize={200}
+          ListHeaderComponent={Header}
+          contentContainerStyle={{ paddingBottom: 200, backgroundColor: 'transparent' }}
+          showsVerticalScrollIndicator={false}
+          extraData={page?.config_hash}
+          // Custom pull-to-refresh — NO native RefreshControl. That component owns
+          // the iOS spinner, which can't be tinted or hidden on FlashList under the
+          // New Architecture (and native appearance is locked light, so it's a
+          // fixed gray). Instead the list rubber-bands at the top; when pulled past
+          // PULL_TRIGGER we fire the refresh and the Zop choreography is the only
+          // loader. No OS control = no gray spinner to theme, mask, or fight.
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            // Mirror the offset BEFORE the re-trigger guard — the overlay's
+            // card tracking needs it during the fly too.
+            const y = e.nativeEvent.contentOffset.y;
+            scrollY.value = y;
+            scrollYJS.current = y;
+            const dy = y - lastScrollY.current;
+            lastScrollY.current = y;
+            if (!refreshing && !heroAnimating) {
+              if (y <= 8) setHeaderHidden(0);            // at/near top: always shown
+              else if (dy < -2) setHeaderHidden(0);      // any upward scroll: return
+              else if (dy > 2 && y > 56) setHeaderHidden(1); // scrolling down: slide away
+            }
+            if (refreshing || heroAnimating) return;
+            if (y <= -PULL_TRIGGER) onRefresh();
+          }}
+        />
+        </SduiErrorBoundary>
+      </Animated.View>
+
+      {/* Refresh mascot overlay — rendered INSIDE the clipped list wrapper
+          (sibling of the list, not a child, so it doesn't scroll) but OUTSIDE
+          HeroPager's ScrollView (which would clip an in-card fly). Used for
+          BOTH carousel and non-carousel. Full Zop fly+wink on the home card
+          (page 0); the simple ZopRefresh spinner on promo cards. Rest coords
+          are window-based, so subtract listTop to convert into this wrapper. */}
+      {heroPage === 0 && heroAnimating ? (
+        // Clipped to the list area so the mascot can never draw over the
+        // fixed header — it slides under the header edge with the card,
+        // exactly like the in-card mascot would. Only mounted while the fly
+        // plays, so the masked layer can't tint the resting screen.
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <HeroRefreshFlyer
+            restX={heroFlyRest.x}
+            restY={heroFlyRest.y - listTop}
+            transX={heroTransX}
+            transY={heroTransY}
+            scale={heroScale}
+            rotation={heroRotZ}
+            scrollY={scrollY}
+            holdY={holdY}
+            ride={heroRide}
+            eyeOpacity={heroEye}
+            winkProgress={heroWink}
+            showFace={heroShowFace}
           />
-        }
-      />
+        </View>
+      ) : null}
+      </View>
+      {hasCarousel && heroPage > 0 ? (
+        // Promo cards: simple spinner, dropped below the header so it doesn't
+        // overlap it — sits around where the home card's fly mascot travels.
+        <ZopRefresh refreshing={refreshing} top={Math.round(insets.top + 56)} />
+      ) : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
-      <UpcomingBookingIndicator />
+      {showUpcoming ? <UpcomingBookingIndicator /> : null}
       {locationModal}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: '#0A0A0A' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

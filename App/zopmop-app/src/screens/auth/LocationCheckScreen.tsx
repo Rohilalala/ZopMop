@@ -24,23 +24,14 @@ import {
   ALL_KNOWN_CITIES,
 } from '../../utils/serviceability';
 import { GlassCard } from '../../components/home/GlassCard';
+import { lightC, type ScreenColors } from '../../theme/screen';
 import { FontFamily, FontSize, Spacing, Radius } from '../../theme';
 
-// Hard-coded dark + amber palette to match the locked home aesthetic
-// (memory: dark home pattern, light mode deferred). Auth screens that fall
-// after sign-in step into the same visual language as Home.
-const BG = '#0A0A0A';
-const SURFACE_DEEP = '#0D0D0F';
-const TEXT_HI = '#FFFFFF';
-const TEXT_MID = 'rgba(255,255,255,0.62)';
-const TEXT_DIM = 'rgba(255,255,255,0.38)';
-const HAIRLINE = 'rgba(255,255,255,0.08)';
-const AMBER = '#F5A300';
-const AMBER_HI = '#FFC042';
-const AMBER_TINT_12 = 'rgba(245,163,0,0.12)';
-const AMBER_TINT_18 = 'rgba(245,163,0,0.18)';
-const DANGER = '#F87171';
-const DANGER_TINT = 'rgba(248,113,113,0.12)';
+// THEME NOTE: auth flow is locked to light — these are light-mode Lottie pages,
+// so this screen always uses the light screen.ts palette (lightC), NOT the global
+// dark/light toggle. Cream bg, amber accents, danger on the light token.
+// Rebrand preview: bg/text overridden to the designer cream/brown (see authColors).
+const authC = { ...lightC, bg: '#FFF6EB', text: '#3C2D1B' } as ScreenColors;
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Location'>;
@@ -52,7 +43,9 @@ type GpsState = 'idle' | 'requesting' | 'checking' | 'denied' | 'error';
 
 export default function LocationCheckScreen({ navigation, route }: Props) {
   const { phone, name } = route.params;
-  const styles = useMemo(() => createStyles(), []);
+  const c = authC;
+  const danger = c.danger;
+  const styles = useMemo(() => createStyles(c, danger), [c, danger]);
   const [mode, setMode] = useState<Mode>('choose');
   const [gpsState, setGpsState] = useState<GpsState>('idle');
   const [searchQuery, setSearchQuery] = useState('');
@@ -157,7 +150,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
         <View style={[styles.ripple, styles.rippleMid]} />
         <View style={styles.pinCircle}>
           <View style={styles.pinInner}>
-            <Feather name={icon} size={32} color={AMBER} />
+            <Feather name={icon} size={32} color={c.amber} />
           </View>
         </View>
       </View>
@@ -190,13 +183,13 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
             >
               <GlassCard radius={Radius.xl} style={styles.optionCard}>
                 <View style={styles.optionIconAmber}>
-                  <Feather name="navigation" size={20} color={AMBER} />
+                  <Feather name="navigation" size={20} color={c.amber} />
                 </View>
                 <View style={styles.optionText}>
                   <Text style={styles.optionTitle}>Use my current location</Text>
                   <Text style={styles.optionDesc}>Detect via GPS</Text>
                 </View>
-                <Feather name="chevron-right" size={20} color={TEXT_DIM} />
+                <Feather name="chevron-right" size={20} color={c.textMuted} />
               </GlassCard>
             </TouchableOpacity>
 
@@ -212,13 +205,13 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
             >
               <GlassCard radius={Radius.xl} style={styles.optionCard}>
                 <View style={styles.optionIconNeutral}>
-                  <Feather name="search" size={20} color={TEXT_HI} />
+                  <Feather name="search" size={20} color={c.text} />
                 </View>
                 <View style={styles.optionText}>
                   <Text style={styles.optionTitle}>Enter city manually</Text>
                   <Text style={styles.optionDesc}>Search and select</Text>
                 </View>
-                <Feather name="chevron-right" size={20} color={TEXT_DIM} />
+                <Feather name="chevron-right" size={20} color={c.textMuted} />
               </GlassCard>
             </TouchableOpacity>
           </View>
@@ -247,7 +240,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
 
           {gpsState === 'denied' && (
             <View style={styles.alertCard}>
-              <Feather name="alert-triangle" size={16} color={DANGER} />
+              <Feather name="alert-triangle" size={16} color={danger} />
               <View style={styles.alertText}>
                 <Text style={styles.alertTitle}>Location access needed</Text>
                 <Text style={styles.alertBody}>
@@ -262,7 +255,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
           )}
           {gpsState === 'error' && (
             <View style={styles.alertCard}>
-              <Feather name="alert-circle" size={16} color={DANGER} />
+              <Feather name="alert-circle" size={16} color={danger} />
               <View style={styles.alertText}>
                 <Text style={styles.alertTitle}>Couldn't get your location</Text>
                 <Text style={styles.alertBody}>
@@ -284,7 +277,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
             activeOpacity={0.9}
           >
             {isGpsLoading ? (
-              <LoadingBars color={SURFACE_DEEP} size="small" />
+              <LoadingBars color={c.ink} size="small" />
             ) : (
               <Text style={styles.primaryButtonText}>
                 {gpsState === 'denied' || gpsState === 'error'
@@ -320,18 +313,18 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.8}
           >
-            <Feather name="arrow-left" size={20} color={TEXT_HI} />
+            <Feather name="arrow-left" size={20} color={c.text} />
           </TouchableOpacity>
           <Text style={styles.manualTitle}>Select your city</Text>
         </View>
 
         <View style={styles.searchWrapper}>
           <GlassCard radius={Radius.xl} style={styles.searchBar}>
-            <Feather name="search" size={18} color={TEXT_DIM} />
+            <Feather name="search" size={18} color={c.textMuted} />
             <TextInput
               style={styles.searchInput}
               placeholder="Search city…"
-              placeholderTextColor={TEXT_DIM}
+              placeholderTextColor={c.textMuted}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoFocus
@@ -343,7 +336,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
                 onPress={() => setSearchQuery('')}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Feather name="x-circle" size={18} color={TEXT_DIM} />
+                <Feather name="x-circle" size={18} color={c.textMuted} />
               </TouchableOpacity>
             )}
           </GlassCard>
@@ -364,7 +357,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
                 <Feather
                   name="map-pin"
                   size={16}
-                  color={item.serviceable ? AMBER : TEXT_DIM}
+                  color={item.serviceable ? c.amber : c.textMuted}
                 />
                 <Text style={styles.cityName}>{item.displayName}</Text>
                 {item.serviceable && (
@@ -380,7 +373,7 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
           )}
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Feather name="search" size={28} color={TEXT_DIM} />
+              <Feather name="search" size={28} color={c.textMuted} />
               <Text style={styles.emptyText}>No cities found for "{searchQuery}"</Text>
             </View>
           }
@@ -400,10 +393,20 @@ export default function LocationCheckScreen({ navigation, route }: Props) {
   );
 }
 
-function createStyles() {
+function createStyles(c: ScreenColors, danger: string) {
+  // Amber tints on cream: 12% maps to the amberSoft token, 18% stays a literal.
+  const amberTint12 = c.amberSoft;
+  const amberTint18 = 'rgba(245,163,0,0.18)';
+  // Neutral chip: near-white card on cream.
+  const neutralChip = c.glassHi;
+  // Danger surfaces on cream (light tokens).
+  const dangerTint = c.dangerSoft;
+  const dangerBorder = c.dangerBorder;
+  const dangerBody = c.danger;
+
   return StyleSheet.create({
     flex: { flex: 1 },
-    safe: { flex: 1, backgroundColor: BG },
+    safe: { flex: 1, backgroundColor: c.bg },
     topSpacer: { flex: 0.6 },
     bottomSpacer: { flex: 0.5 },
 
@@ -420,7 +423,7 @@ function createStyles() {
       position: 'absolute',
       borderRadius: Radius.full,
       borderWidth: 1,
-      borderColor: AMBER,
+      borderColor: c.amber,
     },
     rippleOuter: { width: 132, height: 132 },
     rippleMid: { width: 158, height: 158, opacity: 0.15 },
@@ -428,9 +431,9 @@ function createStyles() {
       width: 92,
       height: 92,
       borderRadius: Radius.full,
-      backgroundColor: AMBER_TINT_12,
+      backgroundColor: amberTint12,
       borderWidth: 1,
-      borderColor: AMBER_TINT_18,
+      borderColor: amberTint18,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -438,7 +441,7 @@ function createStyles() {
       width: 64,
       height: 64,
       borderRadius: Radius.full,
-      backgroundColor: AMBER_TINT_18,
+      backgroundColor: amberTint18,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -455,19 +458,19 @@ function createStyles() {
       fontSize: 30,
       lineHeight: 36,
       letterSpacing: -0.6,
-      color: TEXT_HI,
+      color: c.text,
       textAlign: 'center',
     },
     subtitle: {
       fontFamily: FontFamily.regular,
       fontSize: 15,
       lineHeight: 22,
-      color: TEXT_MID,
+      color: c.textSecondary,
       textAlign: 'center',
       paddingHorizontal: Spacing.md,
     },
-    zopBrand: { fontFamily: FontFamily.extrabold, color: AMBER_HI },
-    mopBrand: { fontFamily: FontFamily.extrabold, color: TEXT_HI },
+    zopBrand: { fontFamily: FontFamily.extrabold, color: c.amberHi },
+    mopBrand: { fontFamily: FontFamily.extrabold, color: c.text },
 
     // Options
     options: {
@@ -486,9 +489,9 @@ function createStyles() {
       width: 44,
       height: 44,
       borderRadius: Radius.lg,
-      backgroundColor: AMBER_TINT_12,
+      backgroundColor: amberTint12,
       borderWidth: 1,
-      borderColor: AMBER_TINT_18,
+      borderColor: amberTint18,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -496,9 +499,9 @@ function createStyles() {
       width: 44,
       height: 44,
       borderRadius: Radius.lg,
-      backgroundColor: 'rgba(255,255,255,0.06)',
+      backgroundColor: neutralChip,
       borderWidth: 1,
-      borderColor: HAIRLINE,
+      borderColor: c.glassBorder,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -506,13 +509,13 @@ function createStyles() {
     optionTitle: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.md,
-      color: TEXT_HI,
+      color: c.text,
       letterSpacing: -0.2,
     },
     optionDesc: {
       fontFamily: FontFamily.regular,
       fontSize: FontSize.sm,
-      color: TEXT_MID,
+      color: c.textSecondary,
     },
     dividerRow: {
       flexDirection: 'row',
@@ -520,11 +523,11 @@ function createStyles() {
       gap: Spacing.md,
       paddingVertical: Spacing.xs,
     },
-    dividerLine: { flex: 1, height: 1, backgroundColor: HAIRLINE },
+    dividerLine: { flex: 1, height: 1, backgroundColor: c.glassBorder },
     dividerText: {
       fontFamily: FontFamily.medium,
       fontSize: FontSize.sm,
-      color: TEXT_DIM,
+      color: c.textMuted,
     },
 
     // Alerts (GPS denied / error)
@@ -533,22 +536,22 @@ function createStyles() {
       gap: Spacing.sm,
       marginHorizontal: 24,
       marginTop: Spacing.xl,
-      backgroundColor: DANGER_TINT,
+      backgroundColor: dangerTint,
       borderRadius: Radius.lg,
       borderWidth: 1,
-      borderColor: 'rgba(248,113,113,0.22)',
+      borderColor: dangerBorder,
       padding: Spacing.base,
     },
     alertText: { flex: 1, gap: 2 },
-    alertTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: DANGER },
+    alertTitle: { fontFamily: FontFamily.semibold, fontSize: FontSize.sm, color: danger },
     alertBody: {
       fontFamily: FontFamily.regular,
       fontSize: FontSize.sm,
-      color: 'rgba(248,113,113,0.85)',
+      color: dangerBody,
       lineHeight: FontSize.sm * 1.6,
     },
 
-    // Bottom CTA (amber, dark text — matches home button)
+    // Bottom CTA (amber, dark ink — matches home button, same in both themes)
     bottom: {
       paddingHorizontal: 24,
       paddingBottom: 20,
@@ -558,11 +561,11 @@ function createStyles() {
     primaryButton: {
       width: '100%',
       height: 54,
-      backgroundColor: AMBER,
+      backgroundColor: c.amber,
       borderRadius: Radius.xl,
       alignItems: 'center',
       justifyContent: 'center',
-      shadowColor: AMBER,
+      shadowColor: c.amber,
       shadowOffset: { width: 0, height: 8 },
       shadowOpacity: 0.35,
       shadowRadius: 18,
@@ -572,19 +575,19 @@ function createStyles() {
     primaryButtonText: {
       fontFamily: FontFamily.extrabold,
       fontSize: FontSize.md,
-      color: SURFACE_DEEP,
+      color: c.ink,
       letterSpacing: 0.2,
     },
     statusHint: {
       fontFamily: FontFamily.regular,
       fontSize: FontSize.sm,
-      color: TEXT_DIM,
+      color: c.textMuted,
       height: 18,
     },
     linkText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.sm,
-      color: AMBER_HI,
+      color: c.amberHi,
     },
 
     // Manual mode
@@ -600,16 +603,16 @@ function createStyles() {
       width: 40,
       height: 40,
       borderRadius: Radius.md,
-      backgroundColor: 'rgba(255,255,255,0.06)',
+      backgroundColor: neutralChip,
       borderWidth: 1,
-      borderColor: HAIRLINE,
+      borderColor: c.glassBorder,
       alignItems: 'center',
       justifyContent: 'center',
     },
     manualTitle: {
       fontFamily: FontFamily.bold,
       fontSize: FontSize.lg,
-      color: TEXT_HI,
+      color: c.text,
       letterSpacing: -0.3,
     },
     searchWrapper: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.sm },
@@ -624,7 +627,7 @@ function createStyles() {
       flex: 1,
       fontFamily: FontFamily.regular,
       fontSize: FontSize.base,
-      color: TEXT_HI,
+      color: c.text,
       paddingVertical: 0,
     },
     cityList: { paddingHorizontal: Spacing.base, paddingBottom: Spacing.base },
@@ -635,34 +638,34 @@ function createStyles() {
       paddingVertical: Spacing.md,
     },
     cityRowLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flex: 1 },
-    cityName: { fontFamily: FontFamily.medium, fontSize: FontSize.md, color: TEXT_HI },
+    cityName: { fontFamily: FontFamily.medium, fontSize: FontSize.md, color: c.text },
     availablePill: {
-      backgroundColor: AMBER_TINT_18,
+      backgroundColor: amberTint18,
       borderRadius: Radius.full,
       paddingHorizontal: Spacing.sm,
       paddingVertical: 2,
       borderWidth: 1,
-      borderColor: AMBER_TINT_18,
+      borderColor: amberTint18,
     },
     availablePillText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.xs,
-      color: AMBER_HI,
+      color: c.amberHi,
     },
-    comingSoon: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: TEXT_DIM },
-    separator: { height: 1, backgroundColor: HAIRLINE },
+    comingSoon: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textMuted },
+    separator: { height: 1, backgroundColor: c.glassBorder },
     emptyState: { paddingTop: Spacing['3xl'], alignItems: 'center', gap: Spacing.md },
     emptyText: {
       fontFamily: FontFamily.regular,
       fontSize: FontSize.base,
-      color: TEXT_DIM,
+      color: c.textMuted,
       textAlign: 'center',
     },
     gpsLinkWrapper: {
       alignItems: 'center',
       paddingVertical: Spacing.lg,
       borderTopWidth: 1,
-      borderTopColor: HAIRLINE,
+      borderTopColor: c.glassBorder,
     },
   });
 }

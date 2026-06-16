@@ -22,11 +22,14 @@ import { useColors } from '../../context/ThemeContext';
 import { showError } from '../../utils/toast';
 import { requestZoneApproval } from '../../api/shifts';
 import { captureSelfieForApproval, type CapturedPhoto } from '../../utils/photoCapture';
-import { t } from '../../i18n';
+import { useProRoleGate } from '../../hooks/useRoleGate';
+import { t, useLocale } from '../../i18n';
 
 const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
 
 export default function ZoneApprovalRequestScreen() {
+  useLocale(); // live-update strings on language change
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'ZoneApprovalRequest'>>();
   const c = useColors();
@@ -88,7 +91,10 @@ export default function ZoneApprovalRequestScreen() {
           <Feather name="clock" size={48} color={c.accent} />
           <Text style={styles.waitTitle}>{t('zoneApproval.waiting')}</Text>
           <Text style={styles.waitBody}>{t('zoneApproval.waitingBody')}</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={() => navigation.navigate('ProDashboard')}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() => navigation.navigate('Pro', { screen: 'ProHome' })}
+          >
             <Text style={styles.primaryBtnText}>{t('zoneApproval.backToDashboard')}</Text>
           </TouchableOpacity>
         </View>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ShieldCheck } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 import { login, verifyTotp } from '@/api/auth';
 import { useAuth } from '@/store/auth';
@@ -185,6 +186,10 @@ function TotpForm({
       {step.otpauthUrl && (
         <div className="card-elevated p-4 mb-4">
           <p className="text-xs text-text-secondary mb-2">First-time setup — scan in Google Authenticator:</p>
+          <div className="flex justify-center mb-3">
+            <QRCodeSVG value={step.otpauthUrl} size={180} className="rounded bg-white p-2" />
+          </div>
+          <p className="text-xs text-text-secondary mb-1">Can't scan? Paste this URL into your authenticator:</p>
           <code className="block text-xs font-mono text-text-primary break-all">{step.otpauthUrl}</code>
         </div>
       )}

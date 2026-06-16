@@ -8,13 +8,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Cron drives the cycle-close payroll run. It fires once per day at
-// 01:00 IST; the handler checks whether today is a cycle close
-// date (the 15th or last-of-month) and only then runs.
+// Cron drives the cycle-close payroll run. It fires at 01:00 IST on
+// each run day — the 1st and the 16th, i.e. the day AFTER a cycle
+// close — so the close day's activity is fully recorded before
+// aggregation.
 //
 // On boot, if the API started after 01:00 today and today is a
-// close date, the cron replays the cycle once so a restart in the
-// morning does not leave the day un-paid. Replays are safe because
+// run date, the cron replays the cycle once so a restart in the
+// morning does not leave the cycle un-paid. Replays are safe because
 // UpsertPayout uses ON CONFLICT DO NOTHING.
 type Cron struct {
 	svc    *Service
@@ -30,7 +31,7 @@ func NewCron(svc *Service) *Cron {
 func (c *Cron) Start(ctx context.Context) {
 	c.wg.Add(1)
 	go c.run(ctx)
-	log.Info().Msg("[payroll] cron started (01:00 IST on 15th + last-of-month)")
+	log.Info().Msg("[payroll] cron started (01:00 IST on the 1st + 16th — day after cycle close)")
 }
 
 // Stop signals the goroutine and waits for it to drain.

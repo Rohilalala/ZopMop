@@ -6,7 +6,6 @@ export interface ApiCartItem {
   cart_id: string;
   service_id: string;
   service_name: string;
-  service_emoji?: string;
   duration_minutes: number;
   price_paise: number;
 }

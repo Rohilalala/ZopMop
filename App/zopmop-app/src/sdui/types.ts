@@ -62,16 +62,39 @@ export interface PromoSlide {
   cta: string;
   bg: string;
   accent: string;
-  emoji: string;
   action: SduiAction;
   image_url?: string;
+  /** Per-card autoplay dwell in ms (overrides carousel-level interval_ms). */
+  duration_ms?: number;
 }
 
-export interface HeroCarouselData  { greeting_name: string; slides: PromoSlide[] }
+export interface HeroCarouselData {
+  greeting_name: string;
+  slides: PromoSlide[];
+  /** Auto-advance through pages. Default true. */
+  autoplay?: boolean;
+  /** Default dwell per page in ms when a slide has no duration_ms. Default 4000. */
+  interval_ms?: number;
+  /** Wrap from the last page back to the first. Default true. */
+  loop?: boolean;
+  /** For animated cards: remount (restart the animation) each time a card
+   *  becomes the active page. Default false (animations run continuously). */
+  restart_on_focus?: boolean;
+}
 export interface LivePillData      { nearby_count: number; avg_eta_min: number; avg_rating: number }
 export interface UsualsRowData     { services: ApiService[] }
 export interface ServiceGridData   { title: string; services: ApiService[]; has_more?: boolean; cursor?: string }
-export type FooterData             = Record<string, never>;
+export interface FooterScheduleCard { title: string; subtitle: string; action: SduiAction }
+export interface FooterTrustColumn  { value: string; label: string }
+export interface FooterSignoff      { lines: string[]; brand: string; badges: string[]; tagline: string }
+export interface FooterData {
+  schedule_card?: FooterScheduleCard | null;
+  trust?:         { columns: FooterTrustColumn[] } | null;
+  signoff:        FooterSignoff;
+}
+export interface GreetingHeroData { greeting?: string; title_lines?: string[]; show_mascot?: boolean }
+export interface HeaderPromoData { label: string; amount_label?: string; action: SduiAction; visible?: boolean }
+export interface UpcomingBookingData { visible?: boolean }
 
 // ── Rollout control ──────────────────────────────────────────────────────────
 
@@ -100,7 +123,10 @@ export type SduiSection =
   | (SduiSectionBase & { type: 'live_pill';     data: LivePillData })
   | (SduiSectionBase & { type: 'usuals_row';    data: UsualsRowData })
   | (SduiSectionBase & { type: 'service_grid';  data: ServiceGridData })
-  | (SduiSectionBase & { type: 'footer';        data: FooterData });
+  | (SduiSectionBase & { type: 'footer';        data: FooterData })
+  | (SduiSectionBase & { type: 'greeting_hero'; data: GreetingHeroData })
+  | (SduiSectionBase & { type: 'header_promo';  data: HeaderPromoData })
+  | (SduiSectionBase & { type: 'upcoming_booking'; data: UpcomingBookingData });
 
 export type SduiSectionType = SduiSection['type'];
 

@@ -40,17 +40,28 @@ type CustomerNotifier interface {
 	NotifyBookingCancelledNoCoverage(ctx context.Context, customerID, bookingID, when string, alternatives []string) error
 }
 
+// ProNotifier tells a pro they were force-assigned a booking via a leave
+// reassignment. Without this the replacement pro never learns they hold a
+// job. nil-safe — wired at composition time to notification.Service.
+type ProNotifier interface {
+	NotifyProBookingAssigned(ctx context.Context, proID, bookingID, serviceType string) error
+}
+
 // Service owns the business rules around leave declaration + reassignment.
 type Service struct {
 	repo     *Repository
 	crm      CRMNotifier
 	cust     CustomerNotifier
+	pro      ProNotifier
 	webhooks *webhooks.Dispatcher // nil-safe: outbound CRM event fan-out
 }
 
 func NewService(repo *Repository, crm CRMNotifier, cust CustomerNotifier) *Service {
 	return &Service{repo: repo, crm: crm, cust: cust}
 }
+
+// SetProNotifier attaches the replacement-pro notification surface.
+func (s *Service) SetProNotifier(p ProNotifier) { s.pro = p }
 
 // SetWebhooks attaches the outbound webhook dispatcher. nil-safe — leaving it
 // unset is the correct default in unit tests where outbound HTTP would block.
@@ -267,7 +278,7 @@ func (s *Service) reassignAffected(ctx context.Context, leavingProID string, dat
 			ScheduledAt:  b.ScheduledTime.In(IST).Format("2006-01-02 15:04 MST"),
 		}
 
-		newProID, err := s.repo.FindReplacementPro(ctx, leavingProID, b.ServiceCategoryID, b.TimeSlotID, date)
+		newProID, err := s.repo.FindReplacementPro(ctx, leavingProID, b.TimeSlotID, date)
 		if err != nil {
 			log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: replacement lookup failed")
 			out = append(out, oc)
@@ -284,6 +295,13 @@ func (s *Service) reassignAffected(ctx context.Context, leavingProID string, dat
 			if s.cust != nil {
 				if err := s.cust.NotifyHelperReassigned(ctx, b.CustomerID, b.ID); err != nil {
 					log.Warn().Err(err).Str("booking_id", b.ID).Msg("leave: customer reassign push failed")
+				}
+			}
+			// Tell the replacement pro they now hold this job — previously
+			// the new pro was force-assigned silently and never learned.
+			if s.pro != nil {
+				if err := s.pro.NotifyProBookingAssigned(ctx, newProID, b.ID, b.ServiceName); err != nil {
+					log.Warn().Err(err).Str("booking_id", b.ID).Str("new_pro_id", newProID).Msg("leave: new-pro assign push failed")
 				}
 			}
 			out = append(out, oc)

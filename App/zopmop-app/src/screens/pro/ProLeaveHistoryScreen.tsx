@@ -44,14 +44,19 @@ export default function ProLeaveHistoryScreen() {
   const [rows, setRows] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const loadHistory = useCallback(async () => {
     if (!token) return;
     try {
       const list = await getHistory(token, 100);
       setRows(list);
+      setLoadError(false);
     } catch {
+      // Distinguish a fetch failure from a genuinely-empty history: a
+      // flaky connection must not masquerade as "No leave history yet."
       setRows([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -90,7 +95,18 @@ export default function ProLeaveHistoryScreen() {
           keyExtractor={(r) => r.id}
           contentContainerStyle={s.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
-          ListEmptyComponent={<Text style={s.empty}>No leave history yet.</Text>}
+          ListEmptyComponent={
+            loadError ? (
+              <View style={s.errorWrap}>
+                <Text style={s.empty}>Couldn't load your leave history.</Text>
+                <TouchableOpacity onPress={handleRefresh} style={s.retryBtn}>
+                  <Text style={s.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <Text style={s.empty}>No leave history yet.</Text>
+            )
+          }
           renderItem={({ item: r }) => (
             <View style={s.row}>
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -136,6 +152,9 @@ function createStyles(c: ReturnType<typeof useColors>) {
     headerTitle: { color: c.text, fontFamily: FontFamily.bold, fontSize: 16 },
     content: { padding: 16, gap: 8 },
     empty: { color: c.textMuted, fontFamily: FontFamily.regular, fontSize: 13, textAlign: 'center', marginTop: 32 },
+    errorWrap: { alignItems: 'center', gap: 12, marginTop: 32 },
+    retryBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: c.accent },
+    retryText: { color: c.accent, fontFamily: FontFamily.bold, fontSize: 14 },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

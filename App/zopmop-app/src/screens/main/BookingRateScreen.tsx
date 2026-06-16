@@ -11,7 +11,7 @@
 //   3. Tap "Add Expert" → POST /me/experts/:helper_id, success toast, close
 //   4. Tap "Not now" → close
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   
   StatusBar,
@@ -38,6 +38,8 @@ import { showError, showSuccess } from '../../utils/toast';
 import { markBookingRated } from '../../utils/ratedBookingsStore';
 import { usePostHog } from 'posthog-react-native';
 
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -53,6 +55,9 @@ type Props = { route: RouteProp<MainStackParamList, 'BookingRate'> };
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 export default function BookingRateScreen({ route }: Props) {
+  const { isDark } = useTheme();
+  const c = useC();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const { bookingId, helperId, helperName } = route.params;
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
@@ -137,13 +142,13 @@ export default function BookingRateScreen({ route }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <View style={[s.head, { paddingTop: insets.top + 10 }]}>
         <View style={s.headRow}>
           <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
-            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            <Feather name="chevron-left" size={18} color={c.text} />
           </PressFx>
           <View style={{ flex: 1 }}>
             <Text style={s.title}>Rate your pro</Text>
@@ -169,9 +174,7 @@ export default function BookingRateScreen({ route }: Props) {
                 <Text
                   style={[
                     s.starGlyph,
-                    n <= stars
-                      ? { color: '#F5A300' }
-                      : { color: 'rgba(255,255,255,0.18)' },
+                    n <= stars ? s.starGlyphOn : s.starGlyphOff,
                   ]}
                 >
                   ★
@@ -185,7 +188,7 @@ export default function BookingRateScreen({ route }: Props) {
               value={comment}
               onChangeText={setComment}
               placeholder="Add a note (optional)"
-              placeholderTextColor="rgba(255,255,255,0.32)"
+              placeholderTextColor={c.textMuted}
               style={s.commentInput}
               multiline
               maxLength={400}
@@ -207,7 +210,7 @@ export default function BookingRateScreen({ route }: Props) {
       ) : (
         <GlassCard radius={22} hero style={s.expertCard}>
           <View style={s.expertIcon}>
-            <Feather name="award" size={26} color="#F5A300" />
+            <Feather name="award" size={26} color={c.amber} />
           </View>
           <Text style={s.expertTitle}>
             Add {helperName ?? 'this pro'} to Your Experts?
@@ -237,7 +240,7 @@ export default function BookingRateScreen({ route }: Props) {
 
       {submitting && !showExpertPrompt ? (
         <View style={s.loadingOverlay}>
-          <LoadingBars color="#F5A300" />
+          <LoadingBars color={c.amber} />
         </View>
       ) : null}
 
@@ -246,25 +249,42 @@ export default function BookingRateScreen({ route }: Props) {
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 identical; light adds the cream bg
+// + amber. Color-only migration — layout, copy, fonts, and logic unchanged.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Empty star: dark keeps the very faint white tick (no useC equivalent);
+  // light uses a faint ink tick so unselected stars stay barely visible.
+  const starOff = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(13,13,15,0.18)';
+  // Loading scrim sits over the screen bg → tint to match each theme's bg.
+  const scrim = isDark ? 'rgba(10,10,10,0.4)' : 'rgba(250,247,242,0.55)';
+  // Ink on the amber avatar — theme-independent (avatar is amber in both).
+  const onAmber = '#0A0A0A';
+  // "Not now" outline button: dark keeps its exact original white tint
+  // (0.15 border / 0.04 fill, slightly stronger than the glass tokens);
+  // light uses the ink-based glass tokens so it reads on cream.
+  const notNowBorder = isDark ? 'rgba(255,255,255,0.15)' : c.glassBorderHi;
+  const notNowFill = isDark ? 'rgba(255,255,255,0.04)' : c.glass;
+
+  return StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.bg },
 
   head: { paddingHorizontal: H_PAD, paddingBottom: 14 },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconBtn: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: c.glassHi,
+    borderWidth: 0.5, borderColor: c.glassBorderHi,
   },
   title: {
     ...fontExtra,
-    fontSize: 24, color: '#FFFFFF',
+    fontSize: 24, color: c.text,
     letterSpacing: -0.6, lineHeight: 28,
   },
   sub: {
     ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    fontSize: 12, color: c.textMuted,
     marginTop: 2,
   },
 
@@ -275,17 +295,17 @@ const s = StyleSheet.create({
   },
   avatar: {
     width: 84, height: 84, borderRadius: 42,
-    backgroundColor: '#F5A300',
+    backgroundColor: c.amber,
     alignItems: 'center', justifyContent: 'center',
   },
   avatarText: {
     ...fontExtra,
     fontSize: 32,
-    color: '#0A0A0A',
+    color: onAmber,
   },
   proName: {
     ...fontBold,
-    fontSize: 17, color: '#FFFFFF',
+    fontSize: 17, color: c.text,
     letterSpacing: -0.3,
   },
 
@@ -300,24 +320,26 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   starGlyph: { fontSize: 38, lineHeight: 42 },
+  starGlyphOn: { color: c.amber },
+  starGlyphOff: { color: starOff },
 
   commentWrap: { paddingHorizontal: H_PAD, marginTop: 10 },
   commentInput: {
     minHeight: 88,
-    backgroundColor: 'rgba(255,255,255,0.045)',
+    backgroundColor: c.glass,
     borderRadius: 16,
     padding: 14,
     ...fontMed,
     fontSize: 14,
-    color: '#FFFFFF',
+    color: c.text,
     textAlignVertical: 'top',
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
 
   errorText: {
     ...fontSemi,
-    fontSize: 12, color: '#EF4444',
+    fontSize: 12, color: c.danger,
     paddingHorizontal: H_PAD + 4,
     marginTop: 10,
   },
@@ -339,12 +361,12 @@ const s = StyleSheet.create({
   },
   expertTitle: {
     ...fontExtra,
-    fontSize: 17, color: '#FFFFFF',
+    fontSize: 17, color: c.text,
     textAlign: 'center', letterSpacing: -0.3,
   },
   expertSub: {
     ...fontMed,
-    fontSize: 13, color: 'rgba(255,255,255,0.6)',
+    fontSize: 13, color: c.textSecondary,
     textAlign: 'center', lineHeight: 19,
   },
   expertCtas: {
@@ -358,18 +380,19 @@ const s = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: notNowBorder,
+    backgroundColor: notNowFill,
     justifyContent: 'center',
   },
   notNowText: {
     ...fontBold,
-    fontSize: 13.5, color: '#FFFFFF',
+    fontSize: 13.5, color: c.text,
   },
 
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(10,10,10,0.4)',
+    backgroundColor: scrim,
   },
-});
+  });
+}

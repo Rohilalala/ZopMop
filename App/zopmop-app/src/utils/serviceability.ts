@@ -25,22 +25,7 @@ export const SERVICEABLE_CITIES: ServiceableCity[] = [
       maxLng: 77.15,
     },
   },
-  {
-    name: 'vellore',
-    displayName: 'Vellore, Tamil Nadu',
-    bounds: {
-      minLat: 12.50,
-      maxLat: 13.25,
-      minLng: 78.70,
-      maxLng: 79.50,
-    },
-  },
-  // Add more cities here as you expand
-  // {
-  //   name: 'delhi',
-  //   displayName: 'Delhi',
-  //   bounds: { minLat: 28.40, maxLat: 28.88, minLng: 76.84, maxLng: 77.35 },
-  // },
+  // Add more cities here as you expand.
 ];
 
 export function checkServiceability(lat: number, lng: number): ServiceableCity | null {
@@ -63,17 +48,7 @@ export function findCityByName(input: string): ServiceableCity | null {
   );
 }
 
-/** All known cities — both serviceable and coming-soon — for the manual picker. */
+/** All known cities for the manual picker. */
 export const ALL_KNOWN_CITIES: { displayName: string; serviceable: boolean }[] = [
   { displayName: 'Gurugram', serviceable: true },
-  { displayName: 'Vellore, Tamil Nadu', serviceable: true },
-  { displayName: 'Delhi', serviceable: false },
-  { displayName: 'Noida', serviceable: false },
-  { displayName: 'Faridabad', serviceable: false },
-  { displayName: 'Ghaziabad', serviceable: false },
-  { displayName: 'Mumbai', serviceable: false },
-  { displayName: 'Bengaluru', serviceable: false },
-  { displayName: 'Hyderabad', serviceable: false },
-  { displayName: 'Pune', serviceable: false },
-  { displayName: 'Chennai', serviceable: false },
 ];

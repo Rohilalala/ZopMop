@@ -37,11 +37,14 @@ const (
 )
 
 var knownSectionTypes = map[string]struct{}{
-	"hero_carousel": {},
-	"live_pill":     {},
-	"usuals_row":    {},
-	"service_grid":  {},
-	"footer":        {},
+	"hero_carousel":    {},
+	"live_pill":        {},
+	"usuals_row":       {},
+	"service_grid":     {},
+	"footer":           {},
+	"greeting_hero":    {},
+	"header_promo":     {},
+	"upcoming_booking": {},
 }
 
 // NewValidator loads the JSON schema from disk and binds the source registry +
@@ -124,7 +127,7 @@ func (v *Validator) Validate(ctx context.Context, raw []byte) (*ValidationResult
 			}
 			// Not an include — must be a section.
 			v.lintSection(ctx, idx, obj, res)
-			if t, _ := obj["type"].(string); t == "hero_carousel" {
+			if t, _ := obj["type"].(string); t == "hero_carousel" || t == "greeting_hero" {
 				hasHero = true
 			}
 		}
@@ -134,7 +137,7 @@ func (v *Validator) Validate(ctx context.Context, raw []byte) (*ValidationResult
 		res.Errors = append(res.Errors, fmt.Sprintf("include count %d exceeds limit %d", len(includeKeys), maxIncludeCount))
 	}
 	if !hasHero {
-		res.Warnings = append(res.Warnings, "no hero_carousel section found")
+		res.Warnings = append(res.Warnings, "no hero section found (hero_carousel or greeting_hero)")
 	}
 
 	log.Debug().
@@ -236,6 +239,18 @@ func (v *Validator) walkRefs(path string, node any, res *ValidationResult) {
 			req, _ := n["$required"].(bool)
 			if req && hasDefault {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: $required:true and $default are mutually exclusive", path))
+			}
+			if rawIDs, ok := n["$ids"]; ok {
+				ids, isArr := rawIDs.([]any)
+				if !isArr || len(ids) == 0 {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: $ids must be a non-empty array of strings", path))
+				} else {
+					for i, id := range ids {
+						if s, ok := id.(string); !ok || s == "" {
+							res.Errors = append(res.Errors, fmt.Sprintf("%s: $ids[%d] must be a non-empty string", path, i))
+						}
+					}
+				}
 			}
 			return
 		}

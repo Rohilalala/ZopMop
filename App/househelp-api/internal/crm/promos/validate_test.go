@@ -20,6 +20,14 @@ func TestValidateCreateRequest(t *testing.T) {
 		{"negative reject", CreateRequest{Code: "C", DiscountType: "fixed", DiscountValue: -1}, true},
 		{"missing code reject", CreateRequest{Code: "", DiscountType: "percent", DiscountValue: 10}, true},
 		{"unknown type reject", CreateRequest{Code: "C", DiscountType: "bogus", DiscountValue: 10}, true},
+
+		// Caps non-negativity (CRM promos P0 fix). Negative caps could weaken
+		// per-user / total redemption limits at booking time.
+		{"caps zero ok", CreateRequest{Code: "C", DiscountType: "percent", DiscountValue: 10, MinOrderCents: 0, MaxUses: 0, MaxPerUser: 0}, false},
+		{"positive caps ok", CreateRequest{Code: "C", DiscountType: "percent", DiscountValue: 10, MinOrderCents: 5000, MaxUses: 100, MaxPerUser: 2}, false},
+		{"negative min_order reject", CreateRequest{Code: "C", DiscountType: "percent", DiscountValue: 10, MinOrderCents: -100}, true},
+		{"negative max_uses reject", CreateRequest{Code: "C", DiscountType: "percent", DiscountValue: 10, MaxUses: -5}, true},
+		{"negative max_per_user reject", CreateRequest{Code: "C", DiscountType: "percent", DiscountValue: 10, MaxPerUser: -1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

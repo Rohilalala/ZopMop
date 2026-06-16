@@ -6,7 +6,6 @@ export interface ApiService {
   name: string;
   description?: string;
   short_description?: string;
-  emoji?: string;
   bg_color: string;
   base_price_paise: number;
   mrp_paise?: number;
@@ -43,9 +42,14 @@ export interface ServiceStep {
 export interface ServiceAddon {
   id: string;
   name: string;
-  emoji?: string;
   bg_color: string;
   base_price_paise: number;
+  display_order: number;
+}
+
+export interface ServiceFaq {
+  question: string;
+  answer: string;
   display_order: number;
 }
 
@@ -54,6 +58,7 @@ export interface ServiceDetails {
   includes: ServiceInclude[];
   excludes: ServiceExclude[];
   steps: ServiceStep[];
+  faqs: ServiceFaq[];
 }
 
 export async function listServices(): Promise<ApiService[]> {
@@ -66,7 +71,16 @@ export async function listServices(): Promise<ApiService[]> {
 export async function getServiceDetails(serviceId: string): Promise<ServiceDetails> {
   const res = await apiFetch(`${BASE_URL}/services/${serviceId}/details`);
   if (!res.ok) throw new Error('Failed to fetch service details');
-  return res.json() as Promise<ServiceDetails>;
+  const d = (await res.json()) as ServiceDetails;
+  // Defensive: an older API build may omit list fields (faqs[] was added in 4a).
+  // Normalize so the sheet never reads `.length` of undefined.
+  return {
+    ...d,
+    includes: d.includes ?? [],
+    excludes: d.excludes ?? [],
+    steps: d.steps ?? [],
+    faqs: d.faqs ?? [],
+  };
 }
 
 export async function getServiceAddons(serviceId: string): Promise<ServiceAddon[]> {

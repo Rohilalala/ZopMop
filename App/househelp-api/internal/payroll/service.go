@@ -120,14 +120,26 @@ func (s *Service) RunForToday(ctx context.Context) (*RunResult, error) {
 // (CRM recompute). Used by the CRM admin recompute path so the
 // computation rule stays in one place.
 func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle CycleClose) (PayBreakdown, error) {
+	if closed, err := s.repo.CloseStaleSessionsForCycle(ctx, proID, cycle.Start, cycle.End); err != nil {
+		log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] close stale sessions failed")
+	} else if closed > 0 {
+		log.Info().Str("pro_id", proID).Int64("closed", closed).Msg("[payroll] auto-closed stale sessions")
+	}
 	onlineMin, workingMin, err := s.repo.AggregateActivity(ctx, proID, cycle.Start, cycle.End)
 	if err != nil {
 		return PayBreakdown{}, fmt.Errorf("aggregate activity: %w", err)
 	}
-	if workingMin > onlineMin {
-		return PayBreakdown{}, ErrInvalidActivity
+	// ComputePay caps working at online — a working>online aggregate no
+	// longer errors out the recompute; the pro is paid the capped amount.
+	pay, err := ComputePay(onlineMin, workingMin)
+	if err != nil {
+		return PayBreakdown{}, err
 	}
-	return ComputePay(onlineMin, workingMin)
+	deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+	if err != nil {
+		return PayBreakdown{}, fmt.Errorf("sum deductions: %w", err)
+	}
+	return pay.applyDeductions(deductions), nil
 }
 
 // RunCycle is the manual-trigger entry point. It writes one payout
@@ -149,6 +161,11 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
+		if closed, cErr := s.repo.CloseStaleSessionsForCycle(ctx, proID, cycle.Start, cycle.End); cErr != nil {
+			log.Warn().Err(cErr).Str("pro_id", proID).Msg("[payroll] close stale sessions failed")
+		} else if closed > 0 {
+			log.Info().Str("pro_id", proID).Int64("closed", closed).Msg("[payroll] auto-closed stale sessions")
+		}
 		onlineMin, workingMin, err := s.repo.AggregateActivity(ctx, proID, cycle.Start, cycle.End)
 		if err != nil {
 			log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] aggregate activity failed")
@@ -156,16 +173,15 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			continue
 		}
 
-		// Working > online violates the working⊆online invariant. Log
-		// loudly and skip rather than write nonsense pay.
+		// Working > online: ComputePay caps working at online — the pro is
+		// still paid (online + capped working), never skipped. Warn for
+		// visibility since it can signal a session-tracking edge.
 		if workingMin > onlineMin {
-			log.Error().
+			log.Warn().
 				Str("pro_id", proID).
 				Int("online_min", onlineMin).
 				Int("working_min", workingMin).
-				Msg("[payroll] working minutes exceed online minutes — data integrity bug, skipping pro")
-			out.Errors++
-			continue
+				Msg("[payroll] working minutes exceed online — capping working at online")
 		}
 
 		pay, err := ComputePay(onlineMin, workingMin)
@@ -174,6 +190,14 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			out.Errors++
 			continue
 		}
+
+		deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+		if err != nil {
+			log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] sum deductions failed")
+			out.Errors++
+			continue
+		}
+		pay = pay.applyDeductions(deductions)
 
 		inserted, err := s.repo.UpsertPayout(ctx, proID, cycle, pay)
 		if err != nil {

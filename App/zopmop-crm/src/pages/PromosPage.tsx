@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { Plus, Wand2 } from 'lucide-react';
 
 import { promosApi, type Promo } from '@/api/all';
+import { utcToISTInput, istInputToUTC } from '@/lib/formatters';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
@@ -62,7 +63,7 @@ export function PromosPage() {
             ) : q.data?.items.map((p) => (
               <tr key={p.id} className="border-t border-border cursor-pointer hover:bg-primary/5" onClick={() => setEditing(p)}>
                 <td className="px-4 py-3 font-mono">{p.code}</td>
-                <td className="px-4 py-3">{p.discount_type === 'percent' ? `${p.discount_value}%` : fmt(p.discount_value * 100)}</td>
+                <td className="px-4 py-3">{p.discount_type === 'percent' ? `${p.discount_value}%` : fmt(p.discount_value)}</td>
                 <td className="px-4 py-3 text-right tabular-nums">{p.uses_count}{p.max_uses > 0 && <span className="text-text-muted"> / {p.max_uses}</span>}</td>
                 <td className="px-4 py-3 text-text-secondary">{p.expires_at ? new Date(p.expires_at).toLocaleDateString() : '—'}</td>
                 <td className="px-4 py-3">
@@ -72,6 +73,25 @@ export function PromosPage() {
             ))}
           </tbody>
         </table>
+        {q.data && q.data.total_count > params.limit && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border text-sm">
+            <span className="text-text-muted tabular-nums">
+              {params.offset + 1}–{Math.min(params.offset + params.limit, q.data.total_count)} of {q.data.total_count}
+            </span>
+            <div className="flex gap-2">
+              <button
+                className="btn-ghost"
+                disabled={params.offset === 0}
+                onClick={() => setParams((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
+              >Prev</button>
+              <button
+                className="btn-ghost"
+                disabled={params.offset + params.limit >= q.data.total_count}
+                onClick={() => setParams((p) => ({ ...p, offset: p.offset + p.limit }))}
+              >Next</button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {(creating || editing) && (
@@ -107,8 +127,8 @@ function emptyForm(p?: Promo | null): Form {
     is_active: p?.is_active ?? true,
     stackable: p?.stackable ?? false,
     audience: p?.audience ?? 'all',
-    starts_at: p?.starts_at?.slice(0, 16) ?? '',
-    expires_at: p?.expires_at?.slice(0, 16) ?? '',
+    starts_at: utcToISTInput(p?.starts_at),
+    expires_at: utcToISTInput(p?.expires_at),
   };
 }
 
@@ -122,8 +142,14 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
     mutationFn: async () => {
       const body: Partial<Promo> = {
         ...f,
-        starts_at: f.starts_at ? new Date(f.starts_at).toISOString() : null,
-        expires_at: f.expires_at ? new Date(f.expires_at).toISOString() : null,
+        starts_at: istInputToUTC(f.starts_at),
+        expires_at: istInputToUTC(f.expires_at),
+        // The editor form has no UI for these two targeting arrays, but the
+        // backend Update overwrites the columns with whatever the body carries
+        // (absent → empty arrays). Echo the existing values back so an edit of
+        // any other field doesn't silently wipe audience targeting / categories.
+        audience_user_ids: promo?.audience_user_ids ?? [],
+        categories: promo?.categories ?? [],
       };
       if (promo) await promosApi.update(promo.id, body);
       else await promosApi.create(body);
@@ -158,7 +184,7 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
         <div className="grid grid-cols-2 gap-3">
           <select className="input" value={f.discount_type} onChange={(e) => setF({ ...f, discount_type: e.target.value as Form['discount_type'] })}>
             <option value="percent">Percent (%)</option>
-            <option value="fixed">Fixed (₹ in rupees)</option>
+            <option value="fixed">Fixed (paise)</option>
           </select>
           <input
             className="input"
@@ -227,7 +253,7 @@ function PromoEditor({ promo, onClose }: { promo: Promo | null; onClose: () => v
         impact={
           <div className="space-y-2">
             <p>Code: <code className="font-mono">{f.code}</code></p>
-            <p>Discount: {f.discount_type === 'percent' ? `${f.discount_value}%` : fmt(f.discount_value * 100)}</p>
+            <p>Discount: {f.discount_type === 'percent' ? `${f.discount_value}%` : fmt(f.discount_value)}</p>
             <p>Audience: {f.audience}</p>
             <p>Expires: {f.expires_at || 'never'}</p>
           </div>

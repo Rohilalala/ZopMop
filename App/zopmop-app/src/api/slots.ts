@@ -10,9 +10,9 @@ export interface ApiTimeSlot {
   max_bookings: number;
   current_bookings: number;
   is_available: boolean;
-  // Remaining live helper capacity for the slot. Present only on the
-  // capacity-aware availability endpoint (getSlotAvailability), not on the
-  // plain /slots list.
+  // Live helper headroom for the slot. Present only on the capacity-aware
+  // /bookings/availability endpoint; absent on the plain /slots fallback, where
+  // the modal derives it from max_bookings − current_bookings.
   available_capacity?: number;
 }
 
@@ -32,21 +32,31 @@ export async function getTimeSlots(token: string, date: string): Promise<ApiSlot
   return (data.periods ?? []) as ApiSlotPeriod[];
 }
 
-// Capacity-aware variant of getTimeSlots. is_available folds in the live
-// helper capacity for the address's locality (a slot can be unavailable here
-// even when the plain /slots list shows it open), and each slot carries an
-// available_capacity count. address_id scopes the locality and must be one of
-// the caller's saved addresses. Same response shape as getTimeSlots.
+// Capacity-aware slots for a given address's locality. Hits the
+// /bookings/availability endpoint (slot-capacity pilot) which layers
+// available_capacity + a live is_available onto each slot. Falls back to the
+// plain /slots feed when no address is known or the endpoint isn't deployed yet
+// (the capacity backend ships on a separate branch) — in that case slots carry
+// no available_capacity and the UI degrades to Available/Full only.
 export async function getSlotAvailability(
   token: string,
+  addressId: string | undefined,
   date: string,
-  addressId: string,
+  durationMin?: number,
 ): Promise<ApiSlotPeriod[]> {
-  const res = await apiFetch(
-    `${BASE_URL}/bookings/availability?date=${encodeURIComponent(date)}&address_id=${encodeURIComponent(addressId)}`,
-    { headers: authHeaders(token) },
-  );
-  if (!res.ok) throw new Error('Failed to fetch slot availability');
-  const data = await res.json();
-  return (data.periods ?? []) as ApiSlotPeriod[];
+  if (!addressId) return getTimeSlots(token, date);
+  try {
+    // Pass the cart's total duration so the endpoint computes availability over
+    // each slot's job window — a slot a long job can't book won't show open.
+    const durationQS = durationMin && durationMin > 0 ? `&duration_minutes=${durationMin}` : '';
+    const res = await apiFetch(
+      `${BASE_URL}/bookings/availability?address_id=${addressId}&date=${date}${durationQS}`,
+      { headers: authHeaders(token) },
+    );
+    if (!res.ok) return getTimeSlots(token, date);
+    const data = await res.json();
+    return (data.periods ?? []) as ApiSlotPeriod[];
+  } catch {
+    return getTimeSlots(token, date);
+  }
 }

@@ -1555,12 +1555,18 @@ func (s *Service) GetTracking(ctx context.Context, bookingID, requestingUserID s
 		helperLat = geoPos[0].Latitude
 		helperLng = geoPos[0].Longitude
 	} else {
-		// Fallback to Postgres (populated by REST PUT /helpers/me/location).
+		// Fallback to Postgres (populated by the location WS Postgres mirror
+		// and REST PUT /helpers/me/location). Skip NULL coords — COALESCE(..,0)
+		// here used to surface (0,0) for a pro who never streamed, dropping the
+		// customer's live marker into the Gulf of Guinea and fitting the map
+		// across ~8000 km. Leave helperLat/Lng at 0 and let the !=0 guards below
+		// suppress the marker/directions instead.
 		qCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		_ = s.db.QueryRow(qCtx,
-			`SELECT COALESCE(current_lat,0), COALESCE(current_lng,0)
-			 FROM helpers WHERE id = $1`,
+			`SELECT current_lat, current_lng
+			   FROM helpers
+			  WHERE id = $1 AND current_lat IS NOT NULL AND current_lng IS NOT NULL`,
 			*booking.HelperID,
 		).Scan(&helperLat, &helperLng)
 	}
@@ -1601,20 +1607,35 @@ func (s *Service) MarkArrived(ctx context.Context, bookingID, helperID string) e
 }
 
 func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
-	res, err := s.db.Exec(ctx,
+	var customerID string
+	err := s.db.QueryRow(ctx,
 		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW()
-		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'`,
+		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'
+		 RETURNING customer_id::text`,
 		bookingID, helperID,
-	)
+	).Scan(&customerID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Stale/duplicate Start tap (already in_progress, reassigned,
+			// or cancelled) — sentinel so the handler maps it to 409 like
+			// EnRoute/Arrived, avoiding the app retry-storm + "backend down".
+			return ErrJobNotInState
+		}
 		return fmt.Errorf("failed to start booking: %w", err)
-	}
-	if res.RowsAffected() == 0 {
-		return fmt.Errorf("booking not found or cannot be started")
 	}
 	s.analytics.Track(ctx, analytics.EventBookingStarted, helperID, bookingID, nil)
 
 	s.fireWebhook(ctx, webhooks.EventOrderStarted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusInProgress)))
+
+	// Customer push — best-effort. Without this the customer's TrackLive
+	// state machine never advances past "arrived" until a background→
+	// foreground refetch. pushRouter handles 'job_started'.
+	if s.notifications != nil {
+		_ = s.notifications.SendData(ctx, customerID, map[string]string{
+			"type":       "job_started",
+			"booking_id": bookingID,
+		})
+	}
 
 	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Msg("booking started (in_progress)")
 	return nil
@@ -1821,34 +1842,67 @@ func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID strin
 		 RETURNING customer_id::text, started_at, completed_at`,
 		bookingID, helperID,
 	).Scan(&customerID, &startedAt, &completedAt); err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("booking not found or cannot be completed")
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Stale/duplicate Complete tap (already completed, reassigned,
+			// or cancelled) — sentinel so the handler maps it to 409 like
+			// EnRoute/Arrived, avoiding the app retry-storm + "backend down".
+			return ErrJobNotInState
 		}
 		return fmt.Errorf("failed to complete booking: %w", err)
 	}
 
-	// Compute actual duration + earnings snapshot. If started_at is
-	// nil (data drift), fall back to total_duration_minutes from the
-	// booking row so the pro is never under-paid.
+	// Actual elapsed time — recorded for analytics/disputes only. Pay is
+	// based on BOOKED duration, not actual: a pro booked for 30 min is paid
+	// for 30 even if the job took 19. There is no per-booking piece-rate /
+	// peak / weekend snapshot anymore — the only pay basis is time (online +
+	// working minutes), aggregated by the payroll engine.
 	actualMin := 0
 	if startedAt != nil {
 		actualMin = int(completedAt.Sub(*startedAt).Minutes())
 	}
-	if actualMin <= 0 {
-		_ = tx.QueryRow(txCtx,
-			`SELECT COALESCE(total_duration_minutes, 60) FROM bookings WHERE id = $1`,
-			bookingID,
-		).Scan(&actualMin)
+	if actualMin < 0 {
+		actualMin = 0
 	}
-	earnings := ComputeBookingEarnings(actualMin, completedAt)
+
+	// Booked duration = the working-minutes the pro is credited for this job.
+	bookedMin := 0
+	_ = tx.QueryRow(txCtx,
+		`SELECT COALESCE(total_duration_minutes, 60) FROM bookings WHERE id = $1`,
+		bookingID,
+	).Scan(&bookedMin)
+
 	if _, err := tx.Exec(txCtx,
-		`UPDATE bookings
-		    SET actual_duration_minutes = $2,
-		        pro_earnings_paise      = $3
-		  WHERE id = $1`,
-		bookingID, actualMin, earnings.TotalPaise,
+		`UPDATE bookings SET actual_duration_minutes = $2 WHERE id = $1`,
+		bookingID, actualMin,
 	); err != nil {
-		return fmt.Errorf("failed to write earnings snapshot: %w", err)
+		return fmt.Errorf("failed to write actual duration: %w", err)
+	}
+
+	// Credit the BOOKED minutes to the pro's open shift session as working
+	// time — payroll's AggregateActivity reads shift_sessions.job_minutes for
+	// the ₹80/hr work bonus, and nothing else writes it. The credit is capped
+	// at the session's elapsed online time so job_minutes can never exceed
+	// online_minutes (working ⊆ online; payroll also caps defensively).
+	// Non-fatal: a missing open session (offline race) must not block
+	// completion — the pro simply accrues no working-minutes for this job.
+	if tag, jmErr := tx.Exec(txCtx,
+		`UPDATE shift_sessions ss
+		    SET job_minutes = ss.job_minutes + LEAST(
+		          $2,
+		          GREATEST(0, (EXTRACT(EPOCH FROM (now() - ss.online_at))::int / 60) - ss.job_minutes)
+		        )
+		  WHERE ss.id = (
+		        SELECT ss2.id FROM shift_sessions ss2
+		         WHERE ss2.pro_id = $1::uuid AND ss2.offline_at IS NULL
+		         ORDER BY ss2.online_at DESC
+		         LIMIT 1
+		  )`,
+		helperID, bookedMin,
+	); jmErr != nil {
+		return fmt.Errorf("failed to credit job minutes: %w", jmErr)
+	} else if tag.RowsAffected() == 0 {
+		log.Warn().Str("helper_id", helperID).Str("booking_id", bookingID).
+			Msg("no open shift session to credit job_minutes — work bonus for this job will not accrue")
 	}
 
 	// Mark any still-pending booking_services rows completed too —

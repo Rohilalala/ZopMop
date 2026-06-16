@@ -27,9 +27,11 @@ import (
 // then COMMITs immediately, releasing the row locks. SKIP LOCKED gives us
 // best-effort cross-instance dedup at the SELECT step (two crons running
 // against the same DB grab disjoint candidate sets), but the *authoritative*
-// dedup is the CAS on Service.SendPush's UPDATE — it carries
-// `WHERE status IN ('draft','scheduled')` and reports RowsAffected()==0 if
-// somebody else already moved the row out of those states.
+// dedup is the claim-CAS at the TOP of Service.SendPush — it flips
+// `status IN ('draft','scheduled')` → 'sending' BEFORE any FCM dispatch and
+// reports RowsAffected()==0 if somebody else already claimed the row, so the
+// loser aborts before delivering. The terminal status ('sent'/'failed') is
+// written after dispatch (WHERE status='sending').
 //
 // We deliberately do NOT keep the FOR UPDATE transaction open across the
 // SendPush call: SendPush's UPDATE runs on a *different* pool connection
@@ -37,12 +39,12 @@ import (
 // statement_timeout fires. The select-then-commit pattern avoids that and
 // the CAS gives us the same correctness guarantee.
 //
-// On crash mid-send: SendPush either (a) hasn't run its terminal UPDATE
-// yet — row stays 'scheduled', the next Tick reprocesses it; or (b) has
-// run it — row is already 'sent'/'failed' and won't be picked again.
-// There is a small window where FCM accepted the dispatch but our final
-// UPDATE crashed; that single push could be re-sent on restart. Acceptable
-// for a marketing-push cron.
+// On crash mid-send: SendPush either (a) hasn't run its claim-CAS yet —
+// row stays 'scheduled', the next Tick reprocesses it; or (b) has claimed
+// it — row is 'sending' and the next Tick (status='scheduled' only) skips
+// it, so a crash between claim and terminal UPDATE leaves the row wedged in
+// 'sending' (no double-send; manual requeue needed). Acceptable for a
+// marketing-push cron — the prior behaviour double-delivered on every race.
 type Scheduler struct {
 	svc       *Service
 	pool      *pgxpool.Pool

@@ -35,6 +35,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { navigationRef } from '../../navigation/navigationRef';
 import { PressFx } from '../ui/PressFx';
 import { haptics } from '../../utils/haptics';
+import { useTheme } from '../../context/ThemeContext';
 import ZopFull from '../../../assets/zop/zop-full.svg';
 import ZopChat from '../ZopChat';
 
@@ -68,6 +69,7 @@ type Props = {
 const INDICATOR_INSET = 6; // breathing room around the indicator pill
 
 export function BottomTabBar({ active }: Props) {
+  const { isDark } = useTheme();
   const [chatVisible, setChatVisible] = useState(false);
   // Per-tab measured layout (x relative to the row, plus width). Driven by
   // each TabItem's onLayout — so the indicator anchors to whatever rectangle
@@ -157,48 +159,52 @@ export function BottomTabBar({ active }: Props) {
           borderRadius: 36,
           overflow: 'hidden',
           borderWidth: 0.5,
-          borderColor: 'rgba(255,255,255,0.10)',
+          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.06)',
           // iOS shadow
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 8 },
-          shadowOpacity: 0.45,
-          shadowRadius: 18,
+          shadowOpacity: isDark ? 0.45 : 0.08,
+          shadowRadius: isDark ? 18 : 12,
           // Android
           elevation: 14,
-          backgroundColor: '#1A1A1F',
+          backgroundColor: isDark ? '#1A1A1F' : 'rgba(255,255,255,0.75)',
         }}
       >
-        {/* Static base gradient */}
-        <Svg
-          width="100%"
-          height="100%"
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        >
-          <Defs>
-            <SvgLinearGradient id="navBg" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0%"   stopColor="#23232A" />
-              <Stop offset="100%" stopColor="#15151A" />
-            </SvgLinearGradient>
-          </Defs>
-          <Rect width="100%" height="100%" fill="url(#navBg)" />
-        </Svg>
+        {/* Static base gradient (dark only) */}
+        {isDark && (
+          <Svg
+            width="100%"
+            height="100%"
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          >
+            <Defs>
+              <SvgLinearGradient id="navBg" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0%"   stopColor="#23232A" />
+                <Stop offset="100%" stopColor="#15151A" />
+              </SvgLinearGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#navBg)" />
+          </Svg>
+        )}
 
-        {/* Static centered amber glow */}
-        <Svg
-          width="100%"
-          height="100%"
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        >
-          <Defs>
-            <SvgRadialGradient id="navGlow" cx="50%" cy="0%" rx="55%" ry="140%">
-              <Stop offset="0%"  stopColor="#F5A300" stopOpacity="0.22" />
-              <Stop offset="60%" stopColor="#F5A300" stopOpacity="0"    />
-            </SvgRadialGradient>
-          </Defs>
-          <Rect width="100%" height="100%" fill="url(#navGlow)" />
-        </Svg>
+        {/* Static centered amber glow (dark only) */}
+        {isDark && (
+          <Svg
+            width="100%"
+            height="100%"
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          >
+            <Defs>
+              <SvgRadialGradient id="navGlow" cx="50%" cy="0%" rx="55%" ry="140%">
+                <Stop offset="0%"  stopColor="#F5A300" stopOpacity="0.22" />
+                <Stop offset="60%" stopColor="#F5A300" stopOpacity="0"    />
+              </SvgRadialGradient>
+            </Defs>
+            <Rect width="100%" height="100%" fill="url(#navGlow)" />
+          </Svg>
+        )}
 
         {/* 1px inner top highlight (glass edge) */}
         <View
@@ -207,7 +213,7 @@ export function BottomTabBar({ active }: Props) {
             position: 'absolute',
             top: 0, left: 16, right: 16,
             height: 1,
-            backgroundColor: 'rgba(255,255,255,0.10)',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(13,13,15,0.04)',
           }}
         />
 
@@ -248,6 +254,7 @@ export function BottomTabBar({ active }: Props) {
               active={t.key === active}
               activeIndex={activeIndex}
               myIndex={i}
+              isDark={isDark}
               onLayout={onTabLayout(i)}
               onPress={() => {
                 if (!t.screen || t.key === active) return;
@@ -326,6 +333,7 @@ function TabItem({
   active,
   activeIndex,
   myIndex,
+  isDark,
   onPress,
   onLayout,
 }: {
@@ -333,10 +341,11 @@ function TabItem({
   active: boolean;
   activeIndex: number;
   myIndex: number;
+  isDark: boolean;
   onPress: () => void;
   onLayout: (e: LayoutChangeEvent) => void;
 }) {
-  const color = active ? '#F5A300' : 'rgba(255,255,255,0.62)';
+  const color = active ? '#F5A300' : (isDark ? 'rgba(255,255,255,0.62)' : 'rgba(13,13,15,0.55)');
 
   // Per-tab pop animation: spike scale to 1.18 on becoming active, settle
   // back to 1. Inactive tabs sit at scale 1.

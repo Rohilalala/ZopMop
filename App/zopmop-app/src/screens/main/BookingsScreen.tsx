@@ -41,6 +41,8 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 import { getBookings, cancelBooking, type ApiBooking } from '../../api/bookings';
 
 import { Bloom } from '../../components/home/Bloom';
@@ -120,6 +122,9 @@ const bookingsMemCache: { upcoming: ApiBooking[] | null; past: ApiBooking[] | nu
 };
 
 export default function BookingsScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -252,12 +257,12 @@ export default function BookingsScreen() {
 
   return (
     <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView
-        style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: '#0A0A0A' }}
+        style={{ flex: 1, backgroundColor: c.bg }}
+        contentContainerStyle={{ paddingBottom: 200, backgroundColor: c.bg }}
         showsVerticalScrollIndicator={false}
         stickyHeaderIndices={[0]}
         refreshControl={
@@ -278,7 +283,7 @@ export default function BookingsScreen() {
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>Your Bookings</Text>
@@ -342,11 +347,11 @@ export default function BookingsScreen() {
                   style={styles.loadMoreBtn}
                 >
                   {loadingMorePast ? (
-                    <LoadingBars size="small" color="#F5A300" />
+                    <LoadingBars size="small" color={c.amber} />
                   ) : (
                     <>
-                      <Feather name="chevron-down" size={14} color="#F5A300" />
-                      <Text style={[fontBold, { color: '#F5A300', fontSize: 13 }]}>
+                      <Feather name="chevron-down" size={14} color={c.amber} />
+                      <Text style={[fontBold, { color: c.amber, fontSize: 13 }]}>
                         Load more
                       </Text>
                     </>
@@ -370,6 +375,9 @@ export default function BookingsScreen() {
 // ── Active card ─────────────────────────────────────────────────────────────
 
 function ActiveCard({ booking }: { booking: ApiBooking }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const svc = booking.services[0];
   const helperInitial = booking.helper_name?.[0]?.toUpperCase() ?? 'P';
@@ -423,17 +431,17 @@ function ActiveCard({ booking }: { booking: ApiBooking }) {
             navigation.navigate('BookingConfirmed', {
               bookingId: booking.id,
               totalCents: booking.price_paise,
+              bookingType: booking.scheduled_time ? 'scheduled' : 'instant',
               serviceId: svc?.service_id,
               serviceName: svc?.service_name,
               durationMinutes: booking.total_duration_minutes,
               helperName: booking.helper_name ?? 'Your Pro',
               helperRating: booking.helper_rating,
-              instant: !booking.scheduled_time,
             })
           }
           style={[styles.act, styles.actSecondary, { flex: 1 }]}
         >
-          <Text style={[fontBold, { color: 'rgba(255,255,255,0.9)', fontSize: 13 }]}>View booking</Text>
+          <Text style={[fontBold, { color: c.text, fontSize: 13 }]}>View booking</Text>
         </PressFx>
       </View>
     </GlassCard>
@@ -449,6 +457,11 @@ function ScheduledCard({
   booking: ApiBooking;
   onCancel: () => Promise<void>;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  // Danger text on a transparent bordered button — dark literal kept; light deepens.
+  const danger = isDark ? '#EF4444' : c.danger;
   const svc = booking.services[0];
   const headerLabel = formatScheduledHeader(booking.scheduled_time);
   const stopWhen = booking.scheduled_time
@@ -494,8 +507,8 @@ function ScheduledCard({
 
       <View style={styles.actions}>
         <PressFx style={[styles.act, styles.actSecondary, { flex: 1 }]}>
-          <Feather name="plus" size={13} color="rgba(255,255,255,0.85)" />
-          <Text style={[fontBold, { color: 'rgba(255,255,255,0.85)', fontSize: 13 }]}>Add service</Text>
+          <Feather name="plus" size={13} color={c.text} />
+          <Text style={[fontBold, { color: c.text, fontSize: 13 }]}>Add service</Text>
         </PressFx>
         <PressFx
           onPress={() => {
@@ -507,7 +520,7 @@ function ScheduledCard({
           }}
           style={[styles.act, styles.actDanger, { flex: 1 }]}
         >
-          <Text style={[fontBold, { color: '#EF4444', fontSize: 13 }]}>Cancel</Text>
+          <Text style={[fontBold, { color: danger, fontSize: 13 }]}>Cancel</Text>
         </PressFx>
       </View>
     </GlassCard>
@@ -517,6 +530,9 @@ function ScheduledCard({
 // ── Past card ───────────────────────────────────────────────────────────────
 
 function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?: (b: ApiBooking) => void; onReport?: (b: ApiBooking) => void }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const svc = booking.services[0];
   const stamp = booking.scheduled_time || booking.created_at;
   const date = shortDate(stamp);
@@ -564,10 +580,10 @@ function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?:
           <Text style={[fontMed, styles.pastLbl]}>Rate this service</Text>
           <View style={styles.starsRow}>
             {[1, 2, 3, 4].map((i) => (
-              <Feather key={i} name="star" size={12} color="#F5A300" style={{ marginRight: 1 }} />
+              <Feather key={i} name="star" size={12} color={c.amber} style={{ marginRight: 1 }} />
             ))}
             <Feather name="star" size={12} color="rgba(245,163,0,0.4)" />
-            <Text style={[fontBold, { color: '#F5A300', fontSize: 11.5, marginLeft: 6 }]}>Tap to rate</Text>
+            <Text style={[fontBold, { color: c.amber, fontSize: 11.5, marginLeft: 6 }]}>Tap to rate</Text>
           </View>
         </PressFx>
       )}
@@ -579,13 +595,13 @@ function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?:
             <Text style={[fontBold, { color: '#0D0D0F', fontSize: 13 }]}>Book again</Text>
           </PressFx>
           <PressFx style={[styles.act, styles.actSecondary, { flex: 1 }]}>
-            <Text style={[fontBold, { color: 'rgba(255,255,255,0.85)', fontSize: 13 }]}>Receipt</Text>
+            <Text style={[fontBold, { color: c.text, fontSize: 13 }]}>Receipt</Text>
           </PressFx>
         </View>
       )}
       {!isCancelled && (
         <PressFx onPress={() => onReport?.(booking)} style={styles.reportBtn}>
-          <Feather name="alert-circle" size={12} color="rgba(255,255,255,0.35)" />
+          <Feather name="alert-circle" size={12} color={c.textMuted} />
           <Text style={[fontMed, styles.reportLabel]}>Report an issue</Text>
         </PressFx>
       )}
@@ -598,11 +614,23 @@ function PastCard({ booking, onRate, onReport }: { booking: ApiBooking; onRate?:
 type PillKind = 'active' | 'scheduled' | 'completed' | 'cancelled';
 
 function StatusPill({ kind, label }: { kind: PillKind; label: string }) {
+  const cols = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(cols, isDark), [cols, isDark]);
+  // Success / danger forks: dark literals kept identical; light deepens for cream.
+  const success = isDark ? '#22C55E' : cols.green;
+  const danger = isDark ? '#EF4444' : cols.danger;
+  // Tints/neutrals: keep EXACT dark rgba (pixel-identical); light uses useC tokens.
+  const successTint   = isDark ? 'rgba(34,197,94,0.14)'   : cols.successSoft;
+  const dangerTint    = isDark ? 'rgba(239,68,68,0.12)'   : cols.dangerSoft;
+  const neutralTint   = isDark ? 'rgba(255,255,255,0.08)' : cols.glassHi;
+  const neutralFg     = isDark ? 'rgba(255,255,255,0.6)'  : cols.textSecondary;
+  const neutralDot    = isDark ? 'rgba(255,255,255,0.4)'  : cols.textMuted;
   const palette: Record<PillKind, { bg: string; fg: string; dot: string; pulse: boolean }> = {
-    active:    { bg: 'rgba(34,197,94,0.14)',   fg: '#22C55E',                dot: '#22C55E',                pulse: true  },
-    scheduled: { bg: 'rgba(245,163,0,0.14)',   fg: '#F5A300',                dot: '#F5A300',                pulse: false },
-    completed: { bg: 'rgba(255,255,255,0.08)', fg: 'rgba(255,255,255,0.6)',  dot: 'rgba(255,255,255,0.4)',  pulse: false },
-    cancelled: { bg: 'rgba(239,68,68,0.12)',   fg: '#EF4444',                dot: '#EF4444',                pulse: false },
+    active:    { bg: successTint,             fg: success,    dot: success,    pulse: true  },
+    scheduled: { bg: 'rgba(245,163,0,0.14)',  fg: cols.amber, dot: cols.amber, pulse: false },
+    completed: { bg: neutralTint,             fg: neutralFg,  dot: neutralDot, pulse: false },
+    cancelled: { bg: dangerTint,              fg: danger,     dot: danger,     pulse: false },
   };
   const c = palette[kind];
 
@@ -622,6 +650,9 @@ function StatusPill({ kind, label }: { kind: PillKind; label: string }) {
 }
 
 function PulseDot({ color }: { color: string }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const op = useSharedValue(1);
   useEffect(() => {
     op.value = withRepeat(
@@ -665,6 +696,9 @@ function SvcRow({
   priceCents: number;
   priceStruck?: boolean;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const src = serviceIcon({ id: service?.service_id, name: service?.service_name });
   const displayTitle = title ?? service?.service_name ?? 'Service';
 
@@ -686,7 +720,7 @@ function SvcRow({
               alignItems: 'center', justifyContent: 'center',
             }}
           >
-            <Feather name="package" size={28} color="rgba(255,255,255,0.7)" />
+            <Feather name="package" size={28} color={c.textSecondary} />
           </View>
         )}
       </View>
@@ -727,6 +761,11 @@ function LiveStrip({
   etaMin: number;
   distanceKm: number;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  // Green "X min" accent — dark literal kept identical; light deepens for cream.
+  const success = isDark ? '#22C55E' : c.green;
   return (
     <View style={styles.liveStrip}>
       <View style={styles.helperAvatar}>
@@ -734,12 +773,12 @@ function LiveStrip({
         <View style={styles.helperOnline} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[fontBold, { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.13 }]}>
+        <Text style={[fontBold, { color: c.text, fontSize: 13, letterSpacing: -0.13 }]}>
           {helperName}
         </Text>
-        <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 }]}>
+        <Text style={[fontMed, { color: c.textSecondary, fontSize: 11, marginTop: 2 }]}>
           ★ {rating.toFixed(1)} · arriving in{' '}
-          <Text style={[fontBold, { color: '#22C55E' }]}>{etaMin} min</Text> · {distanceKm} km away
+          <Text style={[fontBold, { color: success }]}>{etaMin} min</Text> · {distanceKm} km away
         </Text>
       </View>
       <View style={styles.liveActions}>
@@ -765,12 +804,15 @@ function Stop({
   keyLabel: string;
   value: string;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <View style={styles.stop}>
       <Text style={[fontSemi, styles.stopKey]}>{keyLabel}</Text>
-      <Feather name={iconName} size={13} color="rgba(255,255,255,0.55)" style={{ marginRight: 6 }} />
+      <Feather name={iconName} size={13} color={c.textSecondary} style={{ marginRight: 6 }} />
       <Text
-        style={[fontMed, { color: 'rgba(255,255,255,0.65)', fontSize: 11, flex: 1 }]}
+        style={[fontMed, { color: c.textSecondary, fontSize: 11, flex: 1 }]}
         numberOfLines={1}
       >
         {value}
@@ -792,6 +834,9 @@ function Tabs({
   upcomingCount: number;
   pastCount: number;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const [tabsW, setTabsW] = useState(0);
   const offset = useSharedValue(tab === 'upcoming' ? 0 : 1);
 
@@ -867,16 +912,31 @@ function Empty({ tab, onCta }: { tab: Tab; onCta: () => void }) {
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 pixel-identical; light adds the
+// cream bg + amber. Per-variant forks (raised surface, success, danger) live as
+// locals below — exact dark literal in dark, useC token in light.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised icon-stage surfaces (#0F0F11 / #1A1A1C) have no useC equivalent →
+  // documented literals in dark (identical); white in light.
+  const iconStage = isDark ? '#0F0F11' : c.white;
+  const iconStageHi = isDark ? '#1A1A1C' : c.white;
+  // Live strip = success-tinted surface. Dark rgba kept exact; light → tokens.
+  const liveStripBg     = isDark ? 'rgba(34,197,94,0.10)' : c.successSoft;
+  const liveStripBorder = isDark ? 'rgba(34,197,94,0.3)'  : c.green;
+  // Online dot — success fill; ring matches the card/screen bg in both themes.
+  const onlineDot = isDark ? '#22C55E' : c.green;
+
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: c.bg },
 
   head: {
-    backgroundColor: 'rgba(10,10,10,0.92)',
+    backgroundColor: isDark ? 'rgba(10,10,10,0.92)' : c.bg,
     paddingTop: 10,
     paddingBottom: 14,
     paddingHorizontal: H_PAD,
     borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: c.glassBorder,
     zIndex: 30,
   },
   headRow: {
@@ -888,17 +948,17 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
+    borderWidth: 0.5, borderColor: c.glassBorder,
   },
   title: {
     fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 24, color: '#FFFFFF',
+    fontSize: 24, color: c.text,
     letterSpacing: -0.6, lineHeight: 26,
   },
   subtitle: {
     fontFamily: 'PlusJakartaSans_500Medium',
-    fontSize: 11, color: 'rgba(255,255,255,0.5)',
+    fontSize: 11, color: c.textMuted,
     marginTop: 2,
   },
 
@@ -908,9 +968,9 @@ const styles = StyleSheet.create({
     padding: 4,
     flexDirection: 'row',
     position: 'relative',
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: c.glassBorder,
   },
   glider: {
     position: 'absolute',
@@ -918,8 +978,8 @@ const styles = StyleSheet.create({
     left: 0,
     height: 34,
     borderRadius: 11,
-    backgroundColor: '#F5A300',
-    shadowColor: '#F5A300',
+    backgroundColor: c.amber,
+    shadowColor: c.amber,
     shadowOpacity: 0.4,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 4 },
@@ -936,20 +996,21 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 13,
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     letterSpacing: -0.13,
   },
+  // Ink on the amber glider — same in both themes.
   tabLabelActive: { color: '#0D0D0F', fontFamily: 'PlusJakartaSans_700Bold' },
   tabBadge: {
     paddingHorizontal: 6, paddingVertical: 1,
     borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
   },
   tabBadgeActive: { backgroundColor: 'rgba(13,13,15,0.14)' },
   tabBadgeText: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 10,
-    color: 'rgba(255,255,255,0.65)',
+    color: c.textSecondary,
   },
   tabBadgeTextActive: { color: '#0D0D0F' },
 
@@ -961,7 +1022,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
+    color: c.textMuted,
     letterSpacing: 0.88,
     textTransform: 'uppercase',
   },
@@ -987,7 +1048,7 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3 },
   bookingId: {
     fontSize: 10,
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
     letterSpacing: 0.4,
   },
 
@@ -997,14 +1058,14 @@ const styles = StyleSheet.create({
     width: 56, height: 56, borderRadius: 14,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#0F0F11',
+    backgroundColor: iconStage,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: c.glassBorder,
   },
   svcIconBg: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: '#1A1A1C',
+    backgroundColor: iconStageHi,
   },
   svcIconAmber: {
     position: 'absolute',
@@ -1023,23 +1084,23 @@ const styles = StyleSheet.create({
   },
   svcTitle: {
     fontSize: 15,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.2,
     lineHeight: 18,
   },
   svcExtra: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
     marginTop: 3,
     lineHeight: 14,
   },
   svcSecond: {
     fontSize: 10.5,
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
     marginTop: 2,
     letterSpacing: 0.1,
   },
-  svcPrice: { fontSize: 15, color: '#FFFFFF', letterSpacing: -0.3 },
+  svcPrice: { fontSize: 15, color: c.text, letterSpacing: -0.3 },
 
   // Live strip
   liveStrip: {
@@ -1049,15 +1110,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: 'rgba(34,197,94,0.10)',
+    backgroundColor: liveStripBg,
     borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.3)',
+    borderColor: liveStripBorder,
   },
   helperAvatar: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#F5A300',
+    backgroundColor: c.amber,
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#F5A300',
+    shadowColor: c.amber,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4,
     shadowRadius: 8,
@@ -1068,14 +1129,15 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: -1, right: -1,
     width: 11, height: 11, borderRadius: 6,
-    backgroundColor: '#22C55E',
+    backgroundColor: onlineDot,
     borderWidth: 2,
-    borderColor: '#0A0A0A',
+    borderColor: c.bg,
   },
   liveActions: { flexDirection: 'row', gap: 6 },
   liveBtn: {
     width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
+    // Near-white plate holds the dark ink call/chat icons — same in both themes.
     backgroundColor: 'rgba(255,255,255,0.96)',
     shadowColor: '#000',
     shadowOpacity: 0.15,
@@ -1089,9 +1151,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: c.glassBorder,
   },
   stop: {
     flexDirection: 'row',
@@ -1100,7 +1162,7 @@ const styles = StyleSheet.create({
   },
   stopKey: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
+    color: c.textMuted,
     minWidth: 48,
     marginRight: 8,
   },
@@ -1120,8 +1182,8 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   actPrimary: {
-    backgroundColor: '#F5A300',
-    shadowColor: '#F5A300',
+    backgroundColor: c.amber,
+    shadowColor: c.amber,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
@@ -1130,12 +1192,12 @@ const styles = StyleSheet.create({
   actSecondary: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: c.glassBorderHi,
   },
   actDanger: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.3)',
+    borderColor: isDark ? 'rgba(239,68,68,0.3)' : c.dangerBorder,
   },
 
   // Past foot (rate stars)
@@ -1146,12 +1208,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.05)',
+    borderTopColor: c.glassBorder,
   },
-  pastLbl: { fontSize: 11, color: 'rgba(255,255,255,0.5)' },
+  pastLbl: { fontSize: 11, color: c.textMuted },
   starsRow: { flexDirection: 'row', alignItems: 'center' },
-  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, justifyContent: 'center', paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.05)' },
-  reportLabel: { fontSize: 11, color: 'rgba(255,255,255,0.3)' },
+  reportBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, justifyContent: 'center', paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.glassBorder },
+  reportLabel: { fontSize: 11, color: c.textMuted },
 
   // Empty
   empty: {
@@ -1163,20 +1225,20 @@ const styles = StyleSheet.create({
   emptyIcon: {
     width: 96, height: 96, borderRadius: 48,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.12)',
+    backgroundColor: c.amberSoft,
     borderWidth: 1,
     borderColor: 'rgba(245,163,0,0.32)',
     marginBottom: 18,
   },
   emptyH3: {
     fontSize: 18,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.36,
     marginBottom: 6,
   },
   emptyP: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 18,
@@ -1189,7 +1251,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: 'rgba(245,163,0,0.10)',
+    backgroundColor: c.amberSoft,
     borderWidth: 1,
     borderColor: 'rgba(245,163,0,0.32)',
     marginTop: 6,
@@ -1198,11 +1260,12 @@ const styles = StyleSheet.create({
   emptyCta: {
     height: 42, paddingHorizontal: 20, borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#F5A300',
-    shadowColor: '#F5A300',
+    backgroundColor: c.amber,
+    shadowColor: c.amber,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
     shadowRadius: 16,
     elevation: 8,
   },
-});
+  });
+}

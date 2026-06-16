@@ -2,7 +2,7 @@
 // Layout: Bloom backdrop → sticky header (back + title + sub) → contact list
 // (GlassCard) → FAQ list (GlassCard, expandable rows).
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Linking,
   ScrollView,
@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
+import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -62,19 +64,22 @@ const CONTACT_OPTIONS: ContactOption[] = [
     id: 'email',
     icon: 'mail',
     label: 'Email support',
-    sublabel: 'support@zopmop.com',
-    action: () => Linking.openURL('mailto:support@zopmop.com'),
+    sublabel: 'hello@zopmop.com',
+    action: () => Linking.openURL('mailto:hello@zopmop.com'),
   },
 ];
 
 export default function HelpSupportScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState<number | null>(null);
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView
@@ -91,7 +96,7 @@ export default function HelpSupportScreen() {
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
             <View style={{ flex: 1 }}>
               <Text style={s.title}>Help & support</Text>
@@ -107,13 +112,13 @@ export default function HelpSupportScreen() {
               <React.Fragment key={opt.id}>
                 <PressFx onPress={opt.action} style={s.row}>
                   <View style={s.rowIcon}>
-                    <Feather name={opt.icon} size={18} color="#F5A300" />
+                    <Feather name={opt.icon} size={18} color={c.amber} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={s.rowTitle}>{opt.label}</Text>
                     <Text style={s.rowSub}>{opt.sublabel}</Text>
                   </View>
-                  <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.35)" />
+                  <Feather name="chevron-right" size={16} color={c.textMuted} />
                 </PressFx>
                 {idx < CONTACT_OPTIONS.length - 1 && <View style={s.divider} />}
               </React.Fragment>
@@ -138,7 +143,7 @@ export default function HelpSupportScreen() {
                     <Feather
                       name={open ? 'chevron-up' : 'chevron-down'}
                       size={16}
-                      color="rgba(255,255,255,0.45)"
+                      color={c.textMuted}
                     />
                   </PressFx>
                   {open && (
@@ -157,106 +162,112 @@ export default function HelpSupportScreen() {
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). useColors()'s dark palette is slate (#0F172A bg / #1E293B surface),
+// which would change this screen's dark look and fork the amber. useC() keeps
+// dark at #0A0A0A + #F5A300 (pixel-identical) and adds the cream + amber light bg.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
 
-  // Sticky head
-  head: {
-    backgroundColor: '#0A0A0A',
-    paddingHorizontal: H_PAD,
-    paddingBottom: 14,
-  },
-  headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
-  },
-  title: {
-    ...fontExtra,
-    fontSize: 24,
-    color: '#FFFFFF',
-    letterSpacing: -0.6,
-    lineHeight: 28,
-  },
-  sub: {
-    ...fontMed,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 2,
-  },
+    // Sticky head
+    head: {
+      backgroundColor: c.bg,
+      paddingHorizontal: H_PAD,
+      paddingBottom: 14,
+    },
+    headRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    iconBtn: {
+      width: 36, height: 36, borderRadius: 18,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glassHi,
+      borderWidth: 0.5, borderColor: c.glassBorderHi,
+    },
+    title: {
+      ...fontExtra,
+      fontSize: 24,
+      color: c.text,
+      letterSpacing: -0.6,
+      lineHeight: 28,
+    },
+    sub: {
+      ...fontMed,
+      fontSize: 12,
+      color: c.textMuted,
+      marginTop: 2,
+    },
 
-  // Section header
-  secH: {
-    ...fontBold,
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
-    letterSpacing: 1.3,
-    textTransform: 'uppercase',
-    paddingHorizontal: H_PAD + 4,
-    paddingTop: 22,
-    paddingBottom: 10,
-  },
+    // Section header
+    secH: {
+      ...fontBold,
+      fontSize: 11,
+      color: c.textMuted,
+      letterSpacing: 1.3,
+      textTransform: 'uppercase',
+      paddingHorizontal: H_PAD + 4,
+      paddingTop: 22,
+      paddingBottom: 10,
+    },
 
-  body: { paddingHorizontal: H_PAD },
+    body: { paddingHorizontal: H_PAD },
 
-  card: { padding: 8 },
+    card: { padding: 8 },
 
-  // Contact row
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-  },
-  rowIcon: {
-    width: 38, height: 38, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.12)',
-  },
-  rowTitle: {
-    ...fontSemi,
-    fontSize: 14,
-    color: '#FFFFFF',
-    letterSpacing: -0.1,
-  },
-  rowSub: {
-    ...fontMed,
-    fontSize: 11.5,
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 2,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginHorizontal: 10,
-  },
+    // Contact row
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 10,
+      paddingVertical: 12,
+    },
+    rowIcon: {
+      width: 38, height: 38, borderRadius: 12,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amberSoft,
+    },
+    rowTitle: {
+      ...fontSemi,
+      fontSize: 14,
+      color: c.text,
+      letterSpacing: -0.1,
+    },
+    rowSub: {
+      ...fontMed,
+      fontSize: 11.5,
+      color: c.textMuted,
+      marginTop: 2,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: c.divider,
+      marginHorizontal: 10,
+    },
 
-  // FAQ row
-  faqRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
-  faqQ: {
-    flex: 1,
-    ...fontSemi,
-    fontSize: 13.5,
-    color: '#FFFFFF',
-    lineHeight: 19,
-  },
-  faqAnswer: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-  },
-  faqA: {
-    ...fontMed,
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.65)',
-    lineHeight: 19,
-  },
-});
+    // FAQ row
+    faqRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+    },
+    faqQ: {
+      flex: 1,
+      ...fontSemi,
+      fontSize: 13.5,
+      color: c.text,
+      lineHeight: 19,
+    },
+    faqAnswer: {
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+    },
+    faqA: {
+      ...fontMed,
+      fontSize: 13,
+      color: c.textSecondary,
+      lineHeight: 19,
+    },
+  });
+}

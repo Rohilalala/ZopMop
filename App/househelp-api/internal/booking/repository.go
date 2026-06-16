@@ -118,8 +118,8 @@ func (r *Repository) GetBookingDetailServices(ctx context.Context, bookingID str
 	defer cancel()
 
 	rows, err := r.db.Query(queryCtx,
-		`SELECT bs.service_id::text, COALESCE(sc.name, ''), bs.duration_minutes,
-		        bs.price_paise, bs.status, bs.display_order,
+		`SELECT bs.id::text, bs.service_id::text, COALESCE(sc.name, ''), bs.duration_minutes,
+		        bs.price_paise, bs.quantity, bs.status, bs.display_order,
 		        bs.started_at, bs.completed_at, bs.skip_reason
 		 FROM booking_services bs
 		 LEFT JOIN service_categories sc ON sc.id = bs.service_id
@@ -135,8 +135,8 @@ func (r *Repository) GetBookingDetailServices(ctx context.Context, bookingID str
 	out := make([]BookingDetailService, 0)
 	for rows.Next() {
 		var s BookingDetailService
-		if err := rows.Scan(&s.ServiceID, &s.ServiceName, &s.DurationMinutes,
-			&s.PricePaise, &s.Status, &s.DisplayOrder,
+		if err := rows.Scan(&s.ID, &s.ServiceID, &s.ServiceName, &s.DurationMinutes,
+			&s.PricePaise, &s.Quantity, &s.Status, &s.DisplayOrder,
 			&s.StartedAt, &s.CompletedAt, &s.SkipReason); err != nil {
 			return nil, fmt.Errorf("scan booking service: %w", err)
 		}
@@ -145,9 +145,11 @@ func (r *Repository) GetBookingDetailServices(ctx context.Context, bookingID str
 	return out, rows.Err()
 }
 
-// GetPendingBookingByID retrieves a pending booking by ID without IDOR checks.
-// This is specifically for helpers accepting pending bookings where helper_id is NULL.
-// Only returns bookings that are in pending status.
+// GetPendingBookingByID retrieves an acceptable (unassigned) booking by ID
+// without IDOR checks. This is specifically for helpers accepting bookings
+// where helper_id is NULL. Matches both a freshly-created 'pending' row and a
+// stealth-instant row the StealthDispatcher already flipped to 'searching' —
+// mirroring the status set AcceptBooking's UPDATE claims (see :437).
 func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string) (*Booking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -156,8 +158,8 @@ func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
-		 FROM bookings WHERE id = $1 AND status = $2`,
-		bookingID, StatusPending,
+		 FROM bookings WHERE id = $1 AND status IN ($2, $3) AND helper_id IS NULL`,
+		bookingID, StatusPending, StatusSearching,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
 		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
@@ -165,7 +167,10 @@ func (r *Repository) GetPendingBookingByID(ctx context.Context, bookingID string
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("booking not found or not in pending status")
+			// Sentinel, not a fresh error: handler.go:470 / jobs.go:316 map
+			// ErrBookingNotPending to 409 via errors.Is — a fresh fmt.Errorf
+			// here surfaced every already-taken accept as a 500.
+			return nil, ErrBookingNotPending
 		}
 		return nil, fmt.Errorf("failed to get booking: %w", err)
 	}
@@ -539,7 +544,8 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 	// runaway state from melting the pro dashboard.
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at,
+		        COALESCE(pro_earnings_paise, 0)
 		 FROM bookings
 		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')
 		 ORDER BY updated_at DESC
@@ -556,7 +562,8 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
 			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
-			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
+			&b.ProEarningsPaise); err != nil {
 			return nil, fmt.Errorf("scan helper active booking: %w", err)
 		}
 		bookings = append(bookings, b)
@@ -574,12 +581,13 @@ func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string
 
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
-		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at
+		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at,
+		        COALESCE(pro_earnings_paise, 0)
 		 FROM bookings
 		 WHERE helper_id = $1
 		   AND (
 		     status IN ('accepted', 'in_progress')
-		     OR (status IN ('completed', 'cancelled') AND updated_at::date = CURRENT_DATE)
+		     OR (status IN ('completed', 'cancelled') AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 		   )
 		 ORDER BY
 		   CASE status
@@ -603,7 +611,8 @@ func (r *Repository) GetHelperBookingsToday(ctx context.Context, helperID string
 		var b Booking
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
 			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
-			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
+			&b.ProEarningsPaise); err != nil {
 			return nil, fmt.Errorf("scan helper today booking: %w", err)
 		}
 		bookings = append(bookings, b)
@@ -760,6 +769,26 @@ func (r *Repository) CreateScheduledBooking(
 	// Use a placeholder service_category_id (first item) for the legacy column.
 	legacyServiceID := items[0].ServiceID
 
+	// Resolve the delivery address inside the same tx — the booking row must
+	// carry real coords/address: the pro arrived-radius gate (MarkArrivedGated)
+	// compares against bookings.lat/lng, Navigate opens them, and the matcher's
+	// pending rescan reads them. Previously hardcoded '',0,0 — the arrived gate
+	// then compared against (0,0) and scheduled jobs could never start.
+	// Scoped to customerID so a forged address_id cannot attach another user's
+	// address.
+	var addrText string
+	var addrLat, addrLng float64
+	if err := tx.QueryRow(queryCtx,
+		`SELECT COALESCE(full_address, ''), lat, lon
+		 FROM user_addresses WHERE id = $1::uuid AND user_id = $2::uuid`,
+		addressID, customerID,
+	).Scan(&addrText, &addrLat, &addrLng); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("failed to resolve booking address: address not found for customer")
+		}
+		return nil, fmt.Errorf("failed to resolve booking address: %w", err)
+	}
+
 	var b ScheduledBooking
 	err = tx.QueryRow(queryCtx,
 		`INSERT INTO bookings
@@ -767,11 +796,12 @@ func (r *Repository) CreateScheduledBooking(
 		    amount_paise, discount_paise, promo_code,
 		    address_id, time_slot_id, scheduled_time, total_duration_minutes,
 		    is_stealth_instant, fire_at, locality)
-		 VALUES ($1, $2, $3, '', 0, 0, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING id, customer_id, address_id, time_slot_id,
 		           to_char(scheduled_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		           total_duration_minutes, status, amount_paise, discount_paise, promo_code, created_at`,
 		customerID, legacyServiceID, StatusPending,
+		addrText, addrLat, addrLng,
 		totalPriceCents, discountCents, promoCode,
 		addressID, timeSlotID, scheduledTime, totalDuration,
 		isStealthInstant, fireAt, locality,
@@ -823,15 +853,19 @@ func (r *Repository) GetCustomerBookingsByStatus(ctx context.Context, customerID
 	// the PAYMENT_SUCCESS webhook flips payment_status='paid'. Wallet-pay
 	// (payment_method='wallet', stamped paid inline) and legacy COD/null
 	// bookings continue to surface as before.
+	// Columns MUST be b.-qualified: the query below joins booking_services /
+	// service_categories / user_addresses, and a bare `status` is ambiguous
+	// once any joined table also carries one (SQLSTATE 42702 — every
+	// "upcoming" fetch 500'd).
 	const hidePendingUnpaidCashfree = `
-		(payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+		(b.payment_method IS DISTINCT FROM 'cashfree' OR b.payment_status = 'paid')
 	`
 	var statusFilter string
 	switch status {
 	case "upcoming":
-		statusFilter = `status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
+		statusFilter = `b.status IN ('pending', 'accepted', 'in_progress') AND ` + hidePendingUnpaidCashfree
 	case "past":
-		statusFilter = `status IN ('completed', 'cancelled')`
+		statusFilter = `b.status IN ('completed', 'cancelled')`
 	default:
 		statusFilter = `true`
 	}

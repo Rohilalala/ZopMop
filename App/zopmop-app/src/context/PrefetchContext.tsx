@@ -66,9 +66,32 @@ export function PrefetchProvider({ children }: { children: React.ReactNode }) {
   const { token, isAuthenticated } = useAuth();
   const [data, setData] = useState<PrefetchedHome | null>(null);
   const consumed = useRef(false);
+  // The token the cached `data` was prefetched for. Without this, signing
+  // out and into a different account served the previous user's addresses
+  // and home (the consume guard was a module-lifetime ref that never
+  // reset), and blocked the new user's prefetch forever.
+  const prefetchedForToken = useRef<string | null>(null);
+
+  // Reset the prefetch state whenever the account changes (sign-out, or a
+  // switch to a different token). Clears stale cross-account data and the
+  // consume guard so the new user prefetches fresh.
+  useEffect(() => {
+    if (!isAuthenticated || token === '__guest__') {
+      consumed.current = false;
+      prefetchedForToken.current = null;
+      setData(null);
+      return;
+    }
+    if (prefetchedForToken.current !== null && prefetchedForToken.current !== token) {
+      consumed.current = false;
+      prefetchedForToken.current = null;
+      setData(null);
+    }
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     if (!isAuthenticated || token === '__guest__' || consumed.current) return;
+    prefetchedForToken.current = token;
 
     let cancelled = false;
     (async () => {

@@ -6,7 +6,7 @@ import {
   Banknote, Receipt, Settings as SettingsIcon, Flag,
   Map as MapIcon, FlaskConical, BarChart3, Image as ImageIcon,
   Bell, ShieldAlert, ChevronsLeft, ChevronsRight, CalendarDays, MapPinned,
-  ShieldCheck, FileText, Clock, Sliders,
+  ShieldCheck, FileText, Clock, Sliders, ListChecks, Package,
   type LucideIcon,
 } from 'lucide-react';
 import { useProMode } from '@/store/proMode';
@@ -41,6 +41,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
   {
     title: 'Growth',
     items: [
+      { to: '/catalog',     label: 'Catalog',     icon: Package },
       { to: '/promos',      label: 'Promos',      icon: Tag },
       { to: '/banners',     label: 'Banners',     icon: ImageIcon },
       { to: '/push',        label: 'Push',        icon: Bell },
@@ -71,6 +72,16 @@ const SECTIONS: { title: string; items: Item[] }[] = [
   },
 ];
 
+// SDUI control panel — admin-gated, so it's appended to SECTIONS only when the
+// current operator can read SDUI configs (see Sidebar render).
+const SDUI_SECTION: { title: string; items: Item[] } = {
+  title: 'SDUI',
+  items: [
+    { to: '/sdui',                 label: 'Pages',           icon: LayoutDashboard },
+    { to: '/sdui/allowed-actions', label: 'Action allowlist', icon: ListChecks },
+  ],
+};
+
 export function Sidebar({
   collapsed,
   onToggleCollapsed,
@@ -80,6 +91,11 @@ export function Sidebar({
 }) {
   const proMode = useProMode((s) => s.enabled);
   const setProMode = useProMode((s) => s.set);
+
+  // SDUI control panel is admin-only — append its nav section just for those
+  // operators so non-admins never see the entry points.
+  const canSeeSdui = usePermission('sdui.read');
+  const sections = canSeeSdui ? [...SECTIONS, SDUI_SECTION] : SECTIONS;
 
   // Live count of pending zone approvals — drives the badge next to the
   // sidebar link. Same query key the page uses, so the data is shared.
@@ -123,7 +139,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3">
-        {SECTIONS.map((section) => (
+        {sections.map((section) => (
           <div key={section.title} className="mb-4">
             {!collapsed && (
               <div className="px-4 mb-1.5 text-[10px] uppercase tracking-wider text-text-muted">
