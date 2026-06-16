@@ -3,6 +3,8 @@ package slots
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,9 +100,20 @@ func (r *Repository) IncrementBooking(ctx context.Context, slotID string) error 
 // 30-minute slots across three periods (all times IST):
 //   Morning   07:00 – 12:00  (10 slots)
 //   Afternoon 12:00 – 17:00  (10 slots)
-//   Evening   17:00 – 21:00  ( 8 slots)
+//   Evening   17:00 – 20:30  ( 7 slots)
+//
+// The grid stops at the IST service close (closeMin, admin-managed via
+// scheduling.service_close_min — default 20:30): the last slot is 20:00–20:30,
+// so a 30-min job can start at 20:00 at the latest. Slots ending past close
+// (e.g. 20:30–21:00) are not generated. The booking gate enforces the same
+// close per job duration (booking package, same config key).
 
-func generateSlotWindows() [][2]string {
+// defaultServiceCloseMinutes is the fallback close (20:30 IST) used when the
+// admin-managed scheduling.service_close_min config is unreadable. Kept in sync
+// with the booking package's default and config_manager's default.
+const defaultServiceCloseMinutes = 20*60 + 30
+
+func generateSlotWindows(closeMin int) [][2]string {
 	var windows [][2]string
 	periods := [][2]int{
 		{7, 12},  // morning
@@ -109,13 +122,38 @@ func generateSlotWindows() [][2]string {
 	}
 	for _, p := range periods {
 		for h := p[0]; h < p[1]; h++ {
-			windows = append(windows,
-				[2]string{fmt.Sprintf("%02d:00", h), fmt.Sprintf("%02d:30", h)},
-				[2]string{fmt.Sprintf("%02d:30", h), fmt.Sprintf("%02d:00", h+1)},
-			)
+			// Two half-hour slots per hour, with their end-minute for the close
+			// filter: [h:00, h:30] ends h*60+30; [h:30, (h+1):00] ends (h+1)*60.
+			candidates := []struct {
+				start, end string
+				endMin     int
+			}{
+				{fmt.Sprintf("%02d:00", h), fmt.Sprintf("%02d:30", h), h*60 + 30},
+				{fmt.Sprintf("%02d:30", h), fmt.Sprintf("%02d:00", h+1), (h + 1) * 60},
+			}
+			for _, w := range candidates {
+				if w.endMin > closeMin {
+					continue // past the service close — e.g. 20:30–21:00
+				}
+				windows = append(windows, [2]string{w.start, w.end})
+			}
 		}
 	}
 	return windows
+}
+
+// serviceCloseMinutes reads the admin-managed IST service close (minutes-from-
+// midnight) from app_config, falling back to the default if unset/invalid.
+func (r *Repository) serviceCloseMinutes(ctx context.Context) int {
+	var v string
+	if err := r.db.QueryRow(ctx,
+		`SELECT value FROM app_config WHERE key = 'scheduling.service_close_min'`,
+	).Scan(&v); err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultServiceCloseMinutes
 }
 
 // ensureSlotsExist generates default 30-minute slots for a date if none exist.
@@ -127,7 +165,7 @@ func (r *Repository) ensureSlotsExist(ctx context.Context, date string) error {
 		return err
 	}
 
-	for _, w := range generateSlotWindows() {
+	for _, w := range generateSlotWindows(r.serviceCloseMinutes(ctx)) {
 		if _, err := r.db.Exec(ctx,
 			`INSERT INTO time_slots (slot_date, start_time, end_time)
 			 VALUES ($1, $2, $3)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/adityarohilla/househelp-api/internal/middleware"
 	"github.com/adityarohilla/househelp-api/pkg/validator"
@@ -62,6 +63,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Get("/helper/active", append(proChain, h.GetHelperActive)...)
 	router.Get("/helper/today", append(proChain, h.GetHelperToday)...)
 	router.Get("/", h.GetBookings)
+	router.Get("/availability", h.GetSlotAvailability)
 	router.Get("/:id/match-status", h.GetMatchStatus)
 	router.Get("/:id/tracking", h.GetTracking)
 	router.Get("/:id/messages", h.ListMessages)
@@ -271,7 +273,8 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 		}
 		if errors.Is(err, ErrSlotUnavailable) {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"error": "this time slot is no longer available — please pick another",
+				"error": "that slot just filled up — please pick another",
+				"code":  "slot_full",
 			})
 		}
 		if errors.Is(err, ErrSlotTooFar) {
@@ -315,6 +318,52 @@ func (h *Handler) CreateScheduledBooking(c *fiber.Ctx) error {
 	h.service.ClearUserCart(c.UserContext(), userID)
 
 	return c.Status(fiber.StatusCreated).JSON(booking)
+}
+
+// GetSlotAvailability handles GET /bookings/availability?date=&address_id=.
+// It returns the day's slots with is_available recomputed from live capacity
+// in the address's locality (see Service.GetSlotAvailability). The address_id
+// must be a UUID owned by the caller so localities can't be probed via other
+// users' addresses.
+func (h *Handler) GetSlotAvailability(c *fiber.Ctx) error {
+	userID, ok := c.Locals("userID").(string)
+	if !ok || userID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "authentication required"})
+	}
+
+	date := c.Query("date")
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "date must be YYYY-MM-DD"})
+	}
+
+	addressID := c.Query("address_id")
+	if !validator.IsUUID(addressID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "address_id must be a valid uuid"})
+	}
+
+	owns, err := h.service.AddressBelongsToUser(c.UserContext(), addressID, userID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Str("address_id", addressID).Msg("[booking] availability ownership check failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to check availability"})
+	}
+	if !owns {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "address does not belong to caller"})
+	}
+
+	// Optional cart duration. When present, availability is computed over each
+	// slot's job window so a slot a long job can't book isn't shown available.
+	// Absent/zero/negative → duration-agnostic per-slot display.
+	durationMin := c.QueryInt("duration_minutes", 0)
+	if durationMin < 0 {
+		durationMin = 0
+	}
+
+	resp, err := h.service.GetSlotAvailability(c.UserContext(), addressID, date, durationMin)
+	if err != nil {
+		log.Error().Err(err).Str("address_id", addressID).Str("date", date).Msg("[booking] failed to compute slot availability")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to compute slot availability"})
+	}
+	return c.JSON(resp)
 }
 
 // CancelBooking handles POST /bookings/:id/cancel and DELETE /bookings/:id.

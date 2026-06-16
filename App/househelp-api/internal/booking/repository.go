@@ -678,6 +678,8 @@ func (r *Repository) CreateScheduledBooking(
 	isStealthInstant bool,
 	fireAt *time.Time,
 	locality *string,
+	enforceCapacity bool,
+	serviceCloseMin int,
 ) (*ScheduledBooking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -688,41 +690,80 @@ func (r *Repository) CreateScheduledBooking(
 	}
 	defer tx.Rollback(queryCtx)
 
-	// Lock the slot row first — prevents two concurrent bookings from racing
-	// past the capacity check. Pessimistic FOR UPDATE serializes inserts on
-	// the same time_slot_id; other slots stay unaffected.
-	var currentBookings, maxBookings int
+	// Capacity gate. Capacity is live-derived — there is no counter column:
+	// approved roster helpers in the locality, minus those on approved leave
+	// that date, minus committed bookings whose window overlaps this slot
+	// (see availableForSlot). Cancellations free capacity automatically. An
+	// advisory xact lock keyed by (locality, date) serialises concurrent
+	// bookings that share the locality's roster for the date so the re-count
+	// can't race two inserts past a single remaining seat. The domain is the
+	// whole (locality, date), NOT the individual slot: committedCountForSlot
+	// counts bookings from OVERLAPPING slots too, so a booking in one slot
+	// reduces availability for its neighbours — a per-slot lock would let two
+	// bookings in different but overlapping slots double-book the same helper.
+	// Other localities/dates are unaffected and the lock auto-releases on
+	// commit/rollback. Capacity is enforced only for the scheduled flow
+	// (enforceCapacity); the instant/cart path passes false.
+	var slotDate, slotStart string
 	var isActive bool
 	err = tx.QueryRow(queryCtx,
-		`SELECT current_bookings, max_bookings, is_active
+		`SELECT to_char(slot_date, 'YYYY-MM-DD'), to_char(start_time, 'HH24:MI'), is_active
 		 FROM time_slots
-		 WHERE id = $1
-		 FOR UPDATE`,
+		 WHERE id = $1`,
 		timeSlotID,
-	).Scan(&currentBookings, &maxBookings, &isActive)
+	).Scan(&slotDate, &slotStart, &isActive)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrSlotUnavailable
 		}
-		return nil, fmt.Errorf("failed to lock time slot: %w", err)
+		return nil, fmt.Errorf("failed to load time slot: %w", err)
 	}
-	if !isActive || currentBookings >= maxBookings {
+	if !isActive {
 		return nil, ErrSlotUnavailable
 	}
 
-	// Reserve capacity inside the same tx — committed atomically with the
-	// booking insert below.
-	if _, err := tx.Exec(queryCtx,
-		`UPDATE time_slots SET current_bookings = current_bookings + 1 WHERE id = $1`,
-		timeSlotID,
-	); err != nil {
-		return nil, fmt.Errorf("failed to reserve slot capacity: %w", err)
-	}
-
-	// Calculate total duration.
+	// Calculate total duration. Needed before the capacity gate: the gate
+	// measures the booking's full [scheduled_time, +totalDuration) job window,
+	// which can outrun its slot.
 	totalDuration := 0
 	for _, item := range items {
 		totalDuration += item.DurationMinutes
+	}
+
+	if enforceCapacity {
+		// Service-close fit (scheduled flow). The job must finish by the IST
+		// service close (serviceCloseMin, admin-managed; 20:30 default) on its
+		// slot date. A booking
+		// that would overrun close is rejected — this also makes the
+		// 20:30–21:00 slot unbookable (a 30-min job there ends 21:00 > close)
+		// and shrinks the last viable start as the cart gets longer. Slot times
+		// are IST wall-clock, so plain minute math is correct (no slot crosses
+		// midnight).
+		if overrunsServiceClose(slotStart, totalDuration, serviceCloseMin) {
+			return nil, ErrSlotUnavailable
+		}
+	}
+
+	if enforceCapacity && locality != nil && *locality != "" {
+		lockKey := *locality + "|" + slotDate
+		if _, err := tx.Exec(queryCtx,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			lockKey,
+		); err != nil {
+			return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
+		}
+		// Re-count over the new booking's own job window — NOT the slot window.
+		// A job longer than its slot commits the helper past the slot's end, so
+		// availableForSlot would undercount overlaps and double-book. Serialised
+		// with the (locality, date) lock above so concurrent overlapping-window
+		// bookings can't both pass this check.
+		avail, err := r.availableForWindow(queryCtx, tx, *locality, slotDate, scheduledTime, totalDuration)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
+		}
+		if avail <= 0 {
+			return nil, ErrSlotUnavailable
+		}
 	}
 
 	// Use a placeholder service_category_id (first item) for the legacy column.

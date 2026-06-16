@@ -43,6 +43,11 @@ const (
 	ConfigBookingMaxActivePerCustomer      = "booking.max_active_per_customer"
 	ConfigBookingMaxActivePerHelper        = "booking.max_active_per_helper"
 
+	// Scheduling (slot-capacity pilot). Admin-managed so the pilot's society and
+	// service close aren't baked into code.
+	ConfigSchedulingServiceCloseMin       = "scheduling.service_close_min"
+	ConfigSchedulingCapacityPilotLocality = "scheduling.capacity_pilot_locality"
+
 	// App.
 	ConfigAppMaintenanceMode       = "app.maintenance_mode"
 	ConfigAppMinVersionIOS         = "app.min_app_version_ios"
@@ -71,6 +76,8 @@ var DefaultConfigs = map[string]AppConfig{
 	ConfigAppSupportPhone:                  {Key: ConfigAppSupportPhone, Value: "", ValueType: "string", Description: "Support phone number shown in app"},
 	ConfigAppSupportEmail:                  {Key: ConfigAppSupportEmail, Value: "", ValueType: "string", Description: "Support email shown in app"},
 	ConfigHelperMinRatingToAppear:          {Key: ConfigHelperMinRatingToAppear, Value: "3.0", ValueType: "float", Description: "Helpers below this rating are hidden"},
+	ConfigSchedulingServiceCloseMin:        {Key: ConfigSchedulingServiceCloseMin, Value: "1230", ValueType: "int", Description: "IST service close in minutes-from-midnight (1230 = 20:30). Scheduled jobs must finish by this; the slot grid and booking gate enforce it."},
+	ConfigSchedulingCapacityPilotLocality:  {Key: ConfigSchedulingCapacityPilotLocality, Value: "Orchid Island Gurugram", ValueType: "string", Description: "Fallback locality for slot-capacity gating when an address can't be mapped to a seeded locality (single-society pilot). Empty disables the fallback."},
 }
 
 // PublicConfigKeys are safe to expose to the client app.

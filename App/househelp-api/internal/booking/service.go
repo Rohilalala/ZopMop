@@ -1063,13 +1063,15 @@ func (s *Service) CreateScheduledBooking(
 		}
 	}
 
-	locality, locErr := s.resolveLocality(ctx, req.AddressID)
+	// Capacity gating resolves to a concrete locality (admin-managed fallback on
+	// a miss) so the gate applies. resolveGateLocality never returns an error;
+	// the branch is defensive and reuses the configured fallback locality.
+	gateLocality, locErr := s.resolveGateLocality(ctx, req.AddressID)
 	if locErr != nil {
-		// Don't fail the booking on a locality lookup hiccup — log and let
-		// the dispatch chain fall back to "no locality" mode.
 		log.Warn().Err(locErr).Str("address_id", req.AddressID).Msg("[booking] locality resolve failed")
-		locality = nil
+		gateLocality = s.pilotLocality(ctx)
 	}
+	locality := &gateLocality
 
 	// Calculate total price from items + platform fee (matches cart display).
 	totalPriceCents := 0
@@ -1109,6 +1111,8 @@ func (s *Service) CreateScheduledBooking(
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCode,
 		isStealth, fireAt, locality,
+		true,                     // enforce live slot-capacity gate for the scheduled flow
+		s.serviceCloseMin(ctx),   // admin-managed IST service close (job must finish by it)
 	)
 	if err != nil {
 		return nil, err
@@ -1246,11 +1250,15 @@ func (s *Service) CreateInstantBookingFromCart(
 
 	// Insert with isStealthInstant=false + fireAt=nil so the stealth/
 	// scheduled crons leave it alone — the matcher batcher owns this row.
+	// enforceCapacity=false: instant/cart bookings are not slot-gated (only
+	// the scheduled flow is).
 	booking, err := s.repo.CreateScheduledBooking(
 		ctx, customerID, addressID, timeSlotID,
 		scheduledTime, cartItems,
 		totalPriceCents, discountCents, promoCodePtr,
 		false, nil, locality,
+		false, // instant/cart path: not slot-gated
+		0,     // serviceCloseMin unused when capacity is not enforced
 	)
 	if err != nil {
 		return nil, err
