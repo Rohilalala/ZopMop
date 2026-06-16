@@ -102,6 +102,10 @@ export default function PaymentScreen() {
   const bookingID = params?.booking_id ?? '';
   const amountPaise = params?.amount_paise ?? 0;
   const bookingType = params?.bookingType ?? 'scheduled';
+  // ASAP arrival promise forwarded from CartScreen — passed straight through to
+  // BookingConfirmed so card/UPI ASAP bookings render "arriving by HH:MM" too.
+  const etaMinutes = params?.etaMinutes;
+  const helperName = params?.helperName;
   const rupees = Math.floor(amountPaise / 100);
   const decimals = (amountPaise % 100).toString().padStart(2, '0');
 
@@ -155,6 +159,9 @@ export default function PaymentScreen() {
               bookingId: bookingID,
               totalCents: amountPaise,
               bookingType,
+              ...(bookingType === 'instant' && etaMinutes != null
+                ? { etaMinutes, helperName }
+                : {}),
             });
             return;
           }
@@ -181,6 +188,9 @@ export default function PaymentScreen() {
               bookingId: bookingID,
               totalCents: amountPaise,
               bookingType,
+              ...(bookingType === 'instant' && etaMinutes != null
+                ? { etaMinutes, helperName }
+                : {}),
             });
             return;
           }
@@ -195,7 +205,7 @@ export default function PaymentScreen() {
         setErrorMessage(msg);
       },
     });
-  }, [token, bookingID, amountPaise, state, startPayment, pollStatus, navigation, posthog]);
+  }, [token, bookingID, amountPaise, bookingType, etaMinutes, helperName, state, startPayment, pollStatus, navigation, posthog]);
 
   const ctaDisabled =
     state === 'creating_order' ||

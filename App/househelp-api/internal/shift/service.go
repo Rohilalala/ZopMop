@@ -408,14 +408,32 @@ func (s *Service) CancelBooking(ctx context.Context, proID, bookingID string) (*
 		penaltyPaise = (BaseRatePaisePerHour * estMinutes) / 60
 	}
 
-	// Status guard + idempotency: the conditional UPDATE flips ONLY an
-	// 'accepted' booking still owned by this pro to 'cancelled'. A
-	// double-tap, a timeout-retry, or an already-completed/cancelled
-	// booking matches 0 rows → ErrBookingNotCancellable (409) and we
-	// never stack a second strike or flip a finished job.
-	customerID, err := s.repo.MarkBookingCancelled(ctx, bookingID, proID)
-	if err != nil {
-		return nil, err
+	// Re-dispatch instead of dead-ending (spec §7): a future booking returns to
+	// the assigner with this pro excluded so it isn't immediately re-offered to
+	// them. Once the slot has passed there's nothing to re-dispatch, so keep the
+	// old terminal cancel path. scheduled_time read failure also falls back to
+	// cancel — never leave the booking stuck assigned to a pro who quit it.
+	scheduledTime, stErr := s.repo.BookingScheduledTime(ctx, bookingID)
+	reDispatch := stErr == nil && time.Now().Before(scheduledTime)
+	var customerID string
+	if reDispatch {
+		// Returns the booking to the assigner; no customer-facing cancel,
+		// so customerID stays empty and the notify block below is skipped.
+		if err := s.repo.UnassignBooking(ctx, bookingID, proID); err != nil {
+			return nil, err
+		}
+	} else {
+		// Status guard + idempotency: the conditional UPDATE flips ONLY an
+		// 'accepted' booking still owned by this pro to 'cancelled'. A
+		// double-tap, a timeout-retry, or an already-completed/cancelled
+		// booking matches 0 rows → ErrBookingNotCancellable (409) and we
+		// never stack a second strike or flip a finished job. Returns the
+		// customer_id so we can notify the waiting prepaid customer.
+		var err error
+		customerID, err = s.repo.MarkBookingCancelled(ctx, bookingID, proID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.InsertCancellation(ctx, proID, bookingID, customerNotified, estMinutes, penaltyPaise, index); err != nil {
 		return nil, err

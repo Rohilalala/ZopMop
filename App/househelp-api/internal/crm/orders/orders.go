@@ -49,6 +49,23 @@ func parseFilterDate(v string, endOfDay bool) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// validCancelledBy is the allow-list for the cancelled_by orders filter.
+// Mirrors the values writers actually persist: 'customer' (internal/booking
+// self-cancel), 'system' (internal/booking auto-expire / dispatch-rollback,
+// also counted as auto_expired_bookings in analytics), 'admin' (internal/admin
+// bare 'admin' plus the CRM cancel path's 'admin:<email>' form), and
+// 'no_pros_found' (matching dispatch — spec §5.5). 'helper' is intentionally
+// absent: no code path writes it (it lives only in doc comments), so filtering
+// by it would always return zero rows. An unrecognised value is ignored rather
+// than errored, matching the other List filters' best-effort query-param
+// handling.
+var validCancelledBy = map[string]bool{
+	"customer":      true,
+	"system":        true,
+	"admin":         true,
+	"no_pros_found": true,
+}
+
 // ── Models ─────────────────────────────────────────────────────────────
 
 // ListItem is a row in the orders table.
@@ -149,7 +166,7 @@ func NewRepository(read, write *pgxpool.Pool) *Repository {
 func (r *Repository) SetRedis(rdb *redis.Client) { r.rdb = rdb }
 
 // List returns a page of orders matching the filter.
-func (r *Repository) List(ctx context.Context, search, status, category, customerID, workerID string, fromTS, toTS *time.Time, minCents, maxCents *int, sortBy, sortDir string, limit, offset int) ([]ListItem, int, error) {
+func (r *Repository) List(ctx context.Context, search, status, category, customerID, workerID, cancelledBy string, fromTS, toTS *time.Time, minCents, maxCents *int, sortBy, sortDir string, limit, offset int) ([]ListItem, int, error) {
 	args := []any{}
 	conds := []string{"1=1"}
 	if search != "" {
@@ -175,6 +192,18 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	if workerID != "" {
 		args = append(args, workerID)
 		conds = append(conds, fmt.Sprintf("b.helper_id = $%d::uuid", len(args)))
+	}
+	if validCancelledBy[cancelledBy] {
+		// 'admin' covers both the bare 'admin' literal (internal/admin) and the
+		// CRM cancel path's 'admin:<email>' form; everything else matches exactly
+		// (e.g. spec §5.5 'no_pros_found' feed).
+		if cancelledBy == "admin" {
+			args = append(args, "admin%")
+			conds = append(conds, fmt.Sprintf("b.cancelled_by LIKE $%d", len(args)))
+		} else {
+			args = append(args, cancelledBy)
+			conds = append(conds, fmt.Sprintf("b.cancelled_by = $%d", len(args)))
+		}
 	}
 	if fromTS != nil {
 		args = append(args, *fromTS)
@@ -780,7 +809,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	}
 
 	items, total, err := h.repo.List(c.UserContext(),
-		q("search"), q("status"), q("category"), q("customer_id"), q("worker_id"),
+		q("search"), q("status"), q("category"), q("customer_id"), q("worker_id"), q("cancelled_by"),
 		fromTS, toTS, minC, maxC, q("sort_by"), q("sort_dir"), limit, offset,
 	)
 	if err != nil {

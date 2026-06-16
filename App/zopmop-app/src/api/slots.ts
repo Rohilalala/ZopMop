@@ -21,6 +21,13 @@ export interface ApiSlotPeriod {
   slots: ApiTimeSlot[];
 }
 
+// Full body of GET /bookings/availability (backend booking.AvailabilityResponse).
+// The helpers below return only .periods, which is all the picker consumes.
+export interface AvailabilityResponse {
+  date: string; // YYYY-MM-DD (IST)
+  periods: ApiSlotPeriod[];
+}
+
 // Returns slots grouped by period as the backend sends them.
 // Response shape: { date, periods: [{ label, slots: [...] }] }
 export async function getTimeSlots(token: string, date: string): Promise<ApiSlotPeriod[]> {
@@ -42,20 +49,16 @@ export async function getSlotAvailability(
   token: string,
   addressId: string | undefined,
   date: string,
-  durationMin?: number,
 ): Promise<ApiSlotPeriod[]> {
   if (!addressId) return getTimeSlots(token, date);
   try {
-    // Pass the cart's total duration so the endpoint computes availability over
-    // each slot's job window — a slot a long job can't book won't show open.
-    const durationQS = durationMin && durationMin > 0 ? `&duration_minutes=${durationMin}` : '';
     const res = await apiFetch(
-      `${BASE_URL}/bookings/availability?address_id=${addressId}&date=${date}${durationQS}`,
+      `${BASE_URL}/bookings/availability?address_id=${addressId}&date=${date}`,
       { headers: authHeaders(token) },
     );
     if (!res.ok) return getTimeSlots(token, date);
-    const data = await res.json();
-    return (data.periods ?? []) as ApiSlotPeriod[];
+    const data = (await res.json()) as AvailabilityResponse;
+    return data.periods ?? [];
   } catch {
     return getTimeSlots(token, date);
   }

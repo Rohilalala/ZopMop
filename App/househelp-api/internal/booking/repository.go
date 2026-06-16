@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/adityarohilla/househelp-api/internal/wallet"
 )
 
 // Repository handles all database operations for the booking module.
@@ -52,7 +54,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise,
-		        scheduled_time, cancelled_at, cancellation_fee_applied, cancellation_fee_cents,
+		        scheduled_time, cancelled_at, cancelled_by, cancellation_fee_applied, cancellation_fee_cents,
 		        accepted_at, en_route_at, arrived_at, started_at, completed_at,
 		        pro_earnings_paise, actual_duration_minutes, customer_rating_pending,
 		        created_at, updated_at
@@ -62,7 +64,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID, &b.Status,
 		&b.Address, &b.Lat, &b.Lng, &b.AmountPaise, &b.PromoCode,
 		&b.DiscountPaise,
-		&b.ScheduledTime, &b.CancelledAt, &b.CancellationFeeApplied, &b.CancellationFeeCents,
+		&b.ScheduledTime, &b.CancelledAt, &b.CancelledBy, &b.CancellationFeeApplied, &b.CancellationFeeCents,
 		&b.AcceptedAt, &b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
 		&b.ProEarningsPaise, &b.ActualDurationMinutes, &b.CustomerRatingPending,
 		&b.CreatedAt, &b.UpdatedAt,
@@ -216,76 +218,99 @@ func (r *Repository) UpdateBookingStatus(ctx context.Context, bookingID string, 
 }
 
 // CancelBookingWithFee transitions a booking to cancelled and atomically
-// stamps the cancellation fee fields. cancelledBy is "customer" | "helper" |
-// "system". feeCents is 0 when the cancellation is inside the free window.
+// settles the cancellation fee + refund. cancelledBy is "customer" | "helper" |
+// "system". feeCents is the *notional* fee (0 inside the free window).
 //
-// If the booking was already paid through a non-COD method, this also inserts
-// a pending_refunds row for (price - discount - fee), all in the same
-// transaction. The CRM refund worker drains the table; we no longer rely on
-// an async event consumer to create the row, so a crash between cancel and
-// refund-event publish can no longer leave the customer un-reimbursed.
-func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancelledBy string, feeCents int) error {
+// The fee is collected by withholding it from the refund, so it can never
+// exceed what the customer actually paid: the effective fee is clamped to the
+// net collected amount (and is 0 for unpaid / COD bookings, which have nothing
+// to deduct). This stops the broken case where a flat fee larger than a small
+// booking produced a negative refund — no refund row at all and a silent
+// forfeit of the whole paid amount (and a phantom fee on an unpaid row).
+//
+// The refund (net paid − effective fee) is routed through the canonical
+// wallet.RecordBookingRefundTx so wallet payments are instant-credited back to
+// the wallet, Cashfree payments land on the pending_refunds queue, and
+// cash/null methods move nothing — all in the same transaction as the status
+// change. walletRepo may be nil (the fee=0 system/rollback callers never have
+// a paid booking to refund); a nil repo means "no movement".
+//
+// Returns the effective (clamped) fee actually stamped on the row so callers
+// can echo a truthful amount back to the user.
+func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancelledBy string, feeCents int, walletRepo *wallet.Repository) (int, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	tx, err := r.db.BeginTx(queryCtx, pgx.TxOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to begin cancel tx: %w", err)
+		return 0, fmt.Errorf("failed to begin cancel tx: %w", err)
 	}
 	defer tx.Rollback(context.Background())
 
-	feeApplied := feeCents > 0
 	var (
-		customerID     string
-		helperID       *string
-		priceCents     int64
-		discountCents  int64
-		paymentMethod  *string
-		paymentID      *string
-		paymentStatus  *string
+		customerID    string
+		helperID      *string
+		priceCents    int64
+		discountCents int64
+		paymentMethod *string
+		paymentID     *string
+		paymentStatus *string
 	)
+	// First read the row (locking it) so we can compute the effective fee from
+	// the amount actually collected before we stamp it.
 	err = tx.QueryRow(queryCtx,
+		`SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0),
+		        payment_method, payment_id, payment_status, helper_id::text
+		   FROM bookings
+		  WHERE id = $1 AND status IN ('pending', 'accepted')
+		  FOR UPDATE`,
+		bookingID,
+	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus, &helperID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, fmt.Errorf("booking cannot be cancelled in current status")
+		}
+		return 0, fmt.Errorf("failed to load booking for cancel: %w", err)
+	}
+
+	// The fee is only ever realised by withholding it from a refund, so it can
+	// never exceed the net amount the customer actually paid. Unpaid / COD rows
+	// have nothing collected → net paid is 0 → effective fee is 0 (no phantom
+	// fee on a row the customer was never charged for).
+	paid := paymentStatus != nil && *paymentStatus == "paid"
+	netPaid := int64(0)
+	if paid {
+		netPaid = priceCents - discountCents
+		if netPaid < 0 {
+			netPaid = 0
+		}
+	}
+	effectiveFee := int64(feeCents)
+	if effectiveFee > netPaid {
+		effectiveFee = netPaid
+	}
+	feeApplied := effectiveFee > 0
+
+	if _, err := tx.Exec(queryCtx,
 		`UPDATE bookings
 		    SET status = $2, updated_at = NOW(), cancelled_at = NOW(),
 		        cancelled_by = $3,
 		        cancellation_fee_applied = $4, cancellation_fee_cents = $5
-		  WHERE id = $1
-		    AND status IN ('pending', 'accepted')
-		  RETURNING customer_id::text, amount_paise, COALESCE(discount_paise, 0),
-		            payment_method, payment_id, payment_status, helper_id::text`,
-		bookingID, StatusCancelled, cancelledBy, feeApplied, feeCents,
-	).Scan(&customerID, &priceCents, &discountCents, &paymentMethod, &paymentID, &paymentStatus, &helperID)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("booking cannot be cancelled in current status")
-		}
-		return fmt.Errorf("failed to cancel booking: %w", err)
+		  WHERE id = $1`,
+		bookingID, StatusCancelled, cancelledBy, feeApplied, effectiveFee,
+	); err != nil {
+		return 0, fmt.Errorf("failed to cancel booking: %w", err)
 	}
 
-	// Only create a refund row when money was actually collected.
-	// COD + unpaid bookings have nothing to refund.
-	paid := paymentStatus != nil && *paymentStatus == "paid"
-	nonCod := paymentMethod != nil && *paymentMethod != "" && *paymentMethod != "cod"
-	refundAmount := priceCents - discountCents - int64(feeCents)
-	if paid && nonCod && refundAmount > 0 {
-		// $3 is used twice — once as text (source_ref) and once as uuid
-		// (booking_id). Postgres prepared-statement parameter inference
-		// requires a single type per param, so both usages get explicit
-		// casts: $3::text for source_ref, $3::uuid for booking_id.
-		// Without the ::text cast we get SQLSTATE 42P08 ("inconsistent
-		// types deduced for parameter $3").
-		if _, err := tx.Exec(queryCtx,
-			`INSERT INTO pending_refunds
-			   (user_id, amount_cents, source, source_ref,
-			    booking_id, payment_method, payment_id, status)
-			 VALUES ($1::uuid, $2, 'booking_cancellation', $3::text,
-			         $3::uuid, $4, $5, 'pending')
-			 ON CONFLICT (booking_id) WHERE booking_id IS NOT NULL
-			   AND status IN ('pending','approved','processed','processed_manual')
-			 DO NOTHING`,
-			customerID, refundAmount, bookingID, paymentMethod, paymentID,
-		); err != nil {
-			return fmt.Errorf("failed to create refund record: %w", err)
+	// Refund the net paid amount minus the (clamped) fee through the canonical
+	// router. RecordBookingRefundTx no-ops when unpaid or refund <= 0, and picks
+	// the wallet-credit vs Cashfree-queue rail by payment_method.
+	refundAmount := netPaid - effectiveFee
+	if walletRepo != nil && refundAmount > 0 {
+		if err := wallet.RecordBookingRefundTx(queryCtx, tx, walletRepo,
+			customerID, bookingID, paymentMethod, paymentID, paymentStatus,
+			refundAmount, "Booking cancellation refund"); err != nil {
+			return 0, fmt.Errorf("failed to record cancellation refund: %w", err)
 		}
 	}
 
@@ -301,9 +326,9 @@ func (r *Repository) CancelBookingWithFee(ctx context.Context, bookingID, cancel
 	}
 
 	if err := tx.Commit(queryCtx); err != nil {
-		return fmt.Errorf("failed to commit cancel tx: %w", err)
+		return 0, fmt.Errorf("failed to commit cancel tx: %w", err)
 	}
-	return nil
+	return int(effectiveFee), nil
 }
 
 // isValidTransition checks if a booking status transition is valid.
@@ -425,10 +450,10 @@ func (r *Repository) AcceptBooking(ctx context.Context, bookingID, helperID stri
 	}
 
 	var customerID string
-	// Accept any unassigned booking — either a freshly-created 'pending'
-	// row from the scheduled flow OR a stealth-instant row already flipped
-	// to 'searching' by the StealthDispatcher. The race semantics stay
-	// the same: a single UPDATE … WHERE status IN (...) RETURNING id
+	// Accept any unassigned booking — a freshly-created 'pending' row, or a
+	// legacy 'searching' row (the status is no longer produced now the invite
+	// chain is retired, but old rows may still carry it). The race semantics
+	// stay the same: a single UPDATE … WHERE status IN (...) RETURNING id
 	// claims the row atomically; the loser (a second accept attempt) sees
 	// status='accepted' and falls through to ErrAlreadyAccepted.
 	if err := tx.QueryRow(queryCtx,
@@ -679,7 +704,6 @@ func (r *Repository) CreateScheduledBooking(
 	fireAt *time.Time,
 	locality *string,
 	enforceCapacity bool,
-	serviceCloseMin int,
 ) (*ScheduledBooking, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -694,57 +718,43 @@ func (r *Repository) CreateScheduledBooking(
 	// approved roster helpers in the locality, minus those on approved leave
 	// that date, minus committed bookings whose window overlaps this slot
 	// (see availableForSlot). Cancellations free capacity automatically. An
-	// advisory xact lock keyed by (locality, date) serialises concurrent
-	// bookings that share the locality's roster for the date so the re-count
-	// can't race two inserts past a single remaining seat. The domain is the
-	// whole (locality, date), NOT the individual slot: committedCountForSlot
-	// counts bookings from OVERLAPPING slots too, so a booking in one slot
-	// reduces availability for its neighbours — a per-slot lock would let two
-	// bookings in different but overlapping slots double-book the same helper.
-	// Other localities/dates are unaffected and the lock auto-releases on
-	// commit/rollback. Capacity is enforced only for the scheduled flow
-	// (enforceCapacity); the instant/cart path passes false.
-	var slotDate, slotStart string
-	var isActive bool
-	err = tx.QueryRow(queryCtx,
-		`SELECT to_char(slot_date, 'YYYY-MM-DD'), to_char(start_time, 'HH24:MI'), is_active
-		 FROM time_slots
-		 WHERE id = $1`,
-		timeSlotID,
-	).Scan(&slotDate, &slotStart, &isActive)
-	if err != nil {
-		if err == pgx.ErrNoRows {
+	// advisory xact lock keyed by (locality, date) — NOT the slot — serialises
+	// every concurrent booking in that locality+date so the re-count can't race
+	// two inserts past a single remaining seat. The slot id is deliberately
+	// excluded: committedCountForSlot counts bookings whose window overlaps
+	// across slot boundaries (a 60-min 09:00 job also counts against 09:30), so
+	// per-slot locking would let two overlapping-but-different slots skip the
+	// lock and double-book (audit fix b939794). Other localities/dates are
+	// unaffected and the lock auto-releases on commit/rollback. Capacity is
+	// enforced only for the scheduled flow (enforceCapacity); the instant/cart
+	// path passes false.
+	// ASAP bookings carry no slot (timeSlotID==""): scheduled_time is "now" and
+	// the slot row is irrelevant, so skip the time_slots lookup entirely and
+	// store NULL for time_slot_id (the column is a UUID — binding "" would throw
+	// 22P02). The capacity gate below never runs for ASAP (enforceCapacity=false).
+	var slotDate string
+	var timeSlotIDArg any // nil for ASAP, the uuid string for a real slot
+	if timeSlotID != "" {
+		var isActive bool
+		err = tx.QueryRow(queryCtx,
+			`SELECT to_char(slot_date, 'YYYY-MM-DD'), is_active
+			 FROM time_slots
+			 WHERE id = $1`,
+			timeSlotID,
+		).Scan(&slotDate, &isActive)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return nil, ErrSlotUnavailable
+			}
+			return nil, fmt.Errorf("failed to load time slot: %w", err)
+		}
+		if !isActive {
 			return nil, ErrSlotUnavailable
 		}
-		return nil, fmt.Errorf("failed to load time slot: %w", err)
-	}
-	if !isActive {
-		return nil, ErrSlotUnavailable
+		timeSlotIDArg = timeSlotID
 	}
 
-	// Calculate total duration. Needed before the capacity gate: the gate
-	// measures the booking's full [scheduled_time, +totalDuration) job window,
-	// which can outrun its slot.
-	totalDuration := 0
-	for _, item := range items {
-		totalDuration += item.DurationMinutes
-	}
-
-	if enforceCapacity {
-		// Service-close fit (scheduled flow). The job must finish by the IST
-		// service close (serviceCloseMin, admin-managed; 20:30 default) on its
-		// slot date. A booking
-		// that would overrun close is rejected — this also makes the
-		// 20:30–21:00 slot unbookable (a 30-min job there ends 21:00 > close)
-		// and shrinks the last viable start as the cart gets longer. Slot times
-		// are IST wall-clock, so plain minute math is correct (no slot crosses
-		// midnight).
-		if overrunsServiceClose(slotStart, totalDuration, serviceCloseMin) {
-			return nil, ErrSlotUnavailable
-		}
-	}
-
-	if enforceCapacity && locality != nil && *locality != "" {
+	if enforceCapacity && timeSlotID != "" && locality != nil && *locality != "" {
 		lockKey := *locality + "|" + slotDate
 		if _, err := tx.Exec(queryCtx,
 			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
@@ -752,18 +762,19 @@ func (r *Repository) CreateScheduledBooking(
 		); err != nil {
 			return nil, fmt.Errorf("failed to acquire slot capacity lock: %w", err)
 		}
-		// Re-count over the new booking's own job window — NOT the slot window.
-		// A job longer than its slot commits the helper past the slot's end, so
-		// availableForSlot would undercount overlaps and double-book. Serialised
-		// with the (locality, date) lock above so concurrent overlapping-window
-		// bookings can't both pass this check.
-		avail, err := r.availableForWindow(queryCtx, tx, *locality, slotDate, scheduledTime, totalDuration)
+		avail, err := r.availableForSlot(queryCtx, tx, *locality, timeSlotID, slotDate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute slot capacity: %w", err)
 		}
 		if avail <= 0 {
 			return nil, ErrSlotUnavailable
 		}
+	}
+
+	// Calculate total duration.
+	totalDuration := 0
+	for _, item := range items {
+		totalDuration += item.DurationMinutes
 	}
 
 	// Use a placeholder service_category_id (first item) for the legacy column.
@@ -803,7 +814,7 @@ func (r *Repository) CreateScheduledBooking(
 		customerID, legacyServiceID, StatusPending,
 		addrText, addrLat, addrLng,
 		totalPriceCents, discountCents, promoCode,
-		addressID, timeSlotID, scheduledTime, totalDuration,
+		addressID, timeSlotIDArg, scheduledTime, totalDuration,
 		isStealthInstant, fireAt, locality,
 	).Scan(
 		&b.ID, &b.CustomerID, &b.AddressID, &b.TimeSlotID, &b.ScheduledTime,

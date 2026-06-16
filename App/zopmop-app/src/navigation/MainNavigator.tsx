@@ -26,7 +26,6 @@ import CommitShiftScreen from '../screens/pro/CommitShiftScreen';
 import ZoneApprovalRequestScreen from '../screens/pro/ZoneApprovalRequestScreen';
 import ProMoneyScreen from '../screens/pro/ProMoneyScreen';
 import LanguageToggleScreen from '../screens/pro/LanguageToggleScreen';
-import JobOfferScreen from '../screens/pro/JobOfferScreen';
 import JobDetailScreen from '../screens/pro/JobDetailScreen';
 import ProNavigator from './ProNavigator';
 import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
@@ -182,8 +181,10 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         {/* ProMatched / ProActive / ProScheduledInvite were retired
-            in Phase 10 — replaced by JobDetail + JobOffer.
-            Archived at _legacy/pro_legacy_screens/. */}
+            in Phase 10 — replaced by JobDetail. The offer/accept JobOffer
+            flow was deleted under the unified-slot-dispatch design (jobs
+            are force-assigned to the roster). Legacy screens archived at
+            _legacy/pro_legacy_screens/. */}
         <Stack.Screen
           name="ProProfile"
           component={ProProfileScreen}
@@ -213,11 +214,6 @@ export default function MainNavigator() {
           name="ProMoney"
           component={ProMoneyScreen}
           options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="JobOffer"
-          component={JobOfferScreen}
-          options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal', gestureEnabled: false }}
         />
         <Stack.Screen
           name="JobDetail"

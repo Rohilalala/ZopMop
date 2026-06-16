@@ -23,6 +23,7 @@ const STATUS_TONE: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'n
 type Filters = {
   search: string;
   status: string;
+  cancelled_by: string;
   category: string;
   customer_id: string;
   worker_id: string;
@@ -40,6 +41,7 @@ function readFilters(sp: URLSearchParams): Filters {
   return {
     search:      sp.get('search') ?? '',
     status:      sp.get('status') ?? '',
+    cancelled_by: sp.get('cancelled_by') ?? '',
     category:    sp.get('category') ?? '',
     customer_id: sp.get('customer_id') ?? '',
     worker_id:   sp.get('worker_id') ?? '',
@@ -57,17 +59,18 @@ function readFilters(sp: URLSearchParams): Filters {
 function writeFilters(f: Filters): URLSearchParams {
   // Only non-default values land in the URL — keeps it clean.
   const out = new URLSearchParams();
-  if (f.search)      out.set('search', f.search);
-  if (f.status)      out.set('status', f.status);
-  if (f.category)    out.set('category', f.category);
-  if (f.customer_id) out.set('customer_id', f.customer_id);
-  if (f.worker_id)   out.set('worker_id', f.worker_id);
-  if (f.from)        out.set('from', f.from);
-  if (f.to)          out.set('to', f.to);
-  if (f.min_cents)   out.set('min_cents', f.min_cents);
-  if (f.max_cents)   out.set('max_cents', f.max_cents);
-  if (f.sort_by)     out.set('sort_by', f.sort_by);
-  if (f.sort_dir)    out.set('sort_dir', f.sort_dir);
+  if (f.search)       out.set('search', f.search);
+  if (f.status)       out.set('status', f.status);
+  if (f.cancelled_by) out.set('cancelled_by', f.cancelled_by);
+  if (f.category)     out.set('category', f.category);
+  if (f.customer_id)  out.set('customer_id', f.customer_id);
+  if (f.worker_id)    out.set('worker_id', f.worker_id);
+  if (f.from)         out.set('from', f.from);
+  if (f.to)           out.set('to', f.to);
+  if (f.min_cents)    out.set('min_cents', f.min_cents);
+  if (f.max_cents)    out.set('max_cents', f.max_cents);
+  if (f.sort_by)      out.set('sort_by', f.sort_by);
+  if (f.sort_dir)     out.set('sort_dir', f.sort_dir);
   if (f.limit !== PAGE) out.set('limit', String(f.limit));
   if (f.offset !== 0)   out.set('offset', String(f.offset));
   return out;
@@ -77,17 +80,18 @@ function writeFilters(f: Filters): URLSearchParams {
 // values) so the cache key matches across reloads.
 function listParams(f: Filters): Record<string, string | number> {
   const p: Record<string, string | number> = { limit: f.limit, offset: f.offset };
-  if (f.search)      p.search = f.search;
-  if (f.status)      p.status = f.status;
-  if (f.category)    p.category = f.category;
-  if (f.customer_id) p.customer_id = f.customer_id;
-  if (f.worker_id)   p.worker_id = f.worker_id;
-  if (f.from)        p.from = f.from;
-  if (f.to)          p.to = f.to;
-  if (f.min_cents)   p.min_cents = f.min_cents;
-  if (f.max_cents)   p.max_cents = f.max_cents;
-  if (f.sort_by)     p.sort_by = f.sort_by;
-  if (f.sort_dir)    p.sort_dir = f.sort_dir;
+  if (f.search)       p.search = f.search;
+  if (f.status)       p.status = f.status;
+  if (f.cancelled_by) p.cancelled_by = f.cancelled_by;
+  if (f.category)     p.category = f.category;
+  if (f.customer_id)  p.customer_id = f.customer_id;
+  if (f.worker_id)    p.worker_id = f.worker_id;
+  if (f.from)         p.from = f.from;
+  if (f.to)           p.to = f.to;
+  if (f.min_cents)    p.min_cents = f.min_cents;
+  if (f.max_cents)    p.max_cents = f.max_cents;
+  if (f.sort_by)      p.sort_by = f.sort_by;
+  if (f.sort_dir)     p.sort_dir = f.sort_dir;
   return p;
 }
 
@@ -119,7 +123,7 @@ export function OrdersPage() {
   const pages = Math.max(1, Math.ceil(total / filters.limit));
 
   const hasFilters = Boolean(
-    filters.search || filters.status || filters.category ||
+    filters.search || filters.status || filters.cancelled_by || filters.category ||
     filters.customer_id || filters.worker_id || filters.from || filters.to ||
     filters.min_cents || filters.max_cents,
   );
@@ -170,6 +174,19 @@ export function OrdersPage() {
             onChange={(e) => update({ to: e.target.value })}
             aria-label="To"
           />
+          <button
+            className={`pill !px-3 !py-1.5 ${
+              filters.cancelled_by === 'no_pros_found'
+                ? 'border-danger/40 bg-danger/10 text-danger'
+                : 'border-border bg-surface-elevated text-text-secondary hover:text-text-primary'
+            }`}
+            onClick={() =>
+              update({ cancelled_by: filters.cancelled_by === 'no_pros_found' ? '' : 'no_pros_found' })
+            }
+            aria-pressed={filters.cancelled_by === 'no_pros_found'}
+          >
+            Unfilled (no pros)
+          </button>
           {hasFilters && (
             <button className="btn-ghost !py-1.5 !px-3 text-xs" onClick={clear}>
               <X className="w-3 h-3" /> Clear

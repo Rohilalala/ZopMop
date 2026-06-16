@@ -20,11 +20,11 @@ type LangDict = {
     sectionToday: string;
     activeTap: string;
     completedSummary: string;
-    secondsShort: string;
+    newBadge: string;
+    gotIt: string;
   };
   profile: Record<string, string>;
   language: Record<string, string>;
-  offer: Record<string, string>;
   jobDetail: Record<string, string>;
 };
 
@@ -141,7 +141,8 @@ const hi: LangDict = {
     sectionToday: 'आज की पूरी हुई',
     activeTap: 'विवरण देखें',
     completedSummary: '{count} सेवा · {minutes}min · ₹{earnings}',
-    secondsShort: '{n}s',
+    newBadge: 'नई',
+    gotIt: 'समझ गया',
   },
   profile: {
     assignedArea: 'आपका असाइन्ड एरिया',
@@ -172,17 +173,6 @@ const hi: LangDict = {
     confirmTitle: 'भाषा बदलें?',
     confirmBody: 'क्या आप वाकई ऐप की भाषा बदलना चाहते हैं?',
     confirmCta: 'हां, बदलें',
-  },
-  offer: {
-    title: 'नई booking आई है',
-    earningsLabel: 'अनुमानित कमाई',
-    durationLabel: 'कुल समय',
-    minutesShort: '{n} min',
-    accept: 'स्वीकार करें',
-    decline: 'मना करें',
-    expired: 'Offer expired',
-    busyWarning: 'आप पहले से एक काम कर रहे हैं',
-    serviceLine: '{name} · {qty}',
   },
   jobDetail: {
     headerStepAccepted: 'ग्राहक के पास जाएं',

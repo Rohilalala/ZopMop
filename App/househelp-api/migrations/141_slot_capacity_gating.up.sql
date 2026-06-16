@@ -1,11 +1,11 @@
--- 111_slot_capacity_gating.sql
+-- 141_slot_capacity_gating.up.sql
 -- Slot capacity gating (pilot: single society, Orchid Island Gurugram).
 --
 -- Capacity is LIVE-derived at read/booking time — there is no counter column.
 -- available(slot) = approved roster helpers in locality
 --                   − helpers on approved leave that date
 --                   − committed bookings whose [scheduled_time, scheduled_time
---                     + total_duration_minutes) window overlaps the slot window.
+--                     + total_duration_minutes + 15min travel pad) window overlaps the slot window.
 -- A slot is bookable iff available > 0. Cancellations free capacity for free
 -- because a cancelled booking drops out of the committed set.
 --

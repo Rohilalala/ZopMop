@@ -86,9 +86,91 @@ export async function createScheduledBooking(
     if (res.status === 409 && err.code === 'slot_full') {
       throw new SlotFullError(err.error);
     }
+    // A regular slot start that's inside the 45-minute lead window is rejected
+    // by the backend with 400 {code:'slot_too_soon'} (spec §3.1). Surface a
+    // dedicated error so the caller can show "use ASAP" copy instead of the
+    // raw server string.
+    if (res.status === 400 && err.code === 'slot_too_soon') {
+      throw new SlotTooSoonError(err.error);
+    }
     throw new Error(err.error ?? 'Failed to create booking');
   }
   return validateShape<ApiBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
+}
+
+// ── ASAP / instant cart booking (spec §3.2, §5) ─────────────────────────────
+//
+// POST /bookings/instant creates an ASAP booking from the server-side cart and
+// force-assigns a pro synchronously. On success it returns the assignment
+// outcome + the customer-facing arrival promise; when no pro is free right now
+// it returns 409 {code:'no_pros_available', earliest_slot} after cancelling the
+// just-created row server-side (nothing half-created persists).
+
+/** Earliest bookable regular slot offered alongside a no-pros-available 409. */
+export interface EarliestSlot {
+  slot_id: string;
+  date: string;        // YYYY-MM-DD (IST)
+  start_time: string;  // "HH:MM"
+  end_time: string;    // "HH:MM"
+  scheduled_time: string; // RFC3339 (UTC)
+}
+
+/** Success payload of an ASAP booking — mirrors backend booking.ASAPResult. */
+export interface ASAPResult {
+  booking: ApiBooking;
+  assigned: boolean;
+  promise_eta_minutes: number;
+  helper_name: string;
+}
+
+/** Thrown when the ASAP path finds no free pro (409 no_pros_available). */
+export class NoProsAvailableError extends Error {
+  readonly code = 'no_pros_available' as const;
+  readonly earliest: EarliestSlot | null;
+  constructor(earliest: EarliestSlot | null) {
+    super('No pros are free right now');
+    this.name = 'NoProsAvailableError';
+    this.earliest = earliest;
+  }
+}
+
+/** Thrown when a regular slot is booked inside the 45-min lead window (400). */
+export class SlotTooSoonError extends Error {
+  readonly code = 'slot_too_soon' as const;
+  constructor(serverMessage?: string) {
+    super(serverMessage ?? 'slots open 45 minutes out — use ASAP for now');
+    this.name = 'SlotTooSoonError';
+  }
+}
+
+export async function createInstantCartBooking(
+  token: string,
+  payload: { address_id: string; promo_code?: string; payment_source?: 'direct' | 'wallet' },
+): Promise<ASAPResult> {
+  const res = await apiFetch(`${BASE_URL}/bookings/instant`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      count?: number;
+      total_paise?: number;
+      earliest_slot?: EarliestSlot | null;
+    };
+    if (res.status === 409 && err.code === 'no_pros_available') {
+      throw new NoProsAvailableError(err.earliest_slot ?? null);
+    }
+    if (res.status === 409 && err.code === 'UNPAID_BOOKINGS') {
+      throw new UnpaidBookingsError(err.count ?? 0, err.total_paise ?? 0);
+    }
+    throw new Error(err.error ?? 'Failed to create booking');
+  }
+  const data = (await res.json()) as ASAPResult;
+  validateShape<ApiBooking>(data.booking, ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
+  return data;
 }
 
 export async function getBookings(
@@ -155,19 +237,3 @@ export async function rateBooking(
   return { ok: res.ok, statusCode: res.status };
 }
 
-// keep-looking: extends the stealth-search window by another 15 minutes
-// when a booking is in 'pending_customer_action'. Server: POST
-// /bookings/:id/keep-looking (added in service.go KeepLookingBooking).
-export async function keepLookingBooking(
-  token: string,
-  bookingId: string,
-): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/keep-looking`, {
-    method: 'POST',
-    headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? 'failed to extend search');
-  }
-}

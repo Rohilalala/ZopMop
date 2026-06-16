@@ -363,23 +363,20 @@ func main() {
 	configService := config_manager.NewService(configRepo, rdb)
 	configHandler := config_manager.NewHandler(configService)
 
-	// Matching engine + batcher (instant bookings only).
-	matchEngine := matching.NewEngine(dbPool, rdb, configService)
-	matchBatcher := matching.NewBatcher(matchEngine, 5*time.Second)
-	matchBatcher.Start()
-	defer matchBatcher.Stop()
+	// Matching engine. The scoring/batch pipeline is retired by the unified JIT
+	// assigner (spec §9); the Engine now only owns the legacy Redis invite-set
+	// surface that the pro app's pending-offers poll still reads.
+	matchEngine := matching.NewEngine(dbPool, rdb)
 
-	// Google Maps client. Required: instant-booking eligibility is decided
-	// purely by the walking-time filter, which calls the Distance Matrix API.
-	// Boot fails loud if the key is missing so we never silently match a pro
-	// who is hours away from the customer.
+	// Google Maps client. Required: the assigner's travel-feasibility check
+	// calls the Distance Matrix API. Boot fails loud if the key is missing so
+	// we never silently assign a pro who is hours away from the customer.
 	mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	if mapsAPIKey == "" {
-		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — instant booking matches on walking-time only")
+		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — the assigner gates on walking-time feasibility")
 	}
 	mapsClient := googlemaps.NewClient(mapsAPIKey, rdb)
 	log.Info().Msg("Google Maps client initialised")
-	matchEngine.SetMapsClient(mapsClient)
 
 	// Analytics.
 	analyticsSvc := analytics.NewService(dbPool)
@@ -413,7 +410,7 @@ func main() {
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
-	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchBatcher)
+	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchEngine)
 
 	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
 	// account deletion when the customer has completed-but-unpaid Cashfree
@@ -657,17 +654,27 @@ func main() {
 	referralsGroup := api.Group("/referrals", authMiddleware, authLimiter, dbBoundLimiter)
 	referralHandler.RegisterRoutes(referralsGroup)
 
-	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
-	//   - ScheduledDispatcher: nightly 22:00 IST batch
-	//   - StealthDispatcher:   per-minute after-8pm bookings
-	//   - RebookScanner:            per-5-minute "pros are back" nudge
-	//   - PendingActionSweeper:     per-5-minute stuck-booking auto-cancel
+	// Dispatch crons (unified JIT model — spec §5.1, §9).
+	//   - AssignerCron:  60s tick, claims due bookings + force-assigns; the
+	//     no-pro terminal path cancels + refunds at slot start. Replaces the
+	//     retired nightly ScheduledDispatcher, per-minute StealthDispatcher,
+	//     5s batcher, and the pending-action sweeper.
+	//   - RebookScanner: per-5-minute "pros are back" nudge (kept).
 	cronCtx, cancelCrons := context.WithCancel(context.Background())
+	assigner := matching.NewAssigner(
+		dbPool, rdb, notificationService, expertsService, mapsClient,
+		func(ctx context.Context) matching.DispatchConfig {
+			return matching.LoadDispatchConfig(ctx, configService)
+		},
+	)
+	// Wire the assigner into the booking service for the ASAP synchronous-assign
+	// path (spec §3.2, §5), plus the wallet repo for the no-pro refund rail.
+	bookingService.SetSyncAssigner(assigner)
+	bookingService.SetWalletRepo(walletRepo)
+	assignerCron := matching.NewAssignerCron(assigner, walletRepo)
+	assignerCron.Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
-	go matching.NewScheduledDispatcher(dispatcher).Start(cronCtx)
-	go matching.NewStealthDispatcher(dispatcher).Start(cronCtx)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
-	go booking.NewPendingActionSweeper(dbPool, walletRepo, notificationService).Start(cronCtx)
 	defer cancelCrons()
 
 	// Device-token routes (requires JWT). New per-device push registration —
@@ -874,12 +881,18 @@ func main() {
 	// Drain background cron workers (audit NEW-B1-001). Each gets up to 5s
 	// to finish an in-flight DB call; ctx-cancel itself is immediate so the
 	// next ticker iteration never starts.
-	cronCtx, cronCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cronCancel()
-	if err := leaveWorker.Stop(cronCtx); err != nil {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer drainCancel()
+	// The assigner cron drains first: its in-flight tick may be inside the
+	// no-pro cancel+refund transaction, which must finish (or hit the deadline)
+	// rather than be cut off by the deferred cancelCrons() when main returns.
+	if err := assignerCron.Stop(drainCtx); err != nil {
+		log.Warn().Err(err).Msg("assigner cron stop deadline exceeded")
+	}
+	if err := leaveWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("leave worker stop deadline exceeded")
 	}
-	if err := roomiesWorker.Stop(cronCtx); err != nil {
+	if err := roomiesWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("roomies worker stop deadline exceeded")
 	}
 

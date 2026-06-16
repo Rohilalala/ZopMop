@@ -7,6 +7,7 @@ export type KPIs = {
   pending_refunds: number;
   pending_applications: number;
   open_disputes: number;
+  bookings_at_risk: number;
 };
 
 export type LiveOrder = {
