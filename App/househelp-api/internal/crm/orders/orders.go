@@ -28,6 +28,27 @@ import (
 
 var ErrNotFound = errors.New("order not found")
 
+// istZone is Asia/Kolkata (fixed UTC+5:30). Used to turn the bare
+// YYYY-MM-DD the Orders date pickers send into the correct UTC instant for
+// a created_at range filter.
+var istZone = time.FixedZone("IST", 5*3600+30*60)
+
+// parseFilterDate accepts an RFC3339 timestamp or a bare YYYY-MM-DD. For the
+// bare form, `endOfDay` controls whether it resolves to 00:00:00 IST (start)
+// or 23:59:59.999999999 IST (inclusive end) of that day.
+func parseFilterDate(v string, endOfDay bool) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	if d, err := time.ParseInLocation("2006-01-02", v, istZone); err == nil {
+		if endOfDay {
+			d = d.Add(24*time.Hour - time.Nanosecond)
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
 // ── Models ─────────────────────────────────────────────────────────────
 
 // ListItem is a row in the orders table.
@@ -385,17 +406,24 @@ func (r *Repository) Cancel(ctx context.Context, id, reason, adminEmail string) 
 }
 
 // MarkComplete forces an order into 'completed' state. Pro Mode only.
+//
+// Only an order a helper has actually picked up ('accepted' or 'in_progress')
+// may be force-completed. A 'pending' order has no helper assigned, so
+// completing it would stamp completed_at — and fire downstream
+// earnings/ratings — on a helper-less booking, bypassing the entire
+// dispatch/accept lifecycle. The SPA disables the button for non-completable
+// states, but that is client-only; this whitelist is the authoritative guard.
 func (r *Repository) MarkComplete(ctx context.Context, id string) error {
 	res, err := r.write.Exec(ctx, `
 		UPDATE bookings
 		SET status = 'completed', completed_at = now(), updated_at = now()
-		WHERE id = $1::uuid AND status NOT IN ('completed','cancelled')
+		WHERE id = $1::uuid AND status IN ('accepted','in_progress')
 	`, id)
 	if err != nil {
 		return fmt.Errorf("mark complete: %w", err)
 	}
 	if res.RowsAffected() == 0 {
-		return errors.New("order is already completed or cancelled")
+		return errors.New("order is not in a completable state (must be accepted or in_progress)")
 	}
 	return nil
 }
@@ -725,14 +753,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(q("limit", "50"))
 	offset, _ := strconv.Atoi(q("offset", "0"))
 
+	// Accept either RFC3339 or the bare YYYY-MM-DD the date pickers send.
+	// Bare dates are interpreted as IST day boundaries (from = 00:00 IST,
+	// to = end of the selected day) so the filter matches what the admin sees.
 	var fromTS, toTS *time.Time
 	if v := q("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, false); ok {
 			fromTS = &t
 		}
 	}
 	if v := q("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, true); ok {
 			toTS = &t
 		}
 	}

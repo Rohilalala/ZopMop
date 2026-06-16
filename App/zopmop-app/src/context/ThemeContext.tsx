@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { Appearance } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useSharedValue, withTiming, Easing, type SharedValue } from 'react-native-reanimated';
 import { lightColors, darkColors } from '../theme/colors';
@@ -39,6 +40,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       }
     });
   }, []);
+
+  // Force the NATIVE interface style to follow the app theme. System-material
+  // views (iOS 26 Liquid Glass via UIGlassEffect) derive their light/dark
+  // variant from UIUserInterfaceStyle, not from our ThemeContext — without
+  // this, a dark app theme over a light system setting renders milky
+  // light-mode glass on every GlassView.
+  useEffect(() => {
+    Appearance.setColorScheme(isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   const toggleTheme = useCallback(() => {
     const next = !isDark; // next isDark

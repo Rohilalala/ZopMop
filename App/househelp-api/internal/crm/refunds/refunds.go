@@ -47,6 +47,14 @@ type Item struct {
 	Status      string     `json:"status"`
 	CreatedAt   time.Time  `json:"created_at"`
 	SettledAt   *time.Time `json:"settled_at,omitempty"`
+	// T1.6 gateway integration fields (columns added in migration 046).
+	PaymentMethod      *string    `json:"payment_method,omitempty"`
+	PaymentID          *string    `json:"payment_id,omitempty"`
+	GatewayRefundID    *string    `json:"gateway_refund_id,omitempty"`
+	ApprovedAt         *time.Time `json:"approved_at,omitempty"`
+	ProcessedAt        *time.Time `json:"processed_at,omitempty"`
+	ErrorMessage       *string    `json:"error_message,omitempty"`
+	PartialAmountCents *int64     `json:"partial_amount_paise,omitempty"`
 }
 
 type DecisionRequest struct {
@@ -74,6 +82,9 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	args := []any{}
 	cond := ""
 	if status != "" {
@@ -85,7 +96,9 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 	rows, err := r.read.Query(ctx, fmt.Sprintf(`
 		SELECT pr.id::text, pr.user_id::text, u.name, COALESCE(u.phone, '(deleted)'),
 		       pr.amount_cents, pr.source, pr.source_ref, pr.status,
-		       pr.created_at, pr.settled_at
+		       pr.created_at, pr.settled_at,
+		       pr.payment_method, pr.payment_id, pr.gateway_refund_id,
+		       pr.approved_at, pr.processed_at, pr.error_message, pr.partial_amount_cents
 		FROM pending_refunds pr
 		LEFT JOIN users u ON u.id = pr.user_id AND u.deleted_at IS NULL
 		%s
@@ -101,7 +114,9 @@ func (r *Repository) List(ctx context.Context, status string, limit, offset int)
 		var i Item
 		if err := rows.Scan(&i.ID, &i.UserID, &i.UserName, &i.UserPhone,
 			&i.AmountCents, &i.Source, &i.SourceRef, &i.Status,
-			&i.CreatedAt, &i.SettledAt); err != nil {
+			&i.CreatedAt, &i.SettledAt,
+			&i.PaymentMethod, &i.PaymentID, &i.GatewayRefundID,
+			&i.ApprovedAt, &i.ProcessedAt, &i.ErrorMessage, &i.PartialAmountCents); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, i)
@@ -122,13 +137,17 @@ func (r *Repository) Get(ctx context.Context, id string) (*Item, error) {
 	err := r.read.QueryRow(ctx, `
 		SELECT pr.id::text, pr.user_id::text, u.name, COALESCE(u.phone, '(deleted)'),
 		       pr.amount_cents, pr.source, pr.source_ref, pr.status,
-		       pr.created_at, pr.settled_at
+		       pr.created_at, pr.settled_at,
+		       pr.payment_method, pr.payment_id, pr.gateway_refund_id,
+		       pr.approved_at, pr.processed_at, pr.error_message, pr.partial_amount_cents
 		FROM pending_refunds pr
 		LEFT JOIN users u ON u.id = pr.user_id AND u.deleted_at IS NULL
 		WHERE pr.id = $1::uuid
 	`, id).Scan(&i.ID, &i.UserID, &i.UserName, &i.UserPhone,
 		&i.AmountCents, &i.Source, &i.SourceRef, &i.Status,
-		&i.CreatedAt, &i.SettledAt)
+		&i.CreatedAt, &i.SettledAt,
+		&i.PaymentMethod, &i.PaymentID, &i.GatewayRefundID,
+		&i.ApprovedAt, &i.ProcessedAt, &i.ErrorMessage, &i.PartialAmountCents)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -149,11 +168,11 @@ func (r *Repository) Get(ctx context.Context, id string) (*Item, error) {
 // booking (e.g. roomies_group_delete) — caller falls back to manual.
 func (r *Repository) resolveBookingMeta(ctx context.Context, refundID string) (bookingMeta, error) {
 	var (
-		bookingID     *string
-		prMethod      *string
-		prPaymentID   *string
-		source        string
-		sourceRef     *string
+		bookingID   *string
+		prMethod    *string
+		prPaymentID *string
+		source      string
+		sourceRef   *string
 	)
 	err := r.read.QueryRow(ctx, `
 		SELECT booking_id::text, payment_method, payment_id, source, source_ref
@@ -218,7 +237,7 @@ func (r *Repository) findActiveRefundForBooking(ctx context.Context, bookingID, 
 		FROM pending_refunds
 		WHERE booking_id = $1::uuid
 		  AND id <> $2::uuid
-		  AND status IN ('approved','processed','processed_manual')
+		  AND status IN ('pending','approved','processed','processed_manual','gateway_error')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, bookingID, excludeID).Scan(&id, &processed, &settled)
@@ -386,15 +405,24 @@ func (r *Repository) approveUpdate(
 // internal/wallet from being imported here (avoids the cycle and lets the
 // adapter live in main).
 type WalletCrediter interface {
+	// reference is the pending_refunds row id, used as an idempotency key
+	// so a retried wallet credit (after a lost response on a 'gateway_error'
+	// row) can't credit the customer twice. ErrDuplicateTransaction means
+	// the credit already landed — the caller treats it as success.
 	Credit(
 		ctx context.Context,
 		userID string,
 		amountPaise int64,
 		kind string,
 		paymentID, bookingID *string,
-		note string,
+		note, reference string,
 	) error
 }
+
+// ErrWalletDuplicate mirrors wallet.ErrDuplicateTransaction without
+// importing internal/wallet (the adapter in main translates it). A
+// wallet credit that hits this already moved the money — treat as done.
+var ErrWalletDuplicate = errors.New("wallet refund already credited")
 
 type Handler struct {
 	repo       *Repository
@@ -663,6 +691,20 @@ func (h *Handler) Retry(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
 
+	// Guard against a second money movement for the same booking: if another
+	// refund row for this booking is already active (pending/approved/processed),
+	// retrying this gateway_error row would pay the customer twice.
+	if meta.BookingID != "" {
+		if dupID, _, found, dErr := h.repo.findActiveRefundForBooking(c.UserContext(), meta.BookingID, id); dErr != nil {
+			log.Error().Err(dErr).Str("refund_id", id).Msg("[crm.refunds] retry duplicate check failed")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+		} else if found {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "another active refund already exists for this booking: " + dupID,
+			})
+		}
+	}
+
 	adminID, _ := c.Locals("crmAdminID").(string)
 	refundAmount := current.AmountCents
 
@@ -790,7 +832,12 @@ func (h *Handler) runGateway(ctx context.Context, refundID string, meta bookingM
 		if reason != "" {
 			note = "Refund: " + reason
 		}
-		if err := h.wallet.Credit(ctx, userID, amount, "refund_credit", nil, bookingPtr, note); err != nil {
+		// refundID is the idempotency key — a /retry after a lost response
+		// returns ErrWalletDuplicate instead of crediting a second time.
+		if err := h.wallet.Credit(ctx, userID, amount, "refund_credit", nil, bookingPtr, note, refundID); err != nil {
+			if errors.Is(err, ErrWalletDuplicate) {
+				return true, "processed", "wallet:" + meta.BookingID, "", nil
+			}
 			return false, "gateway_error", "", err.Error(), err
 		}
 		// "wallet" gateway-refund-id keeps the audit trail honest — there's
@@ -878,8 +925,11 @@ func (h *Handler) audit(c *fiber.Ctx, action, target string, before, after any) 
 // bookingForRefund holds the payment context needed to seed a new
 // pending_refunds row from an order id.
 type bookingForRefund struct {
-	UserID        string
-	AmountPaise   int64
+	UserID string
+	// NetPaise is what the customer actually paid (amount_paise minus any
+	// promo discount) — the refund cap. amount_paise alone is the gross
+	// pre-discount figure (revenue elsewhere is amount_paise - discount).
+	NetPaise      int64
 	PaymentMethod string
 	PaymentID     string
 }
@@ -888,22 +938,22 @@ type bookingForRefund struct {
 // booking. Returns ErrNotFound when the booking is missing.
 func (r *Repository) loadBookingForRefund(ctx context.Context, bookingID string) (*bookingForRefund, error) {
 	var (
-		userID  string
-		price   int64
-		method  *string
-		payID   *string
+		userID string
+		net    int64
+		method *string
+		payID  *string
 	)
 	err := r.read.QueryRow(ctx, `
-		SELECT customer_id::text, amount_paise, payment_method, payment_id
+		SELECT customer_id::text, amount_paise - COALESCE(discount_paise, 0), payment_method, payment_id
 		FROM bookings WHERE id = $1::uuid
-	`, bookingID).Scan(&userID, &price, &method, &payID)
+	`, bookingID).Scan(&userID, &net, &method, &payID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	out := &bookingForRefund{UserID: userID, AmountPaise: price}
+	out := &bookingForRefund{UserID: userID, NetPaise: net}
 	if method != nil {
 		out.PaymentMethod = *method
 	}
@@ -966,12 +1016,12 @@ func (h *Handler) CreateFromOrder(c *fiber.Ctx) error {
 		log.Error().Err(err).Str("order_id", orderID).Msg("[crm.refunds] load booking failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	if amount > booking.AmountPaise {
+	if amount > booking.NetPaise {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "amount exceeds order total"})
 	}
 
 	// Partial-refund permission gate (matches Approve).
-	if amount < booking.AmountPaise {
+	if amount < booking.NetPaise {
 		role, _ := c.Locals("crmAdminRole").(string)
 		if !auth.HasPermission(role, "refunds.approve_partial") {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{

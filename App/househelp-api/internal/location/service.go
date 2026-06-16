@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -16,11 +19,16 @@ const (
 // Service handles location tracking via Redis GEO.
 type Service struct {
 	rdb *redis.Client
+	db  *pgxpool.Pool
 }
 
-// NewService creates a new location service.
-func NewService(rdb *redis.Client) *Service {
-	return &Service{rdb: rdb}
+// NewService creates a new location service. db is optional; when supplied,
+// streamed locations are also written to helpers.current_lat/lng/last_location_at
+// so the CRM live-pins map (which reads Postgres with a 90s freshness window)
+// and the GetTracking Postgres fallback see live coordinates. Without it, only
+// Redis GEO is updated and pros age off the CRM map after 90s.
+func NewService(rdb *redis.Client, db *pgxpool.Pool) *Service {
+	return &Service{rdb: rdb, db: db}
 }
 
 // UpdateHelperLocation stores or updates a helper's live location in Redis.
@@ -44,6 +52,23 @@ func (s *Service) UpdateHelperLocation(ctx context.Context, helperID string, lat
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to update helper location: %w", err)
+	}
+
+	// Mirror into Postgres so the CRM live-pins map (reads helpers with
+	// last_location_at > now()-90s) and the GetTracking Postgres fallback
+	// see live coordinates. Best-effort: a Postgres hiccup must not break
+	// the Redis-backed live stream the customer map depends on.
+	if s.db != nil {
+		if pid, perr := uuid.Parse(helperID); perr == nil {
+			if _, derr := s.db.Exec(ctx,
+				`UPDATE helpers
+				    SET current_lat = $2, current_lng = $3, last_location_at = now()
+				  WHERE id = $1`,
+				pid, lat, lng,
+			); derr != nil {
+				log.Warn().Err(derr).Str("helper_id", helperID).Msg("[location] Postgres location mirror failed")
+			}
+		}
 	}
 
 	return nil

@@ -33,7 +33,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -180,12 +179,64 @@ export default function HomeScreen() {
   // Measured hero-card window rect — lets the carousel refresh overlay sit
   // pixel-exact on the in-card mascot regardless of header/DEV-chip height.
   const heroCardRef = useRef<View>(null);
+  // Live list scroll offset, mirrored into a shared value (UI thread, for the
+  // overlay's card tracking) and a plain ref (JS thread, for scroll-normalizing
+  // the measured hero rect).
+  const scrollY = useSharedValue(0);
+  const scrollYJS = useRef(0);
+
+  // Scroll-away header: hides while scrolling down, returns the moment the
+  // user scrolls up (or is near the top). translateY slides it out;
+  // the matching negative marginBottom lets the list ride up to fill the gap.
+  const headerH = useSharedValue(0);
+  const headerHidden = useSharedValue(0); // 0 = shown, 1 = off-screen
+  const headerTarget = useRef(0);
+  const lastScrollY = useRef(0);
+  // While the header is hidden or sliding, every measureInWindow on the list
+  // side is shifted by the collapse — anchors measured then are garbage
+  // (mascot flying to random spots). Measures are blocked during that window
+  // and re-taken once the header settles back.
+  const headerAnimUntil = useRef(0);
+  const setHeaderHidden = useCallback((t: 0 | 1) => {
+    if (headerTarget.current === t) return; // don't restart an in-flight timing
+    headerTarget.current = t;
+    headerAnimUntil.current = Date.now() + 280;
+    headerHidden.value = withTiming(t, {
+      duration: 240,
+      easing: Easing.bezier(0.33, 1, 0.68, 1),
+    });
+    if (t === 0) {
+      setTimeout(() => {
+        measureHeroCard();
+        measureListWrap();
+      }, 300);
+    }
+  }, [headerHidden]); // eslint-disable-line react-hooks/exhaustive-deps -- measure fns declared below, stable
+  const headerTopInset = insets.top;
+  const headerStyle = useAnimatedStyle(() => ({
+    zIndex: 10,
+    // Clear the safe-area inset too, or the bar parks inside the status-bar
+    // zone and stays visible. Layout gap (marginBottom) is just headerH.
+    transform: [{ translateY: -(headerH.value + headerTopInset) * headerHidden.value }],
+    marginBottom: -headerH.value * headerHidden.value,
+  }));
+  // heroRect.y is stored in SCROLL-0 coords (measured y + scroll offset at
+  // measure time) so the overlay can re-derive the live position from the
+  // current scroll on the UI thread.
   const [heroRect, setHeroRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const heroAnimatingRef = useRef(false);
   const measureHeroCard = useCallback(() => {
+    // Skip while the fly is playing — measureInWindow would bake the hold
+    // translate / mid-animation scroll into the rest anchor. Same for the
+    // scroll-away header: hidden or mid-slide shifts everything; a remeasure
+    // is scheduled when it settles (see setHeaderHidden).
+    if (heroAnimatingRef.current) return;
+    if (headerTarget.current !== 0 || Date.now() < headerAnimUntil.current) return;
     heroCardRef.current?.measureInWindow((x, y, w, h) => {
-      if (w > 0 && h > 0) setHeroRect({ x, y, w, h });
+      if (w > 0 && h > 0) setHeroRect({ x, y: y + scrollYJS.current, w, h });
     });
   }, []);
+  useEffect(() => { heroAnimatingRef.current = heroAnimating; }, [heroAnimating]);
   const heroTransX  = useSharedValue(0);
   const heroTransY  = useSharedValue(0);
   const heroScale   = useSharedValue(1);
@@ -198,6 +249,25 @@ export default function HomeScreen() {
   // refresh completes. Driven from onRefresh; applied to the list wrapper.
   const holdY = useSharedValue(0);
   const holdStyle = useAnimatedStyle(() => ({ transform: [{ translateY: holdY.value }] }));
+  // Card-ride factor for the fly overlay: 1 = glued to the card (launch and
+  // landing), 0 = fixed screen position (mid-air hover in the hold gap above
+  // the card). Animated in lock-step with the fly choreography in onRefresh.
+  const heroRide = useSharedValue(1);
+
+  // Window top of the list area (below header/DEV chips). The fly overlay is
+  // clipped to this region so the mascot can never draw OVER the fixed header
+  // — when the card slides under the header (user scrolls mid-animation), the
+  // mascot slides under with it, exactly like the in-card mascot would.
+  const [listTop, setListTop] = useState(0);
+  const listWrapRef = useRef<View>(null);
+  const measureListWrap = useCallback(() => {
+    // Same header-settle guard as measureHeroCard — a collapsed/sliding
+    // header shifts the wrapper's window position.
+    if (headerTarget.current !== 0 || Date.now() < headerAnimUntil.current) return;
+    listWrapRef.current?.measureInWindow((_x, y) => {
+      if (y > 0) setListTop(y);
+    });
+  }, []);
 
   // Land the Zop in the same spot the other-screen ZopRefresh overlay uses:
   // horizontally centred, vertically ABOVE the content (~y=88 in screen
@@ -213,7 +283,14 @@ export default function HomeScreen() {
   // offset is -14 (extends past card right by 14). Zop right edge therefore
   // sits at SCREEN_W - 20 + 14 = SCREEN_W - 6. Centre = right - 130/2.
   const zopRestX = SCREEN_W - 6 - 130 / 2;
-  const TARGET_TOP = 60 + 56 / 2;          // = 88, matches ZopRefresh.tsx
+  // Mid-flight hover centre: a FIXED screen spot — the centre of the 64px
+  // hold gap that opens at the top of the list while refreshing. That gap is
+  // reserved empty space (the list is held down by HOLD_OFFSET), so the
+  // mascot can never collide with content or the header. Deliberately NOT
+  // derived from heroRect measurements — measured math is what sent the
+  // mascot to random places. Falls back to 88 (matches ZopRefresh.tsx)
+  // until listTop is measured.
+  const TARGET_TOP = listTop > 0 ? listTop + HOLD_OFFSET / 2 : 60 + 56 / 2;
   const flyTargetX = SCREEN_W / 2 - zopRestX;
   const flyTargetY = TARGET_TOP - zopRestY; // negative — Zop flies UP
   const FLY_SCALE  = 56 / 130;             // matches small loading Zop
@@ -236,6 +313,7 @@ export default function HomeScreen() {
     cancelAnimation(heroRotZ);
     cancelAnimation(heroEye);
     cancelAnimation(heroWink);
+    cancelAnimation(heroRide);
 
     // Strip the face immediately — body-only Zop while loading. Matches the
     // other-screen ZopRefresh visual.
@@ -264,6 +342,14 @@ export default function HomeScreen() {
     heroTransY.value = fly(flyTargetY);
     heroScale.value  = withSequence(
       withTiming(FLY_SCALE, { duration: FLY_MS, easing: Easing.out(Easing.cubic) }),
+      withDelay(HOLD_MS, withSpring(1, { damping: 14, stiffness: 160, mass: 0.9 })),
+    );
+    // Detach from the card for the hover (the gap doesn't move with the held
+    // card), re-attach on the same spring as the return so landing is exactly
+    // the card point. Starts at 1 (launches FROM the card's current position).
+    heroRide.value = 1;
+    heroRide.value = withSequence(
+      withTiming(0, { duration: FLY_MS, easing: Easing.out(Easing.cubic) }),
       withDelay(HOLD_MS, withSpring(1, { damping: 14, stiffness: 160, mass: 0.9 })),
     );
 
@@ -316,7 +402,7 @@ export default function HomeScreen() {
     }
   }, [
     refetch, flyTargetX, flyTargetY, FLY_SCALE,
-    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink, holdY,
+    heroTransX, heroTransY, heroScale, heroRotZ, heroEye, heroWink, holdY, heroRide,
   ]);
 
   // Wink AFTER `refreshing` flips false (the list has already rubber-banded back
@@ -469,7 +555,10 @@ export default function HomeScreen() {
       setLocationName(name);
       try {
         const result = await checkServiceability(lat, lon);
-        if (!cancelled) setServiceable(result.serviceable);
+        // Only an actual server answer may flip the gate — a transient error
+        // (backend restart, dropped request) must not flash the "not in your
+        // area" screen at a user who is in zone.
+        if (!cancelled && result.authoritative) setServiceable(result.serviceable);
       } catch {}
       if (cancelled) return;
       setCoords({ lat, lon });
@@ -500,14 +589,15 @@ export default function HomeScreen() {
       } else {
         setAddressTag(undefined);
       }
-      const result = await checkServiceability(lat, lon).catch(() => ({
-        serviceable: true,
-      }));
+      const result = await checkServiceability(lat, lon);
       posthog.capture('location_changed', {
         serviceable: result.serviceable,
         has_saved_address: !!addressId,
       });
-      setServiceable(result.serviceable);
+      // Same rule as the bootstrap check: only an authoritative server answer
+      // may flip the gate (this path previously defaulted errors to TRUE while
+      // bootstrap defaulted them to FALSE — both replaced by keep-last-state).
+      if (result.authoritative) setServiceable(result.serviceable);
       setCoords({ lat, lon });
       writeLastKnownLocation({ lat, lon, name: shortName, addressId });
     },
@@ -620,17 +710,20 @@ export default function HomeScreen() {
   // returns window coords and the overlay's absolute top is measured from the
   // window origin too, so NO insets.top adjustment (subtracting it rendered the
   // mascot ~insets.top too high). Falls back to the computed screen coords.
-  // heroRect is the RESTING measurement. The carousel overlay is rendered OUTSIDE
-  // the held list wrapper, so while refreshing the card has slid down HOLD_OFFSET
-  // but heroRect has not — add HOLD_OFFSET so the fly tracks the held card. On
-  // return/rest it drops to REST_NUDGE. HERO_FLY_NUDGE is a small global lower
-  // (the "5px too up" tweak).
-  const HERO_FLY_NUDGE = 5;  // fly base nudge while refreshing
-  const REST_NUDGE = 4;      // final landing position (1px higher than the fly base)
-  const flyDrop = refreshing ? HERO_FLY_NUDGE + HOLD_OFFSET : REST_NUDGE;
+  // heroRect is the SCROLL-0 rest anchor — a point defined on the card itself.
+  // The overlay is rendered OUTSIDE the held list wrapper, so the card's live
+  // displacement (the hold spring + any user scroll mid-animation) is applied
+  // INSIDE HeroRefreshFlyer on the UI thread via the holdY/scrollY shared
+  // values — no HOLD_OFFSET step-change here; the mascot rides the card and
+  // the hover handoff happens at exactly the landing point.
+  // No rest nudges: heroRect is measured pixel-exact, so the overlay's rest
+  // must equal the in-card mascot's centre (heroRect.y + 59) EXACTLY — any
+  // offset reads as a hop at launch and at the hover handoff (the old
+  // FLY/REST nudges, tuned for the eyeballed-coords era, caused that jitter;
+  // their mid-spring 5→4 flip when `refreshing` cleared added another 1px hop).
   const heroFlyRest = heroRect
-    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 + flyDrop }
-    : { x: zopRestX, y: zopRestY + flyDrop };
+    ? { x: heroRect.x + heroRect.w - 51, y: heroRect.y + 59 }
+    : { x: zopRestX, y: zopRestY };
   const heroNode = (
     <HomeHero
       name={user?.name ?? undefined}
@@ -674,43 +767,26 @@ export default function HomeScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: sc.bg }} edges={['top']}>
       <Bloom />
 
-      <HomeHeader
-        locationName={locationName}
-        onLocationPress={() => setLocationModalVisible(true)}
-        selectedAddressId={selectedAddressId}
-        addressTag={addressTag}
-        promo={headerPromo}
-        onAction={handleAction}
-      />
+      <Animated.View
+        style={headerStyle}
+        onLayout={(e) => { headerH.value = e.nativeEvent.layout.height; }}
+      >
+        <HomeHeader
+          locationName={locationName}
+          onLocationPress={() => setLocationModalVisible(true)}
+          selectedAddressId={selectedAddressId}
+          addressTag={addressTag}
+          promo={headerPromo}
+          onAction={handleAction}
+        />
+      </Animated.View>
 
-      {/* DEV SHORTCUT — remove before shipping */}
-      {__DEV__ && (
-        <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: 16, paddingBottom: 4 }}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('BookingConfirmed', {
-              bookingId: 'dev-instant-001', totalCents: 49900, bookingType: 'instant',
-              serviceName: 'Deep Clean', durationMinutes: 120,
-              helperName: 'Ravi K.', helperRating: 4.8, etaMinutes: 6,
-              addressLine: '314c, Gf, Orchid Island, Sec 51',
-            })}
-            style={{ backgroundColor: 'rgba(34,197,94,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
-          >
-            <Text style={{ color: '#22C55E', fontSize: 10, fontWeight: '700' }}>DEV: Instant</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('BookingConfirmed', {
-              bookingId: 'dev-scheduled-001', totalCents: 49900, bookingType: 'scheduled',
-              serviceName: 'Deep Clean', durationMinutes: 120,
-              slot: 'Sat, 31 May · 10:00 AM',
-              addressLine: '314c, Gf, Orchid Island, Sec 51',
-            })}
-            style={{ backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}
-          >
-            <Text style={{ color: '#60A5FA', fontSize: 10, fontWeight: '700' }}>DEV: Scheduled</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
+      {/* List area wrapper — measured for listTop. NOT clipped itself: masking
+          this whole region puts the list in its own compositing layer, which
+          renders the backdrop gradient with a subtly different tint and drew a
+          full-width seam at the header boundary in light mode. Only the fly
+          overlay (below) gets a clipped container. */}
+      <View ref={listWrapRef} onLayout={measureListWrap} style={{ flex: 1 }}>
       <Animated.View key={isDark ? 'dark' : 'light'} style={[{ flex: 1 }, holdStyle]}>
         <SduiErrorBoundary resetKey={page?.config_hash}>
         <FlashList
@@ -735,30 +811,61 @@ export default function HomeScreen() {
           // loader. No OS control = no gray spinner to theme, mask, or fight.
           scrollEventThrottle={16}
           onScroll={(e) => {
+            // Mirror the offset BEFORE the re-trigger guard — the overlay's
+            // card tracking needs it during the fly too.
+            const y = e.nativeEvent.contentOffset.y;
+            scrollY.value = y;
+            scrollYJS.current = y;
+            const dy = y - lastScrollY.current;
+            lastScrollY.current = y;
+            if (!refreshing && !heroAnimating) {
+              if (y <= 8) setHeaderHidden(0);            // at/near top: always shown
+              else if (dy < -2) setHeaderHidden(0);      // any upward scroll: return
+              else if (dy > 2 && y > 56) setHeaderHidden(1); // scrolling down: slide away
+            }
             if (refreshing || heroAnimating) return;
-            if (e.nativeEvent.contentOffset.y <= -PULL_TRIGGER) onRefresh();
+            if (y <= -PULL_TRIGGER) onRefresh();
           }}
         />
         </SduiErrorBoundary>
       </Animated.View>
 
-      {/* Refresh mascot, rendered at the root (above the pager, never clipped) —
-          used for BOTH carousel and non-carousel, since the hero always sits in
-          HeroPager's ScrollView which would clip an in-card fly. Full Zop fly+wink
-          on the home card (page 0); the simple ZopRefresh spinner on promo cards. */}
+      {/* Refresh mascot overlay — rendered INSIDE the clipped list wrapper
+          (sibling of the list, not a child, so it doesn't scroll) but OUTSIDE
+          HeroPager's ScrollView (which would clip an in-card fly). Used for
+          BOTH carousel and non-carousel. Full Zop fly+wink on the home card
+          (page 0); the simple ZopRefresh spinner on promo cards. Rest coords
+          are window-based, so subtract listTop to convert into this wrapper. */}
       {heroPage === 0 && heroAnimating ? (
-        <HeroRefreshFlyer
-          restX={heroFlyRest.x}
-          restY={heroFlyRest.y}
-          transX={heroTransX}
-          transY={heroTransY}
-          scale={heroScale}
-          rotation={heroRotZ}
-          eyeOpacity={heroEye}
-          winkProgress={heroWink}
-          showFace={heroShowFace}
-        />
+        // Clipped to the list area so the mascot can never draw over the
+        // fixed header — it slides under the header edge with the card,
+        // exactly like the in-card mascot would. Only mounted while the fly
+        // plays, so the masked layer can't tint the resting screen.
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <HeroRefreshFlyer
+            restX={heroFlyRest.x}
+            restY={heroFlyRest.y - listTop}
+            transX={heroTransX}
+            transY={heroTransY}
+            scale={heroScale}
+            rotation={heroRotZ}
+            scrollY={scrollY}
+            holdY={holdY}
+            ride={heroRide}
+            eyeOpacity={heroEye}
+            winkProgress={heroWink}
+            showFace={heroShowFace}
+          />
+        </View>
       ) : null}
+      </View>
       {hasCarousel && heroPage > 0 ? (
         // Promo cards: simple spinner, dropped below the header so it doesn't
         // overlap it — sits around where the home card's fly mascot travels.

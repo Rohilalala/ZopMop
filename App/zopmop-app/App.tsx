@@ -29,6 +29,7 @@ import { ThemeProvider, useColors } from './src/context/ThemeContext';
 import { RoomiesProvider } from './src/context/RoomiesContext';
 import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import UpdateGate from './src/components/UpdateGate';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
 import { addConnectivityListener, isConnected } from './src/utils/netInfo';
 import Toast from 'react-native-toast-message';
@@ -240,6 +241,9 @@ function App() {
               </RoomiesProvider>
             </PrefetchProvider>
           </AuthProvider>
+          {/* Force/optional-update overlay — sits above the whole app, inside
+              ThemeProvider + SafeAreaProvider so it can theme + inset itself. */}
+          <UpdateGate />
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

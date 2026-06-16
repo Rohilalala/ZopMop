@@ -10,9 +10,10 @@ import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
 import { onShiftEvent } from '../utils/shiftEvents';
 import { useColors } from '../context/ThemeContext';
 import { FontFamily, FontSize, Radius, Spacing } from '../theme';
-import { t } from '../i18n';
+import { t, useLocale } from '../i18n';
 
 export default function ZoneDriftOverlay() {
+  useLocale(); // live-update strings on language change
   const c = useColors();
   const [visible, setVisible] = useState(false);
 

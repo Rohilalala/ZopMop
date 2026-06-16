@@ -11,7 +11,7 @@ import {
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { authColors } from '../../theme/colors';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'HiZop'>;
@@ -21,7 +21,7 @@ const { height: SH } = Dimensions.get('window');
 
 export default function HiZopScreen({ navigation }: Props) {
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const ref = useRef<LottieView>(null);
   const [done, setDone] = useState(false);
   const btnOpacity = useRef(new Animated.Value(0)).current;

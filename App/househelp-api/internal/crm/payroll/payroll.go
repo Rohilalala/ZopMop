@@ -342,7 +342,8 @@ func (r *Repository) RecomputeApply(ctx context.Context, id, adminID string, p p
 		       base_pay_paise   = $4,
 		       work_bonus_paise = $5,
 		       gross_pay_paise  = $6,
-		       net_pay_paise    = $7,
+		       deductions_paise = $7,
+		       net_pay_paise    = $8,
 		       status = CASE
 		                  WHEN status = 'failed' THEN 'pending_manual_payout'
 		                  ELSE status
@@ -356,7 +357,7 @@ func (r *Repository) RecomputeApply(ctx context.Context, id, adminID string, p p
 		   AND status IN ('pending_manual_payout', 'failed')
 		RETURNING id
 	`, id, p.OnlineMinutes, p.WorkingMinutes,
-		p.BasePayPaise, p.BonusPayPaise, p.GrossPayPaise, p.NetPayPaise)
+		p.BasePayPaise, p.BonusPayPaise, p.GrossPayPaise, p.DeductionsPaise, p.NetPayPaise)
 	if err != nil {
 		return nil, err
 	}

@@ -151,9 +151,13 @@ export const sduiApi = {
       })
       .then((r) => r.data),
 
-  rollback: (pageId: string, version: string) =>
+  // Rollback re-activates the most recently archived config for the env. The
+  // backend keys off the `env` query param and ignores the :version path
+  // segment, so we pass a stable literal there instead of the env (which used
+  // to be sent as the version — a footgun if env ever became 'staging').
+  rollback: (pageId: string, env: Env) =>
     api
-      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/${encodeURIComponent(version)}/rollback`)
+      .put<ConfigRecord>(`/admin/pages/${pageId}/configs/current/rollback`, undefined, { params: { env } })
       .then((r) => r.data),
 
   preview: (pageId: string, version: string, params: PreviewParams) =>

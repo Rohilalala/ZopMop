@@ -41,7 +41,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <KpiCard label="Active orders"      icon={Briefcase}     loading={kpis.isLoading} value={kpis.data?.active_orders} />
         <KpiCard label="Workers online"     icon={UsersIcon}     loading={kpis.isLoading} value={kpis.data?.workers_online} />
-        <KpiCard label="Revenue today"      icon={IndianRupee}   loading={kpis.isLoading} value={kpis.data && fmtCents(kpis.data.revenue_today_cents)} />
+        <KpiCard label="Revenue today"      icon={IndianRupee}   loading={kpis.isLoading} value={kpis.data && fmtCents(kpis.data.revenue_today_paise)} />
         <KpiCard label="Pending refunds"    icon={RefreshCw}     loading={kpis.isLoading} value={kpis.data?.pending_refunds} tone="warning" />
         <KpiCard label="Worker applications" icon={UserPlus}     loading={kpis.isLoading} value={kpis.data?.pending_applications} />
         <KpiCard label="Open disputes"      icon={ShieldAlert}   loading={kpis.isLoading} value={kpis.data?.open_disputes} tone="danger" />
@@ -101,7 +101,7 @@ function RevenueChart() {
       </div>
       {q.isLoading ? (
         <Skeleton className="h-48" />
-      ) : (q.data ?? []).every((p) => p.revenue_cents === 0) ? (
+      ) : (q.data ?? []).every((p) => p.revenue_paise === 0) ? (
         <EmptyState title="No revenue yet" body="Completed orders will appear here." />
       ) : (
         <ResponsiveContainer width="100%" height={220}>
@@ -118,7 +118,7 @@ function RevenueChart() {
               labelStyle={{ color: '#F0F0FF' }}
               formatter={(v: number) => fmtCents(v)}
             />
-            <Bar dataKey="revenue_cents" fill="#6C63FF" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="revenue_paise" fill="#6C63FF" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       )}

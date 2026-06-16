@@ -11,22 +11,28 @@
 // TODO (follow-up): jest test asserting this Set matches the navigator's
 // registered screens. Not in this PR — zopmop-app has no jest config yet.
 
+import { ROOMIES_ENABLED } from '../config/features';
+
 export const ALLOWED_SCREENS = new Set<string>([
 	// Tab roots
 	'Tabs', 'Home', 'Bookings', 'Cart', 'Profile', 'Wallet',
 	// Customer flows
 	'ActiveBooking', 'Addresses', 'AllServices', 'BookingConfirmed',
 	'BookingRate', 'Chat', 'HelpSupport', 'HiZop', 'InstantMatching',
-	'Location', 'ManageHousehold', 'NameEntry', 'NotServiceable',
+	'Location', 'NameEntry', 'NotServiceable',
 	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry', 'ReferralEarn',
-	'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup',
-	'RoomiesWelcome', 'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
+	'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
 	'YourExperts', 'ZopIntro',
 	// Pro flows (also gated per-screen via useProRoleGate from C-9).
 	// Phase 10: ProActive/ProMatched/ProScheduledInvite retired —
 	// replaced by JobDetail + JobOffer.
 	'ProDashboard', 'ProDeclareLeave', 'ProLeaveHistory',
-	'ProOnboarding', 'ProProfile', 'JobDetail', 'JobOffer',
+	'ProProfile', 'JobDetail', 'JobOffer',
+	// Roomies (feature-gated off for launch — routes unregistered while
+	// ROOMIES_ENABLED is false; re-add automatically via the spread).
+	...(ROOMIES_ENABLED
+		? ['ManageHousehold', 'RoomiesCodeShare', 'RoomiesJoin', 'RoomiesSetup', 'RoomiesWelcome']
+		: []),
 ]);
 
 // SDUI deep_link actions are restricted to https. First-party tel: and

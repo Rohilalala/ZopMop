@@ -44,6 +44,7 @@ import ReferralEarnScreen from '../screens/main/ReferralEarnScreen';
 import ReferralInviteScreen from '../screens/main/ReferralInviteScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { ROOMIES_ENABLED } from '../config/features';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
@@ -223,31 +224,35 @@ export default function MainNavigator() {
           component={JobDetailScreen}
           options={{ animation: 'slide_from_right' }}
         />
-        <Stack.Screen
-          name="RoomiesSetup"
-          component={RoomiesSetupScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesCodeShare"
-          component={RoomiesCodeShareScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesJoin"
-          component={RoomiesJoinScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesWelcome"
-          component={RoomiesWelcomeScreen}
-          options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="ManageHousehold"
-          component={ManageHouseholdScreen}
-          options={{ animation: 'slide_from_bottom' }}
-        />
+        {ROOMIES_ENABLED && (
+          <>
+            <Stack.Screen
+              name="RoomiesSetup"
+              component={RoomiesSetupScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesCodeShare"
+              component={RoomiesCodeShareScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesJoin"
+              component={RoomiesJoinScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesWelcome"
+              component={RoomiesWelcomeScreen}
+              options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
+            />
+            <Stack.Screen
+              name="ManageHousehold"
+              component={ManageHouseholdScreen}
+              options={{ animation: 'slide_from_bottom' }}
+            />
+          </>
+        )}
         <Stack.Screen
           name="BookingConfirmed"
           component={BookingConfirmedScreen}

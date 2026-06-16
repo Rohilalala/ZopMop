@@ -73,6 +73,14 @@ export const darkColors = {
   },
 } as const;
 
+// Auth flow rebrand preview — designer's cream/brown palette (Final Logo Light.svg).
+// Temporary: auth screens only. If approved, fold into lightColors/darkColors app-wide.
+export const authColors = {
+  ...lightColors,
+  background: '#FFF6EB', // logo cream
+  text: '#3C2D1B',       // wordmark brown
+} as unknown as typeof lightColors; // double-cast: hex literals differ from lightColors' literal types
+
 // Default export keeps existing imports working — they always get light theme.
 // Components that support dark mode use useColors() from ThemeContext instead.
 export const Colors = lightColors;

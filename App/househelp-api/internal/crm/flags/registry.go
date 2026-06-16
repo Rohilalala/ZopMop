@@ -3,9 +3,18 @@ package flags
 // DefaultRegistry is the seed flag list. Add new flags here. The CRM UI
 // renders one card per flag, grouped by Category.
 //
-// IMPORTANT: changing a flag's Key here is a breaking change — the user-app
-// reads keys directly from Redis. Add new keys; never rename existing ones
-// without a migration script.
+// WARNING (audit P1 / cluster-10, not yet wired): these flags are stored in
+// the Redis hash "<namespace>flags" which NO production code path reads. The
+// live matching/config engine sources its knobs from the app_config Postgres
+// table via internal/config_manager (e.g. matching.max_walk_minutes is defined
+// in BOTH stores and silently diverges). Toggling a flag here therefore does
+// NOT change production behaviour today. Backing this module with
+// config_manager is a tracked follow-up that touches the live matching engine
+// and is gated on sign-off (see audit/ + report cluster 10); do not ship a
+// partial bridge. Until then, treat this surface as record-keeping only.
+//
+// Changing a flag's Key here is still a breaking change for stored snapshots —
+// add new keys; never rename existing ones without a migration script.
 func DefaultRegistry() []FlagDef {
 	num := func(v float64) *float64 { return &v }
 	return []FlagDef{

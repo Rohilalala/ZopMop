@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zopnew/zop-full.svg — default: bright round eyes + warm smile -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395.32 395.32" fill="none">
+  <path d="M178.1,26.44c1.39-5.53,10.07-5.53,11.46,0,24.18,96.14,68.9,141.13,165.61,165.5,5.53,1.39,5.53,10.05,0,11.44-96.73,24.37-141.45,69.36-165.61,165.5-1.39,5.53-10.07,5.53-11.46,0-24.18-96.14-68.9-141.15-165.59-165.5-5.53-1.39-5.53-10.05,0-11.44,96.72-24.37,141.44-69.36,165.6-165.5h-.01Z" fill="#FFBA03"/>
+  <circle cx="162" cy="150" r="13.5" fill="#1F1F1F"/><circle cx="157.869" cy="145.869" r="4.590000000000001" fill="#FFF"/><circle cx="165.213" cy="153.672" r="2.0655000000000006" fill="#FFF" opacity="0.85"/><circle cx="234" cy="150" r="13.5" fill="#1F1F1F"/><circle cx="229.869" cy="145.869" r="4.590000000000001" fill="#FFF"/><circle cx="237.213" cy="153.672" r="2.0655000000000006" fill="#FFF" opacity="0.85"/><path d="M154 232 Q 198 276 242 232" stroke="#1F1F1F" stroke-width="12" stroke-linecap="round" fill="none"/><g opacity="0.55"><ellipse cx="128" cy="190" rx="16" ry="9" fill="rgba(232,116,34,0.5)" transform="rotate(-8 128 190)"/><ellipse cx="268" cy="190" rx="16" ry="9" fill="rgba(232,116,34,0.5)" transform="rotate(8 268 190)"/></g>
+</svg>

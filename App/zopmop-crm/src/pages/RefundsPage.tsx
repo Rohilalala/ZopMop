@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { refundsApi, type PaymentMethod, type Refund, type RefundStatus } from '@/api/all';
-import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
+import { Card, EmptyState, ErrorState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { Can } from '@/auth/Can';
@@ -78,6 +79,7 @@ export function RefundsPage() {
       </div>
       <Card className="!p-0 overflow-hidden">
         {q.isLoading ? <div className="p-5"><Skeleton className="h-32" /></div> :
+          q.isError ? <ErrorState title="Could not load refunds" onRetry={() => q.refetch()} /> :
           (q.data?.items.length ?? 0) === 0 ? <EmptyState title={`No ${tab.replace(/_/g, ' ')} refunds`} /> :
             <table className="w-full text-sm">
               <thead className="bg-surface-elevated text-text-muted text-xs uppercase tracking-wider">
@@ -116,9 +118,12 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
   const effectiveAmount = isPartial ? partialCents : r.amount_paise;
 
   const isCod = r.payment_method === 'cod';
-  // Block automatic approval if the refund is non-COD but lacks a payment ref
-  // — the gateway needs the original payment id to issue a reversal.
-  const missingPaymentRef = !isCod && !!r.payment_method && !r.payment_id;
+  const isWallet = r.payment_method === 'wallet';
+  // Block automatic approval if the refund is non-COD/non-wallet but lacks a
+  // payment ref — the gateway needs the original payment id to issue a reversal.
+  // Wallet refunds credit the closed-loop wallet (no gateway anchor, no
+  // payment_id needed — backend runGateway handles them), so don't block them.
+  const missingPaymentRef = !isCod && !isWallet && !!r.payment_method && !r.payment_id;
 
   const approve = useMutation({
     mutationFn: () => refundsApi.approve(r.id, {
@@ -247,92 +252,101 @@ function Row({ r, tab }: { r: Refund; tab: RefundStatus }) {
         </td>
       </tr>
 
-      {/* Approve modal — uses bare Modal so we can control the footer (spinner during gateway call). */}
-      <Modal
-        open={open === 'approve'}
-        onClose={approve.isPending ? () => {} : () => { setOpen(null); }}
-        title="Approve refund?"
-        width="max-w-lg"
-      >
-        <div className="text-sm text-text-secondary space-y-4">
-          <dl className="grid grid-cols-[140px_1fr] gap-y-2 gap-x-3 text-sm">
-            <dt className="text-text-muted">Original amount</dt>
-            <dd className="text-text-primary tabular-nums">{fmt(r.amount_paise)}</dd>
-            <dt className="text-text-muted">Refund amount</dt>
-            <dd className="text-text-primary tabular-nums">{fmt(effectiveAmount)}{isPartial && <span className="text-text-muted"> (partial)</span>}</dd>
-            <dt className="text-text-muted">Payment method</dt>
-            <dd><MethodBadge method={r.payment_method} /></dd>
-            <dt className="text-text-muted">Original payment ref</dt>
-            <dd className="font-mono text-xs text-text-primary" title={r.payment_id ?? undefined}>{shortRef(r.payment_id)}</dd>
-          </dl>
-
-          {isCod && (
-            <div className="rounded-md border border-warning/30 bg-warning/10 text-warning px-3 py-2 text-xs">
-              COD order — refund will be marked as Manual. Reach out to the customer offline.
-            </div>
-          )}
-          {missingPaymentRef && (
-            <div className="rounded-md border border-danger/30 bg-danger/10 text-danger px-3 py-2 text-xs">
-              Original payment reference missing. Cannot process automatic refund.
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <p className="text-xs text-text-muted">Full amount = {fmt(r.amount_paise)}. Leave partial blank to approve full.</p>
-            <input className="input" placeholder="Partial amount in ₹ (optional)" value={partial} onChange={(e) => setPartial(e.target.value.replace(/\D/g, ''))} />
-            <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2 mt-6">
-          <button className="btn-ghost" onClick={() => setOpen(null)} disabled={approve.isPending}>Cancel</button>
-          <button
-            className="btn-primary inline-flex items-center gap-2"
-            disabled={approve.isPending || missingPaymentRef || !reason.trim() || !canApproveNow}
-            onClick={() => {
-              if (!canApproveNow) {
-                showToast({ kind: 'error', message: 'Insufficient permissions' });
-                return;
-              }
-              approve.mutate();
-            }}
+      {/* Modals are portaled to document.body so they don't render inside
+          <tbody> (React validateDOMNesting: <div> cannot be a child of
+          <tbody>). Approve/reject/retry logic is unchanged — only the DOM
+          mount point moves out of the table row. */}
+      {createPortal(
+        <>
+          {/* Approve modal — uses bare Modal so we can control the footer (spinner during gateway call). */}
+          <Modal
+            open={open === 'approve'}
+            onClose={approve.isPending ? () => {} : () => { setOpen(null); }}
+            title="Approve refund?"
+            width="max-w-lg"
           >
-            {approve.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-            {approve.isPending ? 'Processing refund…' : 'Approve'}
-          </button>
-        </div>
-      </Modal>
+            <div className="text-sm text-text-secondary space-y-4">
+              <dl className="grid grid-cols-[140px_1fr] gap-y-2 gap-x-3 text-sm">
+                <dt className="text-text-muted">Original amount</dt>
+                <dd className="text-text-primary tabular-nums">{fmt(r.amount_paise)}</dd>
+                <dt className="text-text-muted">Refund amount</dt>
+                <dd className="text-text-primary tabular-nums">{fmt(effectiveAmount)}{isPartial && <span className="text-text-muted"> (partial)</span>}</dd>
+                <dt className="text-text-muted">Payment method</dt>
+                <dd><MethodBadge method={r.payment_method} /></dd>
+                <dt className="text-text-muted">Original payment ref</dt>
+                <dd className="font-mono text-xs text-text-primary" title={r.payment_id ?? undefined}>{shortRef(r.payment_id)}</dd>
+              </dl>
 
-      <ConfirmModal
-        open={open === 'reject'}
-        onClose={() => setOpen(null)}
-        onConfirm={() => reject.mutateAsync()}
-        title="Reject refund?"
-        impact={
-          <div className="space-y-3">
-            <p>The user will not receive a refund. They may dispute via support.</p>
-            <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
-        }
-        destructive
-        confirmLabel="Reject"
-      />
+              {isCod && (
+                <div className="rounded-md border border-warning/30 bg-warning/10 text-warning px-3 py-2 text-xs">
+                  COD order — refund will be marked as Manual. Reach out to the customer offline.
+                </div>
+              )}
+              {missingPaymentRef && (
+                <div className="rounded-md border border-danger/30 bg-danger/10 text-danger px-3 py-2 text-xs">
+                  Original payment reference missing. Cannot process automatic refund.
+                </div>
+              )}
 
-      <ConfirmModal
-        open={open === 'retry'}
-        onClose={() => setOpen(null)}
-        onConfirm={() => retry.mutateAsync()}
-        title="Retry gateway refund?"
-        impact={
-          <div className="space-y-2">
-            <p>This re-runs the gateway refund call for {fmt(displayedAmount)}.</p>
-            {r.error_message && (
-              <p className="text-xs text-text-muted">Last error: <span className="text-danger">{truncate(r.error_message, 200)}</span></p>
-            )}
-          </div>
-        }
-        confirmLabel="Retry"
-      />
+              <div className="space-y-2">
+                <p className="text-xs text-text-muted">Full amount = {fmt(r.amount_paise)}. Leave partial blank to approve full.</p>
+                <input className="input" placeholder="Partial amount in ₹ (optional)" value={partial} onChange={(e) => setPartial(e.target.value.replace(/\D/g, ''))} />
+                <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button className="btn-ghost" onClick={() => setOpen(null)} disabled={approve.isPending}>Cancel</button>
+              <button
+                className="btn-primary inline-flex items-center gap-2"
+                disabled={approve.isPending || missingPaymentRef || !reason.trim() || !canApproveNow}
+                onClick={() => {
+                  if (!canApproveNow) {
+                    showToast({ kind: 'error', message: 'Insufficient permissions' });
+                    return;
+                  }
+                  approve.mutate();
+                }}
+              >
+                {approve.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+                {approve.isPending ? 'Processing refund…' : 'Approve'}
+              </button>
+            </div>
+          </Modal>
+
+          <ConfirmModal
+            open={open === 'reject'}
+            onClose={() => setOpen(null)}
+            onConfirm={() => reject.mutateAsync()}
+            title="Reject refund?"
+            impact={
+              <div className="space-y-3">
+                <p>The user will not receive a refund. They may dispute via support.</p>
+                <input className="input" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+              </div>
+            }
+            destructive
+            confirmLabel="Reject"
+          />
+
+          <ConfirmModal
+            open={open === 'retry'}
+            onClose={() => setOpen(null)}
+            onConfirm={() => retry.mutateAsync()}
+            title="Retry gateway refund?"
+            impact={
+              <div className="space-y-2">
+                <p>This re-runs the gateway refund call for {fmt(displayedAmount)}.</p>
+                {r.error_message && (
+                  <p className="text-xs text-text-muted">Last error: <span className="text-danger">{truncate(r.error_message, 200)}</span></p>
+                )}
+              </div>
+            }
+            confirmLabel="Retry"
+          />
+        </>,
+        document.body,
+      )}
     </>
   );
 }

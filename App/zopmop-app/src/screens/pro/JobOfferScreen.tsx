@@ -20,7 +20,8 @@ import { acceptJob, declineJob, listActiveJobs } from '../../api/jobs';
 import { onShiftEvent, type OfferPayload } from '../../utils/shiftEvents';
 import { showError, showInfo } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
-import { t } from '../../i18n';
+import { useProRoleGate } from '../../hooks/useRoleGate';
+import { t, useLocale } from '../../i18n';
 
 interface OfferTask {
   service_name: string;
@@ -32,6 +33,8 @@ interface OfferTask {
 const DEFAULT_TTL_SEC = 25;
 
 export default function JobOfferScreen() {
+  useLocale(); // live-update strings on language change
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'JobOffer'>>();
   const c = useColors();

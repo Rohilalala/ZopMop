@@ -9,6 +9,7 @@ export interface JobServiceLine {
   id: string;
   booking_id: string;
   service_id: string;
+  service_name: string;
   duration_minutes: number;
   price_paise: number;
   quantity: number;

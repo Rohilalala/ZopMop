@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, ChevronDown, LogOut, Monitor, User } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { logout } from '@/api/auth';
+import { markLoggedOut } from '@/api/client';
 import {
   listNotifications,
   markAllRead,
@@ -218,6 +219,9 @@ function AdminMenu() {
   const [open, setOpen] = useState(false);
 
   async function doLogout() {
+    // Bump the logout epoch first so any in-flight silent refresh discards its
+    // result instead of bouncing the user back into an authenticated session.
+    markLoggedOut();
     try { await logout(); }
     finally {
       clear();

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -16,7 +15,15 @@ import {
   Easing,
   StatusBar,
 } from 'react-native';
-import Reanimated, { useAnimatedStyle, interpolateColor } from 'react-native-reanimated';
+import Reanimated, {
+  useAnimatedStyle,
+  interpolateColor,
+  useSharedValue,
+  useAnimatedScrollHandler,
+  interpolate,
+  Extrapolation,
+  type SharedValue,
+} from 'react-native-reanimated';
 import Constants from 'expo-constants';
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { useAnimatedColor } from '../../theme/useAnimatedTheme';
@@ -44,8 +51,10 @@ import { haptics } from '../../utils/haptics';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
+import { GlassCard } from '../../components/home/GlassCard';
 import { useTheme } from '../../context/ThemeContext';
 import { useC, C } from '../../theme/screen';
+import { ROOMIES_ENABLED } from '../../config/features';
 
 // Brand legal URLs — matched with auth/OTPVerificationScreen.tsx.
 const PRIVACY_POLICY_URL = 'https://zopmop.com/privacy';
@@ -99,6 +108,12 @@ export default function ProfileScreen() {
   });
   const darkOn = isDark;
   const [remindersOn, setRemindersOn] = useState(true);
+
+  // Scroll position drives the hero card's amber glow (subtle parallax).
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+  });
 
   // Real meta wired to the existing per-user endpoints. We only render meta
   // strings once a value resolves — undefined collapses the row's subtitle.
@@ -226,10 +241,12 @@ export default function ProfileScreen() {
           </ARowTouchable>
         </View>
 
-        <ScrollView
+        <Reanimated.ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 110 + insets.bottom }}
           showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
         >
           <HeroCard
             name={user?.name}
@@ -237,6 +254,7 @@ export default function ProfileScreen() {
             role={user?.role}
             loading={fetchingProfile && !user?.phone}
             onEdit={() => setEditVisible(true)}
+            scrollY={scrollY}
           />
 
           <ActionRail navigation={navigation} />
@@ -270,13 +288,15 @@ export default function ProfileScreen() {
               chev
               onPress={() => navigation.navigate('Addresses')}
             />
-            <Row
-              icon={<AppIcon name="home" size={17} color={C.amber} />}
-              label="Roomies"
-              meta={roomiesMeta}
-              chev
-              onPress={() => navigation.navigate('RoomiesSetup')}
-            />
+            {ROOMIES_ENABLED && (
+              <Row
+                icon={<AppIcon name="home" size={17} color={C.amber} />}
+                label="Roomies"
+                meta={roomiesMeta}
+                chev
+                onPress={() => navigation.navigate('RoomiesSetup')}
+              />
+            )}
             <Row
               icon={<AppIcon name="users" size={17} color={C.amber} />}
               label="Your Experts"
@@ -337,7 +357,7 @@ export default function ProfileScreen() {
               <ZopFace width={32} height={32} opacity={0.4} />
             </View>
           </View>
-        </ScrollView>
+        </Reanimated.ScrollView>
       </SafeAreaView>
 
       <EditProfileModal
@@ -355,10 +375,12 @@ export default function ProfileScreen() {
 // Background glow now sourced from the canonical home primitive (Bloom).
 
 function HeroCard({
-  name, phone, role, loading, onEdit,
+  name, phone, role, loading, onEdit, scrollY,
 }: {
   name?: string | null; phone?: string; role?: string; loading?: boolean; onEdit: () => void;
+  scrollY: SharedValue<number>;
 }) {
+  const { isDark } = useTheme();
   const initials = getInitials(name);
   const displayName = name ?? 'Add your name';
   const displayPhone = formatPhone(phone);
@@ -366,35 +388,41 @@ function HeroCard({
   // exposes membership tier + completed_bookings_count on the user record.
   // Falling back to fabricated values would mislead fresh accounts.
 
+  // Amber glow drifts/fades with scroll. Glow layer is oversized so the
+  // translation never reveals its edges inside the clipped card.
+  const glowStyle = useAnimatedStyle(() => {
+    'worklet';
+    return {
+      opacity: interpolate(scrollY.value, [-120, 0, 220], [1, 1, 0.35], Extrapolation.CLAMP),
+      transform: [
+        { translateX: interpolate(scrollY.value, [-120, 0, 220], [28, 0, -44], Extrapolation.CLAMP) },
+        { translateY: interpolate(scrollY.value, [-120, 0, 220], [-14, 0, 26], Extrapolation.CLAMP) },
+      ],
+    };
+  });
+
   return (
     <View style={s.heroWrap}>
-      <View style={s.hero}>
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <Svg width="100%" height="100%">
-            <Defs>
-              <SvgLinearGradient id="heroBg" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor="#1A1A1C" />
-                <Stop offset="100%" stopColor="#0D0D0F" />
-              </SvgLinearGradient>
-              <SvgRadialGradient id="heroGlow" cx="80%" cy="30%" rx="100%" ry="80%">
-                <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.4" />
-                <Stop offset="50%" stopColor="#F5A300" stopOpacity="0" />
-              </SvgRadialGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#heroBg)" />
-            <Rect width="100%" height="100%" fill="url(#heroGlow)" />
-          </Svg>
+      <GlassCard radius={28} hero style={s.hero}>
+        {/* scroll-linked amber glow, clipped to the glass radius */}
+        <View style={s.heroGlowClip} pointerEvents="none">
+          <Reanimated.View style={[s.heroGlowLayer, glowStyle]}>
+            <Svg width="100%" height="100%">
+              <Defs>
+                <SvgRadialGradient id="heroGlow" cx="72%" cy="32%" rx="70%" ry="60%">
+                  <Stop offset="0%" stopColor="#F5A300" stopOpacity={isDark ? 0.38 : 0.22} />
+                  <Stop offset="60%" stopColor="#F5A300" stopOpacity="0" />
+                </SvgRadialGradient>
+              </Defs>
+              <Rect width="100%" height="100%" fill="url(#heroGlow)" />
+            </Svg>
+          </Reanimated.View>
         </View>
-
-        <View style={s.heroAmberLine} pointerEvents="none" />
 
         <View style={s.heroTop}>
           <Text style={s.heroEyebrow} numberOfLines={1}>
             ZopMop · {roleLabel(role)}
           </Text>
-          <TouchableOpacity onPress={onEdit} activeOpacity={0.75} hitSlop={12} style={s.heroEdit}>
-            <AppIcon name="edit-2" size={13} color={C.white} />
-          </TouchableOpacity>
         </View>
 
         <View style={s.heroBody}>
@@ -419,19 +447,41 @@ function HeroCard({
               </View>
             ) : (
               <>
-                <Text style={[s.heroName, !name && { opacity: 0.6 }]} numberOfLines={1}>
+                <Text
+                  style={[s.heroName, { color: isDark ? C.white : '#0D0D0F' }, !name && { opacity: 0.6 }]}
+                  numberOfLines={1}
+                >
                   {displayName}
                 </Text>
                 {!!displayPhone && (
-                  <Text style={s.heroPhone} numberOfLines={1}>
+                  <Text
+                    style={[s.heroPhone, { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.5)' }]}
+                    numberOfLines={1}
+                  >
                     {displayPhone}
                   </Text>
                 )}
               </>
             )}
           </View>
+
+          <TouchableOpacity
+            onPress={onEdit}
+            activeOpacity={0.75}
+            hitSlop={12}
+            style={[
+              s.heroEdit,
+              { alignSelf: 'flex-end' },
+              {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.05)',
+                borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.08)',
+              },
+            ]}
+          >
+            <AppIcon name="edit-2" size={13} color={isDark ? C.white : '#0D0D0F'} />
+          </TouchableOpacity>
         </View>
-      </View>
+      </GlassCard>
     </View>
   );
 }
@@ -740,20 +790,19 @@ const s = StyleSheet.create({
   // Hero
   heroWrap: { paddingHorizontal: H_PAD, paddingTop: 14 },
   hero: {
-    borderRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 10,
   },
-  heroAmberLine: {
-    position: 'absolute', bottom: 0, left: '20%', right: '20%', height: 1,
-    backgroundColor: 'rgba(245,163,0,0.4)',
+  heroGlowClip: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  heroGlowLayer: {
+    position: 'absolute',
+    top: '-25%', left: '-25%',
+    width: '150%', height: '150%',
   },
   heroTop: {
     flexDirection: 'row',

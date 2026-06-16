@@ -10,6 +10,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { View, Text, type TextStyle, type LayoutChangeEvent } from 'react-native';
 import Animated, {
+  cancelAnimation,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -101,7 +102,15 @@ export function HomeHero({
   // fly's landing point (rest), not jump to an arbitrary mid-bob phase.
   const float = useSharedValue(0);
   useEffect(() => {
-    if (showMascot === false) return;
+    if (showMascot === false) {
+      // Park at rest while hidden. Leaving the repeat running meant the first
+      // frame after re-show could paint at a stale mid-bob phase (≤6px off the
+      // overlay's landing point) before this effect re-armed — the handoff
+      // jitter. Cancel + zero so re-show ALWAYS starts exactly at rest.
+      cancelAnimation(float);
+      float.value = 0;
+      return;
+    }
     float.value = 0;
     float.value = withRepeat(
       withTiming(1, { duration: 3000, easing: Easing.inOut(Easing.sin) }),

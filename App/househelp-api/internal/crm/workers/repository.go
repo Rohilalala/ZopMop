@@ -71,7 +71,11 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 		add(fmt.Sprintf("$%d = ANY(h.services)", len(args)+1), f.Category)
 	}
 	if f.OnlyOnline {
-		conds = append(conds, "h.is_available = TRUE")
+		// Mirror the is_online column (lines below): available AND a
+		// location ping within 90s. is_available alone returned pros who
+		// toggled available then killed the app — rendered with a grey
+		// (offline) dot, contradicting the "Online only" filter.
+		conds = append(conds, "h.is_available = TRUE AND h.last_location_at IS NOT NULL AND h.last_location_at > NOW() - INTERVAL '90 seconds'")
 	}
 
 	sortColMap := map[string]string{
@@ -182,7 +186,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		  h.current_lat, h.current_lng,
 		  u.suspend_reason, u.ban_reason,
 		  COALESCE(stats.completed_30d, 0),
-		  COALESCE(stats.earnings_30d_cents, 0),
+		  COALESCE(shift.online_min_30d, 0),
+		  COALESCE(shift.job_min_30d, 0),
 		  COALESCE(stats.cancellation_rate, 0),
 		  h.locality,
 		  to_char(h.dob, 'YYYY-MM-DD'),
@@ -209,7 +214,6 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		LEFT JOIN LATERAL (
 		  SELECT
 		    COUNT(*) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days') AS completed_30d,
-		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed' AND b.completed_at >= now() - interval '30 days'), 0) AS earnings_30d_cents,
 		    CASE
 		      WHEN COUNT(*) = 0 THEN 0
 		      ELSE COUNT(*) FILTER (WHERE b.status = 'cancelled')::float / COUNT(*)
@@ -217,14 +221,33 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		  FROM bookings b
 		  WHERE b.helper_id = u.id
 		) stats ON TRUE
+		-- earnings_30d is time-based pay over the trailing 30 days, derived from
+		-- shift activity — NOT a per-booking sum. bookings.pro_earnings_paise is
+		-- no longer written under the time-based pay model (C1), so the old
+		-- SUM(pro_earnings_paise) read ₹0 for every worker. Minutes are
+		-- aggregated here (mirroring payroll AggregateActivity's shift_date
+		-- attribution) and converted to paise by payroll.ComputePay below, so
+		-- the rate + working≤online cap stay single-sourced (the ONE pro-pay
+		-- formula — see internal/payroll/calc.go).
+		LEFT JOIN LATERAL (
+		  SELECT COALESCE(SUM(ss.online_minutes), 0)::int AS online_min_30d,
+		         COALESCE(SUM(ss.job_minutes),    0)::int AS job_min_30d
+		    FROM shift_sessions ss
+		    JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		   WHERE ss.pro_id = u.id
+		     AND ss.offline_at IS NOT NULL
+		     AND sc.shift_date >= ((now() AT TIME ZONE 'Asia/Kolkata')::date - 30)
+		) shift ON TRUE
 		WHERE u.id = $1::uuid AND u.role = 'pro' AND u.deleted_at IS NULL
 	`, statusExpr)
 
 	var (
-		d      Detail
-		status string
-		lat    *float64
-		lng    *float64
+		d            Detail
+		status       string
+		lat          *float64
+		lng          *float64
+		onlineMin30d int
+		jobMin30d    int
 	)
 	// TODO Phase 12: when row.AdminID's role is not 'superadmin', null out
 	// AadhaarNumber + BankAccountNumber before returning, and audit the read.
@@ -234,7 +257,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		&d.JoinedAt, &d.LastActiveAt,
 		&d.Address, &lat, &lng,
 		&d.SuspendReason, &d.BanReason,
-		&d.CompletedJobs30d, &d.Earnings30dCents, &d.CancellationRate,
+		&d.CompletedJobs30d, &onlineMin30d, &jobMin30d, &d.CancellationRate,
 		&d.Locality,
 		&d.DOB, &d.Gender, &d.Languages, &d.AltPhone,
 		&d.EmergencyContactName, &d.EmergencyContactPhone, &d.PhotoURL,
@@ -250,6 +273,12 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 	d.Status = Status(status)
 	d.CurrentLat = lat
 	d.CurrentLng = lng
+	// Convert the 30-day shift minutes to paise through the single pro-pay
+	// formula. ComputePay caps working ≤ online and applies the ₹80/hr online
+	// + ₹80/hr working rates; its error path only fires never (it caps rather
+	// than erroring), so ignoring it is safe.
+	pay, _ := payroll.ComputePay(onlineMin30d, jobMin30d)
+	d.Earnings30dCents = pay.GrossPayPaise
 	return &d, nil
 }
 
@@ -290,13 +319,13 @@ func (r *Repository) Jobs(ctx context.Context, workerID string, limit int) ([]Jo
 func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 	rows, err := r.read.Query(ctx, `
 		SELECT u.id::text, u.name, u.phone, h.current_lat::float8, h.current_lng::float8, h.rating::float8,
-		       active.id::text, active.status
+		       active.id::text, active.status, (active.en_route_at IS NOT NULL) AS en_route
 		FROM helpers h
 		JOIN users u ON u.id = h.id
 		LEFT JOIN LATERAL (
-		  SELECT id, status FROM bookings
+		  SELECT id, status, en_route_at FROM bookings
 		  WHERE helper_id = u.id
-		    AND status IN ('assigned','en_route','in_progress','arrived')
+		    AND status IN ('accepted','arrived','in_progress')
 		  ORDER BY created_at DESC
 		  LIMIT 1
 		) active ON TRUE
@@ -323,8 +352,9 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 			p            LivePin
 			activeID     *string
 			activeStatus *string
+			enRoute      bool
 		)
-		if err := rows.Scan(&p.ID, &p.Name, &p.Phone, &p.Lat, &p.Lng, &p.Rating, &activeID, &activeStatus); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Phone, &p.Lat, &p.Lng, &p.Rating, &activeID, &activeStatus, &enRoute); err != nil {
 			return nil, err
 		}
 		switch {
@@ -333,8 +363,11 @@ func (r *Repository) LivePins(ctx context.Context) ([]LivePin, error) {
 		case activeStatus != nil && *activeStatus == "in_progress":
 			p.JobStatus = "on_job"
 			p.ActiveBookingID = activeID
-		default: // assigned / en_route / arrived
+		case enRoute:
 			p.JobStatus = "en_route"
+			p.ActiveBookingID = activeID
+		default: // accepted (not yet en route) / arrived
+			p.JobStatus = "on_job"
 			p.ActiveBookingID = activeID
 		}
 		out = append(out, p)
@@ -349,7 +382,7 @@ func (r *Repository) HasActiveJob(ctx context.Context, workerID string) (bool, *
 	err := r.read.QueryRow(ctx, `
 		SELECT id::text FROM bookings
 		WHERE helper_id = $1::uuid
-		  AND status IN ('assigned','en_route','in_progress','arrived')
+		  AND status IN ('accepted','arrived','in_progress')
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, workerID).Scan(&bookingID)
@@ -698,9 +731,16 @@ func (r *Repository) ListDeductions(ctx context.Context, proID string) ([]Deduct
 // still role 'customer', which left them locked out of the pro side even
 // after approval — the role is the single source of truth the app routes on.
 func (r *Repository) Approve(ctx context.Context, workerID string) error {
+	// Only a 'pending' application may be approved. Without this guard the
+	// UPDATE is unconditional, so a 'rejected' or already-'approved' worker
+	// could be (re)approved with no re-review. The FE hides the button for
+	// non-pending states, but that is client-only. When the helper is not
+	// pending the CTE returns no rows, the user UPDATE matches nothing, and
+	// RowsAffected()==0 surfaces as ErrNotFound.
 	res, err := r.write.Exec(ctx, `
 		WITH h AS (
-			UPDATE helpers SET approval_status = 'approved' WHERE id = $1::uuid
+			UPDATE helpers SET approval_status = 'approved'
+			WHERE id = $1::uuid AND approval_status = 'pending'
 			RETURNING id
 		)
 		UPDATE users SET role = 'pro', updated_at = now()
@@ -715,12 +755,16 @@ func (r *Repository) Approve(ctx context.Context, workerID string) error {
 	return nil
 }
 
-// Reject flips approval_status to 'rejected'. Reason is stored as a note
-// (so the reason history is queryable alongside other admin notes).
-func (r *Repository) Reject(ctx context.Context, workerID string) error {
+// Reject flips a pending application to 'rejected' and persists the reason
+// on the helper record (rejection_reason) so the rationale is visible on the
+// worker — previously the reason survived only in the audit log. Guarded to
+// 'pending' for the same reason Approve is: a non-pending worker must not be
+// rejected via a stale UI or direct API call.
+func (r *Repository) Reject(ctx context.Context, workerID, reason string) error {
 	res, err := r.write.Exec(ctx, `
-		UPDATE helpers SET approval_status = 'rejected' WHERE id = $1::uuid
-	`, workerID)
+		UPDATE helpers SET approval_status = 'rejected', rejection_reason = $2
+		WHERE id = $1::uuid AND approval_status = 'pending'
+	`, workerID, reason)
 	if err != nil {
 		return fmt.Errorf("reject: %w", err)
 	}
@@ -762,7 +806,9 @@ func (r *Repository) Unsuspend(ctx context.Context, workerID string) error {
 	return nil
 }
 
-// ForceOffline toggles is_available=false. Doesn't cancel any active booking.
+// ForceOffline toggles is_available=false. The handler refuses the action
+// when the worker has an in-flight booking (HasActiveJob) so a job is never
+// silently stranded; this repo method only flips the flag.
 func (r *Repository) ForceOffline(ctx context.Context, workerID string) error {
 	res, err := r.write.Exec(ctx, `UPDATE helpers SET is_available = FALSE WHERE id = $1::uuid`, workerID)
 	if err != nil {

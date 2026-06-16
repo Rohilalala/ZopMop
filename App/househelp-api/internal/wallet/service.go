@@ -168,6 +168,47 @@ func (s *Service) Credit(
 	return res, err
 }
 
+// CreditWithRef is Credit plus an idempotency Reference. A second call
+// with the same reference returns ErrDuplicateTransaction (no second
+// money movement) — used by the wallet-path refund so a /retry after a
+// lost response can't credit the customer twice.
+func (s *Service) CreditWithRef(
+	ctx context.Context,
+	userID string,
+	amountPaise int64,
+	kind Kind,
+	paymentID, bookingID *string,
+	note, reference string,
+) (*ApplyResult, error) {
+	if s == nil || s.repo == nil {
+		return nil, ErrNotConfigured
+	}
+	if err := ValidateCreditInputs(amountPaise, kind, paymentID); err != nil {
+		return nil, err
+	}
+	var res *ApplyResult
+	err := pgx.BeginFunc(ctx, s.repo.db, func(tx pgx.Tx) error {
+		r, aerr := s.repo.ApplyTransactionTx(ctx, tx, WalletTx{
+			UserID:      userID,
+			AmountPaise: amountPaise,
+			Kind:        kind,
+			PaymentID:   paymentID,
+			BookingID:   bookingID,
+			Note:        note,
+			Reference:   reference,
+		})
+		if aerr != nil {
+			return aerr
+		}
+		if eerr := emitWalletCreditedTx(ctx, tx, userID, amountPaise, r.BalanceAfter, kind, paymentID, bookingID, time.Now().UTC()); eerr != nil {
+			return fmt.Errorf("emit wallet.credited: %w", eerr)
+		}
+		res = r
+		return nil
+	})
+	return res, err
+}
+
 // Debit is the non-Tx variant.
 func (s *Service) Debit(
 	ctx context.Context,

@@ -80,6 +80,9 @@ function LoyaltyTab() {
       is_enabled: enabled ?? q.data!.is_enabled,
       points_per_100_inr: per100 ?? q.data!.points_per_100_inr,
       points_per_redeem_inr: redeem ?? q.data!.points_per_redeem_inr,
+      // The form has no editor for bonus_rules; the backend defaults an absent
+      // value to [], so echo the existing rules back to avoid wiping them.
+      bonus_rules: q.data!.bonus_rules,
     }),
     onSuccess: () => { showToast({ kind: 'success', message: 'Loyalty saved.' }); qc.invalidateQueries({ queryKey: ['loyalty'] }); setConfirm(false); },
   });
@@ -647,9 +650,16 @@ function AppVersionTab() {
   const [min, setMin] = useState('');
   const [force, setForce] = useState(false);
   const [msg, setMsg] = useState('');
+  const [iosUrl, setIosUrl] = useState('');
+  const [androidUrl, setAndroidUrl] = useState('');
   const create = useMutation({
-    mutationFn: () => platformApi.setAppVersion({ platform, min_version: min, force_update: force, force_message: msg || undefined }),
-    onSuccess: () => { showToast({ kind: 'success', message: 'Version policy saved.' }); qc.invalidateQueries({ queryKey: ['app-versions'] }); setMin(''); setMsg(''); setForce(false); },
+    mutationFn: () => platformApi.setAppVersion({
+      platform, min_version: min, force_update: force,
+      force_message: msg || undefined,
+      ios_store_url: iosUrl || undefined,
+      android_store_url: androidUrl || undefined,
+    }),
+    onSuccess: () => { showToast({ kind: 'success', message: 'Version policy saved.' }); qc.invalidateQueries({ queryKey: ['app-versions'] }); setMin(''); setMsg(''); setForce(false); setIosUrl(''); setAndroidUrl(''); },
   });
   const canSave = usePermission('app_version.update');
   return (
@@ -661,8 +671,19 @@ function AppVersionTab() {
             <option value="any">Any</option><option value="ios">iOS</option><option value="android">Android</option>
           </select>
           <input className="input" placeholder="Min version (e.g. 1.4.2)" value={min} onChange={(e) => setMin(e.target.value)} />
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> Force update</label>
-          {force && <textarea className="input min-h-[60px]" placeholder="Force update message" value={msg} onChange={(e) => setMsg(e.target.value)} />}
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> Required update (block older apps)</label>
+          <p className="text-[11px] text-text-muted -mt-1">
+            {force
+              ? 'Required: users below this version are blocked until they update.'
+              : 'Optional: users below this version see a dismissable prompt and can keep using the app.'}
+          </p>
+          <textarea className="input min-h-[60px]" placeholder={force ? 'Update message (shown on the block screen)' : 'Update message (shown on the prompt)'} value={msg} onChange={(e) => setMsg(e.target.value)} />
+          {platform !== 'android' && (
+            <input className="input" placeholder="iOS App Store URL" value={iosUrl} onChange={(e) => setIosUrl(e.target.value)} />
+          )}
+          {platform !== 'ios' && (
+            <input className="input" placeholder="Android Play Store URL" value={androidUrl} onChange={(e) => setAndroidUrl(e.target.value)} />
+          )}
           <button
             className="btn-primary w-full"
             disabled={!min || !canSave}

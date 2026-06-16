@@ -195,7 +195,7 @@ function InfoCard({ pin, onClose }: { pin: LivePin; onClose: () => void }) {
       {pin.active_booking_id && (
         <div className="mb-2">
           <div className="text-[10px] uppercase tracking-wider text-text-muted">Active booking</div>
-          <Link to="/orders" className="font-mono text-[11px] text-primary hover:underline">
+          <Link to={`/orders/${pin.active_booking_id}`} className="font-mono text-[11px] text-primary hover:underline">
             {pin.active_booking_id}
           </Link>
         </div>

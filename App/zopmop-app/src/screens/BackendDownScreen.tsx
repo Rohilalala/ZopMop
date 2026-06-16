@@ -75,6 +75,32 @@ const BG_ZOPS: BgZop[] = [
   { x: 0.30, y: 0.82, size: 40, rot: -16, V: ZopSurprised },
 ];
 
+// Dimmed Zop scatter backdrop. Exported so other full-screen states (e.g. the
+// force-update screen) render the exact same background.
+export function ScatterBg() {
+  const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {BG_ZOPS.map((z, i) => (
+        <View
+          key={i}
+          style={{
+            position: 'absolute',
+            left: z.x * SCREEN_W - z.size / 2,
+            top: z.y * SCREEN_H - z.size / 2,
+            width: z.size,
+            height: z.size,
+            opacity: 0.13,
+            transform: [{ rotate: `${z.rot}deg` }],
+          }}
+        >
+          <z.V width={z.size} height={z.size} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const ZOP_SIZE = 220;
 
 // Two-state Zop driven by lottie files that share the same X-eyes pose at
@@ -109,11 +135,6 @@ type Props = { onRetry: () => void };
 export default function BackendDownScreen({ onRetry }: Props) {
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  // useWindowDimensions reacts to layout/rotation changes and returns accurate
-  // values on first paint — Dimensions.get('window') at module init can return
-  // a stale or undersized value, which made every background Zop pile up at
-  // the top because y * SCREEN_H mapped 0..1 onto a tiny vertical range.
-  const { width: SCREEN_W, height: SCREEN_H } = useWindowDimensions();
   const [refreshing, setRefreshing] = React.useState(false);
 
   // Tap → run the same probe the button runs, but show the sneaky peek
@@ -133,24 +154,7 @@ export default function BackendDownScreen({ onRetry }: Props) {
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Background scatter — dimmed Zops with mixed expressions. */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        {BG_ZOPS.map((z, i) => (
-          <View
-            key={i}
-            style={{
-              position: 'absolute',
-              left: z.x * SCREEN_W - z.size / 2,
-              top: z.y * SCREEN_H - z.size / 2,
-              width: z.size,
-              height: z.size,
-              opacity: 0.13,
-              transform: [{ rotate: `${z.rot}deg` }],
-            }}
-          >
-            <z.V width={z.size} height={z.size} />
-          </View>
-        ))}
-      </View>
+      <ScatterBg />
 
       {/* Foreground — bright dead Zop + copy + retry. */}
       <View

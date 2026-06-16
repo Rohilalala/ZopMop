@@ -522,6 +522,56 @@ func (s *Service) SendData(ctx context.Context, userID string, data map[string]s
 	return s.sendDataToTokens(ctx, tokens, data)
 }
 
+// SendDataAlert sends the same data payload as SendData but ALSO attaches
+// a visible notification (title/body) at alert priority, so a backgrounded
+// or locked phone surfaces a tray alert the user can tap. Use this for
+// time-sensitive pushes (job offers) where a silent data-only background
+// push (apns-push-type=background, priority 5) is throttled/dropped by iOS
+// and never woke the app — every offer was invisible on a locked phone.
+func (s *Service) SendDataAlert(ctx context.Context, userID, title, body string, data map[string]string) error {
+	tokens, err := s.deviceTokensFor(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("send data alert: load tokens: %w", err)
+	}
+	if len(tokens) == 0 {
+		return nil
+	}
+	if s.fcmClient == nil {
+		log.Info().
+			Int("count", len(tokens)).
+			Int("data_field_count", len(data)).
+			Str("type", data["type"]).
+			Msg("[notif] data+alert multicast mocked (FCM offline)")
+		return nil
+	}
+	_, err = s.fcmClient.SendEachForMulticast(ctx, &messaging.MulticastMessage{
+		Data:         data,
+		Notification: &messaging.Notification{Title: title, Body: body},
+		Tokens:       tokens,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				// Alert push at the highest priority so a locked device
+				// wakes and shows the offer in the tray.
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					Alert: &messaging.ApsAlert{Title: title, Body: body},
+					Sound: "default",
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("FCM data+alert multicast failed: %w", err)
+	}
+	return nil
+}
+
 // deviceTokensFor returns every active device_tokens row for the given
 // account, regardless of role (user_id or worker_id). Used by SendData so
 // scheduled invites land on every device a pro is signed in on.

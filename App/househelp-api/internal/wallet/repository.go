@@ -131,6 +131,23 @@ func (r *Repository) ApplyTransactionTx(ctx context.Context, tx pgx.Tx, in Walle
 		return nil, fmt.Errorf("lock wallet row: %w", err)
 	}
 
+	// Idempotency: with the wallet row locked (serializing same-user
+	// writes), bail before mutating balance if this Reference already
+	// landed. The partial unique index uq_wallet_tx_reference is the hard
+	// backstop for the rare cross-user / non-serialized race.
+	if in.Reference != "" {
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM wallet_transactions WHERE reference = $1)`,
+			in.Reference,
+		).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("check wallet tx reference: %w", err)
+		}
+		if exists {
+			return nil, ErrDuplicateTransaction
+		}
+	}
+
 	newBalance := current + in.AmountPaise
 	if newBalance < 0 {
 		return nil, ErrInsufficientBalance
@@ -147,18 +164,24 @@ func (r *Repository) ApplyTransactionTx(ctx context.Context, tx pgx.Tx, in Walle
 	var txID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO wallet_transactions
-		  (user_id, amount_paise, balance_after, kind, booking_id, payment_id, note)
+		  (user_id, amount_paise, balance_after, kind, booking_id, payment_id, note, reference)
 		VALUES (
 		  $1::uuid, $2, $3, $4,
 		  CASE WHEN $5::text = '' THEN NULL ELSE $5::uuid END,
 		  CASE WHEN $6::text = '' THEN NULL ELSE $6::uuid END,
-		  NULLIF($7, '')
+		  NULLIF($7, ''), NULLIF($8, '')
 		)
+		ON CONFLICT (reference) WHERE reference IS NOT NULL DO NOTHING
 		RETURNING id::text
 	`,
 		in.UserID, in.AmountPaise, newBalance, string(in.Kind),
-		ptrOrEmpty(in.BookingID), ptrOrEmpty(in.PaymentID), in.Note,
+		ptrOrEmpty(in.BookingID), ptrOrEmpty(in.PaymentID), in.Note, in.Reference,
 	).Scan(&txID); err != nil {
+		// ON CONFLICT DO NOTHING returns no row when the reference
+		// already exists — a concurrent racer beat the pre-check above.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrDuplicateTransaction
+		}
 		return nil, fmt.Errorf("insert wallet_transactions: %w", err)
 	}
 

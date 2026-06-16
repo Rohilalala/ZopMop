@@ -22,6 +22,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/auth"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/catalog"
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
@@ -46,6 +47,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/payroll"
+	"github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
 
@@ -202,7 +204,7 @@ func main() {
 	flagsSvc := flags.NewService(dbPool, rdb, cfg.RedisNamespace, flags.DefaultRegistry())
 	flagsHandler := flags.NewHandler(flagsSvc, auditRecorder)
 
-	alertsSvc := alerts.NewService(readPool)
+	alertsSvc := alerts.NewService(readPool, dbPool)
 	alertsHandler := alerts.NewHandler(alertsSvc)
 
 	notificationsSvc := notifications.NewService(dbPool)
@@ -298,6 +300,11 @@ func main() {
 	platformSvc := platform.NewService(readPool, dbPool, webhookDispatcher)
 	platformHandler := platform.NewHandler(platformSvc, auditRecorder)
 
+	// Catalog (service_categories) editor — reuses the auth-agnostic services
+	// Catalog so CRM edits and the app read from one source of truth. Edits go
+	// live: the app refetches GET /services (no cache between the two).
+	catalogHandler := catalog.NewHandler(services.NewService(services.NewRepository(dbPool)), auditRecorder)
+
 	healthHandler := healthmetrics.NewHandler(metricsCollector, cfg.AppAPIURL)
 
 	// Zone approvals — reuses the shift package's service so the state
@@ -332,8 +339,8 @@ func main() {
 	// counters in their own namespace (ratelimit:crm-login:*,
 	// ratelimit:crm-admin:*).
 	crmLoginLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
-		MaxRequests:     5,
-		Window:          15 * time.Minute,
+		MaxRequests:     cfg.LoginRateLimitMax,
+		Window:          cfg.LoginRateLimitWindow,
 		FailureMode:     "fail-closed",
 		SuppressHeaders: true,
 		OnReject: func(c *fiber.Ctx) {
@@ -433,6 +440,7 @@ func main() {
 	crmPayrollHandler.RegisterRoutes(authed)
 	tsHandler.RegisterRoutes(authed)
 	platformHandler.RegisterRoutes(authed)
+	catalogHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
 	zoneApprovalsHandler.RegisterRoutes(authed)
 
@@ -501,9 +509,12 @@ func (a refundsWalletAdapter) Credit(
 	amountPaise int64,
 	kind string,
 	paymentID, bookingID *string,
-	note string,
+	note, reference string,
 ) error {
-	_, err := a.svc.Credit(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note)
+	_, err := a.svc.CreditWithRef(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note, reference)
+	if errors.Is(err, wallet.ErrDuplicateTransaction) {
+		return refunds.ErrWalletDuplicate
+	}
 	return err
 }
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zopnew/zop-shocked.svg — huge sclera eyes + gaping mouth + sweat drop -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395.32 395.32" fill="none">
+  <path d="M178.1,26.44c1.39-5.53,10.07-5.53,11.46,0,24.18,96.14,68.9,141.13,165.61,165.5,5.53,1.39,5.53,10.05,0,11.44-96.73,24.37-141.45,69.36-165.61,165.5-1.39,5.53-10.07,5.53-11.46,0-24.18-96.14-68.9-141.15-165.59-165.5-5.53-1.39-5.53-10.05,0-11.44,96.72-24.37,141.44-69.36,165.6-165.5h-.01Z" fill="#FFBA03"/>
+  <circle cx="162" cy="150" r="20" fill="#FFF" stroke="#1F1F1F" stroke-width="5.5"/><circle cx="162" cy="152" r="8" fill="#1F1F1F"/><circle cx="159.4" cy="149.4" r="2.6" fill="#FFF"/><circle cx="234" cy="150" r="20" fill="#FFF" stroke="#1F1F1F" stroke-width="5.5"/><circle cx="234" cy="152" r="8" fill="#1F1F1F"/><circle cx="231.4" cy="149.4" r="2.6" fill="#FFF"/><ellipse cx="198" cy="244" rx="17" ry="22" fill="#1F1F1F"/><ellipse cx="198" cy="253.9" rx="9.350000000000001" ry="7.04" fill="#FF6B7A"/><path d="M282 96 q -12 18 -12 28 a12 12 0 1 0 24 0 q 0 -10 -12 -28 Z" fill="#6EC6FF"/><circle cx="278" cy="122" r="3" fill="#FFF" opacity="0.85"/>
+</svg>

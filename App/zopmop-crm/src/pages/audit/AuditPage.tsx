@@ -13,14 +13,14 @@ import { Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { usePermission } from '@/auth/usePermission';
 
-// Hard-coded module list — backend uses freeform strings in crm_audit_log.module
-// so we enumerate the known set to drive the dropdown. New backend modules
-// can be filtered via the free-text Action input until added here.
+// Module list — these MUST match the exact `Module:` strings the backend
+// recorder writes to crm_audit_log.module, else the filter returns zero rows.
+// (Sub-domains like blacklist/disputes/fraud/incidents are recorded under
+// 'trustsafety'; surge under 'zones'; changelog/tickets under 'platform'.)
 const MODULES = [
-  'auth', 'banners', 'blacklist', 'changelog', 'disputes', 'experiments',
-  'flags', 'fraud', 'growth', 'incidents', 'leaves', 'localities', 'orders',
-  'payouts', 'platform', 'promos', 'refunds', 'surge', 'tickets', 'users',
-  'workers', 'zone-approvals', 'zones',
+  'auth', 'banners', 'experiments', 'flags', 'growth', 'leaves', 'localities',
+  'orders', 'payouts', 'payroll', 'platform', 'promos', 'refunds',
+  'trustsafety', 'users', 'workers', 'zone-approvals', 'zones',
 ];
 
 const ENTITY_TYPES = [
@@ -198,19 +198,30 @@ function clientFilter(rows: AuditRow[], f: Filters): AuditRow[] {
     out = out.filter((r) => (r.target_id ?? '').toLowerCase().includes(q));
   }
   if (f.from) {
-    const fromMs = Date.parse(f.from);
-    if (!Number.isNaN(fromMs)) {
+    const fromMs = localMidnightMs(f.from);
+    if (fromMs != null) {
       out = out.filter((r) => new Date(r.created_at).getTime() >= fromMs);
     }
   }
   if (f.to) {
     // End-of-day for the chosen date so a single-day filter (from==to) works.
-    const toMs = Date.parse(f.to) + 24 * 3600 * 1000;
-    if (!Number.isNaN(toMs)) {
+    const base = localMidnightMs(f.to);
+    if (base != null) {
+      const toMs = base + 24 * 3600 * 1000;
       out = out.filter((r) => new Date(r.created_at).getTime() < toMs);
     }
   }
   return out;
+}
+
+// Parse a date-only string (YYYY-MM-DD from <input type="date">) as midnight in
+// the browser's local timezone. Date.parse() treats bare date strings as UTC
+// midnight, which skews single-day filters by the local offset (e.g. 5.5h for
+// IST admins, dropping rows in the 00:00–05:30 IST window).
+function localMidnightMs(s: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
 }
 
 // ── Filters bar ─────────────────────────────────────────────────────────
@@ -383,7 +394,8 @@ function entityLink(type: string | null, id: string | null): string | null {
     case 'order':  return `/orders/${id}`;
     case 'user':   return `/users?id=${id}`;
     case 'zone_approval_request': return `/zone-approvals`;
-    case 'refund': return `/refunds?id=${id}`;
+    // No refund deep-link: RefundsPage filters by status tab only and ignores
+    // ?id, so a /refunds?id=… link lands on an unrelated list. Render plain.
     default: return null;
   }
 }

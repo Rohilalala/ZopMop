@@ -51,6 +51,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/reviews"
 	"github.com/adityarohilla/househelp-api/internal/roomies"
 	"github.com/adityarohilla/househelp-api/internal/segments"
+	"github.com/adityarohilla/househelp-api/internal/appversion"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
@@ -444,7 +445,7 @@ func main() {
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
-	locationService := location.NewService(rdb)
+	locationService := location.NewService(rdb, dbPool)
 	locationHandler := location.NewHandler(locationService, jwtVerificationKeys, dbPool, authRepo)
 
 	// Addresses.
@@ -493,12 +494,23 @@ func main() {
 	contentHandler.RegisterPublicRoutes(appGroup)
 	configHandler.RegisterPublicRoutes(appGroup)
 
+	// App version-check (public, so a forced client can always recover) plus a
+	// 426 force-update middleware applied to transactional routes below. Both
+	// read the admin-set policy in crm_app_versions. Optional updates never 426;
+	// they surface only through this endpoint as a dismissable prompt.
+	appVersionSvc := appversion.NewService(dbPool)
+	appversion.NewHandler(appVersionSvc).RegisterPublicRoutes(appGroup)
+	appVersionMW := appVersionSvc.Middleware()
+
 	// Phase 7 shift system. Notifier wraps notification.Service via a
 	// thin adapter (PushClient interface) so the shift package stays
 	// decoupled from the FCM-specific return types.
 	shiftRepo := shift.NewRepository(dbPool)
 	shiftService := shift.NewService(shiftRepo)
 	shiftService.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notificationService}))
+	// Customer-facing side effect of a pro cancellation. Refund + auto
+	// re-dispatch are intentionally deferred (product decision).
+	shiftService.SetCancelHooks(notificationService)
 	shiftHandler := shift.NewHandler(shiftService)
 	shiftCron := shift.NewCron(shiftService)
 	shiftCron.Start(context.Background())
@@ -519,7 +531,7 @@ func main() {
 	authLimiter := mw.RateLimiter(rdb, mw.AuthRateLimit, "user")
 
 	// Booking routes (requires JWT).
-	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
+	bookingGroup := api.Group("/bookings", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	bookingIdem := mw.Idempotency(rdb, 60*time.Second, 10*time.Minute)
 	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
 	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter, proApprovedMW)
@@ -545,11 +557,11 @@ func main() {
 	servicesHandler.RegisterPublicRoutes(servicesGroup)
 
 	// Cart routes (requires JWT).
-	cartGroup := api.Group("/cart", authMiddleware, authLimiter, dbBoundLimiter)
+	cartGroup := api.Group("/cart", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	cartHandler.RegisterRoutes(cartGroup)
 
 	// Offers routes (requires JWT).
-	offersGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
+	offersGroup := api.Group("", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	offers.NewHandler(dbPool).RegisterRoutes(offersGroup)
 
 	// Disputes routes (requires JWT — customer files, CRM resolves).
@@ -679,6 +691,8 @@ func main() {
 	leaveCRMNotifier := &leave.RecorderCRMNotifier{Recorder: crmNotifRecorder}
 	leaveSvc := leave.NewService(leaveRepo, leaveCRMNotifier, leaveCustNotifier)
 	leaveSvc.SetWebhooks(webhookDispatcher)
+	// Notify the replacement pro they were force-assigned a booking.
+	leaveSvc.SetProNotifier(&leave.ProNotifierAdapter{Sender: notificationService})
 	leaveHandler := leave.NewHandler(leaveSvc)
 	// Leave routes: chain RequireRole("pro") + RequireApproved.
 	// Audit A1-F7 (leave routes lacked role gate) + A1-F3 (approval
@@ -711,7 +725,12 @@ func main() {
 	// surface so existing app builds keep working.
 	bookingService.SetNotifier(&bookingNotifierAdapter{n: notificationService})
 	jobsHandler := booking.NewJobsHandler(bookingService)
-	jobsHandler.RegisterRoutes(proGroup.Group("/jobs"))
+	// Mount the idempotency middleware on the pro job-lifecycle group so the
+	// app's automatic timeout-retry (apiFetch reuses the same Idempotency-Key
+	// across its internal retries) replays the cached 2xx instead of
+	// re-executing a non-idempotent accept/complete — the "accept succeeded
+	// yet reports 'offer expired'" race. GET routes carry no key and no-op.
+	jobsHandler.RegisterRoutes(proGroup.Group("/jobs", bookingIdem))
 	contentHandler.RegisterAdminContentRoutes(adminGroup)
 	configHandler.RegisterAdminRoutes(adminGroup)
 	zonesHandler.RegisterAdminRoutes(adminGroup.Group("/zones"))

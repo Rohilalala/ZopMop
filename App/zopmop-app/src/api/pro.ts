@@ -26,6 +26,10 @@ export interface HelperBooking {
   lat: number;
   lng: number;
   price_paise: number;
+  /** What the PRO earns for this job (snapshot at completion). The pro
+   *  UI must show this, never price_paise (the customer's gross, which
+   *  is 4–6× higher). 0/absent until the job completes. */
+  pro_earnings_paise?: number;
   promo_code?: string | null;
   discount_paise: number;
   created_at: string;

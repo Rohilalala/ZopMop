@@ -7,6 +7,7 @@ package zoneapprovals
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/rs/zerolog/log"
@@ -74,6 +75,13 @@ func (h *Handler) Reject(c *fiber.Ctx) error {
 	adminID, _ := c.Locals("crmAdminID").(string)
 	var req rejectRequest
 	_ = c.BodyParser(&req)
+	// A rejection on an audit-logged compliance surface must carry a real
+	// reason. The SPA enforces min-5-chars; mirror it server-side so a
+	// direct API call cannot reject with empty/1-char notes (stored as NULL
+	// via NULLIF), leaving an unauditable rejection.
+	if len(strings.TrimSpace(req.Notes)) < 5 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "notes required (min 5 characters)"})
+	}
 	if err := h.svc.RejectZoneRequest(c.UserContext(), id, adminID, req.Notes); err != nil {
 		if errors.Is(err, shift.ErrAlreadyReviewed) {
 			// Admin race / stale UI — no state change, no audit, no push.

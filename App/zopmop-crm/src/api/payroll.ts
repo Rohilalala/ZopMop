@@ -46,7 +46,7 @@ export const payrollKeys = {
 };
 
 export async function getWorkerPayouts(workerId: string): Promise<WorkerPayoutSummary> {
-  const { data } = await api.get<WorkerPayoutSummary>(`/workers/${workerId}/payroll-payouts`);
+  const { data } = await api.get<WorkerPayoutSummary>(`/admin/workers/${workerId}/payroll-payouts`);
   // Defensive: backend returns recent_payouts as an array; never undefined.
   return {
     ...data,
@@ -58,17 +58,17 @@ export async function markPayoutPaid(
   id: string,
   body: { paid_at?: string; notes?: string },
 ): Promise<Payout> {
-  const { data } = await api.post<Payout>(`/payroll/payouts/${id}/mark-paid`, body);
+  const { data } = await api.post<Payout>(`/admin/payroll/payouts/${id}/mark-paid`, body);
   return data;
 }
 
 export async function markPayoutFailed(id: string, reason: string): Promise<Payout> {
-  const { data } = await api.post<Payout>(`/payroll/payouts/${id}/mark-failed`, { reason });
+  const { data } = await api.post<Payout>(`/admin/payroll/payouts/${id}/mark-failed`, { reason });
   return data;
 }
 
 export async function recomputePayout(id: string): Promise<Payout> {
-  const { data } = await api.post<Payout>(`/payroll/payouts/${id}/recompute`);
+  const { data } = await api.post<Payout>(`/admin/payroll/payouts/${id}/recompute`);
   return data;
 }
 
@@ -113,7 +113,7 @@ export const performanceKeys = {
 };
 
 export async function getWorkerPerformance(workerId: string): Promise<WorkerPerformance> {
-  const { data } = await api.get<WorkerPerformance>(`/workers/${workerId}/performance`);
+  const { data } = await api.get<WorkerPerformance>(`/admin/workers/${workerId}/performance`);
   return { ...data, open_flags: data.open_flags ?? [] };
 }
 
@@ -124,6 +124,6 @@ export async function reviewFlag(
   action: FlagReviewAction,
   notes?: string,
 ): Promise<HelperFlag> {
-  const { data } = await api.post<HelperFlag>(`/payroll/flags/${id}/review`, { action, notes });
+  const { data } = await api.post<HelperFlag>(`/admin/payroll/flags/${id}/review`, { action, notes });
   return data;
 }

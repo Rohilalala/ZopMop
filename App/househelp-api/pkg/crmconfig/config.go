@@ -28,27 +28,29 @@ type JWTSecretEntry struct {
 type Config struct {
 	Port                 string
 	Env                  string
-	DatabaseURL          string         // Primary (read-write) DSN — same instance as user app.
-	DatabaseReadURL      string         // Optional read-replica DSN; falls back to DatabaseURL.
+	DatabaseURL          string // Primary (read-write) DSN — same instance as user app.
+	DatabaseReadURL      string // Optional read-replica DSN; falls back to DatabaseURL.
 	RedisURL             string
-	RedisNamespace       string         // Key prefix to isolate from user app (default "crm:").
+	RedisNamespace       string // Key prefix to isolate from user app (default "crm:").
 	DBPoolMinConns       int32
-	DBPoolMaxConns       int32          // Capped low (CRM has few admins) so we never starve user-app pool.
+	DBPoolMaxConns       int32 // Capped low (CRM has few admins) so we never starve user-app pool.
 	DBPoolMaxConnLife    time.Duration
 	DBPoolMaxConnIdle    time.Duration
 	DBPoolHealthCheck    time.Duration
-	JWTSecret            string             // Distinct from user-app JWT_SECRET.
+	JWTSecret            string // Distinct from user-app JWT_SECRET.
 	JWTSecretID          string
-	JWTPreviousSecrets   []JWTSecretEntry   // CRM_JWT_PREVIOUS_SECRETS rotation set.
-	AccessTokenTTL       time.Duration  // 4h per spec.
-	RefreshTokenTTL      time.Duration  // 30d default.
+	JWTPreviousSecrets   []JWTSecretEntry // CRM_JWT_PREVIOUS_SECRETS rotation set.
+	AccessTokenTTL       time.Duration    // 4h per spec.
+	RefreshTokenTTL      time.Duration    // 30d default.
 	TOTPIssuer           string
 	RefreshCookieDomain  string
 	RefreshCookieSecure  bool
 	AllowedOrigins       []string
-	LockoutThreshold     int            // Failed attempts before lockout.
+	LockoutThreshold     int // Failed attempts before lockout.
 	LockoutDuration      time.Duration
-	AppAPIURL            string         // Base URL of user-facing API for health probe (e.g. https://api.zopmop.com). Empty → probe returns "unknown".
+	LoginRateLimitMax    int           // Per-IP cap on /login + /totp/verify.
+	LoginRateLimitWindow time.Duration // Window for the login per-IP cap.
+	AppAPIURL            string        // Base URL of user-facing API for health probe (e.g. https://api.zopmop.com). Empty → probe returns "unknown".
 }
 
 // IsDevelopment reports whether the service is running in dev mode.
@@ -64,27 +66,29 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:                getEnvOr("CRM_API_PORT", "8090"),
-		Env:                 getEnvOr("ENV", "production"),
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
-		DatabaseReadURL:     os.Getenv("CRM_DATABASE_READ_URL"),
-		RedisURL:            os.Getenv("REDIS_URL"),
-		RedisNamespace:      getEnvOr("CRM_REDIS_NAMESPACE", "crm:"),
-		DBPoolMinConns:      int32(getEnvInt("CRM_DB_POOL_MIN_CONNS", 2)),
-		DBPoolMaxConns:      int32(getEnvInt("CRM_DB_POOL_MAX_CONNS", 15)),
-		DBPoolMaxConnLife:   time.Duration(getEnvInt("CRM_DB_POOL_MAX_CONN_LIFETIME_MINUTES", 20)) * time.Minute,
-		DBPoolMaxConnIdle:   time.Duration(getEnvInt("CRM_DB_POOL_MAX_CONN_IDLE_MINUTES", 5)) * time.Minute,
-		DBPoolHealthCheck:   time.Duration(getEnvInt("CRM_DB_POOL_HEALTHCHECK_SECONDS", 60)) * time.Second,
-		JWTSecret:           strings.TrimSpace(os.Getenv("CRM_JWT_SECRET")),
-		JWTSecretID:         getEnvOr("CRM_JWT_SECRET_ID", "crm-active"),
-		AccessTokenTTL:      time.Duration(getEnvInt("CRM_ACCESS_TOKEN_TTL_MINUTES", 240)) * time.Minute,
-		RefreshTokenTTL:     time.Duration(getEnvInt("CRM_REFRESH_TOKEN_TTL_HOURS", 24*30)) * time.Hour,
-		TOTPIssuer:          getEnvOr("CRM_TOTP_ISSUER", "Zopmop CRM"),
-		RefreshCookieDomain: os.Getenv("CRM_REFRESH_COOKIE_DOMAIN"),
-		RefreshCookieSecure: getEnvBool("CRM_REFRESH_COOKIE_SECURE", true),
-		LockoutThreshold:    getEnvInt("CRM_LOCKOUT_THRESHOLD", 5),
-		LockoutDuration:     time.Duration(getEnvInt("CRM_LOCKOUT_DURATION_MINUTES", 15)) * time.Minute,
-		AppAPIURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("APP_API_URL")), "/"),
+		Port:                 getEnvOr("CRM_API_PORT", "8090"),
+		Env:                  getEnvOr("ENV", "production"),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		DatabaseReadURL:      os.Getenv("CRM_DATABASE_READ_URL"),
+		RedisURL:             os.Getenv("REDIS_URL"),
+		RedisNamespace:       getEnvOr("CRM_REDIS_NAMESPACE", "crm:"),
+		DBPoolMinConns:       int32(getEnvInt("CRM_DB_POOL_MIN_CONNS", 2)),
+		DBPoolMaxConns:       int32(getEnvInt("CRM_DB_POOL_MAX_CONNS", 15)),
+		DBPoolMaxConnLife:    time.Duration(getEnvInt("CRM_DB_POOL_MAX_CONN_LIFETIME_MINUTES", 20)) * time.Minute,
+		DBPoolMaxConnIdle:    time.Duration(getEnvInt("CRM_DB_POOL_MAX_CONN_IDLE_MINUTES", 5)) * time.Minute,
+		DBPoolHealthCheck:    time.Duration(getEnvInt("CRM_DB_POOL_HEALTHCHECK_SECONDS", 60)) * time.Second,
+		JWTSecret:            strings.TrimSpace(os.Getenv("CRM_JWT_SECRET")),
+		JWTSecretID:          getEnvOr("CRM_JWT_SECRET_ID", "crm-active"),
+		AccessTokenTTL:       time.Duration(getEnvInt("CRM_ACCESS_TOKEN_TTL_MINUTES", 240)) * time.Minute,
+		RefreshTokenTTL:      time.Duration(getEnvInt("CRM_REFRESH_TOKEN_TTL_HOURS", 24*30)) * time.Hour,
+		TOTPIssuer:           getEnvOr("CRM_TOTP_ISSUER", "Zopmop CRM"),
+		RefreshCookieDomain:  os.Getenv("CRM_REFRESH_COOKIE_DOMAIN"),
+		RefreshCookieSecure:  getEnvBool("CRM_REFRESH_COOKIE_SECURE", true),
+		LockoutThreshold:     getEnvInt("CRM_LOCKOUT_THRESHOLD", 5),
+		LockoutDuration:      time.Duration(getEnvInt("CRM_LOCKOUT_DURATION_MINUTES", 15)) * time.Minute,
+		LoginRateLimitMax:    getEnvInt("CRM_LOGIN_RATELIMIT_MAX", 5),
+		LoginRateLimitWindow: time.Duration(getEnvInt("CRM_LOGIN_RATELIMIT_WINDOW_MINUTES", 15)) * time.Minute,
+		AppAPIURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("APP_API_URL")), "/"),
 	}
 
 	prevSecrets, err := parseCRMJWTPreviousSecrets(os.Getenv("CRM_JWT_PREVIOUS_SECRETS"))

@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
 import { haptics } from '../../utils/haptics';
@@ -46,7 +46,7 @@ export default function OTPVerificationScreen({ navigation, route }: Props) {
   const { phone, isNewUser = false } = route.params;
   const { signIn } = useAuth();
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));

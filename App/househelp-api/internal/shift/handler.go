@@ -189,6 +189,9 @@ func (h *Handler) ApproveZoneRequest(c *fiber.Ctx) error {
 	adminID, _ := c.Locals(middleware.LocalsKeyUserID).(string)
 	id := c.Params("id")
 	if err := h.svc.ApproveZoneRequest(c.UserContext(), id, adminID); err != nil {
+		if errors.Is(err, ErrAlreadyReviewed) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return internalErr(c, "approve zone request", err)
 	}
 	return c.JSON(fiber.Map{"message": "approved"})
@@ -202,6 +205,9 @@ func (h *Handler) RejectZoneRequest(c *fiber.Ctx) error {
 	}
 	_ = c.BodyParser(&body)
 	if err := h.svc.RejectZoneRequest(c.UserContext(), id, adminID, body.Notes); err != nil {
+		if errors.Is(err, ErrAlreadyReviewed) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return internalErr(c, "reject zone request", err)
 	}
 	return c.JSON(fiber.Map{"message": "rejected"})
@@ -246,6 +252,8 @@ func mapShiftErr(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusPreconditionFailed).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, ErrBookingNotOwnedByPro):
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, ErrBookingNotCancellable):
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 	default:
 		return internalErr(c, "shift op", err)
 	}

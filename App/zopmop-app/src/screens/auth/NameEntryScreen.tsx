@@ -17,7 +17,7 @@ import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
 import { updateMe } from '../../api/users';
 import { useAuth } from '../../context/AuthContext';
@@ -40,7 +40,7 @@ function sanitizeName(raw: string): string {
 export default function NameEntryScreen({ navigation, route }: Props) {
   const { token, updateUser } = useAuth();
   // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
-  const c = lightColors;
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);

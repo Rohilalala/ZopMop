@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
@@ -24,28 +25,28 @@ import (
 
 // LeaveRow is one row in the CRM leaves table.
 type LeaveRow struct {
-	ID                   string    `json:"id"`
-	ProID                string    `json:"pro_id"`
-	ProName              string    `json:"pro_name"`
-	ProPhone             string    `json:"pro_phone"`
-	Date                 time.Time `json:"date"`
-	DeclaredAt           time.Time `json:"declared_at"`
-	Status               string    `json:"status"`
-	Source               string    `json:"source"`
-	BookingsAffected     int       `json:"bookings_affected"`
-	ReassignmentOutcome  string    `json:"reassignment_outcome"`
-	CancelledBookingIDs  []string  `json:"cancelled_booking_ids"`
+	ID                  string    `json:"id"`
+	ProID               string    `json:"pro_id"`
+	ProName             string    `json:"pro_name"`
+	ProPhone            string    `json:"pro_phone"`
+	Date                time.Time `json:"date"`
+	DeclaredAt          time.Time `json:"declared_at"`
+	Status              string    `json:"status"`
+	Source              string    `json:"source"`
+	BookingsAffected    int       `json:"bookings_affected"`
+	ReassignmentOutcome string    `json:"reassignment_outcome"`
+	CancelledBookingIDs []string  `json:"cancelled_booking_ids"`
 }
 
 // Balance is the per-pro monthly balance row shown next to the table.
 type Balance struct {
-	ProID        string    `json:"pro_id"`
-	ProName      string    `json:"pro_name"`
-	ProPhone     string    `json:"pro_phone"`
-	Balance      int       `json:"balance"`
-	MonthlyQuota int       `json:"monthly_quota"`
-	UsedThisMonth int      `json:"used_this_month"`
-	ResetAt      time.Time `json:"reset_at"`
+	ProID         string    `json:"pro_id"`
+	ProName       string    `json:"pro_name"`
+	ProPhone      string    `json:"pro_phone"`
+	Balance       int       `json:"balance"`
+	MonthlyQuota  int       `json:"monthly_quota"`
+	UsedThisMonth int       `json:"used_this_month"`
+	ResetAt       time.Time `json:"reset_at"`
 }
 
 // AllocateRequest is the input to POST /pro/:id/leave/allocate.
@@ -56,11 +57,11 @@ type AllocateRequest struct {
 
 // ListFilters narrows the leaves listing.
 type ListFilters struct {
-	ProID    string
-	From     *time.Time
-	To       *time.Time
-	Limit    int
-	Offset   int
+	ProID  string
+	From   *time.Time
+	To     *time.Time
+	Limit  int
+	Offset int
 }
 
 // Repository handles all DB access.
@@ -112,7 +113,7 @@ func (r *Repository) List(ctx context.Context, f ListFilters) ([]LeaveRow, int, 
 
 	q := fmt.Sprintf(`
 		SELECT pl.id::text, pl.pro_id::text,
-		       COALESCE(u.name, ''), u.phone,
+		       COALESCE(u.name, ''), COALESCE(u.phone, '(deleted)'),
 		       pl.date, pl.declared_at, pl.status, pl.source,
 		       pl.bookings_affected, pl.reassignment_outcome,
 		       COALESCE(pl.cancelled_booking_ids::text[], '{}'::text[])
@@ -158,8 +159,8 @@ func (r *Repository) Balances(ctx context.Context, proID string) ([]Balance, err
 		         SELECT COUNT(*) FROM pro_leaves pl
 		         WHERE pl.pro_id = h.id
 		           AND pl.status = 'approved'
-		           AND pl.date >= date_trunc('month', now())
-		           AND pl.date <  date_trunc('month', now()) + INTERVAL '1 month'
+		           AND pl.date >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata')::date
+		           AND pl.date <  (date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata') + INTERVAL '1 month')::date
 		       ), 0) AS used_this_month
 		FROM helpers h
 		LEFT JOIN users u ON u.id = h.id AND u.deleted_at IS NULL
@@ -252,9 +253,10 @@ func NewHandler(svc *Service, recorder *audit.Recorder) *Handler {
 }
 
 // RegisterRoutes mounts:
-//   GET  /leaves                    — list w/ filters
-//   GET  /leaves/balances           — per-pro balance
-//   POST /pro/:id/leave/allocate    — allocate extra days (audited)
+//
+//	GET  /leaves                    — list w/ filters
+//	GET  /leaves/balances           — per-pro balance
+//	POST /pro/:id/leave/allocate    — allocate extra days (audited)
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	read := middleware.RequirePermission("leaves.read")
 	r.Get("/leaves", read, h.List)
@@ -266,6 +268,13 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 func (h *Handler) List(c *fiber.Ctx) error {
 	f := ListFilters{
 		ProID: c.Query("pro_id"),
+	}
+	// pro_id is cast to ::uuid in SQL — a partial / malformed value would
+	// 500. Reject it cleanly so a half-typed filter doesn't spam errors.
+	if f.ProID != "" {
+		if _, err := uuid.Parse(f.ProID); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid pro_id"})
+		}
 	}
 	if v := c.Query("from"); v != "" {
 		if t, err := time.Parse("2006-01-02", v); err == nil {
@@ -295,7 +304,13 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 // Balances handles GET /leaves/balances?pro_id=.
 func (h *Handler) Balances(c *fiber.Ctx) error {
-	out, err := h.svc.Balances(c.UserContext(), c.Query("pro_id"))
+	proID := c.Query("pro_id")
+	if proID != "" {
+		if _, err := uuid.Parse(proID); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid pro_id"})
+		}
+	}
+	out, err := h.svc.Balances(c.UserContext(), proID)
 	if err != nil {
 		log.Error().Err(err).Msg("[crm.leaves] balances failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})

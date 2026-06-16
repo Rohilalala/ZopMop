@@ -1,5 +1,13 @@
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
 import { reportBackendDown } from '../hooks/useBackendHealth';
 import { refreshAccessToken } from '../services/auth';
+
+/** Installed app version + platform, sent on every request so the backend can
+ *  enforce its min-version policy (force-update). Resolved once at module load. */
+export const CLIENT_VERSION = (Constants.expoConfig?.version as string | undefined) ?? '0.0.0';
+export const CLIENT_PLATFORM = Platform.OS; // 'ios' | 'android'
 
 // Global callbacks registered by AuthProvider on mount. apiFetch reads
 // the current access/refresh pair through these so it can attach the
@@ -30,6 +38,15 @@ export function triggerSignOut() {
   _signOut?.();
 }
 
+// Force-update hook. Registered by the app root; apiFetch calls it when any
+// request returns 426 Upgrade Required (a forced version policy), so a
+// force-update takes effect mid-session, not just at launch.
+export type ForceUpdateInfo = { message?: string; store_url?: string; min_version?: string };
+let _onForceUpdate: ((info: ForceUpdateInfo) => void) | null = null;
+export function registerForceUpdateCallback(fn: (info: ForceUpdateInfo) => void) {
+  _onForceUpdate = fn;
+}
+
 /** Default network timeout in milliseconds. */
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -52,19 +69,30 @@ function sleep(ms: number): Promise<void> {
 // Refresh mutex: under burst load (e.g. dashboard mounts 5 requests
 // in parallel) only one /refresh call should fire. The others wait
 // on this promise then retry with the freshly-rotated access token.
-let _refreshInFlight: Promise<string | null> | null = null;
+type RefreshOutcome = {
+  token: string | null;
+  /** True only when /auth/refresh authoritatively rejected the token
+   *  (401/403 — unknown / revoked / expired). 429s, 5xx and network
+   *  errors are NOT auth failures: signing out on those logged users
+   *  out whenever a refresh raced a backend restart or tripped the
+   *  per-IP rate limiter (the "makes me log in again" bug). */
+  authFailure: boolean;
+};
+let _refreshInFlight: Promise<RefreshOutcome> | null = null;
 
-async function attemptRefresh(): Promise<string | null> {
+async function attemptRefresh(): Promise<RefreshOutcome> {
   if (_refreshInFlight) return _refreshInFlight;
   const refresh = _getRefreshToken?.() ?? null;
-  if (!refresh) return null;
+  // No refresh token stored — authoritative: nothing to rotate with.
+  if (!refresh) return { token: null, authFailure: true };
   _refreshInFlight = (async () => {
     try {
       const out = await refreshAccessToken(refresh);
       _setTokens?.(out.access_token, out.refresh_token);
-      return out.access_token;
-    } catch {
-      return null;
+      return { token: out.access_token, authFailure: false };
+    } catch (e) {
+      const status = (e as { status?: number })?.status;
+      return { token: null, authFailure: status === 401 || status === 403 };
     } finally {
       _refreshInFlight = null;
     }
@@ -99,10 +127,15 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
   const incoming = (options?.headers ?? {}) as Record<string, string>;
   const hasRequestId = Object.keys(incoming).some((k) => k.toLowerCase() === 'x-request-id');
   const hasIdempotencyKey = Object.keys(incoming).some((k) => k.toLowerCase() === 'idempotency-key');
+  const hasClientVersion = Object.keys(incoming).some((k) => k.toLowerCase() === 'x-client-version');
   const baseHeaders: Record<string, string> = {
     ...incoming,
     ...(hasRequestId ? {} : { 'X-Request-ID': generateRequestId() }),
     ...(hasIdempotencyKey ? {} : { 'Idempotency-Key': generateIdempotencyKey() }),
+    // Version/platform on every request so the backend force-update gate can
+    // 426 a stale build. Don't clobber a caller that set its own version header.
+    ...(hasClientVersion ? {} : { 'X-Client-Version': CLIENT_VERSION }),
+    'X-Client-Platform': CLIENT_PLATFORM,
   };
 
   let refreshed = false;
@@ -117,6 +150,18 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
       const res = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(timeoutId);
 
+      // 426 Upgrade Required — a forced version policy. Surface the update
+      // screen and return; never retry (the build can't satisfy it).
+      if (res.status === 426) {
+        try {
+          const info = await res.clone().json();
+          _onForceUpdate?.({ message: info?.message, store_url: info?.store_url, min_version: info?.min_version });
+        } catch {
+          _onForceUpdate?.({});
+        }
+        return res;
+      }
+
       if (res.status >= 500 && res.status < 600 && attempt < MAX_RETRIES) {
         await sleep(RETRY_BACKOFF_MS[attempt]);
         continue;
@@ -125,16 +170,26 @@ export async function apiFetch(url: string, options?: RequestInit): Promise<Resp
       if (res.status === 401 && !refreshed) {
         // Try silent refresh once. Mutex inside attemptRefresh
         // collapses concurrent callers onto the same /refresh call.
-        const fresh = await attemptRefresh();
-        if (fresh) {
-          accessToken = fresh;
+        const outcome = await attemptRefresh();
+        if (outcome.token) {
+          accessToken = outcome.token;
           refreshed = true;
+          // Strip any caller-supplied Authorization header (the
+          // authHeaders(token) pattern ~19 api modules use) so the
+          // retry goes out with the freshly rotated token. Leaving it
+          // in place made withAuthHeader keep the expired token →
+          // guaranteed second 401 → global sign-out roughly daily.
+          for (const k of Object.keys(baseHeaders)) {
+            if (k.toLowerCase() === 'authorization') delete baseHeaders[k];
+          }
           // Retry the original request immediately (does not count
           // against the 5xx-retry budget).
           continue;
         }
-        // Refresh failed → sign out globally.
-        _signOut?.();
+        // Sign out ONLY when the server authoritatively rejected the
+        // refresh token. A 429 / 5xx / network blip during refresh is
+        // transient — keep the session; the next request retries.
+        if (outcome.authFailure) _signOut?.();
         return res;
       }
 

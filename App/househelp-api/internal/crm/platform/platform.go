@@ -66,12 +66,14 @@ type Ticket struct {
 }
 
 type AppVersion struct {
-	ID           string    `json:"id"`
-	Platform     string    `json:"platform"`
-	MinVersion   string    `json:"min_version"`
-	ForceUpdate  bool      `json:"force_update"`
-	ForceMessage *string   `json:"force_message,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	Platform        string    `json:"platform"`
+	MinVersion      string    `json:"min_version"`
+	ForceUpdate     bool      `json:"force_update"`
+	ForceMessage    *string   `json:"force_message,omitempty"`
+	IOSStoreURL     *string   `json:"ios_store_url,omitempty"`
+	AndroidStoreURL *string   `json:"android_store_url,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type ChangelogEntry struct {
@@ -287,7 +289,8 @@ func (s *Service) ResolveTicket(ctx context.Context, id string) error {
 
 func (s *Service) ListAppVersions(ctx context.Context) ([]AppVersion, error) {
 	rows, err := s.read.Query(ctx, `
-		SELECT id::text, platform, min_version, force_update, force_message, created_at
+		SELECT id::text, platform, min_version, force_update, force_message,
+		       ios_store_url, android_store_url, created_at
 		FROM crm_app_versions ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -297,7 +300,8 @@ func (s *Service) ListAppVersions(ctx context.Context) ([]AppVersion, error) {
 	out := []AppVersion{}
 	for rows.Next() {
 		var v AppVersion
-		if err := rows.Scan(&v.ID, &v.Platform, &v.MinVersion, &v.ForceUpdate, &v.ForceMessage, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.Platform, &v.MinVersion, &v.ForceUpdate, &v.ForceMessage,
+			&v.IOSStoreURL, &v.AndroidStoreURL, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -306,10 +310,12 @@ func (s *Service) ListAppVersions(ctx context.Context) ([]AppVersion, error) {
 }
 
 type AppVersionRequest struct {
-	Platform     string `json:"platform"`
-	MinVersion   string `json:"min_version"`
-	ForceUpdate  bool   `json:"force_update"`
-	ForceMessage string `json:"force_message"`
+	Platform        string `json:"platform"`
+	MinVersion      string `json:"min_version"`
+	ForceUpdate     bool   `json:"force_update"`
+	ForceMessage    string `json:"force_message"`
+	IOSStoreURL     string `json:"ios_store_url"`
+	AndroidStoreURL string `json:"android_store_url"`
 }
 
 func (s *Service) SetAppVersion(ctx context.Context, req AppVersionRequest, createdBy string) (string, error) {
@@ -318,10 +324,12 @@ func (s *Service) SetAppVersion(ctx context.Context, req AppVersionRequest, crea
 	}
 	id := ""
 	err := s.write.QueryRow(ctx, `
-		INSERT INTO crm_app_versions (platform, min_version, force_update, force_message, created_by)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::uuid)
+		INSERT INTO crm_app_versions (platform, min_version, force_update, force_message,
+		                              ios_store_url, android_store_url, created_by)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, '')::uuid)
 		RETURNING id::text
-	`, req.Platform, req.MinVersion, req.ForceUpdate, req.ForceMessage, createdBy).Scan(&id)
+	`, req.Platform, req.MinVersion, req.ForceUpdate, req.ForceMessage,
+		req.IOSStoreURL, req.AndroidStoreURL, createdBy).Scan(&id)
 	return id, err
 }
 
@@ -379,8 +387,10 @@ func (s *Service) ListAudit(ctx context.Context, module, action, adminEmail stri
 		conds = append(conds, fmt.Sprintf("module = $%d", len(args)))
 	}
 	if action != "" {
-		args = append(args, action)
-		conds = append(conds, fmt.Sprintf("action = $%d", len(args)))
+		// Substring match — the UI prompts admins to type a bare verb
+		// (e.g. "cancel"), not the full dotted action string.
+		args = append(args, "%"+action+"%")
+		conds = append(conds, fmt.Sprintf("action ILIKE $%d", len(args)))
 	}
 	if adminEmail != "" {
 		args = append(args, adminEmail)

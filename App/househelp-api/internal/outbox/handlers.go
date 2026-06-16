@@ -55,9 +55,11 @@ func BookingHandlers(notif bookingNotifier, db *pgxpool.Pool) map[string]Handler
 				return fmt.Errorf("booking.accepted: unmarshal: %w", err)
 			}
 			// Resolve helper name from DB for the "X is on their way" message.
+			// The name lives on users.name — helpers has no full_name column
+			// (helpers.id IS users.id), so the old query 42703'd every event.
 			var helperName string
 			if err := db.QueryRow(ctx,
-				`SELECT COALESCE(full_name, '') FROM helpers WHERE id = $1`, p.HelperID,
+				`SELECT COALESCE(name, '') FROM users WHERE id = $1`, p.HelperID,
 			).Scan(&helperName); err != nil {
 				return fmt.Errorf("booking.accepted: lookup helper name: %w", err)
 			}

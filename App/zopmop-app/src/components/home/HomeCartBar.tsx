@@ -92,6 +92,8 @@ export function HomeCartBar({ selectedAddressId }: Props) {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 12,
+          // Solid brand amber — primary CTA stays opaque (tinted glass read
+          // muddy over dark content; Apple keeps prominent CTAs solid too).
           backgroundColor: '#F5A300',
           shadowColor: '#F5A300',
           shadowOffset: { width: 0, height: 14 },
