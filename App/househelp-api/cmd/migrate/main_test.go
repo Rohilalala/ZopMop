@@ -97,6 +97,13 @@ func TestMigrate_UpReturnsNoChangeAtCurrent(t *testing.T) {
 
 func TestMigrate_BaselineIdempotent(t *testing.T) {
 	m := openMigrate(t)
+	// Capture the entry version and restore it on exit. Force(baselineVersion)
+	// below pins schema_migrations down to the baseline; on a persistent dev
+	// DB that would make a later Up replay already-applied (non-idempotent)
+	// migrations — leaving the shared-DB suite non-idempotent across runs.
+	if startV, _, verr := m.Version(); verr == nil {
+		t.Cleanup(func() { _ = m.Force(int(startV)) })
+	}
 	// Calling Force(baselineVersion) repeatedly is benign — the row
 	// is rewritten with the same value. The CLI's `baseline`
 	// subcommand short-circuits when version >= baselineVersion to
