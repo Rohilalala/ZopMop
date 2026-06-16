@@ -74,21 +74,6 @@ func (e *Engine) RemoveHelperInvites(ctx context.Context, helperID string, booki
 	}
 }
 
-// GetBookingMatches returns the helpers matched to a specific booking.
-// Used by admin and for debugging.
-func (e *Engine) GetBookingMatches(ctx context.Context, bookingID string) ([]HelperMatch, error) {
-	key := fmt.Sprintf(matchBookingKeyFmt, bookingID)
-	data, err := e.rdb.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, fmt.Errorf("no match data for booking %s: %w", bookingID, err)
-	}
-	var matches []HelperMatch
-	if err := json.Unmarshal(data, &matches); err != nil {
-		return nil, fmt.Errorf("corrupt match data for booking %s: %w", bookingID, err)
-	}
-	return matches, nil
-}
-
 // ClearMatchOnAccept removes match entries once a helper accepts, so other
 // helpers stop seeing the booking as available.  Called by the booking service.
 func (e *Engine) ClearMatchOnAccept(ctx context.Context, bookingID string, acceptedHelperID string) {

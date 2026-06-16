@@ -1689,16 +1689,7 @@ func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID stri
 		return &MatchStatusResponse{Status: "failed", BookingStatus: bookingStatus}, nil
 	}
 
-	// Booking not yet accepted. Check if it's still in the match window via Redis.
-	if s.matchEngine != nil {
-		matches, _ := s.matchEngine.GetBookingMatches(ctx, bookingID)
-		if len(matches) > 0 {
-			// Helpers have been notified but none accepted yet.
-			return &MatchStatusResponse{Status: "searching"}, nil
-		}
-	}
-
-	// Still pending with no Redis data — matching window may have expired.
+	// Booking not yet accepted — matching window may have expired.
 	createdAt := booking.CreatedAt
 	if time.Since(createdAt) > 120*time.Second {
 		return &MatchStatusResponse{Status: "failed"}, nil

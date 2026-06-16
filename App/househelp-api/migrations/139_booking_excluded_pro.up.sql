@@ -4,8 +4,10 @@
 -- Renumbered 135 → 139 to clear a cross-branch collision: branch
 -- fix/pro-crm-audit-sweep also ships migrations 131–135 with different content.
 -- Per the agreed merge order (audit branch first), the unified-slot-dispatch
--- migrations move above the audit branch's head (135), so this file and its
--- siblings now occupy 136–139; this one follows 138_assigner_clash_arrived.
+-- migrations move above the audit branch's head (135): the assigner migrations
+-- occupy 137–139 (the old 136 was dropped in the capacity dedupe, with
+-- slot_capacity landing at 141 and its config keys at 142), so this file
+-- follows 138_assigner_clash_arrived.
 -- Idempotent (IF NOT EXISTS) so a DB already at the old head re-runs it safely.
 --
 -- When a pro cancels an assigned booking or declares leave, the booking returns

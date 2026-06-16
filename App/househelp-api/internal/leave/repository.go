@@ -211,56 +211,6 @@ func (r *Repository) ListProBookingsOnDate(ctx context.Context, proID string, da
 	return out, rows.Err()
 }
 
-// FindReplacementPro returns the id of an active pro with no conflicting
-// scheduled booking in the same time slot, no leave on that date, and
-// supporting the same service category. Returns empty string + nil when no
-// match.
-func (r *Repository) FindReplacementPro(ctx context.Context, excludeProID, timeSlotID string, date time.Time) (string, error) {
-	var id string
-	// role is 'pro' (renamed from 'helper' in migration 019); the old
-	// literal matched nobody. The service-category param was dropped —
-	// pros are general-purpose in this model (the matching engine filters
-	// pros by zone/availability, not by service category), and the
-	// previous query bound a $2 it never referenced, failing pgx prepare
-	// with 42P18 on every leave reassignment.
-	err := r.pool.QueryRow(ctx, `
-		SELECT u.id
-		FROM users u
-		JOIN helpers h ON h.id = u.id
-		WHERE u.role = 'pro'
-		  AND u.id <> $1
-		  AND h.is_available = true
-		  AND NOT EXISTS (
-		      SELECT 1 FROM pro_leaves pl
-		      WHERE pl.pro_id = u.id AND pl.date = $3 AND pl.status = 'approved'
-		  )
-		  AND NOT EXISTS (
-		      SELECT 1 FROM bookings b
-		      WHERE b.helper_id = u.id
-		        AND b.time_slot_id = $2
-		        AND b.status IN ('pending', 'accepted')
-		  )
-		ORDER BY h.rating DESC NULLS LAST, h.total_jobs DESC
-		LIMIT 1
-	`, excludeProID, timeSlotID, date).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	return id, err
-}
-
-// ReassignBooking updates the helper_id on a booking. Caller passes the new
-// pro id; status stays 'accepted' (assumes original was assigned).
-func (r *Repository) ReassignBooking(ctx context.Context, bookingID, newProID string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE bookings
-		SET helper_id = $2,
-		    updated_at = now()
-		WHERE id = $1
-	`, bookingID, newProID)
-	return err
-}
-
 // UnassignBooking returns an assigned booking to the assigner (spec §7,
 // migration 135): clears the on-leave pro, resets the row to 'pending', wipes
 // matched_at so the claim index re-picks it, and stamps excluded_pro_id so the
@@ -277,77 +227,6 @@ func (r *Repository) UnassignBooking(ctx context.Context, bookingID, excludedPro
 		WHERE id = $1 AND status = 'accepted'
 	`, bookingID, excludedProID)
 	return err
-}
-
-// CancelBookingNoCoverage marks a booking cancelled because no replacement
-// pro was available.
-func (r *Repository) CancelBookingNoCoverage(ctx context.Context, bookingID string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE bookings
-		SET status = 'cancelled',
-		    cancelled_at = now(),
-		    updated_at = now()
-		WHERE id = $1
-	`, bookingID)
-	return err
-}
-
-// NearestOpenSlot describes one suggested alternative slot offered to the
-// customer when their booking gets cancelled.
-type NearestOpenSlot struct {
-	SlotID    string    `json:"slot_id"`
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"`
-}
-
-// FindNearestOpenSlots returns up to `limit` time slots starting on/after
-// `from` that have at least one helper available (active, not on leave,
-// no conflicting booking) — used in the cancellation push notification.
-func (r *Repository) FindNearestOpenSlots(ctx context.Context, serviceCategoryID string, from time.Time, limit int) ([]NearestOpenSlot, error) {
-	if limit <= 0 || limit > 10 {
-		limit = 3
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT ts.id,
-		       (ts.slot_date::timestamp + ts.start_time)::timestamptz,
-		       (ts.slot_date::timestamp + ts.end_time)::timestamptz
-		FROM time_slots ts
-		WHERE ts.is_active = true
-		  AND ts.current_bookings < ts.max_bookings
-		  AND (ts.slot_date::timestamp + ts.start_time)::timestamptz >= $1
-		  AND EXISTS (
-		      SELECT 1
-		      FROM users u
-		      JOIN helpers h ON h.id = u.id
-		      WHERE u.role = 'pro'
-		        AND h.is_available = true
-		        AND NOT EXISTS (
-		            SELECT 1 FROM pro_leaves pl
-		            WHERE pl.pro_id = u.id AND pl.date = ts.slot_date AND pl.status = 'approved'
-		        )
-		        AND NOT EXISTS (
-		            SELECT 1 FROM bookings b
-		            WHERE b.helper_id = u.id
-		              AND b.time_slot_id = ts.id
-		              AND b.status IN ('pending', 'accepted')
-		        )
-		  )
-		ORDER BY (ts.slot_date::timestamp + ts.start_time) ASC
-		LIMIT $2
-	`, from, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []NearestOpenSlot{}
-	for rows.Next() {
-		var s NearestOpenSlot
-		if err := rows.Scan(&s.SlotID, &s.StartTime, &s.EndTime); err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, rows.Err()
 }
 
 // ResetExpiredBalances refills leave_balance to monthly_leave_quota for every

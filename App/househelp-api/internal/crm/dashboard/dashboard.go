@@ -89,9 +89,13 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 			// state. There is no 'assigned'/'en_route' booking status in the CHECK
 			// constraint (migrations 004/054) — listing them counted nothing while
 			// dropping the entire 'accepted' bucket, i.e. every assigned-but-not-
-			// started job.
+			// started job. 'searching' is defensively included too: the unified
+			// flow no longer produces it (booking/model.go marks it legacy), but
+			// in-flight develop bookings created before cutover can still be
+			// 'searching' — counting it keeps those transition rows from being
+			// under-counted as active orders.
 			`SELECT COUNT(*) FROM bookings
-			 WHERE status IN ('pending','accepted','in_progress','arrived')`,
+			 WHERE status IN ('pending','searching','accepted','arrived','in_progress')`,
 			&out.ActiveOrders,
 		},
 		{

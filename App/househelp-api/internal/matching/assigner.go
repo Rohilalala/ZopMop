@@ -129,7 +129,7 @@ type assignerBooking struct {
 	Lat             float64
 	Lng             float64
 	// ExcludedProID is the pro that just cancelled/went on leave on this booking
-	// (bookings.excluded_pro_id, migration 135). EligibleCandidates skips them so
+	// (bookings.excluded_pro_id, migration 139). EligibleCandidates skips them so
 	// a re-dispatch isn't immediately re-offered to the same pro (spec §7). Empty
 	// when none.
 	ExcludedProID string
@@ -644,7 +644,7 @@ func (a *Assigner) AssignOne(ctx context.Context, bookingID, excludeProID string
 	cfg := a.cfg(ctx)
 
 	// A re-dispatch after a pro cancel/leave stamps bookings.excluded_pro_id
-	// (migration 135). The cron passes "" — the persisted column is the source of
+	// (migration 139). The cron passes "" — the persisted column is the source of
 	// truth — but a caller-supplied exclusion takes precedence when set (spec §7).
 	if excludeProID == "" {
 		excludeProID = b.ExcludedProID

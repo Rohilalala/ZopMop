@@ -60,7 +60,6 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Post("/", append(createChain, h.CreateBooking)...)
 	router.Post("/scheduled", append(createChain, h.CreateScheduledBooking)...)
 	router.Post("/instant", append(createChain, h.CreateInstantBooking)...)
-	router.Get("/helper/invites", append(proChain, h.GetHelperInvites)...)
 	router.Get("/helper/active", append(proChain, h.GetHelperActive)...)
 	router.Get("/helper/today", append(proChain, h.GetHelperToday)...)
 	router.Get("/", h.GetBookings)
@@ -679,20 +678,6 @@ func (h *Handler) GetMatchStatus(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(resp)
-}
-
-// GetHelperInvites handles GET /bookings/helper/invites.
-// Pros poll this to see which pending booking IDs they have been invited to accept.
-func (h *Handler) GetHelperInvites(c *fiber.Ctx) error {
-	helperID, _ := c.Locals("userID").(string)
-
-	bookingIDs, err := h.service.GetHelperInvites(c.UserContext(), helperID)
-	if err != nil {
-		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get helper invites")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to get invites"})
-	}
-
-	return c.JSON(fiber.Map{"booking_ids": bookingIDs})
 }
 
 // GetHelperActive handles GET /bookings/helper/active.
