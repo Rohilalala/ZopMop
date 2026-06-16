@@ -29,6 +29,7 @@ const LiveMapPage       = lazy(() => import('./pages/LiveMapPage').then(m => ({ 
 const OrdersPage        = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const RefundsPage       = lazy(() => import('./pages/RefundsPage').then(m => ({ default: m.RefundsPage })));
 const PromosPage        = lazy(() => import('./pages/PromosPage').then(m => ({ default: m.PromosPage })));
+const CatalogPage       = lazy(() => import('./pages/CatalogPage').then(m => ({ default: m.CatalogPage })));
 const BannersPage       = lazy(() => import('./pages/BannersPage').then(m => ({ default: m.BannersPage })));
 const ExperimentsPage   = lazy(() => import('./pages/ExperimentsPage').then(m => ({ default: m.ExperimentsPage })));
 const AnalyticsPage     = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
@@ -69,6 +70,7 @@ export function App() {
           <Route path="/leaves"      element={<LeavesPage />} />
           <Route path="/map"         element={<LiveMapPage />} />
           <Route path="/promos"      element={<PromosPage />} />
+          <Route path="/catalog"     element={<CatalogPage />} />
           <Route path="/banners"     element={<BannersPage />} />
           <Route path="/experiments" element={<ExperimentsPage />} />
           <Route path="/push"        element={<PushPage />} />

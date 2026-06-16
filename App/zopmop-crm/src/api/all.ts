@@ -355,7 +355,7 @@ export type WebhookDelivery = {
 };
 export type Template = { id: string; category: string; name: string; body: string; created_at: string };
 export type Ticket = { id: string; user_id?: string | null; subject: string; body: string; status: string; priority: string; assigned_to?: string | null; resolved_at?: string | null; created_at: string };
-export type AppVersion = { id: string; platform: string; min_version: string; force_update: boolean; force_message?: string | null; created_at: string };
+export type AppVersion = { id: string; platform: string; min_version: string; force_update: boolean; force_message?: string | null; ios_store_url?: string | null; android_store_url?: string | null; created_at: string };
 export type ChangelogEntry = { id: string; version: string; body: string; is_published: boolean; published_at?: string | null; created_at: string };
 export type AuditRow = { id: number; admin_email?: string | null; action: string; module: string; target_type?: string | null; target_id?: string | null; before?: unknown; after?: unknown; ip_address?: string | null; created_at: string };
 export const platformApi = {
@@ -375,7 +375,7 @@ export const platformApi = {
   resolveTicket: (id: string) => api.post(`/admin/support/${id}/resolve`),
 
   listAppVersions: () => api.get<{ items: AppVersion[] }>('/admin/app-versions').then(r => r.data.items),
-  setAppVersion: (body: { platform: string; min_version: string; force_update: boolean; force_message?: string }) => api.post('/admin/app-versions', body),
+  setAppVersion: (body: { platform: string; min_version: string; force_update: boolean; force_message?: string; ios_store_url?: string; android_store_url?: string }) => api.post('/admin/app-versions', body),
 
   listChangelog: () => api.get<{ items: ChangelogEntry[] }>('/admin/changelog').then(r => r.data.items),
   createChangelog: (body: { version: string; body: string; is_published: boolean }) => api.post('/admin/changelog', body),

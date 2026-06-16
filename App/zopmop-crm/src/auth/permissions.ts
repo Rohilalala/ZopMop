@@ -38,6 +38,10 @@ export const PERMISSIONS = {
   'promos.update': 'admin',
   'promos.toggle': 'admin',
 
+  // catalog (service prices / MRP / active toggle)
+  'catalog.read': 'viewer',
+  'catalog.update': 'admin',
+
   // banners
   'banners.create': 'admin',
   'banners.update': 'admin',
