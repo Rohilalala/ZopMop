@@ -51,6 +51,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/reviews"
 	"github.com/adityarohilla/househelp-api/internal/roomies"
 	"github.com/adityarohilla/househelp-api/internal/segments"
+	"github.com/adityarohilla/househelp-api/internal/appversion"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
@@ -493,6 +494,14 @@ func main() {
 	contentHandler.RegisterPublicRoutes(appGroup)
 	configHandler.RegisterPublicRoutes(appGroup)
 
+	// App version-check (public, so a forced client can always recover) plus a
+	// 426 force-update middleware applied to transactional routes below. Both
+	// read the admin-set policy in crm_app_versions. Optional updates never 426;
+	// they surface only through this endpoint as a dismissable prompt.
+	appVersionSvc := appversion.NewService(dbPool)
+	appversion.NewHandler(appVersionSvc).RegisterPublicRoutes(appGroup)
+	appVersionMW := appVersionSvc.Middleware()
+
 	// Phase 7 shift system. Notifier wraps notification.Service via a
 	// thin adapter (PushClient interface) so the shift package stays
 	// decoupled from the FCM-specific return types.
@@ -522,7 +531,7 @@ func main() {
 	authLimiter := mw.RateLimiter(rdb, mw.AuthRateLimit, "user")
 
 	// Booking routes (requires JWT).
-	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
+	bookingGroup := api.Group("/bookings", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	bookingIdem := mw.Idempotency(rdb, 60*time.Second, 10*time.Minute)
 	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
 	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter, proApprovedMW)
@@ -548,11 +557,11 @@ func main() {
 	servicesHandler.RegisterPublicRoutes(servicesGroup)
 
 	// Cart routes (requires JWT).
-	cartGroup := api.Group("/cart", authMiddleware, authLimiter, dbBoundLimiter)
+	cartGroup := api.Group("/cart", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	cartHandler.RegisterRoutes(cartGroup)
 
 	// Offers routes (requires JWT).
-	offersGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
+	offersGroup := api.Group("", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	offers.NewHandler(dbPool).RegisterRoutes(offersGroup)
 
 	// Disputes routes (requires JWT — customer files, CRM resolves).
