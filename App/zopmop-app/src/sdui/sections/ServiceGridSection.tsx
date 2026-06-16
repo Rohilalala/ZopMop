@@ -147,7 +147,9 @@ function ServiceCard({
   onPress: () => void;
   onAdd: () => void;
 }) {
-  const price  = `₹${(service.base_price_paise / 100).toFixed(0)}`;
+  const price  = service.base_price_paise != null
+    ? `₹${(service.base_price_paise / 100).toFixed(0)}`
+    : '';
   const mrp    = service.mrp_paise ? `₹${(service.mrp_paise / 100).toFixed(0)}` : null;
   const rating = service.rating?.toFixed(1) ?? null;
   const reviewLabel =
