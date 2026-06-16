@@ -1,4 +1,4 @@
--- 127_wallet_tx_reference.sql
+-- 130_wallet_tx_reference.up.sql (renumbered from 127 on integration)
 -- Idempotency key for wallet ledger writes. The wallet-path refund credit
 -- (crm/refunds runGateway) had no dedupe: when Credit committed but the
 -- response was lost the refund row stayed 'gateway_error', and an admin

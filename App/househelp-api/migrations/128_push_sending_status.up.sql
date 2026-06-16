@@ -1,4 +1,4 @@
--- 125_push_sending_status.sql
+-- 128_push_sending_status.up.sql (renumbered from 125 on integration)
 -- Adds a transient 'sending' status to crm_push_messages so SendPush can
 -- atomically claim a row (CAS draft|scheduled -> sending) BEFORE dispatching
 -- to FCM. Without the claim, two concurrent dispatchers (an admin "Send now"

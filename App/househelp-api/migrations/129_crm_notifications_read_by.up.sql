@@ -1,4 +1,4 @@
--- 126_crm_notifications_read_by.up.sql
+-- 129_crm_notifications_read_by.up.sql (renumbered from 126 on integration)
 -- The CRM notification centre was per-admin in name only: a single global
 -- read_at column meant one admin's "mark all read" cleared the unread feed
 -- (including urgent rows) for EVERY admin. Mirror the crm_alerts model with a
