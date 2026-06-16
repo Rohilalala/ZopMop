@@ -240,6 +240,18 @@ func (v *Validator) walkRefs(path string, node any, res *ValidationResult) {
 			if req && hasDefault {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: $required:true and $default are mutually exclusive", path))
 			}
+			if rawIDs, ok := n["$ids"]; ok {
+				ids, isArr := rawIDs.([]any)
+				if !isArr || len(ids) == 0 {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: $ids must be a non-empty array of strings", path))
+				} else {
+					for i, id := range ids {
+						if s, ok := id.(string); !ok || s == "" {
+							res.Errors = append(res.Errors, fmt.Sprintf("%s: $ids[%d] must be a non-empty string", path, i))
+						}
+					}
+				}
+			}
 			return
 		}
 		for k, child := range n {

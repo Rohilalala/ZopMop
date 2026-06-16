@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { useTheme } from '../../context/ThemeContext';
 import { PressFx } from '../ui/PressFx';
+import { BlurView } from 'expo-blur';
 import { liquidGlass, GlassView } from '../ui/LiquidGlass';
 import type { HeaderPromoData, SduiAction } from '../../sdui/types';
 
@@ -43,13 +44,9 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
   const locationTextColor = isDark ? '#FFFFFF' : c.text;
   const chevronColor = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.35)';
 
-  // Earn pill: clear "liquid glass" button — untinted glass with a bright
-  // inset edge and soft drop shadow, amber text on top. On iOS 26+ GlassView
-  // supplies the fill + refraction; elsewhere a hand-built translucent
-  // recipe approximates the same look.
-  // Light mode: solid ink pill (no glass) — amber text pops on black.
-  const earnBg = isDark ? (liquidGlass ? 'transparent' : 'rgba(255,255,255,0.08)') : '#0D0D0F';
-  const earnBorder = isDark ? (liquidGlass ? 'transparent' : 'rgba(255,255,255,0.28)') : 'transparent';
+  // Earn pill: borderless frosted-blur button — content behind simply blurs
+  // (BlurView clipped to the pill), amber text on top.
+  const earnBg = 'transparent';
   const earnTextColor = '#F5A300';
 
   // Household pill reuses the same inversion logic
@@ -72,28 +69,20 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
       />
     ) : null;
 
-  // Untinted glass for the earn button — clear refraction, no amber cast.
-  // Dark mode only: in light mode the pill is solid ink and glass would wash it out.
-  const clearGlass = (radius: number) =>
-    liquidGlass && isDark ? (
-      <GlassView
-        glassEffectStyle="regular"
-        style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0, bottom: 0,
-          borderRadius: radius,
-        }}
-      />
-    ) : null;
-
-  // Soft drop shadow per the liquid-glass spec (shadow-md analog).
-  const earnShadow = {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: isDark ? 0.3 : 0.12,
-    shadowRadius: 6,
-    elevation: 4,
-  } as const;
+  // Frosted blur for the earn button — whatever scrolls behind just blurs.
+  // No rim, no border: BlurView clipped to the pill radius.
+  const clearGlass = (radius: number) => (
+    <BlurView
+      intensity={40}
+      tint={isDark ? 'dark' : 'light'}
+      style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        borderRadius: radius,
+        overflow: 'hidden',
+      }}
+    />
+  );
 
   return (
     <View
@@ -166,9 +155,6 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
                 paddingHorizontal: 12,
                 borderRadius: 18,
                 backgroundColor: earnBg,
-                borderWidth: 1,
-                borderColor: earnBorder,
-                ...earnShadow,
               }}
             >
               {clearGlass(18)}
@@ -189,9 +175,6 @@ export function HomeHeader({ locationName, onLocationPress, selectedAddressId, a
               paddingHorizontal: 12,
               borderRadius: 18,
               backgroundColor: earnBg,
-              borderWidth: 1,
-              borderColor: earnBorder,
-              ...earnShadow,
             }}
           >
             {clearGlass(18)}
