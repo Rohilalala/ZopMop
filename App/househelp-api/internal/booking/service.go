@@ -2148,12 +2148,13 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, otp str
 		customerID string
 		startOTP   string
 		status     string
+		attempts   int
 	)
 	if err := tx.QueryRow(ctx,
-		`SELECT customer_id::text, start_otp, status
+		`SELECT customer_id::text, start_otp, status, start_otp_attempts
 		   FROM bookings WHERE id = $1 AND helper_id = $2 FOR UPDATE`,
 		bookingID, helperID,
-	).Scan(&customerID, &startOTP, &status); err != nil {
+	).Scan(&customerID, &startOTP, &status, &attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Not this pro's job, reassigned, or gone — sentinel maps to 409.
 			return ErrJobNotInState
@@ -2163,9 +2164,13 @@ func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, otp str
 	if status != string(StatusAccepted) {
 		return ErrJobNotInState
 	}
+	// Per-booking lockout: generous so a typo never strands a pro, but it caps
+	// brute-force of the 4-digit space well short of the 10k keyspace.
+	if attempts >= maxOTPAttempts {
+		return ErrOTPLocked
+	}
 
-	// Count every attempt for audit (committed even on mismatch). No hard
-	// lockout — a typo must not strand a pro mid-job (spec §10).
+	// Count every attempt for audit (committed even on mismatch).
 	if _, err := tx.Exec(ctx,
 		`UPDATE bookings SET start_otp_attempts = start_otp_attempts + 1, updated_at = NOW() WHERE id = $1`,
 		bookingID,
@@ -2440,12 +2445,13 @@ func (s *Service) gateCompletion(ctx context.Context, bookingID, helperID, otp s
 		status        string
 		paymentStatus *string
 		endOTP        string
+		attempts      int
 	)
 	if err := tx.QueryRow(ctx,
-		`SELECT status, payment_status, end_otp
+		`SELECT status, payment_status, end_otp, end_otp_attempts
 		   FROM bookings WHERE id = $1 AND helper_id = $2 FOR UPDATE`,
 		bookingID, helperID,
-	).Scan(&status, &paymentStatus, &endOTP); err != nil {
+	).Scan(&status, &paymentStatus, &endOTP, &attempts); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrJobNotInState
 		}
@@ -2456,6 +2462,10 @@ func (s *Service) gateCompletion(ctx context.Context, bookingID, helperID, otp s
 	}
 	if paymentStatus == nil || *paymentStatus != "paid" {
 		return ErrPaymentRequired
+	}
+	// Per-booking lockout (see StartBooking) — caps END-OTP brute-force.
+	if attempts >= maxOTPAttempts {
+		return ErrOTPLocked
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE bookings SET end_otp_attempts = end_otp_attempts + 1, updated_at = NOW() WHERE id = $1`,

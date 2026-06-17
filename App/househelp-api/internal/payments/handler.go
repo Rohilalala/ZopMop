@@ -928,16 +928,19 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 			return fmt.Errorf("update success status: %w", err)
 		}
 		if paymentBooking != nil && *paymentBooking != "" {
-			// Mirror the wallet path: flip bookings.payment_status='paid'
-			// inside the same tx as the ledger update + outbox emit so the
-			// customer-facing list filter (payment_method != 'cashfree' OR
-			// payment_status = 'paid') starts admitting this row. Scoped
-			// to payment_method='cashfree' so this never touches a wallet-
-			// or COD-paid row that happened to share an order id.
+			// A successful Cashfree payment settled THIS booking (paymentBooking
+			// is resolved from the order's own payments row, so it's
+			// unambiguous). Mark it paid AND stamp payment_method='cashfree' —
+			// the latter matters for the pay-online-anytime path on a COD
+			// booking: the customer can pay the nudge online, which converts the
+			// row to a paid online booking (END OTP unlocks; the customer-list
+			// filter admits it; collect-cash is now gated out, so no double
+			// charge). Previously this was scoped `AND payment_method='cashfree'`
+			// which left COD-paid-online bookings stuck unpaid forever.
 			if _, err := tx.Exec(ctx,
 				`UPDATE bookings
-				 SET payment_status = 'paid', updated_at = NOW()
-				 WHERE id = $1::uuid AND payment_method = 'cashfree'`,
+				 SET payment_status = 'paid', payment_method = 'cashfree', updated_at = NOW()
+				 WHERE id = $1::uuid`,
 				*paymentBooking,
 			); err != nil {
 				return fmt.Errorf("stamp booking payment_status=paid: %w", err)

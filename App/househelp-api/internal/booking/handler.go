@@ -783,6 +783,8 @@ func (h *Handler) StartBooking(c *fiber.Ctx) error {
 
 	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
 		case errors.Is(err, ErrInvalidOTP):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
 		case errors.Is(err, ErrJobNotInState):
@@ -812,6 +814,8 @@ func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
 
 	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
 		case errors.Is(err, ErrInvalidOTP):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
 		case errors.Is(err, ErrPaymentRequired):
