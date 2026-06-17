@@ -209,7 +209,8 @@ export default function CartScreen() {
 
   // Resolved funding rail from the picker. Drives the payment_source mapping in
   // checkout and gates the Roomies split (no split under pay-after, D-edge).
-  const plan = planFor(useWallet, payWhen, totalCents, walletBalance);
+  // Net of promo — the wallet only needs to cover what's actually owed.
+  const plan = planFor(useWallet, payWhen, netCents, walletBalance);
   const splitAllowed = plan.kind !== 'pay_after';
 
   // Pay-after can't be bill-split — force the toggle off when it's selected.
@@ -310,17 +311,17 @@ export default function CartScreen() {
     if (itemCount === 0) return;
     if (bookingInFlight.current) return;
 
-    // Resolve the funding rail. Wallet (full/split) debits inline; cod is
-    // pay-after; direct hands off to Cashfree.
-    const plan = planFor(useWallet, payWhen, totalCents, walletBalance);
-    const applied = Math.min(walletBalance ?? 0, totalCents);
+    // Resolve the funding rail off the NET amount (after promo) — that's what
+    // the customer actually owes and what the backend debits/charges.
+    const plan = planFor(useWallet, payWhen, netCents, walletBalance);
+    const applied = Math.min(walletBalance ?? 0, netCents);
     const paymentSource = ({ wallet_full: 'wallet', wallet_split: 'split', online: 'direct', pay_after: 'cod' } as const)[plan.kind];
 
     // Wallet pre-flight: defense in depth. Only a full-wallet pay needs the
-    // balance to cover the total — split uses whatever is there and tops up
+    // balance to cover the net — split uses whatever is there and tops up
     // online, so it never blocks on balance.
     if (plan.kind === 'wallet_full') {
-      if (walletBalance == null || walletBalance < totalCents) {
+      if (walletBalance == null || walletBalance < netCents) {
         showError('Insufficient wallet balance.', { title: 'Top up first' });
         return;
       }
@@ -384,7 +385,7 @@ export default function CartScreen() {
       if (doSplit && myGroup) {
         try {
           await bookGroupChore(myGroup.group.id, {
-            total_amount: totalCents,
+            total_amount: netCents,
             selected_member_ids: [...selectedMemberIds],
             idempotency_key: generateUUID(),
           });
@@ -496,7 +497,7 @@ export default function CartScreen() {
     }
   }, [
     token, selectedAddress, timing, slot, itemCount, refreshCart, navigation,
-    splitEnabled, myGroup, selectedMemberIds, totalCents, splitCount, bookGroupChore,
+    splitEnabled, myGroup, selectedMemberIds, totalCents, netCents, promoDiscount, splitCount, bookGroupChore,
     useWallet, payWhen, walletBalance, refetchWalletBalance, subtotalCents, posthog,
   ]);
 
@@ -643,7 +644,7 @@ export default function CartScreen() {
                         <View style={[s.splitSummary, { backgroundColor: isDark ? 'rgba(245,163,0,0.06)' : 'rgba(245,163,0,0.06)' }]}>
                           <View style={s.splitRow}>
                             <Text style={[s.splitKey, { color: c.textMuted }]}>Total order</Text>
-                            <Text style={[s.splitVal, { color: c.text }]}>₹{(totalCents / 100).toFixed(0)}</Text>
+                            <Text style={[s.splitVal, { color: c.text }]}>₹{(netCents / 100).toFixed(0)}</Text>
                           </View>
                           <View style={s.splitRow}>
                             <Text style={[s.splitKey, { color: c.textMuted }]}>Split between</Text>
