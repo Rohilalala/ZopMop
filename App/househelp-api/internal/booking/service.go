@@ -487,6 +487,86 @@ func (s *Service) stampBookingCOD(ctx context.Context, bookingID string) {
 	}
 }
 
+// CollectCash records that the pro collected the outstanding net in cash for a
+// COD booking: it flips payment_status to 'paid' (method stays 'cod'), writes a
+// cash payments row for audit/reconciliation (C2 ledger), and emits
+// booking.paid — all in one tx. This unlocks the END OTP for the customer.
+// Returns the remaining outstanding (always 0 on success).
+func (s *Service) CollectCash(ctx context.Context, bookingID, helperID string) (int64, error) {
+	var net int64
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var (
+			customerID    string
+			status        string
+			method        *string
+			paymentStatus *string
+			amount        int64
+			discount      int64
+			walletApplied int64
+		)
+		if err := tx.QueryRow(ctx,
+			`SELECT customer_id::text, status, payment_method, payment_status,
+			        amount_paise, discount_paise, wallet_applied_paise
+			   FROM bookings WHERE id = $1 AND helper_id = $2 FOR UPDATE`,
+			bookingID, helperID,
+		).Scan(&customerID, &status, &method, &paymentStatus, &amount, &discount, &walletApplied); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrJobNotInState
+			}
+			return fmt.Errorf("load booking for collect-cash: %w", err)
+		}
+		if status != string(StatusInProgress) {
+			return ErrJobNotInState
+		}
+		if method == nil || *method != "cod" {
+			return fmt.Errorf("collect-cash: booking is not COD")
+		}
+		if paymentStatus != nil && *paymentStatus == "paid" {
+			return fmt.Errorf("collect-cash: booking already paid")
+		}
+
+		net = amount - discount - walletApplied
+		if net < 0 {
+			net = 0
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO payments (booking_id, user_id, amount_paise, gateway, gateway_status, webhook_received_at, reconciled)
+			VALUES ($1::uuid, $2::uuid, $3, 'cash', 'success', NOW(), TRUE)
+		`, bookingID, customerID, net); err != nil {
+			return fmt.Errorf("insert cash payment row: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE bookings SET payment_status = 'paid', updated_at = NOW() WHERE id = $1::uuid
+		`, bookingID); err != nil {
+			return fmt.Errorf("stamp booking paid (cash): %w", err)
+		}
+
+		payload, mErr := json.Marshal(map[string]any{
+			"booking_id":   bookingID,
+			"user_id":      customerID,
+			"amount_paise": net,
+			"gateway":      "cash",
+			"paid_at":      time.Now().UTC().Format(time.RFC3339),
+		})
+		if mErr != nil {
+			return fmt.Errorf("marshal booking.paid (cash): %w", mErr)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO event_outbox (event_type, aggregate_id, payload)
+			VALUES ('booking.paid', $1::uuid, $2::jsonb)
+		`, bookingID, payload); err != nil {
+			return fmt.Errorf("emit booking.paid (cash): %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	log.Info().Str("booking_id", bookingID).Str("helper_id", helperID).Int64("cash_paise", net).Msg("cash collected (cod marked paid)")
+	return 0, nil
+}
+
 // recordPaymentIntent inserts a pending payment row for a freshly created
 // booking and emits payment.initiated. Errors are logged, never propagated —
 // a ledger glitch must not unwind a booking the customer already saw confirmed.
