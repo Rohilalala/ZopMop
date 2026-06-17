@@ -26,9 +26,14 @@ export function PaymentPicker({
   onChange: (next: { useWallet: boolean; payWhen: 'now' | 'after' }) => void;
 }) {
   const c = useC();
+  const { isDark } = useTheme();
   const bal = walletBalancePaise ?? 0;
   const applied = Math.min(bal, totalPaise);
   const covers = bal >= totalPaise && bal > 0;
+  // Theme-aware hairlines: the static rgba(13,13,15,…) borders vanish on a dark
+  // background, so the wallet row + checkbox were invisible in dark mode.
+  const rowBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.10)';
+  const checkBorder = isDark ? 'rgba(255,255,255,0.30)' : 'rgba(13,13,15,0.20)';
   // When wallet is applied, the remainder is online-only → force payWhen='now'
   // and the Pay-after option is not offered (D13). `PayCard` below is modeled
   // verbatim on the existing `PaymentSourceCard` (lightweight selectable card,
@@ -38,12 +43,12 @@ export function PaymentPicker({
     <View style={pp.wrap}>
       {bal > 0 && (
         <Pressable
-          style={[pp.walletRow, value.useWallet && pp.walletRowOn]}
+          style={[pp.walletRow, { borderColor: rowBorder }, value.useWallet && pp.walletRowOn]}
           onPress={() => onChange({ useWallet: !value.useWallet, payWhen: 'now' })}
         >
           <Feather name="zap" size={16} color={c.amber} />
           <Text style={pp.walletText}>Use wallet (₹{(bal / 100).toFixed(0)} available)</Text>
-          <View style={[pp.check, value.useWallet && pp.checkOn]}>
+          <View style={[pp.check, { borderColor: checkBorder }, value.useWallet && pp.checkOn]}>
             {value.useWallet && <Feather name="check" size={12} color={c.ink} />}
           </View>
         </Pressable>

@@ -643,14 +643,16 @@ export default function CartScreen() {
 
           <SectionHeader>When</SectionHeader>
           {itemCount > 0 && (
-            <ModeToggle
-              mode={timing === 'instant' ? 'instant' : 'schedule'}
-              onChange={(m) => {
-                setTiming(m === 'instant' ? 'instant' : 'scheduled');
-                if (m === 'instant') setSlot(null);
-                else setSchedulingVisible(true); // open slot picker for scheduled
-              }}
-            />
+            <View style={s.bareSection}>
+              <ModeToggle
+                mode={timing === 'instant' ? 'instant' : 'schedule'}
+                onChange={(m) => {
+                  setTiming(m === 'instant' ? 'instant' : 'scheduled');
+                  if (m === 'instant') setSlot(null);
+                  else setSchedulingVisible(true); // open slot picker for scheduled
+                }}
+              />
+            </View>
           )}
           {timing === 'scheduled' && (
             <TouchableOpacity activeOpacity={0.85} onPress={() => setSchedulingVisible(true)} style={{ marginTop: 12 }}>
@@ -752,12 +754,14 @@ export default function CartScreen() {
           </Card>
 
           <SectionHeader>Pay with</SectionHeader>
-          <PaymentPicker
-            totalPaise={totalCents}
-            walletBalancePaise={walletBalance}
-            value={{ useWallet, payWhen }}
-            onChange={(v) => { setUseWallet(v.useWallet); setPayWhen(v.payWhen); }}
-          />
+          <View style={s.bareSection}>
+            <PaymentPicker
+              totalPaise={totalCents}
+              walletBalancePaise={walletBalance}
+              value={{ useWallet, payWhen }}
+              onChange={(v) => { setUseWallet(v.useWallet); setPayWhen(v.payWhen); }}
+            />
+          </View>
         </ScrollView>
 
         <View style={[s.payDock, { paddingBottom: 16 + insets.bottom, backgroundColor: isDark ? 'rgba(10,10,10,0.92)' : 'rgba(255,255,255,0.95)', borderTopColor: isDark ? c.glassBorderHi : 'rgba(13,13,15,0.06)' }]}>
@@ -911,6 +915,10 @@ function DarkToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => v
 
 const s = StyleSheet.create({
   root: { flex: 1 },
+
+  // Bare sections (ModeToggle, PaymentPicker) render outside <Card>; match the
+  // Card's horizontal inset so their width lines up with every other section.
+  bareSection: { marginHorizontal: 20 },
 
   // Empty state
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 14 },
