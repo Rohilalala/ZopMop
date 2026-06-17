@@ -185,6 +185,30 @@ func TestCompleteBooking_PaymentAndOTPGate(t *testing.T) {
 	}
 }
 
+// Once start_otp_attempts hits the per-booking cap, even the CORRECT code is
+// rejected with ErrOTPLocked (brute-force guard).
+func TestStartBooking_OTPLockout(t *testing.T) {
+	pool := splitTestPool(t)
+	ctx := context.Background()
+	customer := makeUUID(t, "lock-cust")
+	helper := makeUUID(t, "lock-pro")
+	seedUser(t, pool, helper, "pro")
+	bookingID := seedPendingBooking(t, pool, customer, 10000)
+	if _, err := pool.Exec(ctx,
+		`UPDATE bookings SET helper_id=$2::uuid, status='accepted', accepted_at=now(), start_otp_attempts=$3 WHERE id=$1::uuid`,
+		bookingID, helper, maxOTPAttempts); err != nil {
+		t.Fatalf("seed locked booking: %v", err)
+	}
+	var code string
+	if err := pool.QueryRow(ctx, `SELECT start_otp FROM bookings WHERE id=$1::uuid`, bookingID).Scan(&code); err != nil {
+		t.Fatalf("read start_otp: %v", err)
+	}
+	svc := NewService(NewRepository(pool), pool, nil, nil, nil)
+	if err := svc.StartBooking(ctx, bookingID, helper, code); err != ErrOTPLocked {
+		t.Fatalf("locked booking: err = %v, want ErrOTPLocked", err)
+	}
+}
+
 // CollectCash flips a COD in_progress booking to paid, writes a cash payment
 // row for the outstanding net, and emits booking.paid. END OTP then becomes
 // visible to the customer.

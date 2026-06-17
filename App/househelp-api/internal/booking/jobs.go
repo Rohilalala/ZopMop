@@ -36,6 +36,12 @@ import (
 // in-zone check is decorative.
 const ArrivedRadiusMeters = 100.0
 
+// maxOTPAttempts caps wrong START/END OTP tries per booking. Generous enough
+// that an honest mis-type never strands a pro, low enough that the 4-digit
+// keyspace can't be brute-forced (≤10 guesses vs 10k). On lockout the pro
+// contacts support / CRM resets.
+const maxOTPAttempts = 10
+
 var (
 	ErrOutsideArrivedRadius = errors.New("too far from customer location to mark arrived")
 	ErrJobNotInState        = errors.New("job is not in the expected state for this transition")
@@ -44,6 +50,8 @@ var (
 	ErrInvalidOTP = errors.New("invalid otp")
 	// ErrPaymentRequired — completion attempted on an unpaid booking. Handler maps to 409.
 	ErrPaymentRequired = errors.New("payment required")
+	// ErrOTPLocked — too many wrong OTP attempts on this booking. Handler maps to 429.
+	ErrOTPLocked = errors.New("otp locked")
 	// Phase 11A contact reveal — distinct errors so handler can map to
 	// 403 vs 409 cleanly. Forbidden = booking not assigned to this pro;
 	// InvalidState = pre-accept / post-complete / cancelled / etc.
@@ -192,6 +200,8 @@ func (h *JobsHandler) Start(c *fiber.Ctx) error {
 	}
 	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
 		case errors.Is(err, ErrInvalidOTP):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
 		case errors.Is(err, ErrJobNotInState):
@@ -217,6 +227,8 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 	}
 	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
 		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
 		case errors.Is(err, ErrInvalidOTP):
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
 		case errors.Is(err, ErrPaymentRequired):
