@@ -592,7 +592,7 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at,
-		        COALESCE(pro_earnings_paise, 0)
+		        COALESCE(pro_earnings_paise, 0), payment_status, payment_method, wallet_applied_paise
 		 FROM bookings
 		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')
 		 ORDER BY updated_at DESC
@@ -610,7 +610,7 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
 			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
 			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
-			&b.ProEarningsPaise); err != nil {
+			&b.ProEarningsPaise, &b.PaymentStatus, &b.PaymentMethod, &b.WalletAppliedPaise); err != nil {
 			return nil, fmt.Errorf("scan helper active booking: %w", err)
 		}
 		bookings = append(bookings, b)
