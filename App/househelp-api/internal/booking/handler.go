@@ -64,6 +64,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router, idem fiber.Handler, create
 	router.Get("/helper/today", append(proChain, h.GetHelperToday)...)
 	router.Get("/", h.GetBookings)
 	router.Get("/availability", h.GetSlotAvailability)
+	router.Get("/promo-preview", h.PreviewPromo)
 	router.Get("/:id/match-status", h.GetMatchStatus)
 	router.Get("/:id/tracking", h.GetTracking)
 	router.Get("/:id/messages", h.ListMessages)
@@ -495,6 +496,32 @@ func (h *Handler) GetSlotAvailability(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to compute slot availability"})
 	}
 	return c.JSON(resp)
+}
+
+// PreviewPromo handles GET /bookings/promo-preview?code=&amount_paise=.
+// Display-only: returns the discount a code would apply so the cart can show a
+// real discount line + net total (the booking-create path re-validates and is
+// the source of truth). An invalid/expired/below-minimum code returns
+// valid:false + the reason (200, not 4xx) so the cart shows an inline "not
+// applied" note rather than an error toast.
+func (h *Handler) PreviewPromo(c *fiber.Ctx) error {
+	code := strings.TrimSpace(c.Query("code"))
+	amount, _ := strconv.Atoi(c.Query("amount_paise"))
+	if code == "" || amount <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "code and amount_paise required"})
+	}
+	discount, err := h.service.PromoDiscount(c.UserContext(), code, amount)
+	if err != nil {
+		// A genuine lookup failure (DB) is a 500; the business validation
+		// messages (not found / expired / limit / below minimum) are a clean
+		// valid:false reason the customer can read.
+		if strings.Contains(err.Error(), "failed to validate") {
+			log.Error().Err(err).Msg("promo preview lookup failed")
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not check that code"})
+		}
+		return c.JSON(fiber.Map{"valid": false, "message": err.Error()})
+	}
+	return c.JSON(fiber.Map{"valid": true, "discount_paise": discount, "net_paise": amount - discount})
 }
 
 // CancelBooking handles POST /bookings/:id/cancel and DELETE /bookings/:id.

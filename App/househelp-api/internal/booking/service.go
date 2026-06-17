@@ -1908,6 +1908,33 @@ func (s *Service) ValidatePromoCode(ctx context.Context, code string, orderAmoun
 	return &promo, nil
 }
 
+// PromoDiscount returns the discount (paise) a promo code would apply to an
+// order of amountCents — display-only preview for the cart. Reuses
+// ValidatePromoCode (same validation the create path runs) so the previewed
+// number matches what checkout will actually charge. Returns the validation
+// error (e.g. expired / below minimum) so the caller can show why it didn't
+// apply; the booking-create path remains the source of truth.
+func (s *Service) PromoDiscount(ctx context.Context, code string, amountCents int) (int, error) {
+	promo, err := s.ValidatePromoCode(ctx, code, amountCents)
+	if err != nil {
+		return 0, err
+	}
+	if promo == nil {
+		return 0, nil
+	}
+	discount := promo.DiscountValue
+	if promo.DiscountType == "percent" {
+		discount = amountCents * promo.DiscountValue / 100
+	}
+	if discount > amountCents {
+		discount = amountCents
+	}
+	if discount < 0 {
+		discount = 0
+	}
+	return discount, nil
+}
+
 // GetMatchStatus returns the current matching state for a booking.
 // Called by the customer's mobile client to poll for an assigned helper.
 func (s *Service) GetMatchStatus(ctx context.Context, bookingID, customerID string) (*MatchStatusResponse, error) {

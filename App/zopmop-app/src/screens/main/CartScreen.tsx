@@ -49,6 +49,7 @@ import { ModeToggle } from '../../components/ModeToggle';
 import { PaymentPicker, planFor } from '../../components/PaymentPicker';
 import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
+import { previewPromo } from '../../api/promotions';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
 import { friendlyError } from '../../utils/errors';
@@ -130,6 +131,10 @@ export default function CartScreen() {
   // null = haven't fetched yet; treat as unknown for UI gating purposes.
   const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
+  // Display-only promo discount preview (the server re-validates at checkout).
+  const [promoDiscount, setPromoDiscount] = useState(0);
+  const [promoLabel, setPromoLabel] = useState<string | null>(null);
+
   const refetchWalletBalance = useCallback(async () => {
     if (!token) return;
     try {
@@ -169,7 +174,38 @@ export default function CartScreen() {
   const splitCount = splitEnabled && selectedMemberIds.size > 0 ? selectedMemberIds.size + 1 : 1;
   const feeCents = PLATFORM_FEE_CENTS;
   const totalCents = subtotalCents + feeCents;
-  const myShareCents = splitCount > 1 ? Math.ceil(totalCents / splitCount) : totalCents;
+  // Net of any applied promo (display). Server recomputes the real discount at
+  // checkout — this just keeps the shown total honest.
+  const netCents = Math.max(0, totalCents - promoDiscount);
+  const myShareCents = splitCount > 1 ? Math.ceil(netCents / splitCount) : netCents;
+
+  // Preview the promo discount for the current cart total so the bill shows a
+  // real discount line. Re-runs on total change + on focus (the code may have
+  // just been picked on the Offers screen).
+  const refreshPromoPreview = useCallback(async () => {
+    const code = promoStore.get();
+    if (!token || !code || totalCents <= 0) {
+      setPromoDiscount(0);
+      setPromoLabel(null);
+      return;
+    }
+    try {
+      const r = await previewPromo(token, code, totalCents);
+      if (r.valid && r.discount_paise && r.discount_paise > 0) {
+        setPromoDiscount(r.discount_paise);
+        setPromoLabel(code);
+      } else {
+        setPromoDiscount(0);
+        setPromoLabel(null);
+      }
+    } catch {
+      setPromoDiscount(0);
+      setPromoLabel(null);
+    }
+  }, [token, totalCents]);
+
+  useEffect(() => { refreshPromoPreview(); }, [refreshPromoPreview]);
+  useFocusEffect(useCallback(() => { refreshPromoPreview(); }, [refreshPromoPreview]));
 
   // Resolved funding rail from the picker. Drives the payment_source mapping in
   // checkout and gates the Roomies split (no split under pay-after, D-edge).
@@ -365,7 +401,8 @@ export default function CartScreen() {
         // amount still due online. Hand off to the Cashfree drop sheet flow —
         // PaymentScreen owns order creation + SDK launch. For split, the wallet
         // portion was debited inline; charge only the remainder.
-        const amountDue = plan.kind === 'wallet_split' ? created.price_paise - applied : created.price_paise;
+        // Net online due = gross − promo discount − wallet already applied.
+        const amountDue = created.price_paise - (created.discount_paise ?? 0) - (plan.kind === 'wallet_split' ? applied : 0);
         posthog.capture('booking_payment_initiated', {
           booking_id: created.id,
           amount_paise: amountDue,
@@ -743,9 +780,17 @@ export default function CartScreen() {
           <Card>
             <BillRow label="Subtotal" value={`₹${(subtotalCents / 100).toFixed(0)}`} />
             <BillRow label="Platform fee" value={`₹${(feeCents / 100).toFixed(0)}`} />
+            {promoDiscount > 0 && (
+              <View style={s.billRow}>
+                <Text style={[s.billLabel, { color: c.amber }]}>
+                  Promo{promoLabel ? ` (${promoLabel})` : ''}
+                </Text>
+                <Text style={[s.billValue, { color: c.amber }]}>−₹{(promoDiscount / 100).toFixed(0)}</Text>
+              </View>
+            )}
             <View style={[s.totalRow, { borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,13,15,0.08)' }]}>
               <Text style={[s.totalLabel, { color: c.text }]}>Total to pay</Text>
-              <Text style={[s.totalValue, { color: c.text }]}>₹{(totalCents / 100).toFixed(0)}</Text>
+              <Text style={[s.totalValue, { color: c.text }]}>₹{(netCents / 100).toFixed(0)}</Text>
             </View>
           </Card>
 

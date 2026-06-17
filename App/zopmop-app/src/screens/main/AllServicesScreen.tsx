@@ -11,8 +11,6 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  
-  Alert,
   Dimensions,
   RefreshControl,
   ScrollView,
