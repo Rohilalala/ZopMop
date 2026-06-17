@@ -11,7 +11,6 @@ export interface HomePartition {
   heroCarousel: Extract<SduiSection, { type: 'hero_carousel' }> | null;
   greetingHero: Extract<SduiSection, { type: 'greeting_hero' }> | null;
   headerPromo: Extract<SduiSection, { type: 'header_promo' }> | null;
-  upcomingBooking: Extract<SduiSection, { type: 'upcoming_booking' }> | null;
   livePill: Extract<SduiSection, { type: 'live_pill' }> | null;
 }
 
@@ -23,7 +22,6 @@ export function partitionHomeSections(sections: SduiSection[]): HomePartition {
     heroCarousel: find('hero_carousel'),
     greetingHero: find('greeting_hero'),
     headerPromo: find('header_promo'),
-    upcomingBooking: find('upcoming_booking'),
     livePill: find('live_pill'),
   };
 }

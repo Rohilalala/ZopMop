@@ -23,7 +23,6 @@ test('extracts hero/greeting and keeps the rest as feed', () => {
   expect(r.livePill?.type).toBe('live_pill');
   expect(r.greetingHero?.type).toBe('greeting_hero');
   expect(r.headerPromo).toBeNull();
-  expect(r.upcomingBooking).toBeNull();
 });
 
 test('feed excludes greeting_hero even if duplicated; missing extracted → null', () => {

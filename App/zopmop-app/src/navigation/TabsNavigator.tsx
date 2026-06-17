@@ -23,7 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 
 export type TabsParamList = {
   Home:        undefined;
-  AllServices: { instant?: boolean } | undefined;
+  AllServices: undefined;
   Bookings:    undefined;
   Profile:     undefined;
   Zop:         undefined;
