@@ -250,6 +250,11 @@ export default function ProDashboardScreen() {
         refresh();
         return;
       }
+      // Location rejected but not manually approvable — don't fake success.
+      if (!result.location_ok) {
+        showError("You're outside your committed zone. Move closer and try again.");
+        return;
+      }
       haptics.success();
       await refresh();
     } catch (e: any) {

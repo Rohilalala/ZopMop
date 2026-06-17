@@ -11,7 +11,7 @@ interface CartContextValue {
   items: ApiCartItem[];
   itemCount: number;
   subtotalCents: number;
-  addItem: (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number) => Promise<void>;
+  addItem: (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number) => Promise<boolean>;
   removeItem: (itemId: string) => Promise<void>;
   refreshCart: () => Promise<void>;
   cartBadgeAnim: Animated.Value;
@@ -47,8 +47,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     ]).start();
   }, [cartBadgeAnim]);
 
-  const addItem = useCallback(async (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number) => {
-    if (!token) return;
+  const addItem = useCallback(async (serviceId: string, durationMinutes: number, serviceName: string, priceCents: number): Promise<boolean> => {
+    if (!token) return false;
     haptics.medium();
     const snapshot = cart;
     const now = new Date().toISOString();
@@ -68,9 +68,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     try {
       const updated = await addToCart(token, serviceId, durationMinutes);
       setCart(updated);
+      return true;
     } catch {
       setCart(snapshot);
       showError('Failed to update cart');
+      return false;
     }
   }, [token, cart, pulseBadge]); // serviceName + priceCents are args, not closured deps
 

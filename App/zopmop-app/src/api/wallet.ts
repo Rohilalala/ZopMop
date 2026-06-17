@@ -102,7 +102,10 @@ export async function topupWallet(
     throw new Error('Wallet topup is not configured on the server.');
   }
   if (!res.ok) {
-    throw new Error(`wallet topup failed (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    const err = new Error((body as { error?: string }).error ?? `wallet topup failed (${res.status})`) as Error & { code?: string };
+    err.code = (body as { code?: string }).code;
+    throw err;
   }
   return res.json() as Promise<WalletTopupResponse>;
 }

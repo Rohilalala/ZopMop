@@ -141,6 +141,10 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
   const [periods, setPeriods] = useState<ApiSlotPeriod[]>([]);
   const [activePeriod, setActivePeriod] = useState<string>('Morning');
   const [loading, setLoading] = useState(false);
+  // Distinguish a failed slot load from a genuinely empty day — otherwise a
+  // transient network error reads as "No slots available" with no retry.
+  const [slotsError, setSlotsError] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
   const [selectedSlot, setSelectedSlot] = useState<ApiTimeSlot | null>(null);
 
   useEffect(() => {
@@ -180,16 +184,17 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
   useEffect(() => {
     if (!visible) return;
     setSelectedSlot(null);
+    setSlotsError(false);
     const cached = cacheRef.current.get(cacheKey(selectedDay));
     if (cached) { setPeriods(cached); setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
     getSlotAvailability(token, addressId, selectedDay)
       .then(data => { if (!cancelled) { cacheRef.current.set(cacheKey(selectedDay), data); setPeriods(data); } })
-      .catch(() => { if (!cancelled) setPeriods([]); })
+      .catch(() => { if (!cancelled) { setPeriods([]); setSlotsError(true); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [visible, selectedDay, token, addressId, cacheKey]);
+  }, [visible, selectedDay, token, addressId, cacheKey, reloadTick]);
 
   // Canonical-ordered tabs with a live open-count, derived from the loaded
   // periods. A period with zero bookable slots renders disabled + "Full".
@@ -323,6 +328,17 @@ export default function SchedulingModal({ visible, token, addressId, onClose, on
           <View style={s.slotsContainer}>
             {loading ? (
               <LoadingBars color={c.amber} style={{ marginVertical: 32 }} />
+            ) : slotsError ? (
+              <View style={{ alignItems: 'center', marginVertical: 28, gap: 10 }}>
+                <Text style={s.noSlots}>Couldn't load time slots</Text>
+                <TouchableOpacity
+                  onPress={() => { cacheRef.current.delete(cacheKey(selectedDay)); setReloadTick((t) => t + 1); }}
+                  style={{ paddingVertical: 8, paddingHorizontal: 18, borderRadius: 10, backgroundColor: c.amber }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ fontFamily: FontFamily.bold, fontSize: 13, color: '#0D0D0F' }}>Retry</Text>
+                </TouchableOpacity>
+              </View>
             ) : activeSlots.length === 0 ? (
               <Text style={s.noSlots}>No slots available for this date</Text>
             ) : (

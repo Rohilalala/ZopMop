@@ -120,6 +120,10 @@ export default function BookingRateScreen({ route }: Props) {
       }
       showSuccess('Thanks for rating.');
       setTimeout(() => navigation.goBack(), 600);
+    } catch (err) {
+      // Network/timeout/non-OK rejection from rateBooking — without this the
+      // spinner just stops and the user sees nothing.
+      setErrorMessage(err instanceof Error ? err.message : 'Could not save rating. Please try again.');
     } finally {
       setSubmitting(false);
     }
