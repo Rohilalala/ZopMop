@@ -1,8 +1,10 @@
-// ZopErrorBanner — the friendly error surface. A glass-overlay card drops in
-// from the top; Zop flies in from the left and rides back up with the card on
-// dismiss. Used for ERRORS only, and only on screens where Zop isn't already
-// on stage (the route gate lives in utils/toast.ts). Driven imperatively via
-// presentZopError(); the host <ZopErrorHost/> is mounted once at the app root.
+// ZopBanner — the universal in-app notification surface. A glass-overlay card
+// drops in from the top; Zop flies in from the left and rides back up with the
+// card on dismiss. One template for every toast-style notification (error /
+// success / info), with a per-type Zop pose + accent. Skipped on screens where
+// Zop is already on stage (the route gate lives in utils/toast.ts) — those fall
+// back to the plain top toast. Driven imperatively via presentZopBanner(); the
+// host <ZopErrorHost/> is mounted once at the app root.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, Pressable, View } from 'react-native';
@@ -19,23 +21,33 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { haptics } from '../utils/haptics';
 import ZopConfused from '../../assets/zop/zop-confused.svg';
+import ZopHappy from '../../assets/zop/zop-happy.svg';
+import ZopThinking from '../../assets/zop/zop-thinking.svg';
 
-export type ZopErrorPayload = { title?: string; message: string };
+export type ZopBannerType = 'error' | 'success' | 'info';
+export type ZopBannerPayload = { type?: ZopBannerType; title?: string; message: string };
 
-// Imperative bridge: toast.ts calls presentZopError(); the mounted host
-// registers the setter. Single active banner — a new error replaces the old.
-let present: ((p: ZopErrorPayload) => void) | null = null;
-export function presentZopError(p: ZopErrorPayload) {
+// Imperative bridge: toast.ts calls presentZopBanner(); the mounted host
+// registers the setter. Single active banner — a new one replaces the old.
+let present: ((p: ZopBannerPayload) => void) | null = null;
+export function presentZopBanner(p: ZopBannerPayload) {
   present?.(p);
+}
+// Back-compat alias.
+export function presentZopError(p: { title?: string; message: string }) {
+  present?.({ ...p, type: 'error' });
 }
 
 const AUTO_DISMISS_MS = 4200;
 const OFF_TOP = -280; // card parked above the screen
 const OFF_LEFT = -340; // Zop parked off the left edge
 
+const POSE = { error: ZopConfused, success: ZopHappy, info: ZopThinking } as const;
+const ACCENT = { error: '#F5A300', success: '#22C55E', info: '#60A5FA' } as const;
+
 export function ZopErrorHost() {
   const insets = useSafeAreaInsets();
-  const [content, setContent] = useState<ZopErrorPayload | null>(null);
+  const [content, setContent] = useState<ZopBannerPayload | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cardY = useSharedValue(OFF_TOP);
@@ -50,7 +62,6 @@ export function ZopErrorHost() {
       clearTimeout(timer.current);
       timer.current = null;
     }
-    // Card lifts straight up; Zop is a child of the card, so it rides up too.
     cardOpacity.value = withTiming(0, { duration: 260 });
     cardY.value = withTiming(
       OFF_TOP,
@@ -61,7 +72,6 @@ export function ZopErrorHost() {
     );
   }, [cardOpacity, cardY, clearContent]);
 
-  // Register the imperative entry point once.
   useEffect(() => {
     present = (p) => setContent(p);
     return () => {
@@ -69,18 +79,17 @@ export function ZopErrorHost() {
     };
   }, []);
 
-  // Animate in whenever new content arrives (replacing any current banner).
   useEffect(() => {
     if (!content) return;
-    haptics.error();
+    const type = content.type ?? 'error';
+    if (type === 'error') haptics.error();
+    else if (type === 'success') haptics.success();
     cardY.value = OFF_TOP;
     cardOpacity.value = 0;
     zopX.value = OFF_LEFT;
     zopOpacity.value = 0;
-    // Card drops from the top with a soft spring.
     cardOpacity.value = withTiming(1, { duration: 160 });
     cardY.value = withSpring(0, { damping: 18, stiffness: 220, mass: 0.9 });
-    // Zop flies in from the left once the card has (mostly) landed.
     zopOpacity.value = withDelay(260, withTiming(1, { duration: 140 }));
     zopX.value = withDelay(260, withSpring(0, { damping: 15, stiffness: 240, mass: 0.8 }));
 
@@ -100,16 +109,19 @@ export function ZopErrorHost() {
   }));
 
   if (!content) return null;
+  const type = content.type ?? 'error';
+  const Zop = POSE[type];
+  const accent = ACCENT[type];
 
   return (
     <View pointerEvents="box-none" style={[styles.wrap, { top: insets.top + 6 }]}>
       <Animated.View style={[styles.card, cardStyle]}>
         <BlurView intensity={26} tint="dark" style={StyleSheet.absoluteFill} />
         <View pointerEvents="none" style={styles.tint} />
-        <View pointerEvents="none" style={styles.hairline} />
+        <View pointerEvents="none" style={[styles.hairline, { backgroundColor: accent }]} />
         <Pressable style={styles.row} onPress={hide} accessibilityRole="alert">
           <Animated.View pointerEvents="none" style={[styles.zop, zopStyle]}>
-            <ZopConfused width={94} height={94} />
+            <Zop width={94} height={94} />
           </Animated.View>
           <View style={styles.txt}>
             {!!content.title && <Text style={styles.title}>{content.title}</Text>}
@@ -135,9 +147,8 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 14 },
   },
-  // Dark tint over the blur — matches the ZopMop glass.overlay token.
   tint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,10,0.55)', borderRadius: RADIUS, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.10)' },
-  hairline: { position: 'absolute', top: 0, left: 112, right: 18, height: 2, borderRadius: 2, backgroundColor: '#F5A300', opacity: 0.55 },
+  hairline: { position: 'absolute', top: 0, left: 112, right: 18, height: 2, borderRadius: 2, opacity: 0.7 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingRight: 14, paddingLeft: 118, minHeight: 102 },
   zop: { position: 'absolute', left: 14, top: 0, bottom: 0, width: 94, justifyContent: 'center' },
   txt: { flex: 1, minWidth: 0 },
