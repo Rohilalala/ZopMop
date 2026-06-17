@@ -83,6 +83,7 @@ func (h *JobsHandler) RegisterRoutes(r fiber.Router) {
 	r.Post("/:id/arrived", h.Arrived)
 	r.Post("/:id/start", h.Start)
 	r.Post("/:id/complete", h.Complete)
+	r.Post("/:id/collect-cash", h.CollectCash)
 	r.Post("/:id/contact", h.RevealContact)
 	r.Post("/:id/services/:service_id/start", h.ServiceStart)
 	r.Post("/:id/services/:service_id/complete", h.ServiceComplete)
@@ -239,6 +240,25 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		"pro_earnings_paise":      earnings,
 		"actual_duration_minutes": actualMin,
 	})
+}
+
+// CollectCash handles POST /pro/jobs/:id/collect-cash. The assigned pro marks
+// the outstanding net collected in cash for a COD booking — flips it to paid,
+// writes a cash payments row, and unlocks the END OTP.
+func (h *JobsHandler) CollectCash(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	helperID, _ := c.Locals("userID").(string)
+	outstanding, err := h.service.CollectCash(c.UserContext(), bookingID, helperID)
+	if err != nil {
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "cash_collected", "outstanding_paise": outstanding})
 }
 
 // RevealContact handles POST /pro/jobs/:id/contact. The assigned pro asks

@@ -184,3 +184,66 @@ func TestCompleteBooking_PaymentAndOTPGate(t *testing.T) {
 		t.Fatalf("after complete: status=%s endVerified=%v, want completed/non-nil", status, endVerified)
 	}
 }
+
+// CollectCash flips a COD in_progress booking to paid, writes a cash payment
+// row for the outstanding net, and emits booking.paid. END OTP then becomes
+// visible to the customer.
+func TestCollectCash(t *testing.T) {
+	pool := splitTestPool(t)
+	ctx := context.Background()
+
+	customer := makeUUID(t, "cash-cust")
+	helper := makeUUID(t, "cash-pro")
+	seedUser(t, pool, helper, "pro")
+	// net = amount(10000) - discount(0) - wallet_applied(2000) = 8000
+	bookingID := seedPendingBooking(t, pool, customer, 10000)
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM event_outbox WHERE aggregate_id=$1::uuid`, bookingID) })
+	if _, err := pool.Exec(ctx,
+		`UPDATE bookings SET helper_id=$2::uuid, status='in_progress', started_at=now(),
+		        payment_method='cod', wallet_applied_paise=2000 WHERE id=$1::uuid`,
+		bookingID, helper); err != nil {
+		t.Fatalf("set in_progress cod: %v", err)
+	}
+	svc := NewService(NewRepository(pool), pool, nil, nil, nil)
+
+	outstanding, err := svc.CollectCash(ctx, bookingID, helper)
+	if err != nil {
+		t.Fatalf("CollectCash: %v", err)
+	}
+	if outstanding != 0 {
+		t.Fatalf("returned outstanding = %d, want 0", outstanding)
+	}
+
+	var payStatus string
+	if err := pool.QueryRow(ctx, `SELECT payment_status FROM bookings WHERE id=$1::uuid`, bookingID).Scan(&payStatus); err != nil {
+		t.Fatalf("read payment_status: %v", err)
+	}
+	if payStatus != "paid" {
+		t.Fatalf("payment_status = %s, want paid", payStatus)
+	}
+
+	var cashAmt int64
+	if err := pool.QueryRow(ctx,
+		`SELECT amount_paise FROM payments WHERE booking_id=$1::uuid AND gateway='cash' AND gateway_status='success'`,
+		bookingID).Scan(&cashAmt); err != nil {
+		t.Fatalf("read cash payment row: %v", err)
+	}
+	if cashAmt != 8000 {
+		t.Fatalf("cash amount = %d, want 8000 (net of wallet)", cashAmt)
+	}
+
+	var evtCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM event_outbox WHERE event_type='booking.paid' AND aggregate_id=$1::uuid`,
+		bookingID).Scan(&evtCount); err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	if evtCount != 1 {
+		t.Fatalf("booking.paid events = %d, want 1", evtCount)
+	}
+
+	// Second call is a no-op error (already paid).
+	if _, err := svc.CollectCash(ctx, bookingID, helper); err == nil {
+		t.Fatalf("second CollectCash should error (already paid)")
+	}
+}
