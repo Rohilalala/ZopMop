@@ -98,6 +98,13 @@ export interface BookingDetail {
   free_cancel_until?: string;
   created_at: string;
   updated_at: string;
+  /** Server-issued START OTP (always present for the customer). */
+  otp?: string;
+  /** Server-issued END OTP — present only once payment_status==='paid'. */
+  end_otp?: string;
+  payment_status?: string;
+  payment_method?: string;
+  wallet_applied_paise?: number;
   helper?: BookingDetailHelper;
   services: BookingDetailService[];
 }

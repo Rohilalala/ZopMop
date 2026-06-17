@@ -55,6 +55,8 @@ import {
   type BookingDetail,
   type TrackingResponse,
 } from '../../api/matching';
+import { createCashfreeOrder, CashfreeOrderError } from '../../api/payments';
+import { useCashfreePayment } from '../../hooks/useCashfreePayment';
 import { onShiftEvent } from '../../utils/shiftEvents';
 import { showError } from '../../utils/toast';
 import polyline from '@mapbox/polyline';
@@ -150,6 +152,8 @@ export default function TrackLiveScreen() {
   const route = useRoute<RouteProp<MainStackParamList, 'TrackLive'>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { startPayment, pollStatus } = useCashfreePayment();
+  const [paying, setPaying] = useState(false);
 
   const params = route.params || ({} as MainStackParamList['TrackLive']);
   const {
@@ -184,6 +188,42 @@ export default function TrackLiveScreen() {
       setLoading(false);
     }
   }, [bookingId, token]);
+
+  // Pay-online nudge: reuse the Cashfree direct-order rail. On success we poll
+  // the gateway then refetch — the webhook stamps payment_status='paid', which
+  // unhides the END OTP and removes the nudge.
+  const payOnline = useCallback(async () => {
+    if (!bookingId || !token || token === '__guest__' || paying) return;
+    setPaying(true);
+    try {
+      const order = await createCashfreeOrder(token, {
+        booking_id: bookingId,
+        payment_source: 'direct',
+      });
+      await startPayment({
+        payment_session_id: order.payment_session_id,
+        order_id: order.order_id,
+        on_success: async () => {
+          try {
+            await pollStatus(order.order_id);
+          } catch {
+            // poll timeout/abort — the focus refetch will still pick up the
+            // webhook-stamped paid state shortly.
+          }
+          await fetchDetail();
+        },
+        on_failure: () => {
+          // sheet closed / failed — leave the nudge in place.
+        },
+      });
+    } catch (err) {
+      showError(
+        err instanceof CashfreeOrderError ? err.message : "Couldn't start payment. Try again.",
+      );
+    } finally {
+      setPaying(false);
+    }
+  }, [bookingId, token, paying, startPayment, pollStatus, fetchDetail]);
 
   // Initial fetch + refetch on focus (handles return from background).
   useFocusEffect(
@@ -399,7 +439,22 @@ export default function TrackLiveScreen() {
     }
   }, [proCoord, homeCoord]);
 
-  const displayOtp = (otp ?? deriveOtp(bookingId ?? '0000')).padStart(4, '0').slice(0, 4);
+  // START OTP comes from the server (detail.otp); route-param `otp` is a
+  // first-paint fallback. END OTP only arrives when paid (server-gated).
+  const startOtp = (detail?.otp ?? otp ?? '').padStart(4, '0').slice(0, 4);
+  const endOtp = detail?.end_otp ?? '';
+  const isPaid = detail?.payment_status === 'paid';
+  const outstandingPaise = detail
+    ? Math.max(
+        0,
+        (detail.price_paise ?? 0) - (detail.discount_paise ?? 0) - (detail.wallet_applied_paise ?? 0),
+      )
+    : 0;
+  const isActive =
+    subState !== 'completed' &&
+    subState !== 'cancelled' &&
+    subState !== 'no_pro_available' &&
+    subState !== 'no_show';
   const initial = (helperName || displayHelperName || 'P')[0].toUpperCase();
   const shortId = bookingId
     ? `ZM-${bookingId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
@@ -708,20 +763,55 @@ export default function TrackLiveScreen() {
             </Text>
           )}
 
-          {/* OTP card — only meaningful pre-start. Once started_at is stamped
-              the OTP is consumed and we hide it. */}
-          {(subState === 'en_route' || subState === 'arrived') && (
+          {/* START OTP — shown once the pro is en-route, stays through the job
+              so the pro can read it at the door. Server-issued. */}
+          {!!startOtp &&
+            (subState === 'en_route' || subState === 'arrived' || subState === 'in_progress') && (
+              <View style={styles.otp}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
+                  <Text style={[fontMed, styles.otpHelp]}>
+                    {helperName
+                      ? `Share with ${helperName.split(' ')[0]} when they arrive`
+                      : 'Share this code with your pro when they arrive'}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {startOtp.split('').map((d, i) => (
+                    <View key={i} style={styles.otpDigit}>
+                      <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+          {/* Pay-online nudge — present while the booking is active and unpaid.
+              Paying online (or the pro collecting cash) flips payment_status to
+              'paid', which removes this row and reveals the END OTP. */}
+          {isActive && !isPaid && (
+            <Pressable style={styles.payNudge} onPress={payOnline} disabled={paying}>
+              <View style={styles.payNudgeIcon}>
+                <Text style={[fontBold, styles.payNudgeRupee]}>₹</Text>
+              </View>
+              <Text style={[fontMed, styles.payNudgeText]}>
+                {`Pay ₹${(outstandingPaise / 100).toFixed(0)} online to avoid cash handling`}
+              </Text>
+              <Text style={[fontMed, styles.payNudgeChevron]}>›</Text>
+            </Pressable>
+          )}
+
+          {/* END OTP — only once paid, during the job. Shared to finish. */}
+          {isPaid && !!endOtp && subState === 'in_progress' && (
             <View style={styles.otp}>
               <View style={{ flex: 1 }}>
-                <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
+                <Text style={[fontBold, styles.otpLabel]}>END OTP</Text>
                 <Text style={[fontMed, styles.otpHelp]}>
-                  {helperName
-                    ? `Share with ${helperName.split(' ')[0]} when they arrive`
-                    : 'Share this code with your pro when they arrive'}
+                  Share when the job is done to finish
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: 6 }}>
-                {displayOtp.split('').map((d, i) => (
+                {endOtp.split('').map((d, i) => (
                   <View key={i} style={styles.otpDigit}>
                     <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
                   </View>
@@ -1118,15 +1208,6 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function deriveOtp(seed: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = (h * 16777619) >>> 0;
-  }
-  return String(h % 10000).padStart(4, '0');
-}
-
 function formatNow(): string {
   const d = new Date();
   let h = d.getHours();
@@ -1470,6 +1551,39 @@ function makeStyles(c: ScreenColors, isDark: boolean) {
     fontSize: 18,
     color: c.amber,
     letterSpacing: -0.3,
+  },
+
+  payNudge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    marginHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: c.amberSoft,
+  },
+  payNudgeIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: c.amber,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payNudgeRupee: {
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  payNudgeText: {
+    flex: 1,
+    color: c.textSecondary,
+    fontSize: 13,
+  },
+  payNudgeChevron: {
+    color: c.amber,
+    fontSize: 20,
   },
 
   // Step marker
