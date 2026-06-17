@@ -38,6 +38,7 @@ import { onShiftEvent } from '../../utils/shiftEvents';
 import { showError, showInfo, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
+import { friendlyError } from '../../utils/errors';
 import { useLocationPublisher } from '../../hooks/useLocationPublisher';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { OtpSheet } from '../../components/OtpSheet';
@@ -131,7 +132,7 @@ export default function JobDetailScreen() {
       setDetail(d as JobDetail);
       setServices(s);
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t load this job. Pull to refresh or try again.'));
     } finally {
       setLoading(false);
     }
@@ -231,7 +232,7 @@ export default function JobDetailScreen() {
       haptics.success();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t mark you on the way. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -254,7 +255,7 @@ export default function JobDetailScreen() {
       if (e?.code === 'OUTSIDE_ARRIVED_RADIUS') {
         Alert.alert(t('jobDetail.arrivedTooFarTitle'), t('jobDetail.arrivedTooFarBody'));
       } else {
-        showError(e?.message ?? t('common.error'));
+        showError(friendlyError(e, 'Couldn’t mark you as arrived. Please try again.'));
       }
     } finally {
       setBusy(false);
@@ -281,7 +282,7 @@ export default function JobDetailScreen() {
       if (e?.code === 'invalid_otp') setOtpError(t('jobDetail.otpWrong'));
       else {
         setOtpMode(null);
-        showError(e?.message ?? t('common.error'));
+        showError(friendlyError(e, 'Couldn’t start the job. Please try again.'));
       }
     } finally {
       setOtpBusy(false);
@@ -312,7 +313,7 @@ export default function JobDetailScreen() {
         showError(t('jobDetail.awaitingPaymentBody'));
       } else {
         setOtpMode(null);
-        showError(e?.message ?? t('common.error'));
+        showError(friendlyError(e, 'Couldn’t finish the job. Please try again.'));
       }
     } finally {
       setOtpBusy(false);
@@ -335,7 +336,7 @@ export default function JobDetailScreen() {
               haptics.success();
               await refresh(); // payment_status flips → finish OTP becomes available
             } catch (e: any) {
-              showError(e?.message ?? t('common.error'));
+              showError(friendlyError(e, 'Couldn’t record the cash payment. Please try again.'));
             } finally {
               setBusy(false);
             }
@@ -352,7 +353,7 @@ export default function JobDetailScreen() {
       await startService(bookingID, s.id);
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t start this service. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -366,7 +367,7 @@ export default function JobDetailScreen() {
       haptics.light();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t mark this service done. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -379,7 +380,7 @@ export default function JobDetailScreen() {
       await skipService(bookingID, s.id, reason);
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t skip this service. Please try again.'));
     } finally {
       setBusy(false);
     }

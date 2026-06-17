@@ -1613,6 +1613,13 @@ func (s *Service) CreateScheduledBooking(
 			s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise-int(applied))
 		}
 	default:
+		// Direct (Cashfree prepay) path: stamp payment_method='cashfree' so the
+		// assigner's ClaimDue gate (payment_method <> 'cashfree' OR paid) holds
+		// the booking until the webhook stamps paid, AND so that webhook's
+		// `WHERE payment_method='cashfree'` flip matches this row. Mirrors
+		// CreateBooking + CreateInstantBookingFromCart; without it a scheduled
+		// prepay booking dispatches unpaid and can never be marked paid.
+		s.stampBookingDirectPay(ctx, booking.ID)
 		s.recordPaymentIntent(ctx, booking.ID, customerID, netPaise)
 	}
 
@@ -1668,6 +1675,18 @@ func (s *Service) CreateInstantBookingFromCart(
 	}
 	if activeCount >= maxActive {
 		return nil, fmt.Errorf("maximum active bookings limit reached")
+	}
+
+	// Block re-booking when the customer has completed-but-unpaid Cashfree
+	// bookings. Mirror of the gate in CreateBooking / CreateScheduledBooking —
+	// same predicate, error type, and handler mapping. Without it the ASAP cart
+	// rail leaks the revenue gate the other two create paths enforce.
+	unpaidCount, unpaidTotal, unpaidErr := s.repo.GetUnpaidBookingsForCustomer(ctx, customerID)
+	if unpaidErr != nil {
+		return nil, fmt.Errorf("check unpaid bookings: %w", unpaidErr)
+	}
+	if unpaidCount > 0 {
+		return nil, &ErrUnpaidBookings{Count: unpaidCount, TotalPaise: unpaidTotal}
 	}
 
 	// Address ownership + coords come from user_addresses. The matcher needs

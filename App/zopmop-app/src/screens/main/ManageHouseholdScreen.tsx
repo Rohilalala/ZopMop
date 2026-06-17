@@ -29,6 +29,7 @@ import { useRoomies } from '../../context/RoomiesContext';
 import DebtCapWarningBanner from '../../components/DebtCapWarningBanner';
 import SettlementModal from '../../components/SettlementModal';
 import type { SimplifiedDebt, MemberBalance } from '../../api/roomies';
+import { friendlyError } from '../../utils/errors';
 import { showError, showSuccess } from '../../utils/toast';
 
 import { Bloom } from '../../components/home/Bloom';
@@ -86,7 +87,7 @@ export default function ManageHouseholdScreen({ route }: Props) {
       await refreshVault();
       showSuccess('Balance added to your vault.');
     } catch (err: any) {
-      showError(err?.message ?? 'Could not add balance. Please try again.', { title: 'Top-up failed' });
+      showError(friendlyError(err, 'Couldn’t add balance to your vault. Please try again.'), { title: 'Top-up failed' });
     }
   };
 

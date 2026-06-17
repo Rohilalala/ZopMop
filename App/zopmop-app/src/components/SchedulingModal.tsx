@@ -118,7 +118,7 @@ type CapView = { fill: number; color: string; label: string; bookable: boolean }
 function capView(slot: ApiTimeSlot, c: ScreenColors, dayIso: string): CapView {
   const n = slotCapacity(slot);
   if (isSlotTooSoon(dayIso, slot.start_time)) {
-    return { fill: 1, color: c.textMuted, label: 'Too soon', bookable: false };
+    return { fill: 1, color: c.textMuted, label: 'Not available', bookable: false };
   }
   if (!slot.is_available || n <= 0) {
     return { fill: 1, color: c.textMuted, label: 'Full', bookable: false };

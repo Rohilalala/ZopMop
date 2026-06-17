@@ -27,6 +27,7 @@ import { useRoomies } from '../../context/RoomiesContext';
 import { listAddresses } from '../../api/addresses';
 import type { ApiAddress } from '../../api/addresses';
 import { createGroup } from '../../api/roomies';
+import { friendlyError } from '../../utils/errors';
 import { showError } from '../../utils/toast';
 
 import { useC, type ScreenColors } from '../../theme/screen';
@@ -83,7 +84,7 @@ export default function RoomiesSetupScreen() {
         groupName: group.name,
       });
     } catch (err: any) {
-      showError(err.message ?? 'Please try again.', { title: 'Could not create household' });
+      showError(friendlyError(err, 'Couldn’t create your household. Please try again.'), { title: 'Could not create household' });
     } finally {
       setCreatingGroup(false);
     }
@@ -104,7 +105,7 @@ export default function RoomiesSetupScreen() {
               await leaveGroup(myGroup.group.id, user.id);
               await refresh();
             } catch (err: any) {
-              showError(err.message ?? 'Could not leave group');
+              showError(friendlyError(err, 'Couldn’t leave the household. Please try again.'));
             }
           },
         },
@@ -127,7 +128,7 @@ export default function RoomiesSetupScreen() {
               await deleteGroup(myGroup.group.id, true);
               await refresh();
             } catch (err: any) {
-              showError(err.message ?? 'Could not delete group');
+              showError(friendlyError(err, 'Couldn’t delete the household. Please try again.'));
             }
           },
         },

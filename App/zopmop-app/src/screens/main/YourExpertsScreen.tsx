@@ -24,6 +24,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { listExperts, removeExpert, type Expert } from '../../api/experts';
 import { haptics } from '../../utils/haptics';
+import { friendlyError } from '../../utils/errors';
 import { showError, showSuccess } from '../../utils/toast';
 
 import { useC, type ScreenColors } from '../../theme/screen';
@@ -98,7 +99,7 @@ export default function YourExpertsScreen() {
               setExperts((prev) => prev.filter((x) => x.helper_id !== e.helper_id));
               showSuccess(`${e.name} removed from Your Experts.`);
             } catch (err: any) {
-              showError(err?.message ?? 'Could not remove expert.');
+              showError(friendlyError(err, 'Couldn’t remove this expert. Please try again.'));
             } finally {
               setRemovingId(null);
             }

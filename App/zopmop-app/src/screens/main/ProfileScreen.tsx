@@ -48,6 +48,7 @@ import { listAddresses } from '../../api/addresses';
 import { listExperts } from '../../api/experts';
 import { useRoomies } from '../../context/RoomiesContext';
 import { haptics } from '../../utils/haptics';
+import { friendlyError } from '../../utils/errors';
 import { showError, showInfo } from '../../utils/toast';
 import ZopFace from '../../../assets/zop/zop-face.svg';
 import { Bloom } from '../../components/home/Bloom';
@@ -209,7 +210,7 @@ export default function ProfileScreen() {
                         );
                         return;
                       }
-                      showError(err instanceof Error ? err.message : 'Please try again.', { title: 'Delete failed' });
+                      showError(friendlyError(err, 'Couldn’t delete your account. Please try again.'), { title: 'Delete failed' });
                     }
                   },
                 },

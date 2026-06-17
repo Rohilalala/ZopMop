@@ -12,6 +12,7 @@
 import { Alert } from 'react-native';
 import { cancelProBooking, getFortnightProgress, type CancelBookingResult } from '../api/shifts';
 import { showInfo, showError } from './toast';
+import { friendlyError } from './errors';
 import { t } from '../i18n';
 
 const BASE_RATE_PER_HOUR = 80; // ₹80/hr — must match backend `BaseRatePaisePerHour`.
@@ -71,7 +72,7 @@ export async function startProBookingCancel({ bookingId, estimatedJobMinutes, on
             }
             onCancelled(result);
           } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
+            showError(friendlyError(e, 'Couldn’t cancel this job right now. Please try again.'));
           }
         },
       },

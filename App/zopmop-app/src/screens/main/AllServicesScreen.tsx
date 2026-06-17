@@ -45,6 +45,7 @@ import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { PressFx } from '../../components/ui/PressFx';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -377,8 +378,7 @@ function ServiceCard({
     try {
       await addItem(service.id, service.min_duration_minutes, service.name, service.base_price_paise);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg, { title: 'Could not add to cart' });
+      showError(friendlyError(err, 'Couldn’t add the service to your cart. Please try again.'), { title: 'Could not add to cart' });
     } finally {
       setBusy(false);
     }
@@ -403,8 +403,7 @@ function ServiceCard({
         await addItem(service.id, next, service.name, Math.round((service.base_price_paise * next) / service.min_duration_minutes));
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg);
+      showError(friendlyError(err, 'Couldn’t update the service. Please try again.'));
     } finally {
       setBusy(false);
     }
