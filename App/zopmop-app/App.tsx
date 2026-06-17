@@ -29,6 +29,7 @@ import { ThemeProvider, useColors } from './src/context/ThemeContext';
 import { RoomiesProvider } from './src/context/RoomiesContext';
 import { PrefetchProvider } from './src/context/PrefetchContext';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import { ZopErrorHost } from './src/components/ZopErrorBanner';
 import UpdateGate from './src/components/UpdateGate';
 import { useBackendHealth } from './src/hooks/useBackendHealth';
 import { addConnectivityListener, isConnected } from './src/utils/netInfo';
@@ -147,6 +148,8 @@ function Navigation() {
           rendered before the navigator it sits behind every screen and no
           toast is ever visible (the app's "no error reporting" bug). */}
       <Toast />
+      {/* Friendly Zop error banner — top layer, above the navigator. */}
+      <ZopErrorHost />
     </ErrorBoundary>
   );
 }
