@@ -2,6 +2,7 @@ package booking
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2037,23 +2038,60 @@ func (s *Service) MarkArrived(ctx context.Context, bookingID, helperID string) e
 	return nil
 }
 
-func (s *Service) StartBooking(ctx context.Context, bookingID, helperID string) error {
-	var customerID string
-	err := s.db.QueryRow(ctx,
-		`UPDATE bookings SET status = 'in_progress', updated_at = NOW(), started_at = NOW()
-		 WHERE id = $1 AND helper_id = $2 AND status = 'accepted'
-		 RETURNING customer_id::text`,
-		bookingID, helperID,
-	).Scan(&customerID)
+func (s *Service) StartBooking(ctx context.Context, bookingID, helperID, otp string) error {
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("start booking begin tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	var (
+		customerID string
+		startOTP   string
+		status     string
+	)
+	if err := tx.QueryRow(ctx,
+		`SELECT customer_id::text, start_otp, status
+		   FROM bookings WHERE id = $1 AND helper_id = $2 FOR UPDATE`,
+		bookingID, helperID,
+	).Scan(&customerID, &startOTP, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Stale/duplicate Start tap (already in_progress, reassigned,
-			// or cancelled) — sentinel so the handler maps it to 409 like
-			// EnRoute/Arrived, avoiding the app retry-storm + "backend down".
+			// Not this pro's job, reassigned, or gone — sentinel maps to 409.
 			return ErrJobNotInState
 		}
-		return fmt.Errorf("failed to start booking: %w", err)
+		return fmt.Errorf("load booking for start: %w", err)
 	}
+	if status != string(StatusAccepted) {
+		return ErrJobNotInState
+	}
+
+	// Count every attempt for audit (committed even on mismatch). No hard
+	// lockout — a typo must not strand a pro mid-job (spec §10).
+	if _, err := tx.Exec(ctx,
+		`UPDATE bookings SET start_otp_attempts = start_otp_attempts + 1, updated_at = NOW() WHERE id = $1`,
+		bookingID,
+	); err != nil {
+		return fmt.Errorf("bump start otp attempts: %w", err)
+	}
+	if subtle.ConstantTimeCompare([]byte(startOTP), []byte(otp)) != 1 {
+		if cErr := tx.Commit(ctx); cErr != nil {
+			return fmt.Errorf("commit start otp attempt: %w", cErr)
+		}
+		return ErrInvalidOTP
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE bookings
+		    SET status = 'in_progress', started_at = NOW(), start_verified_at = NOW(), updated_at = NOW()
+		  WHERE id = $1`,
+		bookingID,
+	); err != nil {
+		return fmt.Errorf("transition to in_progress: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit start: %w", err)
+	}
+
 	s.analytics.Track(ctx, analytics.EventBookingStarted, helperID, bookingID, nil)
 
 	s.fireWebhook(ctx, webhooks.EventOrderStarted, s.buildOrderEvent(ctx, bookingID, &helperID, string(StatusInProgress)))

@@ -75,3 +75,57 @@ func TestGetBookingByID_OTPExposure(t *testing.T) {
 		t.Fatalf("pro saw otp values: start=%v end=%v, want both nil", bp.StartOTP, bp.EndOTP)
 	}
 }
+
+// StartBooking requires the correct START OTP. Wrong code → no transition,
+// attempt counter increments. Right code → in_progress + start_verified_at set.
+func TestStartBooking_OTPGate(t *testing.T) {
+	pool := splitTestPool(t)
+	ctx := context.Background()
+
+	customer := makeUUID(t, "start-cust")
+	helper := makeUUID(t, "start-pro")
+	seedUser(t, pool, helper, "pro")
+	bookingID := seedPendingBooking(t, pool, customer, 10000)
+	// Move to 'accepted' with this helper assigned (start precondition).
+	if _, err := pool.Exec(ctx,
+		`UPDATE bookings SET helper_id=$2::uuid, status='accepted', accepted_at=now() WHERE id=$1::uuid`,
+		bookingID, helper); err != nil {
+		t.Fatalf("set accepted: %v", err)
+	}
+	var code string
+	if err := pool.QueryRow(ctx, `SELECT start_otp FROM bookings WHERE id=$1::uuid`, bookingID).Scan(&code); err != nil {
+		t.Fatalf("read start_otp: %v", err)
+	}
+	svc := NewService(NewRepository(pool), pool, nil, nil, nil)
+
+	// Wrong OTP → ErrInvalidOTP, status unchanged, attempts incremented.
+	wrong := "0000"
+	if code == "0000" {
+		wrong = "1111"
+	}
+	if err := svc.StartBooking(ctx, bookingID, helper, wrong); err != ErrInvalidOTP {
+		t.Fatalf("wrong otp err = %v, want ErrInvalidOTP", err)
+	}
+	var status string
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT status, start_otp_attempts FROM bookings WHERE id=$1::uuid`, bookingID).
+		Scan(&status, &attempts); err != nil {
+		t.Fatalf("read after wrong: %v", err)
+	}
+	if status != "accepted" || attempts != 1 {
+		t.Fatalf("after wrong otp: status=%s attempts=%d, want accepted/1", status, attempts)
+	}
+
+	// Correct OTP → in_progress, start_verified_at set.
+	if err := svc.StartBooking(ctx, bookingID, helper, code); err != nil {
+		t.Fatalf("correct otp StartBooking: %v", err)
+	}
+	var verified *string
+	if err := pool.QueryRow(ctx, `SELECT status, start_verified_at::text FROM bookings WHERE id=$1::uuid`, bookingID).
+		Scan(&status, &verified); err != nil {
+		t.Fatalf("read after correct: %v", err)
+	}
+	if status != "in_progress" || verified == nil {
+		t.Fatalf("after correct otp: status=%s verified=%v, want in_progress/non-nil", status, verified)
+	}
+}
