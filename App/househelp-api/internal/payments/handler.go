@@ -402,12 +402,13 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 		bookingCustomerID string
 		amountPaise       int64
 		discountPaise     int64
+		walletApplied     int64
 		status            string
 	)
 	err := h.db.QueryRow(ctx, `
-		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), status
+		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), COALESCE(wallet_applied_paise, 0), status
 		FROM bookings WHERE id = $1::uuid
-	`, bookingID).Scan(&bookingCustomerID, &amountPaise, &discountPaise, &status)
+	`, bookingID).Scan(&bookingCustomerID, &amountPaise, &discountPaise, &walletApplied, &status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errResp(c, fiber.StatusNotFound, "booking_not_found", "booking not found")
@@ -431,7 +432,9 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 			fmt.Sprintf("booking in status %s cannot be charged", status))
 	}
 
-	netPaise := amountPaise - discountPaise
+	// Split bookings already debited wallet_applied_paise from the wallet at
+	// create time; the Cashfree order charges only the remainder.
+	netPaise := amountPaise - discountPaise - walletApplied
 	if netPaise <= 0 {
 		return errResp(c, fiber.StatusConflict, "zero_amount", "booking has zero amount due")
 	}
@@ -444,11 +447,15 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 	}
 
 	// Idempotency on the gateway side: short-circuit if a successful
-	// payment already lives against this booking.
+	// CASHFREE payment already lives against this booking. Scoped to
+	// gateway='cashfree' so a split booking's wallet-portion payment row
+	// (gateway='wallet', gateway_status='success') does NOT count as
+	// "already paid" and block creating the order for the remaining
+	// Cashfree leg.
 	var alreadyPaid bool
 	if err := h.db.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM payments
-		               WHERE booking_id = $1::uuid AND gateway_status = 'success')
+		               WHERE booking_id = $1::uuid AND gateway = 'cashfree' AND gateway_status = 'success')
 	`, bookingID).Scan(&alreadyPaid); err == nil && alreadyPaid {
 		return errResp(c, fiber.StatusConflict, "already_paid", "booking already paid")
 	}

@@ -14,7 +14,6 @@ import HelpSupportScreen from '../screens/main/HelpSupportScreen';
 import YourExpertsScreen from '../screens/main/YourExpertsScreen';
 import BookingRateScreen from '../screens/main/BookingRateScreen';
 import ReportIssueScreen from '../screens/main/ReportIssueScreen';
-import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
 // Legacy ActiveBookingScreen replaced by TrackLiveScreen — both routes now
 // render the new design.
 // import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
@@ -154,11 +153,6 @@ export default function MainNavigator() {
           name="ReportIssue"
           component={ReportIssueScreen}
           options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="InstantMatching"
-          component={InstantMatchingScreen}
-          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
         />
         <Stack.Screen
           name="ActiveBooking"

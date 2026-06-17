@@ -18,7 +18,7 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'Tabs', 'Home', 'Bookings', 'Cart', 'Profile', 'Wallet',
 	// Customer flows
 	'ActiveBooking', 'Addresses', 'AllServices', 'BookingConfirmed',
-	'BookingRate', 'Chat', 'HelpSupport', 'HiZop', 'InstantMatching',
+	'BookingRate', 'Chat', 'HelpSupport', 'HiZop',
 	'Location', 'NameEntry', 'NotServiceable',
 	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry', 'ReferralEarn',
 	'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',

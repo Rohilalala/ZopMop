@@ -98,6 +98,41 @@ func onlineShiftPro(t *testing.T, f *capFixture, proID string, shiftEndsIn time.
 	})
 }
 
+// soleOnlinePro temporarily marks every currently-open shift session offline so
+// the test's seeded pro is the only online candidate the assigner can pick.
+// ASAP bookings resolve to locality=NULL ("any pro"), so a residual online pro
+// from a prior shared-DB run would let the race assign one pro per booking
+// (assigned=2). The flipped sessions are restored on cleanup (online again,
+// offline_at NULL) so this leaves the shared DB as it found it.
+func soleOnlinePro(t *testing.T, f *capFixture) {
+	t.Helper()
+	ctx := context.Background()
+	rows, err := f.pool.Query(ctx,
+		`UPDATE shift_sessions SET offline_at = now()
+		 WHERE online_at IS NOT NULL AND offline_at IS NULL
+		 RETURNING id::text`)
+	if err != nil {
+		t.Fatalf("quiesce open shift sessions: %v", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan quiesced session id: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	t.Cleanup(func() {
+		if len(ids) == 0 {
+			return
+		}
+		_, _ = f.pool.Exec(ctx,
+			`UPDATE shift_sessions SET offline_at = NULL WHERE id = ANY($1::uuid[])`, ids)
+	})
+}
+
 // seedProTravel makes proID travel-feasible for an ASAP booking to the fixture
 // address (28.45, 77.05): a live Redis GEO position plus a pre-cached 3-min
 // walking ETA under the exact key GetTravelMinutes reads. The cache key uses the
@@ -132,9 +167,16 @@ func TestIntegration_ConcurrentASAP_OnePro_OneWins(t *testing.T) {
 	f := newCapFixture(t, 0) // we add the eligible pro ourselves (with a shift)
 	s, rdb := asapRealAssignerService(t, f)
 
-	// One approved, online, locality-matching pro. ASAP bookings resolve to
-	// locality=NULL, which EligibleCandidates treats as "any pro", so the
-	// fixture locality is sufficient.
+	// ASAP bookings resolve to locality=NULL, which EligibleCandidates treats as
+	// "any pro" — so the seeded pro can only be the SOLE winner if no OTHER pro is
+	// online. The shared test DB can carry residual open shift sessions from a
+	// prior (possibly failed) run; with two online pros the race assigns one each
+	// (assigned=2) and the single-pro premise breaks. Quiesce every currently-open
+	// session before seeding ours, and restore them after, so the seeded pro is the
+	// only online candidate. Idempotent across repeated shared-DB runs.
+	soleOnlinePro(t, f)
+
+	// One approved, online, locality-matching pro.
 	pro := f.addUser(t, "pro")
 	if _, err := f.pool.Exec(context.Background(),
 		`INSERT INTO helpers (id, approval_status, locality) VALUES ($1, 'approved', $2)`,

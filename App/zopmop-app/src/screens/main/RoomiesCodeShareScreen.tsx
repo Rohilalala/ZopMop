@@ -50,9 +50,15 @@ export default function RoomiesCodeShareScreen({ route }: Props) {
   };
 
   const handleShare = async () => {
-    await Share.share({
-      message: `Join my household on ZopMop! Use code: ${displayCode}`,
-    });
+    try {
+      await Share.share({
+        message: `Join my household on ZopMop! Use code: ${displayCode}`,
+      });
+    } catch {
+      // Share sheet failed to open (not user dismissal) — surface the code so
+      // they can copy it manually instead of the button doing nothing.
+      showInfo(`Your invite code is: ${displayCode}`, { title: "Couldn't open share" });
+    }
   };
 
   return (

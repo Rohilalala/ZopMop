@@ -78,10 +78,12 @@ export default function ZoneApprovalRequestScreen() {
 
   function callSupport() {
     const tel = `tel:${SUPPORT_PHONE}`;
-    Linking.canOpenURL(tel).then((ok) => {
-      if (ok) Linking.openURL(tel);
-      else showError(`${tel}`);
-    });
+    Linking.canOpenURL(tel)
+      .then((ok) => {
+        if (ok) return Linking.openURL(tel);
+        showError(`Call us at ${SUPPORT_PHONE}`, { title: "Couldn't open dialer" });
+      })
+      .catch(() => showError(`Call us at ${SUPPORT_PHONE}`, { title: "Couldn't open dialer" }));
   }
 
   if (submitted) {

@@ -774,16 +774,22 @@ func (h *Handler) StartBooking(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
 
-	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
-		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to start booking")
-		status := fiber.StatusInternalServerError
-		message := "failed to start booking"
-		if err.Error() == "booking not found or cannot be started" {
-			status = fiber.StatusBadRequest
-			message = "booking not found or cannot be started"
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrJobNotInState):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(status).JSON(fiber.Map{"error": message})
+		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to start booking")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to start booking"})
 	}
 
 	return c.JSON(fiber.Map{"message": "booking started"})
@@ -797,16 +803,24 @@ func (h *Handler) CompleteBooking(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
 
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
-		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to complete booking")
-		status := fiber.StatusInternalServerError
-		message := "failed to complete booking"
-		if err.Error() == "booking not found or cannot be completed" {
-			status = fiber.StatusBadRequest
-			message = "booking not found or cannot be completed"
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrPaymentRequired):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payment required", "code": "payment_required"})
+		case errors.Is(err, ErrJobNotInState):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(status).JSON(fiber.Map{"error": message})
+		log.Error().Err(err).Str("booking_id", bookingID).Str("helper_id", helperID).Msg("failed to complete booking")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to complete booking"})
 	}
 
 	return c.JSON(fiber.Map{"message": "booking completed"})

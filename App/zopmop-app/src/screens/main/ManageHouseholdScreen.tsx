@@ -29,6 +29,7 @@ import { useRoomies } from '../../context/RoomiesContext';
 import DebtCapWarningBanner from '../../components/DebtCapWarningBanner';
 import SettlementModal from '../../components/SettlementModal';
 import type { SimplifiedDebt, MemberBalance } from '../../api/roomies';
+import { showError, showSuccess } from '../../utils/toast';
 
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
@@ -76,11 +77,17 @@ export default function ManageHouseholdScreen({ route }: Props) {
     }
   };
 
-  const handleAddBalance = () => {
+  const handleAddBalance = async () => {
     if (!user || !myGroup) return;
     const myMember = myGroup.members.find((m) => m.user_id === user.id);
     if (!myMember) return;
-    topUpPrepaid(myMember.id, groupId, 50_000).then(refreshVault);
+    try {
+      await topUpPrepaid(myMember.id, groupId, 50_000);
+      await refreshVault();
+      showSuccess('Balance added to your vault.');
+    } catch (err: any) {
+      showError(err?.message ?? 'Could not add balance. Please try again.', { title: 'Top-up failed' });
+    }
   };
 
   const renderMember = ({ item }: { item: MemberBalance }) => (

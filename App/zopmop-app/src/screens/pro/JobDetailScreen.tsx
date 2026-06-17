@@ -24,6 +24,7 @@ import {
   jobComplete,
   jobEnRoute,
   jobStart,
+  jobCollectCash,
   listBookingServices,
   getJobDetail,
   startService,
@@ -39,6 +40,7 @@ import { haptics } from '../../utils/haptics';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
 import { useLocationPublisher } from '../../hooks/useLocationPublisher';
 import { useProRoleGate } from '../../hooks/useRoleGate';
+import { OtpSheet } from '../../components/OtpSheet';
 import { t, useLocale } from '../../i18n';
 
 const ARRIVED_RADIUS_METERS = 100;
@@ -57,6 +59,11 @@ interface JobDetail {
   pro_earnings_paise?: number;
   actual_duration_minutes?: number;
   customer_rating_pending?: boolean;
+  payment_status?: string;
+  payment_method?: string;
+  price_paise?: number;
+  discount_paise?: number;
+  wallet_applied_paise?: number;
 }
 
 function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -90,6 +97,20 @@ export default function JobDetailScreen() {
   // booking transitions to a terminal state (completed/cancelled).
   const [contactCache, setContactCache] = useState<CustomerContact | null>(null);
   const [callBusy, setCallBusy] = useState(false);
+
+  // OTP entry sheet (start | finish) + payment state for the completion gate.
+  const [otpMode, setOtpMode] = useState<null | 'start' | 'finish'>(null);
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+
+  const isPaid = detail?.payment_status === 'paid';
+  const outstandingPaise = detail
+    ? Math.max(
+        0,
+        (detail.price_paise ?? 0) - (detail.discount_paise ?? 0) - (detail.wallet_applied_paise ?? 0),
+      )
+    : 0;
+  const outstandingRupees = (outstandingPaise / 100).toFixed(0);
 
   // Stream live GPS to /location/ws once the pro is en-route, through the job,
   // until it ends. This is the only path that feeds the customer's live map
@@ -126,6 +147,14 @@ export default function JobDetailScreen() {
       }
     });
   }, [bookingID, refresh]);
+
+  // While the job is in progress but unpaid, poll so the screen flips to the
+  // finish-OTP path the moment the customer pays online (no payment SSE exists).
+  useEffect(() => {
+    if (detail?.status !== 'in_progress' || isPaid) return;
+    const id = setInterval(() => { refresh(); }, 5000);
+    return () => clearInterval(id);
+  }, [detail?.status, isPaid, refresh]);
 
   // Tick every 5s so elapsed-time display updates + GPS-to-customer is
   // re-evaluated while pro is en route.
@@ -232,51 +261,88 @@ export default function JobDetailScreen() {
     }
   }
 
+  // Start/Finish open the OTP entry sheet (the customer reads the code aloud);
+  // the actual transition happens in the submit handlers below.
   function tapStart() {
-    Alert.alert(t('jobDetail.startConfirmTitle'), t('jobDetail.startConfirmBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('jobDetail.startJob'),
-        onPress: async () => {
-          if (!detail || busy) return;
-          setBusy(true);
-          try {
-            await jobStart(bookingID);
-            haptics.success();
-            await refresh();
-          } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
+    setOtpError(null);
+    setOtpMode('start');
+  }
+
+  async function submitStartOtp(otp: string) {
+    if (!detail || otpBusy) return;
+    setOtpBusy(true);
+    setOtpError(null);
+    try {
+      await jobStart(bookingID, otp);
+      haptics.success();
+      setOtpMode(null);
+      await refresh();
+    } catch (e: any) {
+      if (e?.code === 'invalid_otp') setOtpError(t('jobDetail.otpWrong'));
+      else {
+        setOtpMode(null);
+        showError(e?.message ?? t('common.error'));
+      }
+    } finally {
+      setOtpBusy(false);
+    }
   }
 
   function tapFinish() {
-    Alert.alert(t('jobDetail.finishConfirmTitle'), t('jobDetail.finishConfirmBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('jobDetail.finishJob'),
-        onPress: async () => {
-          if (!detail || busy) return;
-          setBusy(true);
-          try {
-            await jobComplete(bookingID);
-            haptics.success();
-            // Pay is time-based (hours online + working), not per-job — show a
-            // plain completion confirmation, no per-job rupee figure.
-            showSuccess(t('jobDetail.headerStepCompleted'));
-            await refresh();
-          } catch (e: any) {
-            showError(e?.message ?? t('common.error'));
-          } finally {
-            setBusy(false);
-          }
+    setOtpError(null);
+    setOtpMode('finish');
+  }
+
+  async function submitFinishOtp(otp: string) {
+    if (!detail || otpBusy) return;
+    setOtpBusy(true);
+    setOtpError(null);
+    try {
+      await jobComplete(bookingID, otp);
+      haptics.success();
+      setOtpMode(null);
+      // Pay is time-based (hours online + working), not per-job — show a
+      // plain completion confirmation, no per-job rupee figure.
+      showSuccess(t('jobDetail.headerStepCompleted'));
+      await refresh();
+    } catch (e: any) {
+      if (e?.code === 'invalid_otp') setOtpError(t('jobDetail.otpWrong'));
+      else if (e?.code === 'payment_required') {
+        setOtpMode(null);
+        showError(t('jobDetail.awaitingPaymentBody'));
+      } else {
+        setOtpMode(null);
+        showError(e?.message ?? t('common.error'));
+      }
+    } finally {
+      setOtpBusy(false);
+    }
+  }
+
+  function tapCollectCash() {
+    Alert.alert(
+      t('jobDetail.collectCashConfirmTitle'),
+      t('jobDetail.collectCashConfirmBody', { amount: outstandingRupees }),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('jobDetail.collectCash', { amount: outstandingRupees }),
+          onPress: async () => {
+            if (busy) return;
+            setBusy(true);
+            try {
+              await jobCollectCash(bookingID);
+              haptics.success();
+              await refresh(); // payment_status flips → finish OTP becomes available
+            } catch (e: any) {
+              showError(e?.message ?? t('common.error'));
+            } finally {
+              setBusy(false);
+            }
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
 
   async function tapServiceStart(s: JobServiceLine) {
@@ -467,6 +533,7 @@ export default function JobDetailScreen() {
 
         {renderStateBody(detail, services, {
           c, styles, busy, gpsNearby,
+          isPaid, outstandingRupees, tapCollectCash,
           tapEnRoute, tapArrived, tapStart, tapFinish,
           tapServiceStart, tapServiceComplete, tapServiceSkip,
           onCancelBooking: () =>
@@ -478,6 +545,18 @@ export default function JobDetailScreen() {
           onGoBack: () => { if (navigation.canGoBack()) navigation.goBack(); },
         })}
       </ScrollView>
+      <OtpSheet
+        visible={otpMode !== null}
+        title={otpMode === 'start' ? t('jobDetail.startOtpTitle') : t('jobDetail.endOtpTitle')}
+        cta={otpMode === 'start' ? t('jobDetail.startOtpCta') : t('jobDetail.endOtpCta')}
+        busy={otpBusy}
+        error={otpError}
+        onSubmit={otpMode === 'start' ? submitStartOtp : submitFinishOtp}
+        onClose={() => {
+          setOtpMode(null);
+          setOtpError(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -487,6 +566,9 @@ interface RenderArgs {
   styles: ReturnType<typeof createStyles>;
   busy: boolean;
   gpsNearby: boolean;
+  isPaid: boolean;
+  outstandingRupees: string;
+  tapCollectCash: () => void;
   tapEnRoute: () => void;
   tapArrived: () => void;
   tapStart: () => void;
@@ -564,13 +646,29 @@ function renderStateBody(detail: JobDetail, services: JobServiceLine[], args: Re
             />
           ))}
         </View>
-        <TouchableOpacity
-          style={[styles.primaryBtn, (!allDone || busy) && { opacity: 0.5 }]}
-          onPress={args.tapFinish}
-          disabled={!allDone || busy}
-        >
-          <Text style={styles.primaryBtnText}>{t('jobDetail.finishJob')}</Text>
-        </TouchableOpacity>
+        {args.isPaid ? (
+          <TouchableOpacity
+            style={[styles.primaryBtn, (!allDone || busy) && { opacity: 0.5 }]}
+            onPress={args.tapFinish}
+            disabled={!allDone || busy}
+          >
+            <Text style={styles.primaryBtnText}>{t('jobDetail.finishJob')}</Text>
+          </TouchableOpacity>
+        ) : (
+          <View>
+            <Text style={styles.awaitingTitle}>{t('jobDetail.awaitingPaymentTitle')}</Text>
+            <Text style={styles.awaitingBody}>{t('jobDetail.awaitingPaymentBody')}</Text>
+            <TouchableOpacity
+              style={[styles.primaryBtn, busy && { opacity: 0.5 }]}
+              onPress={args.tapCollectCash}
+              disabled={busy}
+            >
+              <Text style={styles.primaryBtnText}>
+                {t('jobDetail.collectCash', { amount: args.outstandingRupees })}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </>
     );
   }
@@ -695,6 +793,8 @@ function createStyles(c: ReturnType<typeof useColors>) {
     primaryBtn: { backgroundColor: c.accent, borderRadius: Radius.lg, paddingVertical: Spacing.base, alignItems: 'center' },
     primaryBtnText: { fontFamily: FontFamily.bold, fontSize: FontSize.lg, color: '#1a1a1a' },
     helperText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, textAlign: 'center' },
+    awaitingTitle: { fontFamily: FontFamily.bold, fontSize: FontSize.base, color: c.text, marginBottom: Spacing.xs },
+    awaitingBody: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.textSecondary, marginBottom: Spacing.sm },
     cancelLink: { paddingVertical: Spacing.sm, alignItems: 'center' },
     cancelLinkText: { fontFamily: FontFamily.regular, fontSize: FontSize.sm, color: c.danger },
     elapsedCard: {

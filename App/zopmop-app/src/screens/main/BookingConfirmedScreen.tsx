@@ -574,7 +574,7 @@ function InstantDetails({ slot, addressLine, paymentLabel, discountCents, promoC
       ? `₹${Math.round(discountCents / 100)} saved${promoCode ? ` with ${promoCode}` : ''}`
       : undefined;
   // ETA is supplied by the matching API on the BookingConfirmed nav params
-  // (set in InstantMatchingScreen). Until it's there, surface a neutral
+  // (set by the booking/matching flow). Until it's there, surface a neutral
   // tracking state instead of fabricating "In ~6 min".
   const whenValue =
     typeof etaMinutes === 'number' && etaMinutes > 0

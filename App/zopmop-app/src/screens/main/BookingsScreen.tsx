@@ -363,7 +363,7 @@ export default function BookingsScreen() {
         )}
 
         {showEmpty && (
-          <Empty tab={tab} onCta={() => navigation.navigate('AllServices', {})} />
+          <Empty tab={tab} onCta={() => navigation.navigate('AllServices')} />
         )}
       </ScrollView>
 

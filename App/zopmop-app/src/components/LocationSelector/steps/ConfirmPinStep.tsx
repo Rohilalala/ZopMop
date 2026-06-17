@@ -10,6 +10,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
 import { Feather } from '@expo/vector-icons';
 import { FontFamily } from '../../../theme';
+import { showInfo } from '../../../utils/toast';
 import type { LSThemeTokens } from '../utils/theme';
 import type { SelectedPlace } from '../types';
 
@@ -149,7 +150,7 @@ export function ConfirmPinStep({
           <TouchableOpacity
             style={[s.nsBtn, { backgroundColor: t.glass, borderColor: t.glassBorder }]}
             activeOpacity={0.7}
-            onPress={() => { /* no-op for now */ console.log('notify-me-tapped'); }}
+            onPress={() => showInfo("We'll notify you when we launch in your area.")}
           >
             <Text style={[s.nsBtnText, { color: t.textMuted }]}>
               Notify me when you launch here

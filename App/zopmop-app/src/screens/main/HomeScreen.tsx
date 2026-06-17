@@ -9,7 +9,6 @@
 //   - HomeHeader (the location chip + cart button).
 //   - LocationSelectorModal (overlay).
 //   - HomeCartBar (sticky bottom bar).
-//   - UpcomingBookingIndicator (status pill).
 //   - NotServiceableScreen (when geocoded coords are out of zone).
 //
 // What moved into SDUI sections:
@@ -50,7 +49,6 @@ import { listAddresses } from '../../api/addresses';
 import { apiFetch } from '../../api/client';
 
 import { LocationSelector } from '../../components/LocationSelector';
-import UpcomingBookingIndicator from '../../components/UpcomingBookingIndicator';
 import { HomeHeader } from '../../components/home/HomeHeader';
 import { HomeHero } from '../../components/home/HomeHero';
 import { HomeCartBar } from '../../components/home/HomeCartBar';
@@ -691,9 +689,6 @@ export default function HomeScreen() {
   const heroData = part.greetingHero?.data;
   const carouselData = part.heroCarousel?.data;
   const headerPromo = part.headerPromo?.data;
-  // Default-on: render the indicator unless the section ships and sets visible=false.
-  const showUpcoming = part.upcomingBooking ? part.upcomingBooking.data.visible !== false : true;
-
   // Hero layer: greeting hero is page 0; hero_carousel slides are pages 1..n.
   //
   // Refresh mascot:
@@ -873,7 +868,6 @@ export default function HomeScreen() {
       ) : null}
 
       <HomeCartBar selectedAddressId={selectedAddressId} />
-      {showUpcoming ? <UpcomingBookingIndicator /> : null}
       {locationModal}
     </SafeAreaView>
   );

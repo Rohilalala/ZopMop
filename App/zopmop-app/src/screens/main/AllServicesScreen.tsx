@@ -8,11 +8,8 @@
 //   • Service cards reuse GlassCard + ServiceThumb + serviceIcon (same vocabulary
 //     as Home).
 //   • Cart dock (HomeCartBar) + BottomTabBar (active="services").
-//
-// `instant: true` route param re-renders cards as direct InstantMatching CTAs
-// (no add-to-cart, no stepper) — preserves the existing instant flow.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   
   Alert,
@@ -28,19 +25,9 @@ import {
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
 import { Image } from 'expo-image';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSpring,
-  withTiming,
-  Easing,
-} from 'react-native-reanimated';
-import { ZopSleeping } from '../../components/home/ZopSleeping';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RouteProp } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
@@ -101,23 +88,9 @@ function groupServices(services: ApiService[]): Group[] {
   return out.filter((g) => g.services.length > 0);
 }
 
-function isInstantSvc(s: ApiService): boolean {
-  return s.min_duration_minutes <= 30;
-}
-
-// Night window — instant booking is closed between 20:00 and 06:00 since the
-// pro fleet is off-duty. Matches the LivePill night gate.
-const NIGHT_START_HOUR = 20;
-const NIGHT_END_HOUR   = 6;
-function isNightTime(d = new Date()): boolean {
-  const hr = d.getHours();
-  return hr >= NIGHT_START_HOUR || hr < NIGHT_END_HOUR;
-}
-
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 type Filter = 'all' | string;
-type Mode   = 'schedule' | 'instant';
 
 // Module-level cache so re-entering AllServices renders the grid synchronously
 // from the previous fetch instead of flashing the skeleton again. Background
@@ -132,13 +105,11 @@ export default function AllServicesScreen() {
   const c = useC();
   const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const insets = useSafeAreaInsets();
 
   const [services, setServices] = useState<ApiService[]>(servicesMemCache.list);
   const [loading, setLoading]   = useState(servicesMemCache.list.length === 0);
   const [filter, setFilter]     = useState<Filter>('all');
-  const [mode, setMode]         = useState<Mode>(route.params?.instant ? 'instant' : 'schedule');
   const [nearbyCount, setNearbyCount] = useState<number | null>(servicesMemCache.nearbyCount);
   // Two-phase refresh state:
   //   holdScreen — drives RefreshControl (keeps the scroll pulled down).
@@ -147,7 +118,6 @@ export default function AllServicesScreen() {
   // refresh state until the entire animation has finished.
   const [holdScreen, setHoldScreen] = useState(false);
   const [zopActive,  setZopActive]  = useState(false);
-  const instantMode = mode === 'instant';
 
   // Default coords: Sector 51, Gurugram — same fallback the home screen uses
   // before location resolves. AllServices doesn't get coords passed in, so
@@ -195,11 +165,9 @@ export default function AllServicesScreen() {
     }
   }, [fetchAll]);
 
-  // Mode + filter pipeline. Instant mode pre-filters to quick-turn services
-  // (≤ 30 min). Then category chip narrows further.
-  const modeFiltered = useMemo(() => {
-    return instantMode ? services.filter(isInstantSvc) : services;
-  }, [services, instantMode]);
+  // Filter pipeline — the browse grid shows every service; the category chip
+  // narrows it.
+  const modeFiltered = services;
 
   const visible = useMemo(() => {
     if (filter === 'all') return modeFiltered;
@@ -271,11 +239,6 @@ export default function AllServicesScreen() {
               <Text style={styles.title}>Explore Services</Text>
               <Text style={styles.subtitle}>
                 {services.length} services
-                {/* Show "N pros nearby" only in Instant mode during the day.
-                    Schedule mode + night-mode-instant suppress the count. */}
-                {instantMode && !isNightTime() && nearbyCount != null
-                  ? ` · ${nearbyCount} pros nearby`
-                  : ''}
               </Text>
             </View>
 
@@ -288,9 +251,6 @@ export default function AllServicesScreen() {
               <Feather name="search" size={16} color={c.text} />
             </PressFx>
           </View>
-
-          {/* Mode toggle: Schedule | Instant */}
-          <ModeToggle mode={mode} onChange={setMode} />
 
           {/* Category chips */}
           <ScrollView
@@ -314,8 +274,6 @@ export default function AllServicesScreen() {
         {/* Body */}
         {loading ? (
           <LoadingSkeleton variant="list-grid" rows={6} />
-        ) : instantMode && isNightTime() ? (
-          <NightClosed />
         ) : (
           groups.map((group, gi) => (
             <View key={group.id} style={styles.section}>
@@ -332,7 +290,7 @@ export default function AllServicesScreen() {
 
               <View style={styles.grid}>
                 {group.services.map((svc) => (
-                  <ServiceCard key={`${gi}-${svc.id}`} service={svc} instantMode={instantMode} />
+                  <ServiceCard key={`${gi}-${svc.id}`} service={svc} />
                 ))}
               </View>
             </View>
@@ -348,126 +306,8 @@ export default function AllServicesScreen() {
         )}
       </ScrollView>
 
-      {!instantMode && <HomeCartBar />}
+      <HomeCartBar />
       <ZopRefresh refreshing={zopActive} />
-    </View>
-  );
-}
-
-// ── Mode toggle ─────────────────────────────────────────────────────────────
-
-function ModeToggle({
-  mode,
-  onChange,
-}: {
-  mode: Mode;
-  onChange: (next: Mode) => void;
-}) {
-  const c = useC();
-  const { isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
-  const [w, setW] = useState(0);
-  const offset = useSharedValue(mode === 'schedule' ? 0 : 1);
-
-  useEffect(() => {
-    // Snappy spring — matches BookingsScreen tab glider exactly.
-    offset.value = withSpring(mode === 'schedule' ? 0 : 1, {
-      damping: 26,
-      stiffness: 320,
-      mass: 0.7,
-      overshootClamping: false,
-    });
-  }, [mode]);
-
-  const gliderWidth = Math.max((w - 8) / 2, 0);
-  const gliderStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: 4 + offset.value * gliderWidth }],
-  }));
-
-  return (
-    <View style={styles.modeWrap} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      <Animated.View
-        style={[
-          styles.modeGlider,
-          { width: gliderWidth },
-          gliderStyle,
-        ]}
-      />
-      <ModeBtn
-        active={mode === 'schedule'}
-        onPress={() => onChange('schedule')}
-        icon="calendar"
-        label="Schedule"
-      />
-      <ModeBtn
-        active={mode === 'instant'}
-        onPress={() => onChange('instant')}
-        icon="zap"
-        label="Instant"
-      />
-    </View>
-  );
-}
-
-function ModeBtn({
-  active,
-  onPress,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onPress: () => void;
-  icon: 'calendar' | 'zap';
-  label: string;
-}) {
-  const c = useC();
-  const { isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
-  return (
-    <PressFx onPress={onPress} style={styles.modeBtn}>
-      <Feather
-        name={icon}
-        size={14}
-        // active icon sits on the amber glider → ink in both themes
-        color={active ? '#0D0D0F' : c.textSecondary}
-      />
-      <Text style={[styles.modeLabel, active && styles.modeLabelActive]}>{label}</Text>
-    </PressFx>
-  );
-}
-
-// ── Night closed empty state ────────────────────────────────────────────────
-// Instant booking is shut between 20:00 and 06:00. Show a floating Zop and a
-// "come back tomorrow" message instead of the service grid.
-
-function NightClosed() {
-  const c = useC();
-  const { isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
-  const float = useSharedValue(0);
-  useEffect(() => {
-    float.value = withRepeat(
-      withTiming(1, { duration: 3200, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-  }, []);
-  const zopStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -float.value * 10 }],
-  }));
-
-  return (
-    <View style={styles.nightWrap}>
-      <Animated.View style={[zopStyle, { marginBottom: 28 }]}>
-        <ZopSleeping size={200} />
-      </Animated.View>
-      <Text style={styles.nightTitle}>Pros are clocked out</Text>
-      <Text style={styles.nightSub}>
-        Instant booking is closed for the night.{'\n'}Come back tomorrow at 6 am.
-      </Text>
-      <Text style={styles.nightHint}>
-        Tap <Text style={{ color: c.amber }}>Schedule</Text> above to book ahead.
-      </Text>
     </View>
   );
 }
@@ -504,10 +344,8 @@ function Chip({
 
 function ServiceCard({
   service,
-  instantMode,
 }: {
   service: ApiService;
-  instantMode: boolean;
 }) {
   const c = useC();
   const { isDark } = useTheme();
@@ -530,15 +368,6 @@ function ServiceCard({
 
   const handleCardPress = () => {
     haptics.light();
-    if (instantMode) {
-      navigation.navigate('InstantMatching', {
-        serviceId: service.id,
-        serviceName: service.name,
-        // Carried so "switch to scheduled" can seed the cart with this service.
-        durationMinutes: service.min_duration_minutes,
-      });
-      return;
-    }
     if (!inCart) navigation.navigate('ServiceAbout', { service });
   };
 
@@ -648,8 +477,7 @@ function ServiceCard({
           )}
 
           {/* add fab OR stepper */}
-          {!instantMode && (
-            inCart ? (
+          {inCart ? (
               <View style={styles.stepper}>
                 <PressFx
                   onPress={() => handleStep(-1)}
@@ -709,8 +537,7 @@ function ServiceCard({
                   : <Feather name="plus" size={16} color={c.amber} />
                 }
               </PressFx>
-            )
-          )}
+            )}
         </View>
 
         {/* meta */}
@@ -855,48 +682,6 @@ function makeStyles(c: ScreenColors, isDark: boolean) {
   },
   chipCountTextActive: { color: c.amber },
 
-  // Mode toggle (Schedule | Instant) — segmented control with sliding glider.
-  modeWrap: {
-    flexDirection: 'row',
-    backgroundColor: c.glass,
-    borderWidth: 0.5,
-    borderColor: c.glassBorder,
-    borderRadius: 12,
-    padding: 4,
-    position: 'relative',
-  },
-  modeGlider: {
-    position: 'absolute',
-    top: 4,
-    left: 0,
-    bottom: 4,
-    borderRadius: 9,
-    backgroundColor: c.amber,
-    shadowColor: '#F5A300',
-    shadowOpacity: 0.3,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  modeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 9,
-    zIndex: 1,
-  },
-  modeLabel: {
-    fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 13,
-    color: c.textSecondary,
-    letterSpacing: -0.13,
-  },
-  // active label sits on the amber glider → ink in both themes
-  modeLabelActive: { color: '#0D0D0F' },
-
   loadWrap: { padding: 60, alignItems: 'center' },
 
   section: { paddingHorizontal: H_PAD, paddingTop: 22 },
@@ -1000,36 +785,6 @@ function makeStyles(c: ScreenColors, isDark: boolean) {
     alignItems: 'baseline',
     gap: 6,
     marginTop: 4,
-  },
-
-  // Night-closed empty state for instant mode after 8pm.
-  nightWrap: {
-    paddingTop: 60,
-    paddingBottom: 60,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-  },
-  nightTitle: {
-    fontFamily: 'PlusJakartaSans_800ExtraBold',
-    fontSize: 24,
-    color: c.text,
-    letterSpacing: -0.6,
-    textAlign: 'center',
-  },
-  nightSub: {
-    fontFamily: 'PlusJakartaSans_500Medium',
-    fontSize: 14,
-    color: c.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginTop: 10,
-  },
-  nightHint: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: c.textMuted,
-    textAlign: 'center',
-    marginTop: 24,
   },
 
   emptyWrap: {

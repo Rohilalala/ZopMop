@@ -21,6 +21,7 @@ import { useC, type ScreenColors } from '../../theme/screen';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
+import { showError } from '../../utils/toast';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontSemi:  TextStyle = { fontFamily: 'PlusJakartaSans_600SemiBold' };
@@ -65,7 +66,10 @@ const CONTACT_OPTIONS: ContactOption[] = [
     icon: 'mail',
     label: 'Email support',
     sublabel: 'hello@zopmop.com',
-    action: () => Linking.openURL('mailto:hello@zopmop.com'),
+    action: () =>
+      Linking.openURL('mailto:hello@zopmop.com').catch(() =>
+        showError('No email app is set up. Reach us at hello@zopmop.com.', { title: "Couldn't open email" }),
+      ),
   },
 ];
 

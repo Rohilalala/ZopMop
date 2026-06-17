@@ -204,7 +204,8 @@ export default function ServiceAboutScreen() {
 
   const handleAddToCart = useCallback(async () => {
     const pc = priceFor(activeSvc, duration);
-    await addItem(service.id, duration, service.name, pc);
+    const ok = await addItem(service.id, duration, service.name, pc);
+    if (!ok) return; // addItem already surfaced the error; keep the sheet open
     setAddedToCart(true);
     posthog?.capture('service_added_to_cart', {
       service_id: service.id,

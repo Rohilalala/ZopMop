@@ -40,6 +40,10 @@ var (
 	ErrOutsideArrivedRadius = errors.New("too far from customer location to mark arrived")
 	ErrJobNotInState        = errors.New("job is not in the expected state for this transition")
 	ErrServiceNotFound      = errors.New("service line not found on this booking")
+	// ErrInvalidOTP — the supplied booking OTP did not match. Handler maps to 400.
+	ErrInvalidOTP = errors.New("invalid otp")
+	// ErrPaymentRequired — completion attempted on an unpaid booking. Handler maps to 409.
+	ErrPaymentRequired = errors.New("payment required")
 	// Phase 11A contact reveal — distinct errors so handler can map to
 	// 403 vs 409 cleanly. Forbidden = booking not assigned to this pro;
 	// InvalidState = pre-accept / post-complete / cancelled / etc.
@@ -79,6 +83,7 @@ func (h *JobsHandler) RegisterRoutes(r fiber.Router) {
 	r.Post("/:id/arrived", h.Arrived)
 	r.Post("/:id/start", h.Start)
 	r.Post("/:id/complete", h.Complete)
+	r.Post("/:id/collect-cash", h.CollectCash)
 	r.Post("/:id/contact", h.RevealContact)
 	r.Post("/:id/services/:service_id/start", h.ServiceStart)
 	r.Post("/:id/services/:service_id/complete", h.ServiceComplete)
@@ -179,11 +184,21 @@ func (h *JobsHandler) Start(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
-		if errors.Is(err, ErrJobNotInState) {
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrJobNotInState):
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"message": "in_progress"})
 }
@@ -194,11 +209,23 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
-		if errors.Is(err, ErrJobNotInState) {
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrPaymentRequired):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payment required", "code": "payment_required"})
+		case errors.Is(err, ErrJobNotInState):
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	// Read back the earnings snapshot for the response.
 	var earnings int64
@@ -213,6 +240,25 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		"pro_earnings_paise":      earnings,
 		"actual_duration_minutes": actualMin,
 	})
+}
+
+// CollectCash handles POST /pro/jobs/:id/collect-cash. The assigned pro marks
+// the outstanding net collected in cash for a COD booking — flips it to paid,
+// writes a cash payments row, and unlocks the END OTP.
+func (h *JobsHandler) CollectCash(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	helperID, _ := c.Locals("userID").(string)
+	outstanding, err := h.service.CollectCash(c.UserContext(), bookingID, helperID)
+	if err != nil {
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "cash_collected", "outstanding_paise": outstanding})
 }
 
 // RevealContact handles POST /pro/jobs/:id/contact. The assigned pro asks

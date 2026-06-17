@@ -51,13 +51,16 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	defer cancel()
 
 	b := &Booking{}
+	var startOTP, endOTP string
+	var paymentStatus, paymentMethod *string
 	err := r.db.QueryRow(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise,
 		        scheduled_time, cancelled_at, cancelled_by, cancellation_fee_applied, cancellation_fee_cents,
 		        accepted_at, en_route_at, arrived_at, started_at, completed_at,
 		        pro_earnings_paise, actual_duration_minutes, customer_rating_pending,
-		        created_at, updated_at
+		        created_at, updated_at,
+		        start_otp, end_otp, payment_status, payment_method, wallet_applied_paise
 		 FROM bookings WHERE id = $1`,
 		bookingID,
 	).Scan(
@@ -68,6 +71,7 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 		&b.AcceptedAt, &b.EnRouteAt, &b.ArrivedAt, &b.StartedAt, &b.CompletedAt,
 		&b.ProEarningsPaise, &b.ActualDurationMinutes, &b.CustomerRatingPending,
 		&b.CreatedAt, &b.UpdatedAt,
+		&startOTP, &endOTP, &paymentStatus, &paymentMethod, &b.WalletAppliedPaise,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -80,6 +84,24 @@ func (r *Repository) GetBookingByID(ctx context.Context, bookingID, requestingUs
 	if b.CustomerID != requestingUserID {
 		if b.HelperID == nil || *b.HelperID != requestingUserID {
 			return nil, fmt.Errorf("booking not found") // Intentionally vague to prevent enumeration.
+		}
+	}
+
+	// Payment fields are safe for both roles (pro needs them for the
+	// outstanding/collect-cash UI; customer for the nudge).
+	b.PaymentStatus = paymentStatus
+	b.PaymentMethod = paymentMethod
+
+	// OTP exposure is role-gated. Only the booking's CUSTOMER ever receives the
+	// code values — the pro/helper types them in and the server compares, so
+	// the verifier must never be handed the answer. END OTP additionally
+	// requires payment to be settled.
+	if b.CustomerID == requestingUserID {
+		sc := startOTP
+		b.StartOTP = &sc
+		if paymentStatus != nil && *paymentStatus == "paid" {
+			ec := endOTP
+			b.EndOTP = &ec
 		}
 	}
 
@@ -570,7 +592,7 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 	rows, err := r.db.Query(queryCtx,
 		`SELECT id, customer_id, helper_id, service_category_id, status, address,
 		        lat, lng, amount_paise, promo_code, discount_paise, created_at, updated_at,
-		        COALESCE(pro_earnings_paise, 0)
+		        COALESCE(pro_earnings_paise, 0), payment_status, payment_method, wallet_applied_paise
 		 FROM bookings
 		 WHERE helper_id = $1 AND status IN ('accepted', 'in_progress')
 		 ORDER BY updated_at DESC
@@ -588,7 +610,7 @@ func (r *Repository) GetHelperActiveBookings(ctx context.Context, helperID strin
 		if err := rows.Scan(&b.ID, &b.CustomerID, &b.HelperID, &b.ServiceCategoryID,
 			&b.Status, &b.Address, &b.Lat, &b.Lng, &b.AmountPaise,
 			&b.PromoCode, &b.DiscountPaise, &b.CreatedAt, &b.UpdatedAt,
-			&b.ProEarningsPaise); err != nil {
+			&b.ProEarningsPaise, &b.PaymentStatus, &b.PaymentMethod, &b.WalletAppliedPaise); err != nil {
 			return nil, fmt.Errorf("scan helper active booking: %w", err)
 		}
 		bookings = append(bookings, b)

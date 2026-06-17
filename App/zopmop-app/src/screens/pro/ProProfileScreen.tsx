@@ -22,6 +22,7 @@ import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { getCurrentZone, getFortnightProgress, type ZoneInfo, type FortnightProgress } from '../../api/shifts';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { t, useLocale } from '../../i18n';
+import { showError } from '../../utils/toast';
 
 const SUPPORT_PHONE = process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '+918000000000';
 
@@ -89,7 +90,12 @@ export default function ProProfileScreen() {
 
   function handleSupport() {
     const tel = `tel:${SUPPORT_PHONE}`;
-    Linking.canOpenURL(tel).then((ok) => { if (ok) Linking.openURL(tel); });
+    Linking.canOpenURL(tel)
+      .then((ok) => {
+        if (ok) return Linking.openURL(tel);
+        showError(`Call us at ${SUPPORT_PHONE}`, { title: "Couldn't open dialer" });
+      })
+      .catch(() => showError(`Call us at ${SUPPORT_PHONE}`, { title: "Couldn't open dialer" }));
   }
 
   function handleAbout() {

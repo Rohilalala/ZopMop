@@ -170,6 +170,7 @@ func (c *AssignerCron) handleNoPro(ctx context.Context, bookingID string) (done 
 		paymentStatus *string
 		amountPaise   int64
 		discountPaise int64
+		walletApplied int64
 	)
 	// Re-load + lock the row. SKIP LOCKED keeps a parallel writer (admin assign)
 	// from blocking us, and the status guard means an assign that landed between
@@ -177,14 +178,14 @@ func (c *AssignerCron) handleNoPro(ctx context.Context, bookingID string) (done 
 	err = tx.QueryRow(ctx, `
 		SELECT customer_id::text, scheduled_time,
 		       payment_method, payment_id, payment_status,
-		       amount_paise, COALESCE(discount_paise, 0)
+		       amount_paise, COALESCE(discount_paise, 0), COALESCE(wallet_applied_paise, 0)
 		FROM bookings
 		WHERE id = $1::uuid
 		  AND status = 'pending'
 		  AND helper_id IS NULL
 		FOR UPDATE SKIP LOCKED
 	`, bookingID).Scan(&customerID, &scheduledTime,
-		&paymentMethod, &paymentID, &paymentStatus, &amountPaise, &discountPaise)
+		&paymentMethod, &paymentID, &paymentStatus, &amountPaise, &discountPaise, &walletApplied)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Row was assigned / cancelled out from under us — nothing to do.
@@ -219,6 +220,26 @@ func (c *AssignerCron) handleNoPro(ctx context.Context, bookingID string) (done 
 			paymentMethod, paymentID, paymentStatus, refundAmount,
 			"Auto-refunded: no pro available at slot time"); err != nil {
 			return false, err
+		}
+
+		// Split bookings spent wallet_applied_paise at create time but stay
+		// unpaid (payment_status NULL) until the Cashfree remainder settles, so
+		// RecordBookingRefundTx above (paid-only) misses them. Return that
+		// portion + zero the column (idempotent) in the same tx as the cancel.
+		paid := paymentStatus != nil && *paymentStatus == "paid"
+		if walletApplied > 0 && !paid {
+			if _, err := c.walletRepo.ApplyTransactionTx(ctx, tx, wallet.WalletTx{
+				UserID:      customerID,
+				AmountPaise: walletApplied,
+				Kind:        wallet.KindRefundCredit,
+				BookingID:   &bookingID,
+				Note:        "Split booking cancelled — wallet portion returned",
+			}); err != nil {
+				return false, err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE bookings SET wallet_applied_paise = 0, updated_at = now() WHERE id = $1::uuid`, bookingID); err != nil {
+				return false, err
+			}
 		}
 	}
 

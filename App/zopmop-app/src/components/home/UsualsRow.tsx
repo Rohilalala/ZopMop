@@ -3,7 +3,7 @@
 // Special behaviour: the "Book Instantly" entry is pinned to the left edge while
 // the remaining presets scroll horizontally *behind* it. The pin starts wide
 // (icon + label visible) and shrinks to an icon-only chip as the user scrolls
-// right. Tapping the pin routes to the instant flow (AllServices?instant=true).
+// right. Tapping the pin routes to the services catalog (AllServices).
 // Other taps route through the normal onPress handler.
 
 import React, { useRef } from 'react';
@@ -62,7 +62,7 @@ export function UsualsRow({ services, onPress, onSeeAll }: Props) {
   const rest = services.filter((_, i) => i !== pinIndex);
 
   const handlePinPress = () => {
-    navigation.navigate('AllServices', { instant: true });
+    navigation.navigate('AllServices');
   };
 
   // Pin shrinks from wide → icon-only as the rail scrolls right. Layout

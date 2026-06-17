@@ -67,14 +67,30 @@ export async function jobArrived(bookingID: string, lat: number, lng: number): P
   await expectOk<{ message: string }>(res, 'mark arrived');
 }
 
-export async function jobStart(bookingID: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/start`, { method: 'POST' });
+export async function jobStart(bookingID: string, otp: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
   await expectOk<{ message: string }>(res, 'start job');
 }
 
-export async function jobComplete(bookingID: string): Promise<CompleteJobResponse> {
-  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/complete`, { method: 'POST' });
+export async function jobComplete(bookingID: string, otp: string): Promise<CompleteJobResponse> {
+  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
   return expectOk<CompleteJobResponse>(res, 'complete job');
+}
+
+export async function jobCollectCash(bookingID: string): Promise<{ outstanding_paise: number }> {
+  const res = await apiFetch(`${BASE_URL}/pro/jobs/${bookingID}/collect-cash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return expectOk<{ outstanding_paise: number }>(res, 'collect cash');
 }
 
 export async function startService(bookingID: string, serviceID: string): Promise<void> {
@@ -108,6 +124,11 @@ export async function getJobDetail(bookingID: string): Promise<HelperBooking & {
   pro_earnings_paise?: number;
   actual_duration_minutes?: number;
   customer_rating_pending?: boolean;
+  payment_status?: string;
+  payment_method?: string;
+  price_paise?: number;
+  discount_paise?: number;
+  wallet_applied_paise?: number;
 }> {
   const res = await apiFetch(`${BASE_URL}/bookings/${bookingID}`);
   return expectOk(res, 'get job detail');

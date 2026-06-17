@@ -153,6 +153,7 @@ export default function SettlementModal({
 
   const [topUpAmount, setTopUpAmount] = useState('');
   const [topUpError, setTopUpError] = useState('');
+  const [externalError, setExternalError] = useState('');
   const [externalDone, setExternalDone] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -176,11 +177,12 @@ export default function SettlementModal({
 
   const handleExternal = async () => {
     setLoading(true);
+    setExternalError('');
     try {
       await settleExternal(debtID);
       setExternalDone(true);
     } catch (e: any) {
-      setTopUpError(e.message ?? 'Failed to mark as settled');
+      setExternalError(e.message ?? 'Failed to mark as settled');
     } finally {
       setLoading(false);
     }
@@ -189,6 +191,7 @@ export default function SettlementModal({
   const reset = () => {
     setTopUpAmount('');
     setTopUpError('');
+    setExternalError('');
     setExternalDone(false);
     setLoading(false);
     onClose();
@@ -254,6 +257,7 @@ export default function SettlementModal({
 
               {/* Option 2: Settle Externally */}
               <Text style={s.sectionTitle}>Already Paid in Cash?</Text>
+              {externalError ? <Text style={s.inputError}>{externalError}</Text> : null}
               <Pressable
                 style={[s.btn, s.btnSecondary, loading && { opacity: 0.6 }]}
                 onPress={handleExternal}

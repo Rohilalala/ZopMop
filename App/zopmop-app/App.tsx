@@ -110,7 +110,6 @@ function Navigation() {
   if (isLoading) return null;
   return (
     <ErrorBoundary>
-      <Toast />
       <NavigationContainer
         ref={navigationRef}
         onReady={() => {
@@ -144,6 +143,10 @@ function Navigation() {
             : <AuthNavigator needsName={needsName} phone={user?.phone} />}
         </PostHogProvider>
       </NavigationContainer>
+      {/* Toast host MUST be the last child so it paints on the top layer —
+          rendered before the navigator it sits behind every screen and no
+          toast is ever visible (the app's "no error reporting" bug). */}
+      <Toast />
     </ErrorBoundary>
   );
 }
