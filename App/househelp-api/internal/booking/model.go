@@ -56,6 +56,16 @@ type Booking struct {
 	FreeCancelUntil *time.Time `json:"free_cancel_until,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// Server OTP rail (migration 144). StartOTP is exposed to the booking's
+	// customer only; EndOTP additionally requires payment_status='paid'. Both
+	// are nil on the pro/helper payload — never leak the code to the verifier.
+	// Populated in GetBookingByID per caller role; never selected for the pro
+	// list query.
+	StartOTP           *string `json:"otp,omitempty"`
+	EndOTP             *string `json:"end_otp,omitempty"`
+	PaymentStatus      *string `json:"payment_status,omitempty"`
+	PaymentMethod      *string `json:"payment_method,omitempty"`
+	WalletAppliedPaise int     `json:"wallet_applied_paise"`
 }
 
 // BookingDetail is the enriched response returned by GET /bookings/:id.
