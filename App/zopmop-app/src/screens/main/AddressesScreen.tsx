@@ -24,6 +24,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useC, type ScreenColors } from '../../theme/screen';
 import { listAddresses, deleteAddress, type ApiAddress } from '../../api/addresses';
+import { friendlyError } from '../../utils/errors';
 import { LocationSelector } from '../../components/LocationSelector';
 
 import { Bloom } from '../../components/home/Bloom';
@@ -232,7 +233,7 @@ function SwipeableRow({
               await deleteAddress(token, address.id);
               onDeleted(address.id);
             } catch (err: any) {
-              Alert.alert('Cannot delete', err?.message ?? 'Try again.');
+              Alert.alert('Cannot delete', friendlyError(err, 'Couldn’t delete this address. Please try again.'));
             }
           },
         },

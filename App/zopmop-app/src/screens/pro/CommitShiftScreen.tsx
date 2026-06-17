@@ -18,6 +18,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { showError, showInfo } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import {
   listCommitments,
   createCommitment,
@@ -96,7 +97,7 @@ export default function CommitShiftScreen() {
     try {
       setCommitments(await listCommitments());
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t load your shifts. Pull to refresh or try again.'));
     } finally {
       setLoading(false);
     }
@@ -155,12 +156,12 @@ export default function CommitShiftScreen() {
       setPicker(null);
       await refresh();
     } catch (e: any) {
-      // Surface the server's specific reason (overlap vs date-in-past vs
-      // bounds vs lock-window) rather than always blaming an overlap.
+      // A 409 means the shift clashes with an existing one or falls outside
+      // the editable window — point the pro at picking a different time.
       if (e?.status === 409) {
-        showError(e?.message ?? t('commit.overlapError'));
+        showError(friendlyError(e, 'That shift overlaps another one or is no longer editable. Please pick a different time.'));
       } else {
-        showError(e?.message ?? t('common.error'));
+        showError(friendlyError(e, 'Couldn’t save your shift. Please try again.'));
       }
     } finally {
       setSaving(false);
@@ -181,7 +182,7 @@ export default function CommitShiftScreen() {
               await deleteCommitment(c.id);
               await refresh();
             } catch (e: any) {
-              showError(e?.message ?? t('common.error'));
+              showError(friendlyError(e, 'Couldn’t remove this shift. Please try again.'));
             }
           },
         },

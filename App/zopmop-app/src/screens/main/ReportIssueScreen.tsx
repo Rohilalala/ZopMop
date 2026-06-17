@@ -23,6 +23,7 @@ import { fileDispute, DISPUTE_REASON_LABELS, type DisputeReason } from '../../ap
 import { PressFx } from '../../components/ui/PressFx';
 import { useC, type ScreenColors } from '../../theme/screen';
 import { useTheme } from '../../context/ThemeContext';
+import { friendlyError } from '../../utils/errors';
 import { showError, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 
@@ -61,8 +62,7 @@ export default function ReportIssueScreen() {
       showSuccess('Dispute filed. We will review within 48 hours.');
       navigation.goBack();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg, { title: 'Could not file dispute' });
+      showError(friendlyError(err, 'Couldn’t file your dispute. Please try again.'), { title: 'Could not file dispute' });
     } finally {
       setSubmitting(false);
     }

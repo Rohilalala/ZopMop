@@ -51,6 +51,7 @@ import { ZopRefresh } from '../../components/home/ZopRefresh';
 import { PressFx } from '../../components/ui/PressFx';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
 import { EmptyState } from '../../components/EmptyState';
 import { isBookingRated } from '../../utils/ratedBookingsStore';
@@ -246,7 +247,7 @@ export default function BookingsScreen() {
       await cancelBooking(token, id);
       setUpcoming((prev) => prev.filter((b) => b.id !== id));
     } catch (err) {
-      showError(err instanceof Error ? err.message : 'Could not cancel.');
+      showError(friendlyError(err, 'Couldn’t cancel right now. Please try again.'));
     }
   };
 

@@ -35,6 +35,7 @@ import { addExpert, listExperts } from '../../api/experts';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { haptics } from '../../utils/haptics';
 import { showError, showSuccess } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { markBookingRated } from '../../utils/ratedBookingsStore';
 import { usePostHog } from 'posthog-react-native';
 
@@ -123,7 +124,7 @@ export default function BookingRateScreen({ route }: Props) {
     } catch (err) {
       // Network/timeout/non-OK rejection from rateBooking — without this the
       // spinner just stops and the user sees nothing.
-      setErrorMessage(err instanceof Error ? err.message : 'Could not save rating. Please try again.');
+      setErrorMessage(friendlyError(err, 'Couldn’t save your rating. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -139,7 +140,7 @@ export default function BookingRateScreen({ route }: Props) {
       showSuccess(`${helperName ?? 'Pro'} added to Your Experts.`);
       setTimeout(() => navigation.goBack(), 600);
     } catch (err: any) {
-      showError(err?.message ?? 'Could not add expert.');
+      showError(friendlyError(err, 'Couldn’t add this pro to Your Experts. Please try again.'));
       setAddingExpert(false);
     }
   }

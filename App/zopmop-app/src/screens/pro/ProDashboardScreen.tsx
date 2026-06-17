@@ -22,6 +22,7 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
 import {
   getActiveShift,
@@ -258,7 +259,7 @@ export default function ProDashboardScreen() {
       haptics.success();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t take you online. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -278,7 +279,7 @@ export default function ProDashboardScreen() {
       haptics.success();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t take you offline. Please try again.'));
     } finally {
       setBusy(false);
     }

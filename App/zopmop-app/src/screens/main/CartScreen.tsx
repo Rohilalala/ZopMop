@@ -51,6 +51,7 @@ import { LocationSelector } from '../../components/LocationSelector';
 import { promoStore } from '../../utils/promoStore';
 import { haptics } from '../../utils/haptics';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { usePostHog } from 'posthog-react-native';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { serviceIcon } from '../../components/home/serviceIcon';
@@ -439,11 +440,6 @@ export default function CartScreen() {
       }
 
       const code: string | undefined = err?.response?.data?.code ?? err?.code;
-      const msg: string =
-        err?.response?.data?.error ??
-        err?.response?.data?.message ??
-        err?.message ??
-        'Something went wrong. Please try again.';
 
       if ((paymentSource === 'wallet' || paymentSource === 'split') && code === 'INSUFFICIENT_WALLET_BALANCE') {
         // Race: balance dropped below required between focus-refetch and
@@ -455,7 +451,7 @@ export default function CartScreen() {
         );
         refetchWalletBalance();
       } else {
-        showError(msg, { title: 'Booking failed' });
+        showError(friendlyError(err, 'Couldn’t confirm your booking. Please try again.'), { title: 'Booking failed' });
       }
     } finally {
       setBooking(false);

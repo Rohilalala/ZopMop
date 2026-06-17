@@ -20,6 +20,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { requestZoneApproval } from '../../api/shifts';
 import { captureSelfieForApproval, type CapturedPhoto } from '../../utils/photoCapture';
 import { useProRoleGate } from '../../hooks/useRoleGate';
@@ -70,7 +71,7 @@ export default function ZoneApprovalRequestScreen() {
       });
       setSubmitted(true);
     } catch (e: any) {
-      showError(e?.message ?? t('zoneApproval.submitFailed'));
+      showError(friendlyError(e, 'Couldn’t send your approval request. Please try again.'));
     } finally {
       setSubmitting(false);
     }

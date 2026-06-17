@@ -23,6 +23,7 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useRoomies } from '../../context/RoomiesContext';
 import { joinGroup } from '../../api/roomies';
+import { friendlyError } from '../../utils/errors';
 import { showError } from '../../utils/toast';
 
 import { useC, type ScreenColors } from '../../theme/screen';
@@ -69,7 +70,7 @@ export default function RoomiesJoinScreen() {
         addressAdded: resp.address_added,
       });
     } catch (err: any) {
-      const msg = err?.message ?? 'Please check the code and try again.';
+      const msg = friendlyError(err, 'Couldn’t join that household. Check the code and try again.');
       setErrorMessage(msg);
       showError(msg, { title: 'Could not join' });
     } finally {
