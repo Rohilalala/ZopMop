@@ -419,7 +419,7 @@ export default function CartScreen() {
       if (err instanceof SlotTooSoonError) {
         // The chosen slot is inside the 45-min lead window (race past the
         // picker's own disable). Nudge to ASAP.
-        showError('Slots open 45 minutes out — use ASAP for now.', { title: 'Too soon' });
+        showError('Slots open 45 minutes out — use ASAP for now.', { title: 'Not available' });
         return;
       }
 
