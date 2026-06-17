@@ -1,7 +1,7 @@
 import Toast from 'react-native-toast-message';
 import { haptics } from './haptics';
 import { navigationRef } from '../navigation/navigationRef';
-import { presentZopError } from '../components/ZopErrorBanner';
+import { presentZopBanner, type ZopBannerType } from '../components/ZopErrorBanner';
 
 type Opts = { title?: string; duration?: number };
 
@@ -21,41 +21,40 @@ function currentRoute(): string | undefined {
   }
 }
 
-export function showError(message: string, opts: Opts = {}) {
+// Default headlines per notification type for the Zop banner.
+const DEFAULT_TITLE: Record<ZopBannerType, string> = {
+  error: 'Hmm, that didn’t work',
+  success: 'All set',
+  info: 'Heads up',
+};
+
+// Route a notification to the universal Zop banner, except on screens where Zop
+// is already on stage — there it falls back to the plain top toast.
+function notify(type: ZopBannerType, message: string, opts: Opts) {
   const route = currentRoute();
-  // Off the Zop-present screens, errors get the friendly Zop banner.
   if (!route || !ZOP_PRESENT_SCREENS.has(route)) {
-    presentZopError({ title: opts.title ?? 'Hmm, that didn’t work', message });
+    presentZopBanner({ type, title: opts.title ?? DEFAULT_TITLE[type], message });
     return;
   }
-  // Zop-present screen → plain toast (no duplicate Zop).
-  haptics.error();
+  if (type === 'error') haptics.error();
+  else if (type === 'success') haptics.success();
   Toast.show({
-    type: 'error',
-    text1: opts.title ?? 'Something went wrong',
-    text2: message,
+    type,
+    text1: opts.title ?? (type === 'error' ? 'Something went wrong' : type === 'success' ? 'Done' : message),
+    text2: type === 'info' && !opts.title ? undefined : message,
     position: 'top',
-    visibilityTime: opts.duration ?? 3500,
+    visibilityTime: opts.duration ?? (type === 'error' ? 3500 : 2500),
   });
+}
+
+export function showError(message: string, opts: Opts = {}) {
+  notify('error', message, opts);
 }
 
 export function showSuccess(message: string, opts: Opts = {}) {
-  haptics.success();
-  Toast.show({
-    type: 'success',
-    text1: opts.title ?? 'Done',
-    text2: message,
-    position: 'top',
-    visibilityTime: opts.duration ?? 2500,
-  });
+  notify('success', message, opts);
 }
 
 export function showInfo(message: string, opts: Opts = {}) {
-  Toast.show({
-    type: 'info',
-    text1: opts.title ?? message,
-    text2: opts.title ? message : undefined,
-    position: 'top',
-    visibilityTime: opts.duration ?? 2500,
-  });
+  notify('info', message, opts);
 }
