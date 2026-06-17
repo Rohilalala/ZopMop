@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -25,6 +25,13 @@ interface Props {
 export function OtpSheet({ visible, title, cta, busy, error, onSubmit, onClose }: Props) {
   const [digits, setDigits] = useState<string[]>(Array(OTP_LEN).fill(''));
   const refs = useRef<(TextInput | null)[]>([]);
+
+  // Clear any previously-typed digits each time the sheet opens — otherwise the
+  // component stays mounted and the START code pre-fills the END-OTP sheet
+  // (guaranteed-wrong submission that also burns an attempt counter).
+  useEffect(() => {
+    if (visible) setDigits(Array(OTP_LEN).fill(''));
+  }, [visible]);
 
   function reset() {
     setDigits(Array(OTP_LEN).fill(''));
