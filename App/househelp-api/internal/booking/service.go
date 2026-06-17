@@ -2323,7 +2323,68 @@ func (s *Service) RescheduleBooking(
 // CompleteBooking transitions a booking from in_progress → completed and
 // increments the helper's total_jobs counter.
 // Only the assigned helper may call this.
-func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID string) error {
+// gateCompletion enforces, in its own short tx, the completion preconditions:
+// the caller owns the in_progress job, payment is settled, and the END OTP
+// matches. The attempt counter is bumped for audit (committed even on a
+// mismatch). Returns nil only when the caller may proceed to complete. The
+// main completion tx re-guards status='in_progress', so the tiny gap between
+// this tx and that one is safe (payment can't un-settle; a status change just
+// yields ErrJobNotInState there).
+func (s *Service) gateCompletion(ctx context.Context, bookingID, helperID, otp string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("gate completion begin tx: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	var (
+		status        string
+		paymentStatus *string
+		endOTP        string
+	)
+	if err := tx.QueryRow(ctx,
+		`SELECT status, payment_status, end_otp
+		   FROM bookings WHERE id = $1 AND helper_id = $2 FOR UPDATE`,
+		bookingID, helperID,
+	).Scan(&status, &paymentStatus, &endOTP); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrJobNotInState
+		}
+		return fmt.Errorf("load booking for completion gate: %w", err)
+	}
+	if status != string(StatusInProgress) {
+		return ErrJobNotInState
+	}
+	if paymentStatus == nil || *paymentStatus != "paid" {
+		return ErrPaymentRequired
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE bookings SET end_otp_attempts = end_otp_attempts + 1, updated_at = NOW() WHERE id = $1`,
+		bookingID,
+	); err != nil {
+		return fmt.Errorf("bump end otp attempts: %w", err)
+	}
+	if subtle.ConstantTimeCompare([]byte(endOTP), []byte(otp)) != 1 {
+		if cErr := tx.Commit(ctx); cErr != nil {
+			return fmt.Errorf("commit end otp attempt: %w", cErr)
+		}
+		return ErrInvalidOTP
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE bookings SET end_verified_at = NOW(), updated_at = NOW() WHERE id = $1`,
+		bookingID,
+	); err != nil {
+		return fmt.Errorf("stamp end_verified_at: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Service) CompleteBooking(ctx context.Context, bookingID, helperID, otp string) error {
+	// Payment + END OTP gate (own tx). Must pass before any completion work.
+	if err := s.gateCompletion(ctx, bookingID, helperID, otp); err != nil {
+		return err
+	}
+
 	txCtx, txCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer txCancel()
 

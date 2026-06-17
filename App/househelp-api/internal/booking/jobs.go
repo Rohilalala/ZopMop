@@ -208,11 +208,23 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
-		if errors.Is(err, ErrJobNotInState) {
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrPaymentRequired):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payment required", "code": "payment_required"})
+		case errors.Is(err, ErrJobNotInState):
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	// Read back the earnings snapshot for the response.
 	var earnings int64

@@ -129,3 +129,58 @@ func TestStartBooking_OTPGate(t *testing.T) {
 		t.Fatalf("after correct otp: status=%s verified=%v, want in_progress/non-nil", status, verified)
 	}
 }
+
+// CompleteBooking gates on payment THEN END OTP. Unpaid → ErrPaymentRequired
+// (even with a correct-looking code). Paid + wrong → ErrInvalidOTP. Paid +
+// right → completed.
+func TestCompleteBooking_PaymentAndOTPGate(t *testing.T) {
+	pool := splitTestPool(t)
+	ctx := context.Background()
+
+	customer := makeUUID(t, "cmp-cust")
+	helper := makeUUID(t, "cmp-pro")
+	seedUser(t, pool, helper, "pro")
+	bookingID := seedPendingBooking(t, pool, customer, 10000)
+	if _, err := pool.Exec(ctx,
+		`UPDATE bookings SET helper_id=$2::uuid, status='in_progress', started_at=now(),
+		        payment_method='cod' WHERE id=$1::uuid`,
+		bookingID, helper); err != nil {
+		t.Fatalf("set in_progress cod unpaid: %v", err)
+	}
+	var code string
+	if err := pool.QueryRow(ctx, `SELECT end_otp FROM bookings WHERE id=$1::uuid`, bookingID).Scan(&code); err != nil {
+		t.Fatalf("read end_otp: %v", err)
+	}
+	svc := NewService(NewRepository(pool), pool, nil, nil, nil)
+
+	// Unpaid → ErrPaymentRequired regardless of code.
+	if err := svc.CompleteBooking(ctx, bookingID, helper, code); err != ErrPaymentRequired {
+		t.Fatalf("unpaid complete err = %v, want ErrPaymentRequired", err)
+	}
+
+	// Mark paid.
+	if _, err := pool.Exec(ctx, `UPDATE bookings SET payment_status='paid' WHERE id=$1::uuid`, bookingID); err != nil {
+		t.Fatalf("mark paid: %v", err)
+	}
+	// Paid + wrong → ErrInvalidOTP.
+	wrong := "0000"
+	if code == "0000" {
+		wrong = "1111"
+	}
+	if err := svc.CompleteBooking(ctx, bookingID, helper, wrong); err != ErrInvalidOTP {
+		t.Fatalf("paid+wrong err = %v, want ErrInvalidOTP", err)
+	}
+	// Paid + right → completed.
+	if err := svc.CompleteBooking(ctx, bookingID, helper, code); err != nil {
+		t.Fatalf("paid+right complete: %v", err)
+	}
+	var status string
+	var endVerified *string
+	if err := pool.QueryRow(ctx, `SELECT status, end_verified_at::text FROM bookings WHERE id=$1::uuid`, bookingID).
+		Scan(&status, &endVerified); err != nil {
+		t.Fatalf("read after complete: %v", err)
+	}
+	if status != "completed" || endVerified == nil {
+		t.Fatalf("after complete: status=%s endVerified=%v, want completed/non-nil", status, endVerified)
+	}
+}
