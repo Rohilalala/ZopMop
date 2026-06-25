@@ -14,9 +14,6 @@ import HelpSupportScreen from '../screens/main/HelpSupportScreen';
 import YourExpertsScreen from '../screens/main/YourExpertsScreen';
 import BookingRateScreen from '../screens/main/BookingRateScreen';
 import ReportIssueScreen from '../screens/main/ReportIssueScreen';
-// Legacy ActiveBookingScreen replaced by TrackLiveScreen — both routes now
-// render the new design.
-// import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProDeclareLeaveScreen from '../screens/pro/ProDeclareLeaveScreen';
 import ProProfileScreen from '../screens/pro/ProProfileScreen';
