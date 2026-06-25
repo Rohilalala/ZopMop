@@ -19,7 +19,6 @@ const darkC = {
   white: '#FFFFFF',
   green: '#22C55E',
   danger: '#EF4444',
-  upiPurple: '#5F259F',
   paytmBlue: '#00BAF2',
 
   text: '#FFFFFF',
@@ -48,7 +47,6 @@ export const lightC = {
   white: '#FFFFFF',
   green: '#16A34A',
   danger: '#DC2626',
-  upiPurple: '#5F259F',
   paytmBlue: '#00BAF2',
 
   text: '#0D0D0F',

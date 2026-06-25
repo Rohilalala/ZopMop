@@ -81,7 +81,6 @@ export interface HeroCarouselData {
    *  becomes the active page. Default false (animations run continuously). */
   restart_on_focus?: boolean;
 }
-export interface LivePillData      { nearby_count: number; avg_eta_min: number; avg_rating: number }
 export interface UsualsRowData     { services: ApiService[] }
 export interface ServiceGridData   { title: string; services: ApiService[]; has_more?: boolean; cursor?: string }
 export interface FooterScheduleCard { title: string; subtitle: string; action: SduiAction }
@@ -120,7 +119,6 @@ export interface SduiSectionBase {
 
 export type SduiSection =
   | (SduiSectionBase & { type: 'hero_carousel'; data: HeroCarouselData })
-  | (SduiSectionBase & { type: 'live_pill';     data: LivePillData })
   | (SduiSectionBase & { type: 'usuals_row';    data: UsualsRowData })
   | (SduiSectionBase & { type: 'service_grid';  data: ServiceGridData })
   | (SduiSectionBase & { type: 'footer';        data: FooterData })

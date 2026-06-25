@@ -13,7 +13,6 @@
 //
 // What moved into SDUI sections:
 //   - HeroCarousel slides (promos + greeting)
-//   - LivePill nearby stats
 //   - UsualsRow service shortcuts
 //   - PopularServices grid
 //   - HomeFooter
@@ -64,7 +63,6 @@ import { SectionRenderer } from '../../sdui/SectionRenderer';
 import { HeroPager } from '../../components/home/HeroPager';
 import { HeroRefreshFlyer } from '../../components/home/HeroRefreshFlyer';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
-import { LivePillSection } from '../../sdui/sections/LivePillSection';
 import { SduiErrorBoundary } from '../../components/SduiErrorBoundary';
 import { executeAction } from '../../sdui/ActionHandler';
 import { setAnalyticsContext } from '../../analytics/context';
@@ -734,17 +732,10 @@ export default function HomeScreen() {
       onLayout={measureHeroCard}
     />
   );
-  // Live pill rides inside the hero pager's page 0 (bundled with the hero —
-  // they swipe in/out together), so it's extracted from the feed.
-  const livePillData = part.livePill?.data;
-  const livePillNode = livePillData ? (
-    <LivePillSection data={livePillData} onAction={handleAction} />
-  ) : null;
 
   const Header = (
     <HeroPager
       hero={heroNode}
-      heroExtra={livePillNode}
       slides={carouselData?.slides ?? []}
       behavior={{
         autoplay: carouselData?.autoplay,
