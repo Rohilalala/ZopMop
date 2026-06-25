@@ -809,7 +809,7 @@ export default function CartScreen() {
         <View style={[s.payDock, { paddingBottom: 16 + insets.bottom, backgroundColor: isDark ? 'rgba(10,10,10,0.92)' : 'rgba(255,255,255,0.95)', borderTopColor: isDark ? c.glassBorderHi : 'rgba(13,13,15,0.06)' }]}>
           <PrimaryButton
             label={`Confirm booking · ₹${(myShareCents / 100).toFixed(0)}`}
-            onPress={handleCheckout}
+            onPress={() => handleCheckout()}
             isLoading={booking}
             showChevron
           />
