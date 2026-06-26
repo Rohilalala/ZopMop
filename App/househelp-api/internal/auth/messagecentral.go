@@ -60,11 +60,12 @@ type MessageCentralConfig struct {
 	AuthToken  string // long-lived bearer copied from console.messagecentral.com → sent verbatim as `authToken` header
 	BaseURL    string // defaults to mcDefaultBaseURL when empty
 	DevMode    bool
-	// IsProduction is a defense-in-depth latch (C10): even if DevMode is true,
-	// the hardcoded "999999" bypass is disabled when this is set, so a
-	// misconfigured prod deploy cannot accept the dev OTP. The config boot
-	// guard is the primary protection; this is belt-and-braces.
-	IsProduction bool
+	// IsDevelopment is a defense-in-depth latch (C10): the hardcoded "999999"
+	// bypass is only honoured when this is true (a real development env), so a
+	// misconfigured staging/prod deploy cannot accept the dev OTP even if
+	// DevMode is somehow set. The config boot guard is the primary protection;
+	// this is belt-and-braces.
+	IsDevelopment bool
 }
 
 // MessageCentralClient talks to the VerifyNow API. Concurrent-safe (config is
@@ -89,10 +90,11 @@ func NewMessageCentralClient(cfg MessageCentralConfig) *MessageCentralClient {
 	}
 }
 
-// devEnabled reports whether the dev short-circuit is active. It is forced
-// off in production even if DevMode is set, so a misconfigured prod deploy
-// cannot accept the hardcoded "999999" OTP (C10 defense-in-depth).
-func (c *MessageCentralClient) devEnabled() bool { return c.cfg.DevMode && !c.cfg.IsProduction }
+// devEnabled reports whether the dev short-circuit is active. It is honoured
+// only in a development env (never staging/production) even if DevMode is set,
+// so a misconfigured non-dev deploy cannot accept the hardcoded "999999" OTP
+// (C10 defense-in-depth).
+func (c *MessageCentralClient) devEnabled() bool { return c.cfg.DevMode && c.cfg.IsDevelopment }
 
 // DevMode reports whether OTP delivery is short-circuited.
 func (c *MessageCentralClient) DevMode() bool { return c.devEnabled() }

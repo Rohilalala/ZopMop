@@ -243,10 +243,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("JWT_REFRESH_TTL_DAYS must be positive")
 	}
 	// C10 fail-closed: OTP_DEV_MODE accepts the hardcoded dev OTP "999999" for
-	// any phone at verify time. Refuse to boot in production so a single
-	// misconfigured env var cannot become a universal account-takeover.
-	if c.IsProduction() && c.OTPDevMode {
-		return fmt.Errorf("OTP_DEV_MODE must not be true in production")
+	// any phone at verify time. Refuse to boot in any non-development env
+	// (staging included — not just production) so a single misconfigured env
+	// var cannot become a universal account-takeover.
+	if !c.IsDevelopment() && c.OTPDevMode {
+		return fmt.Errorf("OTP_DEV_MODE must not be true outside development (APP_ENV=%q)", c.Env)
 	}
 	if !c.IsDevelopment() {
 		if c.MessageCentralCustomerID == "" && !c.OTPDevMode {

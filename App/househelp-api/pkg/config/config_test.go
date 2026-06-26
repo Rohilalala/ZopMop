@@ -105,8 +105,21 @@ func prodBaseConfig() *Config {
 	}
 }
 
-// C10: OTP_DEV_MODE=true in production would let the verify path accept the
-// hardcoded dev OTP "999999" for any phone. validate() must refuse to start.
+// C10: OTP_DEV_MODE=true outside development (production OR staging) would let
+// the verify path accept the hardcoded dev OTP "999999". validate() must refuse
+// to start in ANY non-development env, not just production.
+func TestConfigValidate_RejectsOTPDevModeOutsideDevelopment(t *testing.T) {
+	t.Parallel()
+	for _, env := range []string{"production", "staging"} {
+		cfg := prodBaseConfig()
+		cfg.Env = env
+		cfg.OTPDevMode = true
+		if err := cfg.validate(); err == nil {
+			t.Fatalf("expected validate() to reject OTP_DEV_MODE=true in %q", env)
+		}
+	}
+}
+
 func TestConfigValidate_RejectsOTPDevModeInProduction(t *testing.T) {
 	t.Parallel()
 	cfg := prodBaseConfig()
