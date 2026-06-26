@@ -85,6 +85,15 @@ export class PollAbortedError extends Error {
 
 function resolveEnvironment(): CFEnvironment {
   const raw = (process.env.EXPO_PUBLIC_CASHFREE_ENV ?? 'sandbox').toLowerCase();
+  // Fail loud in release builds instead of silently routing real payments to the
+  // sandbox gateway. EXPO_PUBLIC_CASHFREE_ENV must be 'production' for a production
+  // build (set in .env.production / the EAS production env).
+  if (!__DEV__ && raw !== 'production') {
+    throw new Error(
+      `[Cashfree] EXPO_PUBLIC_CASHFREE_ENV must be "production" in a release build (got "${raw}"). ` +
+      'Set it in .env.production or the EAS production env before building a release.',
+    );
+  }
   return raw === 'production' ? CFEnvironment.PRODUCTION : CFEnvironment.SANDBOX;
 }
 
