@@ -210,17 +210,18 @@ func (r *Repository) ProsWithoutShiftToday(ctx context.Context) ([]string, error
 // ─── Sessions ─────────────────────────────────────────────────────
 
 // OpenSession inserts a new shift_sessions row with offline_at=NULL.
-func (r *Repository) OpenSession(ctx context.Context, commitmentID, proID string, lat, lng float64, locationOK, manualApprovalUsed bool, adminID *string) (string, error) {
+func (r *Repository) OpenSession(ctx context.Context, commitmentID, proID string, lat, lng float64, locationOK, manualApprovalUsed bool, adminID *string, onlineSelfieURL string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var id string
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO shift_sessions
 		    (commitment_id, pro_id, start_lat, start_lng,
-		     location_verified_at_start, manual_approval_used, manual_approval_admin_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		     location_verified_at_start, manual_approval_used, manual_approval_admin_id,
+		     online_selfie_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
 		RETURNING id
-	`, commitmentID, proID, lat, lng, locationOK, manualApprovalUsed, adminID).Scan(&id)
+	`, commitmentID, proID, lat, lng, locationOK, manualApprovalUsed, adminID, onlineSelfieURL).Scan(&id)
 	return id, err
 }
 
@@ -258,17 +259,20 @@ func (r *Repository) CurrentSessionForPro(ctx context.Context, proID string) (*S
 
 // CloseSession stamps offline_at + online_minutes; returns the
 // computed minute count for the live denormalisation update.
-func (r *Repository) CloseSession(ctx context.Context, sessionID string) (int, error) {
+// CloseSession stamps offline_at + online_minutes. offlineSelfieURL is the
+// go-offline selfie; pass "" for system force-offline (stored as NULL).
+func (r *Repository) CloseSession(ctx context.Context, sessionID, offlineSelfieURL string) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var minutes int
 	err := r.db.QueryRow(ctx, `
 		UPDATE shift_sessions
-		   SET offline_at     = now(),
-		       online_minutes = GREATEST(0, EXTRACT(EPOCH FROM (now() - online_at))::int / 60)
+		   SET offline_at         = now(),
+		       online_minutes     = GREATEST(0, EXTRACT(EPOCH FROM (now() - online_at))::int / 60),
+		       offline_selfie_url = NULLIF($2, '')
 		 WHERE id = $1
 		 RETURNING online_minutes
-	`, sessionID).Scan(&minutes)
+	`, sessionID, offlineSelfieURL).Scan(&minutes)
 	return minutes, err
 }
 

@@ -24,6 +24,7 @@ import { useProRoleGate } from '../../hooks/useRoleGate';
 import { showError } from '../../utils/toast';
 import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
+import { captureSelfieForApproval } from '../../utils/photoCapture';
 import {
   getActiveShift,
   listCommitments,
@@ -232,7 +233,12 @@ export default function ProDashboardScreen() {
         return;
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const result: GoOnlineResult = await goOnline(commitment.id, pos.coords.latitude, pos.coords.longitude);
+      const selfie = await captureSelfieForApproval();
+      if (!selfie) {
+        showError('A selfie is required to go online.');
+        return;
+      }
+      const result: GoOnlineResult = await goOnline(commitment.id, pos.coords.latitude, pos.coords.longitude, selfie.dataUrl);
       if (!result.location_ok && result.requires_manual_approval) {
         // A request is already queued — go straight to the waiting state
         // rather than re-prompting for a selfie (the resubmit 409s).
@@ -275,7 +281,12 @@ export default function ProDashboardScreen() {
         setShowPendingModal(pending);
         return;
       }
-      await goOffline(commitment.id);
+      const selfie = await captureSelfieForApproval();
+      if (!selfie) {
+        showError('A selfie is required to go offline.');
+        return;
+      }
+      await goOffline(commitment.id, selfie.dataUrl);
       haptics.success();
       await refresh();
     } catch (e: any) {

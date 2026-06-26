@@ -92,7 +92,7 @@ func (h *Handler) GoOnline(c *fiber.Ctx) error {
 	if err := validator.Validate.Struct(req); err != nil {
 		return validationErr(c, err)
 	}
-	res, err := h.svc.GoOnline(c.UserContext(), proID, commitmentID, req.Lat, req.Lng)
+	res, err := h.svc.GoOnline(c.UserContext(), proID, commitmentID, req.Lat, req.Lng, req.Selfie)
 	if err != nil {
 		return mapShiftErr(c, err)
 	}
@@ -101,6 +101,13 @@ func (h *Handler) GoOnline(c *fiber.Ctx) error {
 
 func (h *Handler) GoOffline(c *fiber.Ctx) error {
 	proID, _ := c.Locals(middleware.LocalsKeyUserID).(string)
+	var req GoOfflineRequest
+	if err := c.BodyParser(&req); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if err := validator.Validate.Struct(req); err != nil {
+		return validationErr(c, err)
+	}
 	sess, _, err := h.svc.repo.CurrentSessionForPro(c.UserContext(), proID)
 	if err != nil {
 		return internalErr(c, "load session", err)
@@ -108,7 +115,7 @@ func (h *Handler) GoOffline(c *fiber.Ctx) error {
 	if sess == nil {
 		return mapShiftErr(c, ErrNotOnline)
 	}
-	if err := h.svc.GoOffline(c.UserContext(), proID, sess.ID); err != nil {
+	if err := h.svc.GoOffline(c.UserContext(), proID, sess.ID, req.Selfie); err != nil {
 		return mapShiftErr(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "offline", "session_id": sess.ID})
@@ -248,6 +255,8 @@ func mapShiftErr(c *fiber.Ctx, err error) error {
 		errors.Is(err, ErrApprovalPending),
 		errors.Is(err, ErrOutsideZone):
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+	case errors.Is(err, ErrSelfieRequired):
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error(), "code": "selfie_required"})
 	case errors.Is(err, ErrNoZoneAssigned):
 		return c.Status(fiber.StatusPreconditionFailed).JSON(fiber.Map{"error": err.Error()})
 	case errors.Is(err, ErrBookingNotOwnedByPro):

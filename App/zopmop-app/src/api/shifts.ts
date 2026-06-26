@@ -113,17 +113,21 @@ export async function deleteCommitment(id: string): Promise<void> {
   }
 }
 
-export async function goOnline(commitmentID: string, lat: number, lng: number): Promise<GoOnlineResult> {
+export async function goOnline(commitmentID: string, lat: number, lng: number, selfie: string): Promise<GoOnlineResult> {
   const res = await apiFetch(`${BASE_URL}/pro/shifts/${commitmentID}/go-online`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lat, lng }),
+    body: JSON.stringify({ lat, lng, selfie }),
   });
   return expectOk<GoOnlineResult>(res, 'go online');
 }
 
-export async function goOffline(commitmentID: string): Promise<void> {
-  const res = await apiFetch(`${BASE_URL}/pro/shifts/${commitmentID}/go-offline`, { method: 'POST' });
+export async function goOffline(commitmentID: string, selfie: string): Promise<void> {
+  const res = await apiFetch(`${BASE_URL}/pro/shifts/${commitmentID}/go-offline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selfie }),
+  });
   if (!res.ok) {
     const err = new Error('go offline failed') as Error & { status?: number };
     err.status = res.status;

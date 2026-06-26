@@ -190,7 +190,10 @@ func (s *Service) decrementLeaveBalance(ctx context.Context, proID string) error
 // opens a session. Outside-zone path returns LocationOK=false +
 // RequiresManualApproval=true unless an approval is already on file
 // for this commitment.
-func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat, lng float64) (*GoOnlineResult, error) {
+func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat, lng float64, selfie string) (*GoOnlineResult, error) {
+	if selfie == "" {
+		return nil, ErrSelfieRequired
+	}
 	c, err := s.repo.GetCommitmentForPro(ctx, proID, commitmentID)
 	if err != nil {
 		return nil, err
@@ -272,7 +275,7 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 		_ = s.repo.MarkLateShow(ctx, commitmentID)
 	}
 
-	sessID, err := s.repo.OpenSession(ctx, commitmentID, proID, lat, lng, approved || locationOK, approved, adminID)
+	sessID, err := s.repo.OpenSession(ctx, commitmentID, proID, lat, lng, approved || locationOK, approved, adminID, selfie)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +290,10 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 }
 
 // GoOffline closes the session unless bookings are still pending.
-func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error {
+func (s *Service) GoOffline(ctx context.Context, proID, sessionID, selfie string) error {
+	if selfie == "" {
+		return ErrSelfieRequired
+	}
 	pending, err := s.repo.PendingBookingsCountForPro(ctx, proID)
 	if err != nil {
 		return err
@@ -295,7 +301,7 @@ func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error 
 	if pending > 0 {
 		return ErrBookingsPending
 	}
-	minutes, err := s.repo.CloseSession(ctx, sessionID)
+	minutes, err := s.repo.CloseSession(ctx, sessionID, selfie)
 	if err != nil {
 		return err
 	}
@@ -337,7 +343,7 @@ func (s *Service) ExpireStaleSessions(ctx context.Context) (int, error) {
 		if pending > 0 {
 			continue
 		}
-		minutes, cerr := s.repo.CloseSession(ctx, r.SessionID)
+		minutes, cerr := s.repo.CloseSession(ctx, r.SessionID, "") // auto-offline: no selfie (pro absent)
 		if cerr != nil {
 			log.Warn().Err(cerr).Str("session_id", r.SessionID).Msg("[shift] expire sweep: close failed")
 			continue
