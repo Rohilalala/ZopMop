@@ -8,6 +8,30 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/shift"
 )
 
+// Race guard: once a session is closed (manual go-offline, with a selfie), a
+// later auto-close must be a no-op and must NOT overwrite offline_at / minutes /
+// the selfie.
+func TestCloseSession_SecondCloseDoesNotOverwrite(t *testing.T) {
+	pool := openExpiryDB(t)
+	ctx := context.Background()
+	repo := shift.NewRepository(pool)
+	_, _, sess := seedOnlinePro(t, pool, "00:00", "23:59")
+
+	const realSelfie = "data:image/jpeg;base64,UkVBTA=="
+	if _, err := repo.CloseSession(ctx, sess, realSelfie); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	// Racing auto-close (empty selfie) must be a benign no-op.
+	if _, err := repo.CloseSession(ctx, sess, ""); err != nil {
+		t.Fatalf("second close should be an idempotent no-op, got %v", err)
+	}
+	var url *string
+	pool.QueryRow(ctx, `SELECT offline_selfie_url FROM shift_sessions WHERE id=$1::uuid`, sess).Scan(&url)
+	if url == nil || *url != realSelfie {
+		t.Errorf("offline_selfie_url was overwritten by the racing close: %v", url)
+	}
+}
+
 // Mandatory selfie: go-online with no selfie must be rejected before anything
 // else happens.
 func TestGoOnline_RequiresSelfie(t *testing.T) {

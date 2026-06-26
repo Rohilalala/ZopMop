@@ -270,9 +270,15 @@ func (r *Repository) CloseSession(ctx context.Context, sessionID, offlineSelfieU
 		   SET offline_at         = now(),
 		       online_minutes     = GREATEST(0, EXTRACT(EPOCH FROM (now() - online_at))::int / 60),
 		       offline_selfie_url = NULLIF($2, '')
-		 WHERE id = $1
+		 WHERE id = $1 AND offline_at IS NULL
 		 RETURNING online_minutes
 	`, sessionID, offlineSelfieURL).Scan(&minutes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already closed — a racing manual go-offline or an earlier sweep won.
+		// Idempotent no-op: do NOT overwrite the existing offline_at / minutes /
+		// offline_selfie_url (otherwise an auto-close could wipe a real selfie).
+		return 0, nil
+	}
 	return minutes, err
 }
 
