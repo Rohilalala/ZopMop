@@ -21,7 +21,7 @@ export const ALLOWED_SCREENS = new Set<string>([
 	'BookingRate', 'Chat', 'HelpSupport', 'HiZop',
 	'Location', 'NameEntry', 'NotServiceable',
 	'Offers', 'OTPVerification', 'Payment', 'PhoneEntry', 'ReferralEarn',
-	'ServiceAbout', 'Tip', 'TrackLive', 'Welcome',
+	'ServiceAbout', 'TrackLive', 'Welcome',
 	'YourExperts', 'ZopIntro',
 	// Pro flows (also gated per-screen via useProRoleGate from C-9).
 	// Phase 10: ProActive/ProMatched/ProScheduledInvite retired —

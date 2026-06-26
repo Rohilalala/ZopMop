@@ -186,7 +186,7 @@ export default function BookingConfirmedScreen() {
     switch (liveStage) {
       case 'at_door':     return `${(liveHelperName ?? 'Your pro').split(' ')[0]} is right outside. Share the OTP to begin.`;
       case 'in_progress': return 'Sit back — your pro is hard at work.';
-      case 'completed':   return 'Cleaning wrapped up. Rate your pro and add a tip if you loved it.';
+      case 'completed':   return 'Cleaning wrapped up. Rate your pro to let us know how it went.';
       case 'cancelled':   return 'This booking was cancelled.';
       default:
         if (arrivalBy) {
@@ -214,10 +214,6 @@ export default function BookingConfirmedScreen() {
   const onMessage = () => {
     if (!bookingId) return;
     navigation.navigate('Chat', { bookingId, helperName: liveHelperName });
-  };
-  const onAddTip = () => {
-    if (!bookingId) return;
-    navigation.navigate('Tip', { bookingId, helperName: liveHelperName });
   };
   const onReschedule = () => { /* scheduled flow only — no-op for instant */ };
 
@@ -275,7 +271,6 @@ export default function BookingConfirmedScreen() {
             canCall={!!livePhone}
             onCall={onCallPro}
             onMessage={onMessage}
-            onTip={onAddTip}
             onReschedule={onReschedule}
             isDark={isDark}
           />
@@ -788,14 +783,12 @@ function InstantActions({
   canCall,
   onCall,
   onMessage,
-  onTip,
   onReschedule,
   isDark,
 }: {
   canCall: boolean;
   onCall: () => void;
   onMessage: () => void;
-  onTip: () => void;
   onReschedule: () => void;
   isDark: boolean;
 }) {
@@ -803,7 +796,6 @@ function InstantActions({
     <View style={styles.actGrid}>
       <ActChip icon="phone"          label="Call pro"    onPress={onCall} disabled={!canCall} isDark={isDark} />
       <ActChip icon="message-square" label="Message"     onPress={onMessage} isDark={isDark} />
-      <ActChip icon="award"          label="Add tip"     onPress={onTip} isDark={isDark} />
       <ActChip icon="clock"          label="Reschedule"  onPress={onReschedule} disabled isDark={isDark} />
     </View>
   );

@@ -142,11 +142,6 @@ export type MainStackParamList = {
     bookingId: string;
     helperName?: string;
   };
-  Tip: {
-    bookingId: string;
-    helperName?: string;
-    initialAmountRupees?: number;
-  };
   ReferralEarn: undefined;
   ReferralInvite: { code: string };
 };
