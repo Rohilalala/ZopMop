@@ -58,3 +58,35 @@ func TestListForUser_NewUsersAudience(t *testing.T) {
 		t.Fatalf("expected new_users promo %q visible to a user with no bookings; got %d offers", code, len(offers))
 	}
 }
+
+// A 'specific'-audience promo (targeted via audience_user_ids) must be visible
+// to a targeted user. The handler queried audience='user_segment', a value the
+// promotions.audience CHECK forbids, so targeted promos never showed.
+func TestListForUser_SpecificAudience(t *testing.T) {
+	db := openOffersTestDB(t)
+	ctx := context.Background()
+
+	const code = "AUDITTEST_TARGETED"
+	const targetUser = "00000000-0000-0000-0000-0000000000a1"
+	_, _ = db.Exec(ctx, `DELETE FROM promotions WHERE code = $1`, code)
+	if _, err := db.Exec(ctx, `
+		INSERT INTO promotions (code, discount_type, discount_value, audience, audience_user_ids, is_active)
+		VALUES ($1, 'fixed', 5000, 'specific', ARRAY[$2::uuid], true)`, code, targetUser); err != nil {
+		t.Fatalf("seed specific promo: %v", err)
+	}
+	t.Cleanup(func() { _, _ = db.Exec(ctx, `DELETE FROM promotions WHERE code = $1`, code) })
+
+	offers, err := listForUser(ctx, db, targetUser)
+	if err != nil {
+		t.Fatalf("listForUser: %v", err)
+	}
+	found := false
+	for _, o := range offers {
+		if o.Code == code {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected targeted promo %q visible to the targeted user; got %d offers", code, len(offers))
+	}
+}
