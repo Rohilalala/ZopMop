@@ -132,3 +132,68 @@ func TestRefundWorker_SkipsNonCashfree(t *testing.T) {
 		t.Errorf("wallet refund status = %s, want untouched 'pending'", status)
 	}
 }
+
+func seedGatewayErrorRefund(t *testing.T, pool *pgxpool.Pool, attempts int) string {
+	t.Helper()
+	ctx := context.Background()
+	var userID string
+	ph := "9" + uuid.NewString()[:9]
+	if err := pool.QueryRow(ctx, `INSERT INTO users(phone, role) VALUES ($1,'customer') RETURNING id::text`, ph).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	var id string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO pending_refunds
+		  (user_id, amount_cents, source, payment_method, payment_id, status, refund_attempts, approved_at)
+		VALUES ($1::uuid, 7000, 'booking_cancellation', 'cashfree', 'order_x', 'gateway_error', $2, now() - interval '20 minutes')
+		RETURNING id::text`, userID, attempts).Scan(&id); err != nil {
+		t.Fatalf("seed gateway_error refund: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		pool.Exec(c, `DELETE FROM pending_refunds WHERE id=$1::uuid`, id)
+		pool.Exec(c, `DELETE FROM users WHERE id=$1::uuid`, userID)
+	})
+	return id
+}
+
+// A transient gateway_error (stale, under the attempt cap) must be re-driven —
+// the gap the re-audit found (refunds stranding on one gateway flake).
+func TestRefundWorker_RetriesStaleGatewayError(t *testing.T) {
+	pool := openRefundTestDB(t)
+	id := seedGatewayErrorRefund(t, pool, 1)
+	gw := &fakeGateway{}
+	w := NewRefundWorker(pool, gw)
+
+	if _, _, err := w.ProcessOnce(context.Background(), 20); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if gw.calls == 0 {
+		t.Fatal("stale gateway_error row was not retried")
+	}
+	var status string
+	pool.QueryRow(context.Background(), `SELECT status FROM pending_refunds WHERE id=$1::uuid`, id).Scan(&status)
+	if status != "processed" {
+		t.Errorf("retried row status = %s, want processed", status)
+	}
+}
+
+// A row that has hit the attempt cap must be left terminal (not retried forever).
+func TestRefundWorker_GivesUpAtMaxAttempts(t *testing.T) {
+	pool := openRefundTestDB(t)
+	id := seedGatewayErrorRefund(t, pool, 5)
+	gw := &fakeGateway{}
+	w := NewRefundWorker(pool, gw)
+
+	if _, _, err := w.ProcessOnce(context.Background(), 20); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if gw.calls != 0 {
+		t.Errorf("row at the attempt cap should not be retried; gateway called %d times", gw.calls)
+	}
+	var status string
+	pool.QueryRow(context.Background(), `SELECT status FROM pending_refunds WHERE id=$1::uuid`, id).Scan(&status)
+	if status != "gateway_error" {
+		t.Errorf("status = %s, want gateway_error (terminal)", status)
+	}
+}

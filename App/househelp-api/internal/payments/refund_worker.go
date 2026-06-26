@@ -2,6 +2,7 @@ package payments
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,6 +12,8 @@ import (
 const (
 	refundWorkerInterval = 60 * time.Second
 	refundClaimBatch     = 20
+	// gateway_error rows are re-driven with backoff up to 5 attempts (see the
+	// claim() WHERE clause), then left terminal for ops.
 )
 
 // RefundWorker drives queued booking-cancellation refunds against the payment
@@ -83,7 +86,7 @@ func (w *RefundWorker) ProcessOnce(ctx context.Context, limit int) (processed, f
 		if rerr != nil {
 			failed++
 			_, _ = w.db.Exec(ctx,
-				`UPDATE pending_refunds SET status='gateway_error', error_message=$2 WHERE id=$1::uuid`,
+				`UPDATE pending_refunds SET status='gateway_error', error_message=$2, refund_attempts=refund_attempts+1 WHERE id=$1::uuid`,
 				r.id, truncateErr(rerr.Error(), 480))
 			log.Warn().Err(rerr).Str("refund_id", r.id).Msg("[refunds] gateway refund failed")
 			continue
@@ -111,7 +114,8 @@ func (w *RefundWorker) claim(ctx context.Context, limit int) ([]claimedRefund, e
 		   SELECT id FROM pending_refunds
 		    WHERE payment_method='cashfree' AND payment_id IS NOT NULL
 		      AND (status='pending'
-		           OR (status='approved' AND approved_at < now() - interval '10 minutes'))
+		           OR (status='approved' AND approved_at < now() - interval '10 minutes')
+		           OR (status='gateway_error' AND refund_attempts < 5 AND approved_at < now() - interval '15 minutes'))
 		    ORDER BY created_at
 		    LIMIT $1
 		    FOR UPDATE SKIP LOCKED
@@ -141,8 +145,11 @@ func (w *RefundWorker) claim(ctx context.Context, limit int) ([]claimedRefund, e
 }
 
 func truncateErr(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	if len(s) <= n {
+		return s
 	}
-	return s
+	// Cut on a valid UTF-8 boundary so the error_message column never receives
+	// an invalid byte sequence (Postgres rejects those, which would fail the
+	// gateway_error UPDATE and leave the row stuck in 'approved').
+	return strings.ToValidUTF8(s[:n], "")
 }
