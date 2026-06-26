@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Camera, RefreshCw, ShieldAlert } from 'lucide-react';
 
-import { listShiftSessions, shiftSessionKeys, type ShiftSession } from '@/api/shiftSessions';
+import { getShiftSessionSelfies, listShiftSessions, shiftSessionKeys, type ShiftSession } from '@/api/shiftSessions';
 import { Card, EmptyState, ErrorState, Skeleton } from '@/components/ui';
 import { usePermission } from '@/auth/usePermission';
 
@@ -127,12 +127,36 @@ function fmt(ts?: string | null): string {
   }
 }
 
-function Selfie({ url }: { url?: string | null }) {
-  if (!url) return <span className="text-text-muted">—</span>;
+// SelfieCell lazy-loads the (large, base64) selfie only when an admin clicks
+// View — the list response carries presence flags only, so it stays small.
+function SelfieCell({ sessionId, kind, has }: { sessionId: string; kind: 'online' | 'offline'; has: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  if (!has) return <span className="text-text-muted">—</span>;
+  if (url) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer">
+        <img src={url} alt="selfie" className="w-12 h-12 rounded-lg object-cover border border-border" />
+      </a>
+    );
+  }
   return (
-    <a href={url} target="_blank" rel="noreferrer">
-      <img src={url} alt="selfie" className="w-12 h-12 rounded-lg object-cover border border-border" />
-    </a>
+    <button
+      disabled={loading}
+      onClick={async () => {
+        setLoading(true);
+        try {
+          const s = await getShiftSessionSelfies(sessionId);
+          setUrl((kind === 'online' ? s.online_selfie_url : s.offline_selfie_url) ?? null);
+        } finally {
+          setLoading(false);
+        }
+      }}
+      className="text-xs rounded-lg border border-border px-2 py-1 hover:bg-surface-elevated disabled:opacity-50"
+    >
+      {loading ? '…' : 'View'}
+    </button>
   );
 }
 
@@ -144,8 +168,8 @@ function Row({ s, alt }: { s: ShiftSession; alt: boolean }) {
       <td className="px-4 py-3">{fmt(s.online_at)}</td>
       <td className="px-4 py-3">{s.offline_at ? fmt(s.offline_at) : <span className="text-green-500">online</span>}</td>
       <td className="px-4 py-3">{s.online_minutes ?? '—'}</td>
-      <td className="px-4 py-3"><Selfie url={s.online_selfie_url} /></td>
-      <td className="px-4 py-3"><Selfie url={s.offline_selfie_url} /></td>
+      <td className="px-4 py-3"><SelfieCell sessionId={s.id} kind="online" has={s.has_online_selfie} /></td>
+      <td className="px-4 py-3"><SelfieCell sessionId={s.id} kind="offline" has={s.has_offline_selfie} /></td>
     </tr>
   );
 }
