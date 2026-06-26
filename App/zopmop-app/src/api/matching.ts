@@ -270,8 +270,14 @@ export async function submitBookingReview(
     body: JSON.stringify({ rating, comment: comment ?? '' }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? 'Failed to submit review');
+    const body = await res.json().catch(() => ({}));
+    const e = new Error((body as any).error ?? 'Failed to submit review') as Error & {
+      code?: string;
+      status?: number;
+    };
+    e.code = (body as any).code;
+    e.status = res.status;
+    throw e;
   }
 }
 

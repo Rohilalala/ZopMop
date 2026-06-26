@@ -89,7 +89,14 @@ export default function BookingRateScreen({ route }: Props) {
     setSubmitting(true);
     setErrorMessage('');
     try {
-      await submitBookingReview(token, bookingId, stars, comment.trim() || undefined);
+      try {
+        await submitBookingReview(token, bookingId, stars, comment.trim() || undefined);
+      } catch (e: any) {
+        // A 409 "already reviewed" (e.g. a retry after a dropped response) means
+        // the rating is already recorded — the desired end state. Treat it as
+        // success and fall through; re-throw anything else.
+        if (e?.code !== 'already_reviewed') throw e;
+      }
       await markBookingRated(bookingId);
       posthog.capture('booking_rated', {
         booking_id: bookingId,
