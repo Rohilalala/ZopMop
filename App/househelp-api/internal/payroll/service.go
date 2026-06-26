@@ -149,6 +149,9 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 	if cycle.End.Before(cycle.Start) {
 		return nil, fmt.Errorf("payroll: cycle_end before cycle_start")
 	}
+	if !IsCanonicalCycle(cycle) {
+		return nil, fmt.Errorf("payroll: %s..%s is not a canonical pay cycle (1st–15th or 16th–end-of-month); refusing to avoid overlapping double-pay", cycle.StartDate(), cycle.EndDate())
+	}
 
 	ids, err := s.repo.EligibleHelpers(ctx, cycle.End)
 	if err != nil {

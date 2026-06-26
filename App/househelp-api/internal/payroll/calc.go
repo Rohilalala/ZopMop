@@ -58,6 +58,15 @@ func CycleForCloseDate(t time.Time) (CycleClose, bool) {
 	return CycleClose{}, false
 }
 
+// IsCanonicalCycle reports whether (Start,End) is a real pay cycle — the 1st
+// through the 15th, or the 16th through the last day of the month. Arbitrary
+// admin-supplied windows that aren't canonical can overlap an already-run
+// cycle and double-pay pros for the shared hours; RunCycle rejects them.
+func IsCanonicalCycle(c CycleClose) bool {
+	canon, ok := CycleForCloseDate(c.End.AddDate(0, 0, 1))
+	return ok && canon.Start.Equal(c.Start) && canon.End.Equal(c.End)
+}
+
 // IsCycleCloseDate reports whether `t` (in IST) is a payroll run day —
 // the 1st or the 16th, i.e. the day after a cycle close.
 func IsCycleCloseDate(t time.Time) bool {

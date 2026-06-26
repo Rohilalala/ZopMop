@@ -245,3 +245,32 @@ func TestLastDayOfMonth(t *testing.T) {
 		}
 	}
 }
+
+func TestIsCanonicalCycle(t *testing.T) {
+	mk := func(sy int, sm time.Month, sd, ey int, em time.Month, ed int) CycleClose {
+		return CycleClose{
+			Start: time.Date(sy, sm, sd, 0, 0, 0, 0, istLocation),
+			End:   time.Date(ey, em, ed, 0, 0, 0, 0, istLocation),
+		}
+	}
+	// Canonical cycles.
+	if !IsCanonicalCycle(mk(2026, time.May, 1, 2026, time.May, 15)) {
+		t.Error("1st–15th must be canonical")
+	}
+	if !IsCanonicalCycle(mk(2026, time.May, 16, 2026, time.May, 31)) {
+		t.Error("16th–31st must be canonical")
+	}
+	if !IsCanonicalCycle(mk(2026, time.February, 16, 2026, time.February, 28)) {
+		t.Error("Feb 16th–28th (non-leap) must be canonical")
+	}
+	// Non-canonical / overlapping windows that would double-pay.
+	if IsCanonicalCycle(mk(2026, time.May, 1, 2026, time.May, 20)) {
+		t.Error("1st–20th must be rejected (overlaps the 16th–EOM cycle)")
+	}
+	if IsCanonicalCycle(mk(2026, time.May, 10, 2026, time.May, 25)) {
+		t.Error("10th–25th must be rejected")
+	}
+	if IsCanonicalCycle(mk(2026, time.May, 1, 2026, time.May, 31)) {
+		t.Error("whole-month 1st–31st must be rejected")
+	}
+}
