@@ -32,14 +32,16 @@ func TestCloseSession_SecondCloseDoesNotOverwrite(t *testing.T) {
 	}
 }
 
-// Mandatory selfie: go-online with no selfie must be rejected before anything
-// else happens.
+// Mandatory + valid image selfie: go-online must reject an empty selfie AND any
+// non-image data URL (a javascript:/data:text/html stored-XSS payload).
 func TestGoOnline_RequiresSelfie(t *testing.T) {
 	pool := openExpiryDB(t)
 	svc := shift.NewService(shift.NewRepository(pool))
-	_, err := svc.GoOnline(context.Background(), "00000000-0000-0000-0000-0000000000aa", "00000000-0000-0000-0000-0000000000bb", 28.4, 77.0, "")
-	if !errors.Is(err, shift.ErrSelfieRequired) {
-		t.Fatalf("expected ErrSelfieRequired for empty go-online selfie, got %v", err)
+	for _, bad := range []string{"", "javascript:alert(1)", "data:text/html,<script>x</script>", "https://evil.example/x.png"} {
+		_, err := svc.GoOnline(context.Background(), "00000000-0000-0000-0000-0000000000aa", "00000000-0000-0000-0000-0000000000bb", 28.4, 77.0, bad)
+		if !errors.Is(err, shift.ErrSelfieRequired) {
+			t.Fatalf("selfie %q: expected ErrSelfieRequired, got %v", bad, err)
+		}
 	}
 }
 

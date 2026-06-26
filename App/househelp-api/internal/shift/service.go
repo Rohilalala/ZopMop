@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -191,7 +192,10 @@ func (s *Service) decrementLeaveBalance(ctx context.Context, proID string) error
 // RequiresManualApproval=true unless an approval is already on file
 // for this commitment.
 func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat, lng float64, selfie string) (*GoOnlineResult, error) {
-	if selfie == "" {
+	// Must be an image data URL — reject empty AND non-image values (e.g. a
+	// "javascript:"/"data:text/html" payload that the CRM would render in an
+	// <a href>, a stored-XSS vector).
+	if !strings.HasPrefix(selfie, "data:image/") {
 		return nil, ErrSelfieRequired
 	}
 	c, err := s.repo.GetCommitmentForPro(ctx, proID, commitmentID)
@@ -291,7 +295,7 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 
 // GoOffline closes the session unless bookings are still pending.
 func (s *Service) GoOffline(ctx context.Context, proID, sessionID, selfie string) error {
-	if selfie == "" {
+	if !strings.HasPrefix(selfie, "data:image/") {
 		return ErrSelfieRequired
 	}
 	pending, err := s.repo.PendingBookingsCountForPro(ctx, proID)

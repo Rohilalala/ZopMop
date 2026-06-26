@@ -31,7 +31,7 @@ var (
 	ErrAlreadyOnline        = errors.New("pro is already online for this shift")
 	ErrNotOnline            = errors.New("pro is not currently online")
 	ErrBookingsPending      = errors.New("cannot go offline while bookings are pending")
-	ErrSelfieRequired       = errors.New("a selfie is required to go online and offline")
+	ErrSelfieRequired       = errors.New("a valid photo selfie (data:image/...) is required to go online and offline")
 	ErrOutsideZone          = errors.New("current location is outside the assigned zone")
 	ErrNoZoneAssigned       = errors.New("pro has no active zone assignment")
 	ErrApprovalPending      = errors.New("a zone approval is already pending")
