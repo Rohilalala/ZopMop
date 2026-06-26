@@ -34,9 +34,7 @@
             ]
           }
         ],
-        "NSFaceIDUsageDescription": "ZopMop uses Face ID to keep your saved payment methods and wallet secure on this device.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "ZopMop uses your location only while the app is open to dispatch the nearest helper. We do not track your location in the background.",
-        "NSLocationAlwaysUsageDescription": "ZopMop uses your location only while the app is open. We do not track your location in the background."
+        "NSFaceIDUsageDescription": "ZopMop uses Face ID to keep your saved payment methods and wallet secure on this device."
       },
       "config": {
         "googleMaps": {}
@@ -72,7 +70,8 @@
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ],
       "package": "com.zopmop.app",
       "config": {
@@ -91,6 +90,12 @@
         }
       ],
       "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-build-properties",
         {
