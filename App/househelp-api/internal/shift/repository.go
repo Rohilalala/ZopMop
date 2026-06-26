@@ -285,6 +285,47 @@ func (r *Repository) BumpHelperOnlineMinutes(ctx context.Context, proID string, 
 	return err
 }
 
+// ExpirableSession is an open shift session joined to its commitment's window.
+type ExpirableSession struct {
+	SessionID    string
+	ProID        string
+	CommitmentID string
+	ShiftDate    string // YYYY-MM-DD
+	StartTime    string // HH:MM (IST wall-clock)
+	EndTime      string // HH:MM (IST wall-clock)
+}
+
+// ListExpirableSessions returns open sessions (offline_at IS NULL) whose
+// commitment date is today or earlier — candidates for force-offline. The
+// precise IST end-of-window comparison is done by the caller (commitmentWindow).
+func (r *Repository) ListExpirableSessions(ctx context.Context) ([]ExpirableSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	rows, err := r.db.Query(ctx, `
+		SELECT ss.id, ss.pro_id, ss.commitment_id,
+		       to_char(sc.shift_date,'YYYY-MM-DD'),
+		       to_char(sc.start_time,'HH24:MI'),
+		       to_char(sc.end_time,'HH24:MI')
+		  FROM shift_sessions ss
+		  JOIN shift_commitments sc ON sc.id = ss.commitment_id
+		 WHERE ss.offline_at IS NULL
+		   AND sc.shift_date <= (now() AT TIME ZONE 'Asia/Kolkata')::date
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list expirable sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []ExpirableSession
+	for rows.Next() {
+		var e ExpirableSession
+		if err := rows.Scan(&e.SessionID, &e.ProID, &e.CommitmentID, &e.ShiftDate, &e.StartTime, &e.EndTime); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ─── Zones ────────────────────────────────────────────────────────
 
 // CurrentZoneAssignment returns the active zone for a pro, with the

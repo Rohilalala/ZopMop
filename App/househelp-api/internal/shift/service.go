@@ -305,6 +305,56 @@ func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error 
 	return nil
 }
 
+// ExpireStaleSessions force-closes any open shift session whose committed
+// shift window has already ended (the pro never went offline), unless the pro
+// still has a booking in flight. Mirrors a manual go-offline: closes the
+// session, marks the commitment completed, and bumps online minutes. Returns
+// the number of sessions closed. Intended to run on a short periodic sweep.
+func (s *Service) ExpireStaleSessions(ctx context.Context) (int, error) {
+	rows, err := s.repo.ListExpirableSessions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	now := IST()
+	closed := 0
+	for _, r := range rows {
+		_, end, werr := commitmentWindow(&Commitment{ShiftDate: r.ShiftDate, StartTime: r.StartTime, EndTime: r.EndTime})
+		if werr != nil {
+			// Unparseable / overnight window — can't safely compute the end; skip.
+			log.Warn().Err(werr).Str("commitment_id", r.CommitmentID).Msg("[shift] expire sweep: skip (bad window)")
+			continue
+		}
+		if !now.After(end) {
+			continue // still inside the committed shift window
+		}
+		// Shift window has ended. Don't yank a pro who is mid-job — leave the
+		// session open; the next sweep closes it once the job clears.
+		pending, perr := s.repo.PendingBookingsCountForPro(ctx, r.ProID)
+		if perr != nil {
+			log.Warn().Err(perr).Str("pro_id", r.ProID).Msg("[shift] expire sweep: pending-bookings check failed; skip")
+			continue
+		}
+		if pending > 0 {
+			continue
+		}
+		minutes, cerr := s.repo.CloseSession(ctx, r.SessionID)
+		if cerr != nil {
+			log.Warn().Err(cerr).Str("session_id", r.SessionID).Msg("[shift] expire sweep: close failed")
+			continue
+		}
+		if err := s.repo.MarkCompleted(ctx, r.CommitmentID); err != nil {
+			log.Warn().Err(err).Str("commitment_id", r.CommitmentID).Msg("[shift] expire sweep: mark completed failed")
+		}
+		if err := s.repo.BumpHelperOnlineMinutes(ctx, r.ProID, minutes); err != nil {
+			log.Warn().Err(err).Str("pro_id", r.ProID).Msg("[shift] expire sweep: bump minutes failed")
+		}
+		closed++
+		log.Info().Str("session_id", r.SessionID).Str("pro_id", r.ProID).Int("minutes", minutes).
+			Msg("[shift] force-offline: committed shift window ended")
+	}
+	return closed, nil
+}
+
 // ─── Manual approval ──────────────────────────────────────────────
 
 // RequestManualApproval files a pending zone_approval_requests row.

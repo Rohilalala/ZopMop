@@ -12,7 +12,7 @@ import (
 //
 //   - 03:00 IST daily      → LockShiftsAt3AM
 //   - every 60 minutes      → RecomputeCancellationCount30d
-//   - every 60 seconds      → zone-drift scan (best-effort warnings)
+//   - every 60 seconds      → force-offline expired shift sessions
 //
 // All loops run in the API process — no external scheduler. Each
 // loop respects the context passed to Start; Stop cancels everything
@@ -33,8 +33,8 @@ func (c *Cron) Start(ctx context.Context) {
 	c.wg.Add(3)
 	go c.runDaily3AM(ctx)
 	go c.runHourly(ctx)
-	go c.runDriftScan(ctx)
-	log.Info().Msg("[shift] cron started (3AM lock, hourly recompute, drift scan)")
+	go c.runSessionExpiry(ctx)
+	log.Info().Msg("[shift] cron started (3AM lock, hourly recompute, 60s session-expiry sweep)")
 }
 
 func (c *Cron) Stop() {
@@ -103,20 +103,23 @@ func (c *Cron) runHourly(ctx context.Context) {
 	}
 }
 
-// runDriftScan is a placeholder for the zone-drift loop. Wiring the
-// live pro-location reads requires the location heartbeat plumbing
-// which sits in internal/location — out of Phase 7 Part A scope.
-// The loop is registered so the hook point exists; it logs and noops
-// every minute until the heartbeat join is added in a follow-up.
-func (c *Cron) runDriftScan(ctx context.Context) {
+// runSessionExpiry force-closes shift sessions whose committed window has
+// ended but the pro never went offline (the "online all day" bug). Runs every
+// 60 seconds; each tick is best-effort and idempotent.
+func (c *Cron) runSessionExpiry(ctx context.Context) {
 	defer c.wg.Done()
 	tick := time.NewTicker(60 * time.Second)
 	defer tick.Stop()
 	for {
 		select {
 		case <-tick.C:
-			// TODO: read internal/location heartbeats + compare to
-			// pro_zone_assignments centre; fire warnings on >1km.
+			jobCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if closed, err := c.svc.ExpireStaleSessions(jobCtx); err != nil {
+				log.Warn().Err(err).Msg("[shift] ExpireStaleSessions sweep failed")
+			} else if closed > 0 {
+				log.Info().Int("closed", closed).Msg("[shift] force-offlined expired shift sessions")
+			}
+			cancel()
 		case <-c.stopCh:
 			return
 		case <-ctx.Done():
