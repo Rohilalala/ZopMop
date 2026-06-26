@@ -101,6 +101,19 @@ func TestMC_DevModeBypass(t *testing.T) {
 	}
 }
 
+// C10 defense-in-depth: even with DevMode=true, the hardcoded "999999" bypass
+// must be disabled when IsProduction is set, so a misconfigured prod deploy
+// cannot accept the dev OTP for any phone.
+func TestMC_DevBypassDisabledInProduction(t *testing.T) {
+	c := NewMessageCentralClient(MessageCentralConfig{DevMode: true, IsProduction: true})
+	if c.DevMode() {
+		t.Fatalf("DevMode() must report false when IsProduction is set")
+	}
+	if err := c.VerifyOTP(context.Background(), "dev-9999999999", "999999"); err == nil {
+		t.Fatalf("VerifyOTP must NOT accept 999999 in production (got nil = accepted)")
+	}
+}
+
 // TestMC_SendUnauthorizedMapsToMisconfigured locks in the new behaviour: a
 // 401 from /verification/v3/send means the configured dashboard token is
 // wrong/expired — no retry, no token refetch, surfaced as ErrMCMisconfigured

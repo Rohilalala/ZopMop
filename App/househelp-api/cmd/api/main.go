@@ -287,8 +287,9 @@ func main() {
 	mcClient := auth.NewMessageCentralClient(auth.MessageCentralConfig{
 		CustomerID: cfg.MessageCentralCustomerID,
 		AuthToken:  cfg.MessageCentralAuthToken,
-		BaseURL:    cfg.MessageCentralBaseURL,
-		DevMode:    cfg.OTPDevMode,
+		BaseURL:      cfg.MessageCentralBaseURL,
+		DevMode:      cfg.OTPDevMode,
+		IsProduction: cfg.IsProduction(),
 	})
 	tokenIssuer := auth.NewTokenIssuer(auth.TokenIssuerConfig{
 		AccessSecret:   cfg.JWTAccessSecret,

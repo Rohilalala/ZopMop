@@ -79,3 +79,50 @@ func TestConfigValidate_RejectsDuplicateRotationKeyID(t *testing.T) {
 		t.Fatalf("expected duplicate key ID validation failure")
 	}
 }
+
+// prodBaseConfig returns a Config that passes validate() for a production
+// environment, so a single toggle can be tested in isolation.
+func prodBaseConfig() *Config {
+	return &Config{
+		Env:                "production",
+		DatabaseURL:        "postgres://x",
+		RedisURL:           "redis://x",
+		JWTSecret:          strongSecretA,
+		JWTSecretID:        "active",
+		JWTRefreshSecret:   strongSecretB,
+		JWTExpiryHours:     24,
+		JWTAccessTTLHours:  1,
+		JWTRefreshTTLDays:  30,
+		MessageCentralCustomerID: "cust",
+		MessageCentralAuthToken:  "tok",
+		DBPoolMinConns:     5,
+		DBPoolMaxConns:     20,
+		DBPoolMaxConnLife:  60,
+		DBPoolMaxConnIdle:  30,
+		DBPoolHealthCheck:  60,
+		DBBoundMaxInFlight: 600,
+		DBBoundQueueWaitMS: 75,
+	}
+}
+
+// C10: OTP_DEV_MODE=true in production would let the verify path accept the
+// hardcoded dev OTP "999999" for any phone. validate() must refuse to start.
+func TestConfigValidate_RejectsOTPDevModeInProduction(t *testing.T) {
+	t.Parallel()
+	cfg := prodBaseConfig()
+	cfg.OTPDevMode = true
+	if err := cfg.validate(); err == nil {
+		t.Fatalf("expected validate() to reject OTP_DEV_MODE=true in production")
+	}
+}
+
+// The same flag must remain allowed in development (local/integration flow).
+func TestConfigValidate_AllowsOTPDevModeInDevelopment(t *testing.T) {
+	t.Parallel()
+	cfg := prodBaseConfig()
+	cfg.Env = "development"
+	cfg.OTPDevMode = true
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("expected OTP_DEV_MODE=true to be allowed in development, got %v", err)
+	}
+}
