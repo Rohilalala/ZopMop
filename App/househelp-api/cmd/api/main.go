@@ -413,10 +413,6 @@ func main() {
 	bookingRepo := booking.NewRepository(dbPool)
 	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchEngine)
 
-	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
-	// account deletion when the customer has completed-but-unpaid Cashfree
-	// bookings. App Store 5.1.1(v) + revenue-leak prevention.
-	authRepo.SetUnpaidChecker(bookingRepo)
 	bookingService.SetMapsClient(mapsClient)
 	bookingService.SetAnalytics(analyticsSvc)
 	bookingService.SetWebhooks(webhookDispatcher)
