@@ -37,6 +37,7 @@ import {
 import { onShiftEvent } from '../../utils/shiftEvents';
 import { showError, showInfo, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
+import { getPositionWithTimeout } from '../../utils/location';
 import { startProBookingCancel } from '../../utils/proBookingCancel';
 import { friendlyError } from '../../utils/errors';
 import { useLocationPublisher } from '../../hooks/useLocationPublisher';
@@ -223,7 +224,7 @@ export default function JobDetailScreen() {
       let lng: number | undefined;
       if (perm.status === 'granted') {
         try {
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const pos = await getPositionWithTimeout();
           lat = pos.coords.latitude;
           lng = pos.coords.longitude;
         } catch { /* lat/lng are optional */ }
@@ -247,7 +248,7 @@ export default function JobDetailScreen() {
         showError(t('dashboard.locationDenied'));
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const pos = await getPositionWithTimeout();
       await jobArrived(bookingID, pos.coords.latitude, pos.coords.longitude);
       haptics.success();
       await refresh();

@@ -25,6 +25,7 @@ import { showError } from '../../utils/toast';
 import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
 import { captureSelfieForApproval } from '../../utils/photoCapture';
+import { getPositionWithTimeout } from '../../utils/location';
 import {
   getActiveShift,
   listCommitments,
@@ -232,7 +233,7 @@ export default function ProDashboardScreen() {
         showError(t('dashboard.locationDenied'));
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const pos = await getPositionWithTimeout();
       const selfie = await captureSelfieForApproval();
       if (!selfie) {
         showError('A selfie is required to go online.');
