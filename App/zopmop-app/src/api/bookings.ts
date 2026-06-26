@@ -215,29 +215,3 @@ export async function cancelBooking(
   return (await res.json()) as CancelBookingResponse;
 }
 
-// ── Ratings ────────────────────────────────────────────────────────────────
-//
-// NOTE: backend endpoint POST /bookings/:id/rate does NOT yet exist
-// (verified during 2026-05-03 build). The call is wired here so the
-// frontend rating screen ships ready-to-use; the server returns 404 today
-// and the screen treats that as a non-fatal "rating saved locally" path.
-// Replace the stub with a real implementation when the backend ships.
-
-export type RateBookingPayload = {
-  stars: number;             // 1-5
-  comment?: string;
-};
-
-export async function rateBooking(
-  token: string,
-  bookingId: string,
-  payload: RateBookingPayload,
-): Promise<{ ok: boolean; statusCode: number }> {
-  const res = await apiFetch(`${BASE_URL}/bookings/${bookingId}/rate`, {
-    method: 'POST',
-    headers: authHeaders(token),
-    body: JSON.stringify(payload),
-  });
-  return { ok: res.ok, statusCode: res.status };
-}
-

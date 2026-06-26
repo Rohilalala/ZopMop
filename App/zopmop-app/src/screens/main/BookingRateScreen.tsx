@@ -5,7 +5,7 @@
 // + accessible by tapping a completed card on the past bookings tab.
 //
 // After Submit:
-//   1. POST /bookings/:id/rate (backend stub — non-fatal on 404)
+//   1. POST /bookings/:id/review (customer rating; throws on failure)
 //   2. If helper isn't already an expert AND user has < 5, surface
 //      "Add [name] to Your Experts?" card
 //   3. Tap "Add Expert" → POST /me/experts/:helper_id, success toast, close
@@ -30,7 +30,7 @@ import type { RouteProp } from '@react-navigation/native';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
-import { rateBooking } from '../../api/bookings';
+import { submitBookingReview } from '../../api/matching';
 import { addExpert, listExperts } from '../../api/experts';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { haptics } from '../../utils/haptics';
@@ -89,15 +89,7 @@ export default function BookingRateScreen({ route }: Props) {
     setSubmitting(true);
     setErrorMessage('');
     try {
-      const res = await rateBooking(token, bookingId, {
-        stars,
-        comment: comment.trim() || undefined,
-      });
-      if (!res.ok && res.statusCode !== 404) {
-        setErrorMessage('Could not save rating. Please try again.');
-        setSubmitting(false);
-        return;
-      }
+      await submitBookingReview(token, bookingId, stars, comment.trim() || undefined);
       await markBookingRated(bookingId);
       posthog.capture('booking_rated', {
         booking_id: bookingId,
@@ -122,8 +114,8 @@ export default function BookingRateScreen({ route }: Props) {
       showSuccess('Thanks for rating.');
       setTimeout(() => navigation.goBack(), 600);
     } catch (err) {
-      // Network/timeout/non-OK rejection from rateBooking — without this the
-      // spinner just stops and the user sees nothing.
+      // Network/timeout/non-OK rejection from submitBookingReview — without this
+      // the spinner just stops and the user sees nothing.
       setErrorMessage(friendlyError(err, 'Couldn’t save your rating. Please try again.'));
     } finally {
       setSubmitting(false);
