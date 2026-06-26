@@ -129,6 +129,10 @@ var permissions = map[string]string{
 	"zones.approval.approve": RoleAdmin,
 	"zones.approval.reject":  RoleAdmin,
 
+	// shift-session selfies (go-online / go-offline proof-of-presence). PII —
+	// gate at support, same tier as workers.read / zones.approval.read.
+	"shift_sessions.read": RoleSupport,
+
 	// SDUI page-config lifecycle (crm-api fronts the bff admin handler).
 	// Pushing/blanking the production home screen and widening the action
 	// allowlist must be admin-gated; FE gates write/activate at admin.

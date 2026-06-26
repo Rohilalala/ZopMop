@@ -6,7 +6,7 @@ import {
   Banknote, Receipt, Settings as SettingsIcon, Flag,
   Map as MapIcon, FlaskConical, BarChart3, Image as ImageIcon,
   Bell, ShieldAlert, ChevronsLeft, ChevronsRight, CalendarDays, MapPinned,
-  ShieldCheck, FileText, Clock, Sliders, ListChecks, Package,
+  ShieldCheck, FileText, Clock, Sliders, ListChecks, Package, Camera,
   type LucideIcon,
 } from 'lucide-react';
 import { useProMode } from '@/store/proMode';
@@ -30,6 +30,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
       { to: '/',                label: 'Dashboard',       icon: LayoutDashboard },
       { to: '/map',             label: 'Live Map',        icon: MapIcon },
       { to: '/zone-approvals',  label: 'Zone Approvals',  icon: ShieldCheck },
+      { to: '/shift-sessions',  label: 'Shift Sessions',  icon: Camera },
       { to: '/workers',         label: 'Workers',         icon: UserCog },
       { to: '/users',           label: 'Users',           icon: User },
       { to: '/orders',          label: 'Orders',          icon: ClipboardList },

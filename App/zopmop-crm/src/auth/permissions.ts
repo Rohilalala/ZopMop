@@ -106,6 +106,7 @@ export const PERMISSIONS = {
 
   // zone approvals (Phase 11B)
   'zones.approval.read': 'support',
+  'shift_sessions.read': 'support',
   'zones.approval.approve': 'admin',
   'zones.approval.reject': 'admin',
 

@@ -41,6 +41,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/refunds"
 	"github.com/adityarohilla/househelp-api/internal/crm/trustsafety"
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
+	"github.com/adityarohilla/househelp-api/internal/crm/shiftsessions"
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/internal/crm/zoneapprovals"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
@@ -330,6 +331,7 @@ func main() {
 	crmPayrollRepo := crmpayroll.NewRepository(readPool, dbPool)
 	crmPayrollHandler := crmpayroll.NewHandler(crmPayrollRepo, payrollSvc, auditRecorder)
 	zoneApprovalsHandler := zoneapprovals.NewHandler(shiftSvc, auditRecorder)
+	shiftSessionsHandler := shiftsessions.NewHandler(shiftsessions.NewRepository(readPool))
 
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
@@ -451,6 +453,7 @@ func main() {
 	catalogHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
 	zoneApprovalsHandler.RegisterRoutes(authed)
+	shiftSessionsHandler.RegisterRoutes(authed)
 
 	// SDUI (server-driven UI) admin surface — reuses internal/bff's admin
 	// handler verbatim so config lifecycle logic lives in one place. Mounted

@@ -22,6 +22,7 @@ const UsersPage         = lazy(() => import('./pages/users/UsersPage').then(m =>
 const WorkersPage       = lazy(() => import('./pages/workers/WorkersPage').then(m => ({ default: m.WorkersPage })));
 const WorkerNewPage     = lazy(() => import('./pages/workers/WorkerNewPage').then(m => ({ default: m.WorkerNewPage })));
 const ZoneApprovalsPage = lazy(() => import('./pages/zoneApprovals/ZoneApprovalsPage').then(m => ({ default: m.ZoneApprovalsPage })));
+const ShiftSessionsPage = lazy(() => import('./pages/shiftSessions/ShiftSessionsPage').then(m => ({ default: m.ShiftSessionsPage })));
 const OrderDetailPage   = lazy(() => import('./pages/orders/OrderDetailPage').then(m => ({ default: m.OrderDetailPage })));
 const AuditPage         = lazy(() => import('./pages/audit/AuditPage').then(m => ({ default: m.AuditPage })));
 const LeavesPage        = lazy(() => import('./pages/LeavesPage').then(m => ({ default: m.LeavesPage })));
@@ -65,6 +66,7 @@ export function App() {
           <Route path="/refunds"     element={<RefundsPage />} />
           <Route path="/users"       element={<UsersPage />} />
           <Route path="/workers"     element={<WorkersPage />} />
+          <Route path="/shift-sessions" element={<ShiftSessionsPage />} />
           <Route path="/workers/new" element={<WorkerNewPage />} />
           <Route path="/zone-approvals" element={<ZoneApprovalsPage />} />
           <Route path="/leaves"      element={<LeavesPage />} />
