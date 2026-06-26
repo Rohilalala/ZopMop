@@ -81,7 +81,7 @@ func listForUser(ctx context.Context, db *pgxpool.Pool, userID string) ([]Offer,
 		   OR (audience = 'user_segment' AND $1::uuid = ANY(audience_user_ids))
 		   OR (audience = 'new_users' AND NOT EXISTS (
 		          SELECT 1 FROM bookings
-		          WHERE user_id = $1::uuid
+		          WHERE customer_id = $1::uuid
 		            AND status NOT IN ('cancelled')
 		       ))
 		  )
