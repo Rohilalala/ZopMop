@@ -676,6 +676,17 @@ func main() {
 	assignerCron.Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
+
+	// Refund worker: drives queued booking-cancellation refunds against the
+	// Cashfree gateway. pending_refunds rows are produced on cancel but only
+	// the gateway can move the money; without this, prod cancellation refunds
+	// stranded (only the non-deployed CRM processed them). Runs only when a real
+	// gateway is configured; coexists safely with the CRM via atomic claim.
+	if cashfreeGW != nil {
+		refundWorker := payments.NewRefundWorker(dbPool, cashfreeGW)
+		refundWorker.Start(cronCtx)
+		defer refundWorker.Stop()
+	}
 	defer cancelCrons()
 
 	// Device-token routes (requires JWT). New per-device push registration —
