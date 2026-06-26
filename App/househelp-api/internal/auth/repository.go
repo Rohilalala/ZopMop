@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
-	"github.com/adityarohilla/househelp-api/internal/booking"
 	"github.com/adityarohilla/househelp-api/internal/compliance"
 	"github.com/adityarohilla/househelp-api/internal/payroll"
 	"github.com/adityarohilla/househelp-api/internal/users"
@@ -309,20 +308,11 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		return ErrActiveBooking
 	}
 
-	// Customer-side guard: block deletion when the customer has
-	// completed-but-unpaid Cashfree bookings. Without this, AnonymizeBookings
-	// AsCustomerTx below would hard-delete the unpaid rows (money never moved
-	// per moneyMovedPredicate), erasing the receivable. Apple guideline
-	// 5.1.1(v) + revenue-leak prevention.
-	if r.unpaidChecker != nil {
-		count, totalPaise, err := r.unpaidChecker.GetUnpaidBookingsForCustomer(queryCtx, userID)
-		if err != nil {
-			return fmt.Errorf("check unpaid bookings: %w", err)
-		}
-		if count > 0 {
-			return &booking.ErrUnpaidBookings{Count: count, TotalPaise: totalPaise}
-		}
-	}
+	// B7: completed-but-unpaid Cashfree bookings no longer block deletion.
+	// AnonymizeBookingsAsCustomerTx now retains them de-identified (the
+	// receivable survives for recovery + tax) instead of hard-deleting, so
+	// account deletion always proceeds — Apple guideline 5.1.1(v). Active
+	// in-flight bookings still block above (ErrActiveBooking).
 
 	// Chunk-7 active-refund guard: block deletion if the user has a
 	// refund in the chunk-3 'approved' in-flight lock state claimed

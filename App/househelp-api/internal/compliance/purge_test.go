@@ -530,6 +530,38 @@ func TestAnonymizeBookingsAsCustomer_Bucketing(t *testing.T) {
 	}
 }
 
+// B7: a COMPLETED-but-unpaid Cashfree booking is a delivered service (a
+// receivable) and must be RETAINED (anonymised), not hard-deleted, on account
+// deletion — so the debt record survives de-identified for recovery + tax, and
+// deletion is no longer blocked. Mirrors how Swiggy/Zepto retain transactional
+// history while removing PII.
+func TestAnonymizeBookingsAsCustomer_RetainsCompletedUnpaidCashfree(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	customer := makeUser(t, pool, uuid.NewString())
+	now := time.Now().UTC()
+
+	id := makeBookingFull(t, pool, bookingOpts{
+		label: "cashfree-completed-unpaid", customerID: customer,
+		status: "completed", address: "real address", lat: 12.91, lng: 77.61,
+		paymentMethod: "cashfree", paymentStatus: "pending", locality: "BLR-East",
+		completedAt: &now,
+	})
+
+	if _, _, err := svc.AnonymizeBookingsAsCustomer(context.Background(), customer); err != nil {
+		t.Fatalf("anonymize bookings: %v", err)
+	}
+
+	var custID string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT customer_id::text FROM bookings WHERE id=$1::uuid`, id).Scan(&custID); err != nil {
+		t.Fatalf("completed-but-unpaid Cashfree booking was hard-deleted (debt erased): %v", err)
+	}
+	if custID != TombstoneUserID {
+		t.Errorf("booking customer_id = %s, want tombstone (retained + anonymised)", custID)
+	}
+}
+
 // TestAnonymizeBookingsAsCustomer_AnonymizationShape verifies the per-
 // column edits applied to retained (money-moved) rows: address text
 // nulled to '', address_id detached, lat/lng rounded to 1 decimal,
