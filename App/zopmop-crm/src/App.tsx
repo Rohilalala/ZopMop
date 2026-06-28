@@ -22,6 +22,7 @@ const UsersPage         = lazy(() => import('./pages/users/UsersPage').then(m =>
 const WorkersPage       = lazy(() => import('./pages/workers/WorkersPage').then(m => ({ default: m.WorkersPage })));
 const WorkerNewPage     = lazy(() => import('./pages/workers/WorkerNewPage').then(m => ({ default: m.WorkerNewPage })));
 const ZoneApprovalsPage = lazy(() => import('./pages/zoneApprovals/ZoneApprovalsPage').then(m => ({ default: m.ZoneApprovalsPage })));
+const ShiftSessionsPage = lazy(() => import('./pages/shiftSessions/ShiftSessionsPage').then(m => ({ default: m.ShiftSessionsPage })));
 const OrderDetailPage   = lazy(() => import('./pages/orders/OrderDetailPage').then(m => ({ default: m.OrderDetailPage })));
 const AuditPage         = lazy(() => import('./pages/audit/AuditPage').then(m => ({ default: m.AuditPage })));
 const LeavesPage        = lazy(() => import('./pages/LeavesPage').then(m => ({ default: m.LeavesPage })));
@@ -29,6 +30,7 @@ const LiveMapPage       = lazy(() => import('./pages/LiveMapPage').then(m => ({ 
 const OrdersPage        = lazy(() => import('./pages/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const RefundsPage       = lazy(() => import('./pages/RefundsPage').then(m => ({ default: m.RefundsPage })));
 const PromosPage        = lazy(() => import('./pages/PromosPage').then(m => ({ default: m.PromosPage })));
+const CatalogPage       = lazy(() => import('./pages/CatalogPage').then(m => ({ default: m.CatalogPage })));
 const BannersPage       = lazy(() => import('./pages/BannersPage').then(m => ({ default: m.BannersPage })));
 const ExperimentsPage   = lazy(() => import('./pages/ExperimentsPage').then(m => ({ default: m.ExperimentsPage })));
 const AnalyticsPage     = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
@@ -37,6 +39,9 @@ const PayoutsPage       = lazy(() => import('./pages/PayoutsPage').then(m => ({ 
 const DisputesPage      = lazy(() => import('./pages/DisputesPage').then(m => ({ default: m.DisputesPage })));
 const SettingsPage      = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LocalitiesPage    = lazy(() => import('./pages/LocalitiesPage').then(m => ({ default: m.LocalitiesPage })));
+const SduiPagesPage         = lazy(() => import('./pages/SduiPagesPage').then(m => ({ default: m.SduiPagesPage })));
+const SduiPageDetailPage    = lazy(() => import('./pages/SduiPageDetailPage').then(m => ({ default: m.SduiPageDetailPage })));
+const SduiAllowedActionsPage = lazy(() => import('./pages/SduiAllowedActionsPage').then(m => ({ default: m.SduiAllowedActionsPage })));
 
 // Top-level router. The auth store hydrates once on boot via
 // bootstrapAuth() — until then we show a full-screen skeleton instead of
@@ -61,11 +66,13 @@ export function App() {
           <Route path="/refunds"     element={<RefundsPage />} />
           <Route path="/users"       element={<UsersPage />} />
           <Route path="/workers"     element={<WorkersPage />} />
+          <Route path="/shift-sessions" element={<ShiftSessionsPage />} />
           <Route path="/workers/new" element={<WorkerNewPage />} />
           <Route path="/zone-approvals" element={<ZoneApprovalsPage />} />
           <Route path="/leaves"      element={<LeavesPage />} />
           <Route path="/map"         element={<LiveMapPage />} />
           <Route path="/promos"      element={<PromosPage />} />
+          <Route path="/catalog"     element={<CatalogPage />} />
           <Route path="/banners"     element={<BannersPage />} />
           <Route path="/experiments" element={<ExperimentsPage />} />
           <Route path="/push"        element={<PushPage />} />
@@ -75,6 +82,9 @@ export function App() {
           <Route path="/audit"       element={<AuditPage />} />
           <Route path="/settings"    element={<SettingsPage />} />
           <Route path="/localities"  element={<LocalitiesPage />} />
+          <Route path="/sdui"                 element={<SduiPagesPage />} />
+          <Route path="/sdui/allowed-actions" element={<SduiAllowedActionsPage />} />
+          <Route path="/sdui/:pageId"         element={<SduiPageDetailPage />} />
           <Route path="*"            element={<Navigate to="/" replace />} />
         </Route>
       ) : (

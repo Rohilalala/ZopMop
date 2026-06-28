@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Feather } from '@expo/vector-icons';
 
@@ -18,13 +18,15 @@ import type { MainStackParamList } from '../../types/navigation';
 import { FontFamily, FontSize, Radius, Spacing } from '../../theme';
 import { useColors } from '../../context/ThemeContext';
 import { showError, showInfo } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import {
   listCommitments,
   createCommitment,
   deleteCommitment,
   type Commitment,
 } from '../../api/shifts';
-import { t } from '../../i18n';
+import { useProRoleGate } from '../../hooks/useRoleGate';
+import { t, useLocale } from '../../i18n';
 
 // 30-min increments, 24h day → 48 slots.
 function buildTimeSlots(): string[] {
@@ -59,6 +61,16 @@ function hoursBetween(start: string, end: string): number {
   return Math.round((mins / 60) * 10) / 10;
 }
 
+// Same-day duration in minutes WITHOUT the midnight wrap. The backend
+// rejects any shift where end <= start (no overnight support), so the
+// picker must validate against the same rule — otherwise 22:00→02:00
+// previewed a bogus "4h" and got a confusing 409 on save.
+function sameDayMinutes(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map((n) => parseInt(n, 10));
+  const [eh, em] = end.split(':').map((n) => parseInt(n, 10));
+  return (eh * 60 + em) - (sh * 60 + sm);
+}
+
 function isEditableForDate(dateYMD: string): boolean {
   // Day D is editable until 03:00 (local IST) on day D itself.
   const [y, m, d] = dateYMD.split('-').map((n) => parseInt(n, 10));
@@ -67,6 +79,8 @@ function isEditableForDate(dateYMD: string): boolean {
 }
 
 export default function CommitShiftScreen() {
+  useLocale(); // live-update strings on language change
+  useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const c = useColors();
   const styles = useMemo(() => createStyles(c), [c]);
@@ -83,28 +97,39 @@ export default function CommitShiftScreen() {
     try {
       setCommitments(await listCommitments());
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t load your shifts. Pull to refresh or try again.'));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const days = useMemo(() => {
-    const out: Date[] = [];
+  // Date anchors live in state, not useMemo([]), so they recompute when
+  // the screen regains focus — otherwise the 14-day grid froze at the
+  // mount day and showed the wrong "today"/"tomorrow" across a midnight
+  // boundary (and the commitment list went stale).
+  const computeAnchors = useCallback(() => {
     const base = new Date();
     base.setHours(0, 0, 0, 0);
+    const out: Date[] = [];
     for (let i = 0; i < 14; i++) {
       const d = new Date(base);
       d.setDate(base.getDate() + i);
       out.push(d);
     }
-    return out;
+    const tmrw = new Date(base);
+    tmrw.setDate(base.getDate() + 1);
+    return { days: out, today: new Date(), tomorrow: tmrw };
   }, []);
 
-  const today = useMemo(() => new Date(), []);
-  const tomorrow = useMemo(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d; }, []);
+  const [{ days, today, tomorrow }, setAnchors] = useState(computeAnchors);
+
+  // Refetch commitments + recompute anchors on every focus.
+  useFocusEffect(
+    useCallback(() => {
+      setAnchors(computeAnchors());
+      refresh();
+    }, [computeAnchors, refresh]),
+  );
 
   // Total committed hours across all listed commitments (rough fortnight view).
   const fortnightHours = useMemo(() => {
@@ -119,9 +144,10 @@ export default function CommitShiftScreen() {
 
   async function save() {
     if (!picker) return;
-    const hrs = hoursBetween(pickerStart, pickerEnd);
-    if (hrs <= 0) {
-      showError(t('common.error'));
+    // End must be strictly after start on the same day — no overnight
+    // wrap (the backend rejects end <= start).
+    if (sameDayMinutes(pickerStart, pickerEnd) <= 0) {
+      showError(t('commit.endBeforeStart'));
       return;
     }
     setSaving(true);
@@ -130,10 +156,12 @@ export default function CommitShiftScreen() {
       setPicker(null);
       await refresh();
     } catch (e: any) {
+      // A 409 means the shift clashes with an existing one or falls outside
+      // the editable window — point the pro at picking a different time.
       if (e?.status === 409) {
-        showError(t('commit.overlapError'));
+        showError(friendlyError(e, 'That shift overlaps another one or is no longer editable. Please pick a different time.'));
       } else {
-        showError(e?.message ?? t('common.error'));
+        showError(friendlyError(e, 'Couldn’t save your shift. Please try again.'));
       }
     } finally {
       setSaving(false);
@@ -154,7 +182,7 @@ export default function CommitShiftScreen() {
               await deleteCommitment(c.id);
               await refresh();
             } catch (e: any) {
-              showError(e?.message ?? t('common.error'));
+              showError(friendlyError(e, 'Couldn’t remove this shift. Please try again.'));
             }
           },
         },
@@ -162,7 +190,11 @@ export default function CommitShiftScreen() {
     );
   }
 
-  const previewHours = picker ? hoursBetween(pickerStart, pickerEnd) : 0;
+  // Preview uses the non-wrap duration so an invalid overnight selection
+  // shows 0/negative (and the Save guard catches it) instead of a bogus
+  // wrapped value.
+  const previewMinutes = picker ? sameDayMinutes(pickerStart, pickerEnd) : 0;
+  const previewHours = Math.max(0, Math.round((previewMinutes / 60) * 10) / 10);
   const showOverWarning = previewHours > 8;
 
   return (

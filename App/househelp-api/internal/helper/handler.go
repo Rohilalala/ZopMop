@@ -43,7 +43,6 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 
 	// Approved-only.
 	approved := router.Group("", RequireApproved(h.repo))
-	approved.Get("/me/invites", h.GetInvites)
 	approved.Get("/me/stats", h.GetStats)
 	approved.Post("/me/invites/:bookingId/decline", h.DeclineInvite)
 	approved.Put("/me/location", h.UpdateLocation)
@@ -86,18 +85,6 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "profile not found"})
 	}
 	return c.JSON(profile)
-}
-
-// GetInvites handles GET /helpers/me/invites.
-// Returns all pending booking invites the matching engine has assigned to this helper.
-func (h *Handler) GetInvites(c *fiber.Ctx) error {
-	helperID, _ := c.Locals("userID").(string)
-	invites, err := h.service.GetInvites(c.UserContext(), helperID)
-	if err != nil {
-		log.Error().Err(err).Str("helper_id", helperID).Msg("failed to get invites")
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch invites"})
-	}
-	return c.JSON(fiber.Map{"invites": invites})
 }
 
 // DeclineInvite handles POST /helpers/me/invites/:bookingId/decline.

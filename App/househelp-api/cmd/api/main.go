@@ -51,6 +51,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/reviews"
 	"github.com/adityarohilla/househelp-api/internal/roomies"
 	"github.com/adityarohilla/househelp-api/internal/segments"
+	"github.com/adityarohilla/househelp-api/internal/appversion"
 	servicesmod "github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	slotsmod "github.com/adityarohilla/househelp-api/internal/slots"
@@ -286,8 +287,9 @@ func main() {
 	mcClient := auth.NewMessageCentralClient(auth.MessageCentralConfig{
 		CustomerID: cfg.MessageCentralCustomerID,
 		AuthToken:  cfg.MessageCentralAuthToken,
-		BaseURL:    cfg.MessageCentralBaseURL,
-		DevMode:    cfg.OTPDevMode,
+		BaseURL:       cfg.MessageCentralBaseURL,
+		DevMode:       cfg.OTPDevMode,
+		IsDevelopment: cfg.IsDevelopment(),
 	})
 	tokenIssuer := auth.NewTokenIssuer(auth.TokenIssuerConfig{
 		AccessSecret:   cfg.JWTAccessSecret,
@@ -315,6 +317,11 @@ func main() {
 	complianceService.SetRedis(rdb)
 	auditRecorder := audit.NewRecorder(dbPool)
 	authHandler.SetCompliance(complianceService)
+	// Wire compliance into the repo too — SoftDeleteUser gates its PII
+	// anonymise/purge + active-refund guard on r.compliance != nil. Without
+	// this, prod account deletion silently runs the pre-compliance path
+	// (DPDP erasure gap; Apple 5.1.1(v)). The handler wiring above is not enough.
+	authRepo.SetCompliance(complianceService)
 	authHandler.SetAudit(auditRecorder)
 
 	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+2)
@@ -362,23 +369,20 @@ func main() {
 	configService := config_manager.NewService(configRepo, rdb)
 	configHandler := config_manager.NewHandler(configService)
 
-	// Matching engine + batcher (instant bookings only).
-	matchEngine := matching.NewEngine(dbPool, rdb, configService)
-	matchBatcher := matching.NewBatcher(matchEngine, 5*time.Second)
-	matchBatcher.Start()
-	defer matchBatcher.Stop()
+	// Matching engine. The scoring/batch pipeline is retired by the unified JIT
+	// assigner (spec §9); the Engine now only owns the legacy Redis invite-set
+	// surface that the pro app's pending-offers poll still reads.
+	matchEngine := matching.NewEngine(dbPool, rdb)
 
-	// Google Maps client. Required: instant-booking eligibility is decided
-	// purely by the walking-time filter, which calls the Distance Matrix API.
-	// Boot fails loud if the key is missing so we never silently match a pro
-	// who is hours away from the customer.
+	// Google Maps client. Required: the assigner's travel-feasibility check
+	// calls the Distance Matrix API. Boot fails loud if the key is missing so
+	// we never silently assign a pro who is hours away from the customer.
 	mapsAPIKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	if mapsAPIKey == "" {
-		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — instant booking matches on walking-time only")
+		log.Fatal().Msg("GOOGLE_MAPS_API_KEY is required — the assigner gates on walking-time feasibility")
 	}
 	mapsClient := googlemaps.NewClient(mapsAPIKey, rdb)
 	log.Info().Msg("Google Maps client initialised")
-	matchEngine.SetMapsClient(mapsClient)
 
 	// Analytics.
 	analyticsSvc := analytics.NewService(dbPool)
@@ -412,12 +416,8 @@ func main() {
 
 	// Booking.
 	bookingRepo := booking.NewRepository(dbPool)
-	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchBatcher)
+	bookingService := booking.NewService(bookingRepo, dbPool, rdb, configService, matchEngine)
 
-	// Wire the unpaid-bookings checker into auth so SoftDeleteUser can block
-	// account deletion when the customer has completed-but-unpaid Cashfree
-	// bookings. App Store 5.1.1(v) + revenue-leak prevention.
-	authRepo.SetUnpaidChecker(bookingRepo)
 	bookingService.SetMapsClient(mapsClient)
 	bookingService.SetAnalytics(analyticsSvc)
 	bookingService.SetWebhooks(webhookDispatcher)
@@ -444,7 +444,7 @@ func main() {
 	bookingHandler := booking.NewHandler(bookingService)
 
 	// Location.
-	locationService := location.NewService(rdb)
+	locationService := location.NewService(rdb, dbPool)
 	locationHandler := location.NewHandler(locationService, jwtVerificationKeys, dbPool, authRepo)
 
 	// Addresses.
@@ -493,12 +493,23 @@ func main() {
 	contentHandler.RegisterPublicRoutes(appGroup)
 	configHandler.RegisterPublicRoutes(appGroup)
 
+	// App version-check (public, so a forced client can always recover) plus a
+	// 426 force-update middleware applied to transactional routes below. Both
+	// read the admin-set policy in crm_app_versions. Optional updates never 426;
+	// they surface only through this endpoint as a dismissable prompt.
+	appVersionSvc := appversion.NewService(dbPool)
+	appversion.NewHandler(appVersionSvc).RegisterPublicRoutes(appGroup)
+	appVersionMW := appVersionSvc.Middleware()
+
 	// Phase 7 shift system. Notifier wraps notification.Service via a
 	// thin adapter (PushClient interface) so the shift package stays
 	// decoupled from the FCM-specific return types.
 	shiftRepo := shift.NewRepository(dbPool)
 	shiftService := shift.NewService(shiftRepo)
 	shiftService.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notificationService}))
+	// Customer-facing side effect of a pro cancellation. Refund + auto
+	// re-dispatch are intentionally deferred (product decision).
+	shiftService.SetCancelHooks(notificationService)
 	shiftHandler := shift.NewHandler(shiftService)
 	shiftCron := shift.NewCron(shiftService)
 	shiftCron.Start(context.Background())
@@ -519,7 +530,7 @@ func main() {
 	authLimiter := mw.RateLimiter(rdb, mw.AuthRateLimit, "user")
 
 	// Booking routes (requires JWT).
-	bookingGroup := api.Group("/bookings", authMiddleware, authLimiter, dbBoundLimiter)
+	bookingGroup := api.Group("/bookings", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	bookingIdem := mw.Idempotency(rdb, 60*time.Second, 10*time.Minute)
 	bookingCreateLimiter := mw.NamedRateLimiter(rdb, mw.BookingCreateRateLimit, "user", "booking-create")
 	bookingHandler.RegisterRoutes(bookingGroup, bookingIdem, bookingCreateLimiter, proApprovedMW)
@@ -545,11 +556,11 @@ func main() {
 	servicesHandler.RegisterPublicRoutes(servicesGroup)
 
 	// Cart routes (requires JWT).
-	cartGroup := api.Group("/cart", authMiddleware, authLimiter, dbBoundLimiter)
+	cartGroup := api.Group("/cart", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	cartHandler.RegisterRoutes(cartGroup)
 
 	// Offers routes (requires JWT).
-	offersGroup := api.Group("", authMiddleware, authLimiter, dbBoundLimiter)
+	offersGroup := api.Group("", authMiddleware, appVersionMW, authLimiter, dbBoundLimiter)
 	offers.NewHandler(dbPool).RegisterRoutes(offersGroup)
 
 	// Disputes routes (requires JWT — customer files, CRM resolves).
@@ -645,17 +656,38 @@ func main() {
 	referralsGroup := api.Group("/referrals", authMiddleware, authLimiter, dbBoundLimiter)
 	referralHandler.RegisterRoutes(referralsGroup)
 
-	// Scheduled-booking dispatch crons. All three share the same Dispatcher.
-	//   - ScheduledDispatcher: nightly 22:00 IST batch
-	//   - StealthDispatcher:   per-minute after-8pm bookings
-	//   - RebookScanner:            per-5-minute "pros are back" nudge
-	//   - PendingActionSweeper:     per-5-minute stuck-booking auto-cancel
+	// Dispatch crons (unified JIT model — spec §5.1, §9).
+	//   - AssignerCron:  60s tick, claims due bookings + force-assigns; the
+	//     no-pro terminal path cancels + refunds at slot start. Replaces the
+	//     retired nightly ScheduledDispatcher, per-minute StealthDispatcher,
+	//     5s batcher, and the pending-action sweeper.
+	//   - RebookScanner: per-5-minute "pros are back" nudge (kept).
 	cronCtx, cancelCrons := context.WithCancel(context.Background())
+	assigner := matching.NewAssigner(
+		dbPool, rdb, notificationService, expertsService, mapsClient,
+		func(ctx context.Context) matching.DispatchConfig {
+			return matching.LoadDispatchConfig(ctx, configService)
+		},
+	)
+	// Wire the assigner into the booking service for the ASAP synchronous-assign
+	// path (spec §3.2, §5), plus the wallet repo for the no-pro refund rail.
+	bookingService.SetSyncAssigner(assigner)
+	bookingService.SetWalletRepo(walletRepo)
+	assignerCron := matching.NewAssignerCron(assigner, walletRepo)
+	assignerCron.Start(cronCtx)
 	dispatcher := matching.NewDispatcher(dbPool, rdb, notificationService, expertsService)
-	go matching.NewScheduledDispatcher(dispatcher).Start(cronCtx)
-	go matching.NewStealthDispatcher(dispatcher).Start(cronCtx)
 	go matching.NewRebookScanner(dispatcher).Start(cronCtx)
-	go booking.NewPendingActionSweeper(dbPool, walletRepo, notificationService).Start(cronCtx)
+
+	// Refund worker: drives queued booking-cancellation refunds against the
+	// Cashfree gateway. pending_refunds rows are produced on cancel but only
+	// the gateway can move the money; without this, prod cancellation refunds
+	// stranded (only the non-deployed CRM processed them). Runs only when a real
+	// gateway is configured; coexists safely with the CRM via atomic claim.
+	if cashfreeGW != nil {
+		refundWorker := payments.NewRefundWorker(dbPool, cashfreeGW)
+		refundWorker.Start(cronCtx)
+		defer refundWorker.Stop()
+	}
 	defer cancelCrons()
 
 	// Device-token routes (requires JWT). New per-device push registration —
@@ -679,6 +711,8 @@ func main() {
 	leaveCRMNotifier := &leave.RecorderCRMNotifier{Recorder: crmNotifRecorder}
 	leaveSvc := leave.NewService(leaveRepo, leaveCRMNotifier, leaveCustNotifier)
 	leaveSvc.SetWebhooks(webhookDispatcher)
+	// Notify the replacement pro they were force-assigned a booking.
+	leaveSvc.SetProNotifier(&leave.ProNotifierAdapter{Sender: notificationService})
 	leaveHandler := leave.NewHandler(leaveSvc)
 	// Leave routes: chain RequireRole("pro") + RequireApproved.
 	// Audit A1-F7 (leave routes lacked role gate) + A1-F3 (approval
@@ -711,7 +745,12 @@ func main() {
 	// surface so existing app builds keep working.
 	bookingService.SetNotifier(&bookingNotifierAdapter{n: notificationService})
 	jobsHandler := booking.NewJobsHandler(bookingService)
-	jobsHandler.RegisterRoutes(proGroup.Group("/jobs"))
+	// Mount the idempotency middleware on the pro job-lifecycle group so the
+	// app's automatic timeout-retry (apiFetch reuses the same Idempotency-Key
+	// across its internal retries) replays the cached 2xx instead of
+	// re-executing a non-idempotent accept/complete — the "accept succeeded
+	// yet reports 'offer expired'" race. GET routes carry no key and no-op.
+	jobsHandler.RegisterRoutes(proGroup.Group("/jobs", bookingIdem))
 	contentHandler.RegisterAdminContentRoutes(adminGroup)
 	configHandler.RegisterAdminRoutes(adminGroup)
 	zonesHandler.RegisterAdminRoutes(adminGroup.Group("/zones"))
@@ -855,12 +894,18 @@ func main() {
 	// Drain background cron workers (audit NEW-B1-001). Each gets up to 5s
 	// to finish an in-flight DB call; ctx-cancel itself is immediate so the
 	// next ticker iteration never starts.
-	cronCtx, cronCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cronCancel()
-	if err := leaveWorker.Stop(cronCtx); err != nil {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer drainCancel()
+	// The assigner cron drains first: its in-flight tick may be inside the
+	// no-pro cancel+refund transaction, which must finish (or hit the deadline)
+	// rather than be cut off by the deferred cancelCrons() when main returns.
+	if err := assignerCron.Stop(drainCtx); err != nil {
+		log.Warn().Err(err).Msg("assigner cron stop deadline exceeded")
+	}
+	if err := leaveWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("leave worker stop deadline exceeded")
 	}
-	if err := roomiesWorker.Stop(cronCtx); err != nil {
+	if err := roomiesWorker.Stop(drainCtx); err != nil {
 		log.Warn().Err(err).Msg("roomies worker stop deadline exceeded")
 	}
 

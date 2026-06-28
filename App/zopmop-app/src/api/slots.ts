@@ -10,11 +10,22 @@ export interface ApiTimeSlot {
   max_bookings: number;
   current_bookings: number;
   is_available: boolean;
+  // Live helper headroom for the slot. Present only on the capacity-aware
+  // /bookings/availability endpoint; absent on the plain /slots fallback, where
+  // the modal derives it from max_bookings − current_bookings.
+  available_capacity?: number;
 }
 
 export interface ApiSlotPeriod {
   label: string; // "Morning" | "Afternoon" | "Evening"
   slots: ApiTimeSlot[];
+}
+
+// Full body of GET /bookings/availability (backend booking.AvailabilityResponse).
+// The helpers below return only .periods, which is all the picker consumes.
+export interface AvailabilityResponse {
+  date: string; // YYYY-MM-DD (IST)
+  periods: ApiSlotPeriod[];
 }
 
 // Returns slots grouped by period as the backend sends them.
@@ -26,4 +37,29 @@ export async function getTimeSlots(token: string, date: string): Promise<ApiSlot
   if (!res.ok) throw new Error('Failed to fetch time slots');
   const data = await res.json();
   return (data.periods ?? []) as ApiSlotPeriod[];
+}
+
+// Capacity-aware slots for a given address's locality. Hits the
+// /bookings/availability endpoint (slot-capacity pilot) which layers
+// available_capacity + a live is_available onto each slot. Falls back to the
+// plain /slots feed when no address is known or the endpoint isn't deployed yet
+// (the capacity backend ships on a separate branch) — in that case slots carry
+// no available_capacity and the UI degrades to Available/Full only.
+export async function getSlotAvailability(
+  token: string,
+  addressId: string | undefined,
+  date: string,
+): Promise<ApiSlotPeriod[]> {
+  if (!addressId) return getTimeSlots(token, date);
+  try {
+    const res = await apiFetch(
+      `${BASE_URL}/bookings/availability?address_id=${addressId}&date=${date}`,
+      { headers: authHeaders(token) },
+    );
+    if (!res.ok) return getTimeSlots(token, date);
+    const data = (await res.json()) as AvailabilityResponse;
+    return data.periods ?? [];
+  } catch {
+    return getTimeSlots(token, date);
+  }
 }

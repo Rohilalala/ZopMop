@@ -22,6 +22,8 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/audit"
 	"github.com/adityarohilla/househelp-api/internal/crm/auth"
 	"github.com/adityarohilla/househelp-api/internal/crm/banners"
+	"github.com/adityarohilla/househelp-api/internal/crm/capacity"
+	"github.com/adityarohilla/househelp-api/internal/crm/catalog"
 	"github.com/adityarohilla/househelp-api/internal/crm/dashboard"
 	"github.com/adityarohilla/househelp-api/internal/crm/experiments"
 	"github.com/adityarohilla/househelp-api/internal/crm/flags"
@@ -39,6 +41,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/crm/refunds"
 	"github.com/adityarohilla/househelp-api/internal/crm/trustsafety"
 	"github.com/adityarohilla/househelp-api/internal/crm/users"
+	"github.com/adityarohilla/househelp-api/internal/crm/shiftsessions"
 	"github.com/adityarohilla/househelp-api/internal/crm/workers"
 	"github.com/adityarohilla/househelp-api/internal/crm/zoneapprovals"
 	"github.com/adityarohilla/househelp-api/internal/crm/zones"
@@ -46,6 +49,7 @@ import (
 	"github.com/adityarohilla/househelp-api/internal/notification"
 	"github.com/adityarohilla/househelp-api/internal/payments"
 	"github.com/adityarohilla/househelp-api/internal/payroll"
+	"github.com/adityarohilla/househelp-api/internal/services"
 	"github.com/adityarohilla/househelp-api/internal/shift"
 	"github.com/adityarohilla/househelp-api/internal/wallet"
 
@@ -119,6 +123,10 @@ func main() {
 		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 		BodyLimit:    8 * 1024 * 1024, // 8MB — banner uploads.
+		// Config versions are free-text (e.g. "testing again?") and arrive
+		// percent-encoded in the path. Decode :version/:page_id params so the
+		// handler sees "testing again?", not "testing%20again%3F".
+		UnescapePath: true,
 		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			message := "internal server error"
@@ -198,7 +206,7 @@ func main() {
 	flagsSvc := flags.NewService(dbPool, rdb, cfg.RedisNamespace, flags.DefaultRegistry())
 	flagsHandler := flags.NewHandler(flagsSvc, auditRecorder)
 
-	alertsSvc := alerts.NewService(readPool)
+	alertsSvc := alerts.NewService(readPool, dbPool)
 	alertsHandler := alerts.NewHandler(alertsSvc)
 
 	notificationsSvc := notifications.NewService(dbPool)
@@ -257,6 +265,12 @@ func main() {
 	localitiesRepo := localities.NewRepository(dbPool)
 	localitiesHandler := localities.NewHandler(localitiesRepo, auditRecorder)
 
+	// Capacity — read-only window-recount grid (spec §14.2), drill-down from
+	// the localities page. Uses the write pool so the grid is read-after-write
+	// consistent with the booking-creation gate (no replica lag for ops
+	// verifying capacity right after a booking lands).
+	capacityHandler := capacity.NewHandler(dbPool)
+
 	payoutsRepo := payouts.NewRepository(readPool, dbPool)
 	payoutsHandler := payouts.NewHandler(payoutsRepo, auditRecorder)
 
@@ -294,6 +308,11 @@ func main() {
 	platformSvc := platform.NewService(readPool, dbPool, webhookDispatcher)
 	platformHandler := platform.NewHandler(platformSvc, auditRecorder)
 
+	// Catalog (service_categories) editor — reuses the auth-agnostic services
+	// Catalog so CRM edits and the app read from one source of truth. Edits go
+	// live: the app refetches GET /services (no cache between the two).
+	catalogHandler := catalog.NewHandler(services.NewService(services.NewRepository(dbPool)), auditRecorder)
+
 	healthHandler := healthmetrics.NewHandler(metricsCollector, cfg.AppAPIURL)
 
 	// Zone approvals — reuses the shift package's service so the state
@@ -312,6 +331,7 @@ func main() {
 	crmPayrollRepo := crmpayroll.NewRepository(readPool, dbPool)
 	crmPayrollHandler := crmpayroll.NewHandler(crmPayrollRepo, payrollSvc, auditRecorder)
 	zoneApprovalsHandler := zoneapprovals.NewHandler(shiftSvc, auditRecorder)
+	shiftSessionsHandler := shiftsessions.NewHandler(shiftsessions.NewRepository(readPool))
 
 	// ── Routes ─────────────────────────────────────────────────────
 	api := app.Group("/admin")
@@ -328,8 +348,8 @@ func main() {
 	// counters in their own namespace (ratelimit:crm-login:*,
 	// ratelimit:crm-admin:*).
 	crmLoginLimiter := mw.NamedRateLimiter(rdb, mw.RateLimitConfig{
-		MaxRequests:     5,
-		Window:          15 * time.Minute,
+		MaxRequests:     cfg.LoginRateLimitMax,
+		Window:          cfg.LoginRateLimitWindow,
 		FailureMode:     "fail-closed",
 		SuppressHeaders: true,
 		OnReject: func(c *fiber.Ctx) {
@@ -425,12 +445,21 @@ func main() {
 	growthHandler.RegisterRoutes(authed)
 	zonesHandler.RegisterRoutes(authed)
 	localitiesHandler.RegisterRoutes(authed)
+	capacityHandler.RegisterRoutes(authed)
 	payoutsHandler.RegisterRoutes(authed)
 	crmPayrollHandler.RegisterRoutes(authed)
 	tsHandler.RegisterRoutes(authed)
 	platformHandler.RegisterRoutes(authed)
+	catalogHandler.RegisterRoutes(authed)
 	healthHandler.RegisterRoutes(authed)
 	zoneApprovalsHandler.RegisterRoutes(authed)
+	shiftSessionsHandler.RegisterRoutes(authed)
+
+	// SDUI (server-driven UI) admin surface — reuses internal/bff's admin
+	// handler verbatim so config lifecycle logic lives in one place. Mounted
+	// on the same authed group (JWT + per-admin limiter); a locals bridge maps
+	// the CRM admin identity onto the userID/role the bff handler reads.
+	registerSDUIAdmin(authed, dbPool, rdb)
 
 	// Module stub handler — gated behind ENABLE_STUB_ENUMERATOR=1
 	// (audit E2-4). The route exposed the CRM module taxonomy to anyone
@@ -491,9 +520,12 @@ func (a refundsWalletAdapter) Credit(
 	amountPaise int64,
 	kind string,
 	paymentID, bookingID *string,
-	note string,
+	note, reference string,
 ) error {
-	_, err := a.svc.Credit(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note)
+	_, err := a.svc.CreditWithRef(ctx, userID, amountPaise, wallet.Kind(kind), paymentID, bookingID, note, reference)
+	if errors.Is(err, wallet.ErrDuplicateTransaction) {
+		return refunds.ErrWalletDuplicate
+	}
 	return err
 }
 

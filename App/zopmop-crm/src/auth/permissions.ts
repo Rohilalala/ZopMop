@@ -18,6 +18,7 @@ export const PERMISSIONS = {
   'workers.force_offline': 'admin',
   'workers.set_categories': 'admin',
   'workers.add_note': 'support',
+  'workers.read_pii': 'superadmin',
   'workers.deduct': 'admin',
   'workers.update': 'admin',
 
@@ -36,6 +37,10 @@ export const PERMISSIONS = {
   'promos.create': 'admin',
   'promos.update': 'admin',
   'promos.toggle': 'admin',
+
+  // catalog (service prices / MRP / active toggle)
+  'catalog.read': 'viewer',
+  'catalog.update': 'admin',
 
   // banners
   'banners.create': 'admin',
@@ -101,11 +106,17 @@ export const PERMISSIONS = {
 
   // zone approvals (Phase 11B)
   'zones.approval.read': 'support',
+  'shift_sessions.read': 'support',
   'zones.approval.approve': 'admin',
   'zones.approval.reject': 'admin',
 
   // audit
   'audit.read': 'admin',
+
+  // sdui (server-driven UI control panel)
+  'sdui.read': 'admin',
+  'sdui.write': 'admin',
+  'sdui.activate': 'admin',
 
   // growth — waitlist
   'waitlist.create': 'admin',

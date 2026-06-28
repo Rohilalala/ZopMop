@@ -4,15 +4,16 @@ export const lightColors = {
   primaryBg: '#EEF2FF',   // Indigo 50
   accent: '#F5A300',       // ZopMop amber
   accentLight: '#FFC042',  // ZopMop amber-hi
+  accentOnSurface: '#B37100',  // Amber text sitting directly on cream bg (no chip/card behind it) — kicker labels only
 
   // Neutral
-  background: '#FAFAFA',
+  background: '#FAF7F2',   // Warm cream (top of light bg gradient)
   white: '#FFFFFF',
-  text: '#111827',         // Gray 900
-  textSecondary: '#6B7280', // Gray 500
-  textMuted: '#9CA3AF',    // Gray 400
-  border: '#E5E7EB',       // Gray 200
-  surface: '#F9FAFB',      // Gray 50
+  text: '#0D0D0F',         // Ink — primary text on cream
+  textSecondary: 'rgba(13,13,15,0.65)',
+  textMuted: 'rgba(13,13,15,0.50)',
+  border: 'rgba(13,13,15,0.06)',
+  surface: '#FFFFFF',
 
   // Status
   warning: '#F59E0B',
@@ -41,6 +42,7 @@ export const darkColors = {
 
   accent: '#FFC042',       // ZopMop amber-hi (brighter on dark)
   accentLight: '#FFD980',  // ZopMop amber-glow
+  accentOnSurface: '#F5A300',  // Same as accent — already readable on dark surfaces
 
   // Neutral
   background: '#0F172A',   // Slate 900
@@ -70,6 +72,14 @@ export const darkColors = {
     cancelled: '#F87171',
   },
 } as const;
+
+// Auth flow rebrand preview — designer's cream/brown palette (Final Logo Light.svg).
+// Temporary: auth screens only. If approved, fold into lightColors/darkColors app-wide.
+export const authColors = {
+  ...lightColors,
+  background: '#FFF6EB', // logo cream
+  text: '#3C2D1B',       // wordmark brown
+} as unknown as typeof lightColors; // double-cast: hex literals differ from lightColors' literal types
 
 // Default export keeps existing imports working — they always get light theme.
 // Components that support dark mode use useColors() from ThemeContext instead.

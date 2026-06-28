@@ -3,7 +3,7 @@
 // /pro/leave/declare. Outcome screen reflects the reassignment / cancellation
 // breakdown returned by the backend.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   
   ScrollView,
@@ -78,29 +78,34 @@ export default function ProDeclareLeaveScreen() {
   const [balance, setBalance] = useState<LeaveBalance | null>(null);
   const [bookings, setBookings] = useState<AffectedBooking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [result, setResult] = useState<DeclareResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadPreview = useCallback(async () => {
     if (!token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [bal, aff] = await Promise.all([
-          getBalance(token).catch(() => null),
-          getAffectedTomorrow(token).catch(() => [] as AffectedBooking[]),
-        ]);
-        if (cancelled) return;
-        setBalance(bal);
-        setBookings(aff);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+    setLoading(true);
+    setLoadError(false);
+    // allSettled so a failed balance call doesn't hide an affected-bookings
+    // success and vice-versa. Any rejection flags loadError — we must NOT
+    // render a confident "No bookings scheduled" on a fetch failure.
+    const [balRes, affRes] = await Promise.allSettled([
+      getBalance(token),
+      getAffectedTomorrow(token),
+    ]);
+    setBalance(balRes.status === 'fulfilled' ? balRes.value : null);
+    setBookings(affRes.status === 'fulfilled' ? affRes.value : []);
+    setLoadError(balRes.status === 'rejected' || affRes.status === 'rejected');
+    setLoading(false);
   }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadPreview().then(() => { if (cancelled) return; });
+    return () => { cancelled = true; };
+  }, [loadPreview]);
 
   async function onConfirm() {
     if (!token || submittingRef.current) return;
@@ -123,23 +128,55 @@ export default function ProDeclareLeaveScreen() {
   if (result) {
     const reassigned = result.reassigned_count;
     const cancelled = result.cancelled_count;
+    const outcomes = result.outcomes ?? [];
+    // A failed reassignment is an outcome that was neither reassigned
+    // (has a new_pro_id) nor cancelled — the booking is stranded with the
+    // on-leave pro. The old summary counted these as "no bookings
+    // affected", silently hiding the failure.
+    const failed = outcomes.filter((o) => !o.new_pro_id && !o.cancelled);
+    const total = outcomes.length;
+
     let summary = 'Leave declared. Affected bookings will be reassigned.';
-    if (cancelled > 0) {
-      summary = `Leave declared. ${cancelled} booking${cancelled === 1 ? '' : 's'} could not be reassigned and ${cancelled === 1 ? 'has' : 'have'} been cancelled. Customers have been notified.`;
-    } else if (reassigned === 0) {
+    if (total === 0) {
       summary = 'Leave declared. No bookings were affected.';
+    } else if (failed.length > 0) {
+      summary = `Leave declared, but ${failed.length} booking${failed.length === 1 ? '' : 's'} could not be reassigned and ${failed.length === 1 ? 'is' : 'are'} still assigned to you. Please contact support.`;
+    } else if (cancelled > 0) {
+      summary = `Leave declared. ${cancelled} booking${cancelled === 1 ? '' : 's'} could not be reassigned and ${cancelled === 1 ? 'has' : 'have'} been cancelled. Customers have been notified.`;
+    } else if (reassigned > 0) {
+      summary = `Leave declared. ${reassigned} booking${reassigned === 1 ? '' : 's'} reassigned to other pros.`;
     }
+
+    const hasFailures = failed.length > 0;
     return (
       <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
         <Header title="Leave declared" onBack={() => nav.goBack()} colors={c} />
         <ScrollView contentContainerStyle={s.content}>
           <View style={s.card}>
-            <Feather name="check-circle" size={32} color="#3DDC84" style={{ marginBottom: 12 }} />
+            <Feather
+              name={hasFailures ? 'alert-triangle' : 'check-circle'}
+              size={32}
+              color={hasFailures ? '#F59E0B' : '#3DDC84'}
+              style={{ marginBottom: 12 }}
+            />
             <Text style={s.cardTitle}>{summary}</Text>
             <Text style={s.cardSub}>
               Balance: {result.balance.balance} / {result.balance.quota}
             </Text>
           </View>
+
+          {/* Per-booking outcomes so the pro sees exactly what happened. */}
+          {outcomes.map((o) => {
+            const state = o.new_pro_id ? 'Reassigned' : o.cancelled ? 'Cancelled' : 'Still assigned to you';
+            return (
+              <View key={o.booking_id} style={s.card}>
+                <Text style={s.value}>{o.service_name || 'Booking'}{o.customer_name ? ` · ${o.customer_name}` : ''}</Text>
+                {!!o.scheduled_at && <Text style={s.cardSub}>{o.scheduled_at}</Text>}
+                <Text style={[s.cardSub, !o.new_pro_id && !o.cancelled && { color: '#F59E0B' }]}>{state}</Text>
+              </View>
+            );
+          })}
+
           <TouchableOpacity onPress={() => nav.goBack()} style={s.primaryBtn} activeOpacity={0.85}>
             <Text style={s.primaryBtnText}>Done</Text>
           </TouchableOpacity>
@@ -158,6 +195,18 @@ export default function ProDeclareLeaveScreen() {
       <ScrollView contentContainerStyle={s.content}>
         {loading ? (
           <LoadingSkeleton variant="block" />
+        ) : loadError ? (
+          <View style={s.card}>
+            <Feather name="wifi-off" size={20} color="#FF6B6B" style={{ marginBottom: 8 }} />
+            <Text style={s.cardTitle}>Couldn't load your leave details.</Text>
+            <Text style={s.cardSub}>
+              Check your connection and try again. We won't let you confirm leave
+              until we can show which bookings would be affected.
+            </Text>
+            <TouchableOpacity onPress={loadPreview} style={s.primaryBtn} activeOpacity={0.85}>
+              <Text style={s.primaryBtnText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <>
             <View style={s.card}>

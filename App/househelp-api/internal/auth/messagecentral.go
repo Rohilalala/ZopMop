@@ -60,6 +60,12 @@ type MessageCentralConfig struct {
 	AuthToken  string // long-lived bearer copied from console.messagecentral.com → sent verbatim as `authToken` header
 	BaseURL    string // defaults to mcDefaultBaseURL when empty
 	DevMode    bool
+	// IsDevelopment is a defense-in-depth latch (C10): the hardcoded "999999"
+	// bypass is only honoured when this is true (a real development env), so a
+	// misconfigured staging/prod deploy cannot accept the dev OTP even if
+	// DevMode is somehow set. The config boot guard is the primary protection;
+	// this is belt-and-braces.
+	IsDevelopment bool
 }
 
 // MessageCentralClient talks to the VerifyNow API. Concurrent-safe (config is
@@ -84,8 +90,14 @@ func NewMessageCentralClient(cfg MessageCentralConfig) *MessageCentralClient {
 	}
 }
 
+// devEnabled reports whether the dev short-circuit is active. It is honoured
+// only in a development env (never staging/production) even if DevMode is set,
+// so a misconfigured non-dev deploy cannot accept the hardcoded "999999" OTP
+// (C10 defense-in-depth).
+func (c *MessageCentralClient) devEnabled() bool { return c.cfg.DevMode && c.cfg.IsDevelopment }
+
 // DevMode reports whether OTP delivery is short-circuited.
-func (c *MessageCentralClient) DevMode() bool { return c.cfg.DevMode }
+func (c *MessageCentralClient) DevMode() bool { return c.devEnabled() }
 
 // normalizeToNational10 converts +91XXXXXXXXXX / 91XXXXXXXXXX / XXXXXXXXXX to
 // the bare 10-digit national number Message Central expects. Empty string if
@@ -151,7 +163,7 @@ func (c *MessageCentralClient) doAuthed(ctx context.Context, method, reqURL stri
 // SendOTP triggers an OTP. Returns the verificationId the service must store.
 func (c *MessageCentralClient) SendOTP(ctx context.Context, phone string) (string, error) {
 	national := normalizeToNational10(phone)
-	if c.cfg.DevMode {
+	if c.devEnabled() {
 		if national == "" {
 			national = "0000000000"
 		}
@@ -213,7 +225,7 @@ func (c *MessageCentralClient) VerifyOTP(ctx context.Context, verificationID, co
 	if code == "" {
 		return ErrOTPInvalid
 	}
-	if c.cfg.DevMode {
+	if c.devEnabled() {
 		if strings.HasPrefix(verificationID, "dev-") && code == devModeOTPVal {
 			return nil
 		}
@@ -264,7 +276,7 @@ func (c *MessageCentralClient) VerifyOTP(ctx context.Context, verificationID, co
 // verificationId. Currently unwired (no /retry route) — implemented for
 // otpVendor parity. ASSUMPTION (docs unreachable): resend path below.
 func (c *MessageCentralClient) RetryOTP(ctx context.Context, verificationID string) error {
-	if c.cfg.DevMode {
+	if c.devEnabled() {
 		if strings.HasPrefix(verificationID, "dev-") {
 			return nil
 		}

@@ -37,9 +37,11 @@ const STROKE_WIDTH = 13.03;
 type Props = {
   refreshing: boolean;
   size?: number;
+  /** Distance from the top of the overlay parent. Default 60. */
+  top?: number;
 };
 
-export function ZopRefresh({ refreshing, size = SIZE_DEFAULT }: Props) {
+export function ZopRefresh({ refreshing, size = SIZE_DEFAULT, top = 60 }: Props) {
   // Visibility: visible while refreshing OR while playing the post-refresh
   // smile animation. Driven by a state flag rather than the prop directly.
   const [showFace, setShowFace] = useState(false);
@@ -134,7 +136,7 @@ export function ZopRefresh({ refreshing, size = SIZE_DEFAULT }: Props) {
       pointerEvents="none"
       style={{
         position: 'absolute',
-        top: 60,
+        top,
         left: 0,
         right: 0,
         alignItems: 'center',

@@ -53,7 +53,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 // listForUser queries active promotions visible to the given user.
 // Audience rules:
 //   - "all"          → everyone
-//   - "user_segment" → only users in audience_user_ids
+//   - "specific"     → only users in audience_user_ids
 //   - "new_users"    → users with no non-cancelled bookings
 //   - "vip"          → users with role = "vip" (future)
 //   - "role"         → users whose role matches audience_role column (future)
@@ -78,11 +78,11 @@ func listForUser(ctx context.Context, db *pgxpool.Pool, userID string) ([]Offer,
 		  AND (max_uses = 0 OR uses_count < max_uses)
 		  AND (
 		      audience = 'all'
-		   OR (audience = 'user_segment' AND $1::uuid = ANY(audience_user_ids))
+		   OR (audience = 'specific' AND $1::uuid = ANY(audience_user_ids))
 		   OR (audience = 'new_users' AND NOT EXISTS (
 		          SELECT 1 FROM bookings
-		          WHERE user_id = $1::uuid
-		            AND status NOT IN ('cancelled', 'pending_customer_action')
+		          WHERE customer_id = $1::uuid
+		            AND status NOT IN ('cancelled')
 		       ))
 		  )
 		ORDER BY

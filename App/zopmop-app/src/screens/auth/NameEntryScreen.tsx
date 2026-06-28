@@ -17,11 +17,11 @@ import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing, Radius, Shadow } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { updateMe } from '../../api/users';
 import { useAuth } from '../../context/AuthContext';
+import { setNeedsWelcome } from '../../utils/pendingAuthStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'NameEntry'>;
@@ -38,9 +38,9 @@ function sanitizeName(raw: string): string {
 }
 
 export default function NameEntryScreen({ navigation, route }: Props) {
-  const { phone } = route.params;
   const { token, updateUser } = useAuth();
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -94,18 +94,24 @@ export default function NameEntryScreen({ navigation, route }: Props) {
 
   async function handleContinue() {
     if (!isValid) return;
+    if (!token) {
+      setError('Something went wrong. Please sign in again.');
+      return;
+    }
     setError('');
     setLoading(true);
 
     try {
-      if (token) {
-        const updatedUser = await updateMe(token, sanitized);
-        updateUser(updatedUser);
-      }
-      navigation.replace('Location', { phone, name: sanitized });
+      const updatedUser = await updateMe(token, sanitized);
+      // Raise the welcome flag BEFORE persisting the name: updateUser()
+      // flips App.tsx `needsName` to false, and only this flag keeps the
+      // AuthNavigator mounted long enough for Welcome to play before the
+      // root swaps to MainNavigator.
+      setNeedsWelcome(true);
+      updateUser(updatedUser);
+      navigation.replace('Welcome', { phone: route.params.phone, name: updatedUser.name });
     } catch {
-      navigation.replace('Location', { phone, name: sanitized });
-    } finally {
+      setError('Couldn’t save your name. Please try again.');
       setLoading(false);
     }
   }
@@ -116,7 +122,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
       <View style={styles.lottieWrap} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/enter-name.lottie')}
+          source={require('../../../assets/animation/enter-name.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
@@ -174,7 +180,7 @@ export default function NameEntryScreen({ navigation, route }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <LoadingBars color="#FFFFFF" size="small" />
+              <LoadingBars color="#0D0D0F" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Continue</Text>
             )}
@@ -240,7 +246,7 @@ function createStyles(c: typeof lightColors) {
     bottom: { paddingHorizontal: 24, paddingBottom: 16 },
     continueButton: {
       height: 54,
-      backgroundColor: c.primary,
+      backgroundColor: c.accent,
       borderRadius: Radius.xl,
       alignItems: 'center',
       justifyContent: 'center',
@@ -250,7 +256,7 @@ function createStyles(c: typeof lightColors) {
     continueButtonText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.md,
-      color: '#FFFFFF',
+      color: '#0D0D0F',
       letterSpacing: 0.2,
     },
   });

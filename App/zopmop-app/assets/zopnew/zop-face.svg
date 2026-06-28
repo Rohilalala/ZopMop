@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zopnew/zop-face.svg — default face only (compositing) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 395.32 395.32" fill="none">
+  
+  <circle cx="162" cy="150" r="13.5" fill="#1F1F1F"/><circle cx="157.869" cy="145.869" r="4.590000000000001" fill="#FFF"/><circle cx="165.213" cy="153.672" r="2.0655000000000006" fill="#FFF" opacity="0.85"/><circle cx="234" cy="150" r="13.5" fill="#1F1F1F"/><circle cx="229.869" cy="145.869" r="4.590000000000001" fill="#FFF"/><circle cx="237.213" cy="153.672" r="2.0655000000000006" fill="#FFF" opacity="0.85"/><path d="M154 232 Q 198 276 242 232" stroke="#1F1F1F" stroke-width="12" stroke-linecap="round" fill="none"/>
+</svg>

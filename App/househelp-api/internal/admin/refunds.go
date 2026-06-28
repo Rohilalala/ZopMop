@@ -85,7 +85,7 @@ func (r *Repository) SettlePendingRefund(ctx context.Context, id string) (*Pendi
 	pr := &PendingRefund{}
 	err := r.db.QueryRow(queryCtx,
 		`UPDATE pending_refunds
-		 SET status = 'settled', settled_at = now()
+		 SET status = 'processed_manual', settled_at = now()
 		 WHERE id = $1 AND status = 'pending'
 		 RETURNING id, user_id, amount_cents, source, COALESCE(source_ref, ''),
 		           status, created_at, settled_at`,

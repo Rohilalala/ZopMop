@@ -9,11 +9,12 @@ import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import hi from './hi';
 import en from './en';
+import bn from './bn';
 import type { Dict } from './hi';
 
-export type Locale = 'hi' | 'en';
+export type Locale = 'hi' | 'en' | 'bn';
 
-const DICTS: Record<Locale, Dict> = { hi, en };
+const DICTS: Record<Locale, Dict> = { hi, en, bn };
 const STORAGE_KEY = 'app_locale';
 
 let currentLocale: Locale = 'hi';
@@ -38,7 +39,7 @@ export function setLocale(loc: Locale, persist: boolean = true) {
 export async function bootstrapLocale(): Promise<Locale> {
   try {
     const saved = await AsyncStorage.getItem(STORAGE_KEY);
-    if (saved === 'hi' || saved === 'en') {
+    if (saved === 'hi' || saved === 'en' || saved === 'bn') {
       currentLocale = saved;
       listeners.forEach((fn) => fn(saved));
       return saved;

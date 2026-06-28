@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import ZopFull from '../../assets/zop/zop-full.svg';
+import { useTheme } from '../context/ThemeContext';
 
 const AMBER = '#F5A300';
 
@@ -55,6 +56,8 @@ function renderRich(content: string, baseStyle: object) {
  * replaces text with three pulsing amber dots, staggered 0/150/300ms.
  */
 export default function ZopChatBubble({ role, content, isTyping = false }: Props) {
+  const { isDark, colors: c } = useTheme();
+
   if (role === 'user') {
     return (
       <View style={styles.row}>
@@ -65,16 +68,24 @@ export default function ZopChatBubble({ role, content, isTyping = false }: Props
     );
   }
 
+  // Assistant bubble + text are theme-aware: dark glass / white text on dark,
+  // faint-dark glass / dark text on light (otherwise white-on-light = invisible).
+  const aBubble = [
+    styles.assistantBubble,
+    !isDark && { backgroundColor: 'rgba(13,13,15,0.05)' },
+  ];
+  const aText = [styles.assistantText, !isDark && { color: c.text }];
+
   return (
     <View style={styles.assistantRow}>
       <View style={styles.avatar}>
         <ZopFull width={26} height={26} />
       </View>
-      <View style={styles.assistantBubble}>
+      <View style={aBubble}>
         {isTyping ? (
           <TypingDots />
         ) : (
-          <Text style={styles.assistantText}>{renderRich(content, styles.assistantText)}</Text>
+          <Text style={aText}>{renderRich(content, aText)}</Text>
         )}
       </View>
     </View>

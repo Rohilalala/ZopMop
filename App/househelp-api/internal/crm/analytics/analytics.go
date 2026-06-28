@@ -46,12 +46,16 @@ type DailyPoint struct {
 func (s *Service) RevenueDaily(ctx context.Context, from, to time.Time) ([]DailyPoint, error) {
 	rows, err := s.db.Query(ctx, `
 		WITH days AS (
-		  SELECT generate_series(date_trunc('day', $1::timestamptz), date_trunc('day', $2::timestamptz), interval '1 day') AS day
+		  SELECT generate_series(
+		           date_trunc('day', $1::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           date_trunc('day', $2::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           interval '1 day') AS day
 		)
 		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(SUM(b.amount_paise), 0)
 		FROM days d
 		LEFT JOIN bookings b ON b.status = 'completed'
-		  AND b.completed_at >= d.day AND b.completed_at < d.day + interval '1 day'
+		  AND b.completed_at >= d.day AT TIME ZONE 'Asia/Kolkata'
+		  AND b.completed_at < (d.day + interval '1 day') AT TIME ZONE 'Asia/Kolkata'
 		GROUP BY d.day ORDER BY d.day
 	`, from, to)
 	return scanDaily(rows, err)
@@ -60,11 +64,15 @@ func (s *Service) RevenueDaily(ctx context.Context, from, to time.Time) ([]Daily
 func (s *Service) OrdersDaily(ctx context.Context, from, to time.Time) ([]DailyPoint, error) {
 	rows, err := s.db.Query(ctx, `
 		WITH days AS (
-		  SELECT generate_series(date_trunc('day', $1::timestamptz), date_trunc('day', $2::timestamptz), interval '1 day') AS day
+		  SELECT generate_series(
+		           date_trunc('day', $1::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           date_trunc('day', $2::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           interval '1 day') AS day
 		)
 		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(COUNT(b.id), 0)
 		FROM days d
-		LEFT JOIN bookings b ON b.created_at >= d.day AND b.created_at < d.day + interval '1 day'
+		LEFT JOIN bookings b ON b.created_at >= d.day AT TIME ZONE 'Asia/Kolkata'
+		  AND b.created_at < (d.day + interval '1 day') AT TIME ZONE 'Asia/Kolkata'
 		GROUP BY d.day ORDER BY d.day
 	`, from, to)
 	return scanDaily(rows, err)
@@ -73,11 +81,15 @@ func (s *Service) OrdersDaily(ctx context.Context, from, to time.Time) ([]DailyP
 func (s *Service) SignupsDaily(ctx context.Context, from, to time.Time) ([]DailyPoint, error) {
 	rows, err := s.db.Query(ctx, `
 		WITH days AS (
-		  SELECT generate_series(date_trunc('day', $1::timestamptz), date_trunc('day', $2::timestamptz), interval '1 day') AS day
+		  SELECT generate_series(
+		           date_trunc('day', $1::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           date_trunc('day', $2::timestamptz AT TIME ZONE 'Asia/Kolkata'),
+		           interval '1 day') AS day
 		)
 		SELECT to_char(d.day, 'YYYY-MM-DD'), COALESCE(COUNT(u.id), 0)
 		FROM days d
-		LEFT JOIN users u ON u.created_at >= d.day AND u.created_at < d.day + interval '1 day' AND u.deleted_at IS NULL
+		LEFT JOIN users u ON u.created_at >= d.day AT TIME ZONE 'Asia/Kolkata'
+		  AND u.created_at < (d.day + interval '1 day') AT TIME ZONE 'Asia/Kolkata' AND u.deleted_at IS NULL
 		GROUP BY d.day ORDER BY d.day
 	`, from, to)
 	return scanDaily(rows, err)
@@ -116,18 +128,32 @@ type Summary struct {
 
 func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, error) {
 	var sum Summary
+	// Order COUNTs are creation-based (orders placed in the window).
 	err := s.db.QueryRow(ctx, `
 		SELECT
 		  COUNT(*),
 		  COUNT(*) FILTER (WHERE status = 'completed'),
-		  COUNT(*) FILTER (WHERE status = 'cancelled'),
-		  COALESCE(SUM(amount_paise) FILTER (WHERE status = 'completed'), 0),
-		  COALESCE(AVG(amount_paise) FILTER (WHERE status = 'completed'), 0)::bigint
+		  COUNT(*) FILTER (WHERE status = 'cancelled')
 		FROM bookings
 		WHERE created_at >= $1 AND created_at <= $2
-	`, from, to).Scan(&sum.Orders, &sum.CompletedOrders, &sum.CancelledOrders, &sum.RevenueCents, &sum.AvgOrderCents)
+	`, from, to).Scan(&sum.Orders, &sum.CompletedOrders, &sum.CancelledOrders)
 	if err != nil {
 		return nil, fmt.Errorf("summary bookings: %w", err)
+	}
+	// Revenue is recognised on the COMPLETION date, windowed on completed_at
+	// — identical basis to RevenueDaily — so the Revenue KPI card and the
+	// sum of the Revenue/day chart reconcile. (Filtering completed revenue
+	// by created_at made the two disagree whenever a booking was created in
+	// one window but completed in another.)
+	err = s.db.QueryRow(ctx, `
+		SELECT
+		  COALESCE(SUM(amount_paise), 0),
+		  COALESCE(AVG(amount_paise), 0)::bigint
+		FROM bookings
+		WHERE status = 'completed' AND completed_at >= $1 AND completed_at <= $2
+	`, from, to).Scan(&sum.RevenueCents, &sum.AvgOrderCents)
+	if err != nil {
+		return nil, fmt.Errorf("summary revenue: %w", err)
 	}
 	if err := s.db.QueryRow(ctx, `
 		SELECT COUNT(*) FILTER (WHERE role = 'customer'), COUNT(*) FILTER (WHERE role = 'pro')
@@ -139,9 +165,9 @@ func (s *Service) Summary(ctx context.Context, from, to time.Time) (*Summary, er
 }
 
 type CategoryRow struct {
-	Category   string `json:"category"`
-	Orders     int    `json:"orders"`
-	RevenueCents int64 `json:"revenue_paise"`
+	Category     string `json:"category"`
+	Orders       int    `json:"orders"`
+	RevenueCents int64  `json:"revenue_paise"`
 }
 
 func (s *Service) ByCategory(ctx context.Context, from, to time.Time) ([]CategoryRow, error) {
@@ -179,11 +205,11 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g := r.Group("/analytics")
 	read := middleware.RequirePermission("analytics.read")
-	g.Get("/summary",       read, h.Summary)
+	g.Get("/summary", read, h.Summary)
 	g.Get("/revenue-daily", read, h.RevenueDaily)
-	g.Get("/orders-daily",  read, h.OrdersDaily)
+	g.Get("/orders-daily", read, h.OrdersDaily)
 	g.Get("/signups-daily", read, h.SignupsDaily)
-	g.Get("/by-category",   read, h.ByCategory)
+	g.Get("/by-category", read, h.ByCategory)
 }
 
 func (h *Handler) Summary(c *fiber.Ctx) error {

@@ -8,7 +8,6 @@ import React from 'react';
 
 import { FooterSection }       from './sections/FooterSection';
 import { HeroCarouselSection } from './sections/HeroCarouselSection';
-import { LivePillSection }     from './sections/LivePillSection';
 import { ServiceGridSection }  from './sections/ServiceGridSection';
 import { UsualsRowSection }    from './sections/UsualsRowSection';
 import type { SduiAction, SduiSection, SduiSectionType } from './types';
@@ -32,11 +31,6 @@ function HeroEntry({ section, onAction }: RegistryProps) {
   );
 }
 
-function LivePillEntry({ section, onAction }: RegistryProps) {
-  if (section.type !== 'live_pill') return null;
-  return <LivePillSection data={section.data} onAction={onAction} />;
-}
-
 function UsualsEntry({ section, onAction }: RegistryProps) {
   if (section.type !== 'usuals_row') return null;
   return <UsualsRowSection data={section.data} onAction={onAction} />;
@@ -52,10 +46,14 @@ function FooterEntry({ section, onAction }: RegistryProps) {
   return <FooterSection data={section.data} onAction={onAction} />;
 }
 
+function GreetingHeroEntry(_props: RegistryProps) { return null; } // extracted by HomeScreen; never rendered in-feed
+
 export const SECTION_REGISTRY: Record<SduiSectionType, SectionComponent> = {
-  hero_carousel: HeroEntry,
-  live_pill:     LivePillEntry,
-  usuals_row:    UsualsEntry,
-  service_grid:  ServiceGridEntry,
-  footer:        FooterEntry,
+  hero_carousel:    HeroEntry,
+  usuals_row:       UsualsEntry,
+  service_grid:     ServiceGridEntry,
+  footer:           FooterEntry,
+  greeting_hero:    GreetingHeroEntry,
+  header_promo:     () => null,      // extracted by HomeScreen; never rendered in-feed
+  upcoming_booking: () => null,      // extracted by HomeScreen; never rendered in-feed
 };

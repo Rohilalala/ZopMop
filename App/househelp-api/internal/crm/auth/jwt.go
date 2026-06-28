@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // JWTKey is one verification entry in a CRM JWT rotation set. ID is the
@@ -149,6 +150,7 @@ func IssueChallengeToken(secret, kid, adminID string) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "zopmop-crm-challenge",
 			Subject:   adminID,
+			ID:        uuid.NewString(), // jti — recorded on use so a challenge is single-use
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 		},

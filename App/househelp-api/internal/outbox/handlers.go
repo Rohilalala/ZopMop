@@ -3,8 +3,10 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -55,11 +57,21 @@ func BookingHandlers(notif bookingNotifier, db *pgxpool.Pool) map[string]Handler
 				return fmt.Errorf("booking.accepted: unmarshal: %w", err)
 			}
 			// Resolve helper name from DB for the "X is on their way" message.
+			// Helper display names live in users.name (helpers.id IS users.id —
+			// helpers extend users via a shared PK); the helpers table has no
+			// name column, so the old helpers.full_name query 42703'd every
+			// event. Mirror matching/dispatch.go:helperName.
 			var helperName string
 			if err := db.QueryRow(ctx,
-				`SELECT COALESCE(full_name, '') FROM helpers WHERE id = $1`, p.HelperID,
+				`SELECT COALESCE(name, '') FROM users WHERE id = $1 AND deleted_at IS NULL`, p.HelperID,
 			).Scan(&helperName); err != nil {
-				return fmt.Errorf("booking.accepted: lookup helper name: %w", err)
+				if !errors.Is(err, pgx.ErrNoRows) {
+					return fmt.Errorf("booking.accepted: lookup helper name: %w", err)
+				}
+				helperName = ""
+			}
+			if helperName == "" {
+				helperName = "Your pro"
 			}
 			return notif.NotifyCustomerBookingAccepted(ctx, p.CustomerID, helperName, p.BookingID)
 		},

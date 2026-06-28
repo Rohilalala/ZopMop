@@ -4,14 +4,13 @@
 // Type schema (set by backend in internal/notification/service.go SendData
 // + internal/matching dispatch crons):
 //
-//   SCHEDULED_INVITE          — scheduled-job invite for a pro
 //   BOOKING_ACCEPTED          — pro took the customer's job
 //   BOOKING_NO_PROS_FOUND     — chain exhausted, customer must rebook
 //   BOOKING_STILL_LOOKING     — stealth-instant 15-min mark, no taker yet
 //   BOOKING_REBOOK_AVAILABLE  — pros came back online within 2h
+//   booking_assigned          — job force-assigned into a pro's roster
 //
-// All types carry booking_id. SCHEDULED_INVITE additionally carries
-// scheduled_time, duration_minutes, locality, customer_id.
+// All types carry booking_id.
 
 import { navigate } from '../navigation/navigationRef';
 import { showInfo, showSuccess } from './toast';
@@ -26,22 +25,27 @@ type FcmMessageData = Record<string, string> | undefined;
 // token registered as a pro target). We drop those silently and warn —
 // see audit C-9 / CH1D-1.
 //
-// Today only SCHEDULED_INVITE meets that bar (it deep-links into
-// ProScheduledInvite). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
+// Today only booking_assigned meets that bar (it refreshes a pro's
+// roster). BOOKING_ACCEPTED / NO_PROS_FOUND / STILL_LOOKING /
 // REBOOK_AVAILABLE are customer-facing toasts/redirects and stay open.
 // When new Pro-targeted types are added, append them here.
-const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['SCHEDULED_INVITE', 'booking_offer'];
+const PRO_TARGETED_MESSAGE_TYPES: readonly string[] = ['booking_assigned'];
 
 export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) {
   if (!data || !data.type) return;
   const bookingId = data.booking_id ?? '';
 
-  if (PRO_TARGETED_MESSAGE_TYPES.includes(data.type) && userRole !== 'helper') {
-    // Pro-targeted push delivered to a non-helper. Drop without UI side-
+  // Canonical JWT role for pros is 'pro' (migration 019 renamed every
+  // 'helper' row and tightened the CHECK constraint — 'helper' can no
+  // longer exist in the DB). Accept the legacy literal anyway in case a
+  // stale pre-019 JWT is still cached on-device. Gating on 'helper'
+  // alone dropped EVERY job-offer push for every pro.
+  if (PRO_TARGETED_MESSAGE_TYPES.includes(data.type) && userRole !== 'pro' && userRole !== 'helper') {
+    // Pro-targeted push delivered to a non-pro. Drop without UI side-
     // effects: navigating would land them on a Pro screen, toasting would
     // acknowledge a misrouted message we don't want to surface.
     // eslint-disable-next-line no-console
-    console.warn('[pushRouter] Pro-targeted push for non-helper user, dropping', {
+    console.warn('[pushRouter] Pro-targeted push for non-pro user, dropping', {
       type: data.type,
       userRole: userRole ?? '<unauthenticated>',
     });
@@ -49,14 +53,16 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
   }
 
   switch (data.type) {
-    // Legacy SCHEDULED_INVITE path is now handled by the
-    // booking_offer case below — both share the same emit/route.
-
+    // The unified assigner is the sole producer of the customer "accepted" push
+    // and sends data.type as lowercase 'booking_accepted' (notification SendData);
+    // the legacy uppercase string is kept for any in-flight pushes. Both land on
+    // the same confirmation toast.
+    case 'booking_accepted':
     case 'BOOKING_ACCEPTED': {
       const helperName = data.helper_name ?? 'Your pro';
       showSuccess(`${helperName} has accepted your booking.`, { title: 'Booking confirmed' });
-      // No navigation push — customer is likely on Bookings or Home; the
-      // toast + a list refresh on focus is enough.
+      // Refresh any open booking feed/track screen in addition to the toast.
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: data.status });
       return;
     }
 
@@ -90,6 +96,26 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       return;
     }
 
+    // Customer's booking was cancelled (pro/admin cancel) or auto-cancelled by
+    // the pending-action sweeper. Toast + refresh the booking feed so the
+    // customer isn't left on a stale "searching"/"on the way" screen.
+    case 'booking_cancelled':
+    case 'BOOKING_AUTO_CANCELLED': {
+      showInfo(data.body ?? 'Your booking has been cancelled.', {
+        title: data.title ?? 'Booking cancelled',
+      });
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: 'cancelled' });
+      return;
+    }
+
+    case 'refund_processed': {
+      showInfo(data.body ?? 'Your refund has been initiated.', {
+        title: data.title ?? 'Refund processed',
+      });
+      if (bookingId) emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId, status: data.status });
+      return;
+    }
+
     case 'zone_approval_granted': {
       emitShiftEvent({
         type: 'zone_approval_granted',
@@ -107,29 +133,30 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
       return;
     }
 
-    case 'booking_offer':
-    case 'SCHEDULED_INVITE': {
-      // SCHEDULED_INVITE is the wire name from backend Phase 10; the
-      // pro app treats every invite as a booking_offer regardless of
-      // whether it's a stealth-instant or scheduled flow.
-      if (!bookingId) return;
-      const offer = {
-        booking_id: bookingId,
-        customer_first_name: data.customer_first_name,
-        address_summary: data.address_summary,
-        task_list_json: data.task_list_json,
-        estimated_earnings_paise: data.estimated_earnings_paise ? parseInt(data.estimated_earnings_paise, 10) : undefined,
-        estimated_duration_minutes: data.estimated_duration_minutes ? parseInt(data.estimated_duration_minutes, 10) : undefined,
-        time_remaining_sec: data.time_remaining_sec ? parseInt(data.time_remaining_sec, 10) : 25,
-        received_at_ms: Date.now(),
-      };
-      emitShiftEvent({ type: 'booking_offer', payload: offer });
-      // Background-tap deep-link: navigate to JobOffer screen so the
-      // pro lands on it after tapping the notification. The
-      // foreground modal listener (in MainNavigator) will also fire
-      // on the same emit but is a no-op if the screen is already
-      // mounted.
-      navigate('JobOffer', { booking_id: bookingId });
+    case 'zone_approval_rejected': {
+      // Pro's out-of-zone go-online request was rejected by an admin.
+      // Without this case the pro sat on "Waiting for approval" the whole
+      // shift and never saw the admin's notes. The ZoneApproval screen
+      // listens for this to clear approvalPendingRef + show the reason.
+      emitShiftEvent({
+        type: 'zone_approval_rejected',
+        request_id: data.request_id,
+        commitment_id: data.commitment_id,
+        reason: data.reason ?? data.notes ?? data.body,
+      });
+      return;
+    }
+
+    case 'booking_assigned': {
+      // Force-assigned roster job (no offer/accept) — the unified-slot-dispatch
+      // design replaces the old booking_offer/SCHEDULED_INVITE JobOffer flow.
+      // Mark the row as newly arrived (drives the NEW badge + "Got it" ack in
+      // JobsList) and trigger a roster refetch via the shared status-change
+      // event, then surface a high-visibility in-app toast on top of the FCM
+      // tray notification.
+      if (bookingId) emitShiftEvent({ type: 'booking_assigned', booking_id: bookingId });
+      emitShiftEvent({ type: 'booking_status_change', booking_id: bookingId });
+      showSuccess('New job added to your roster', { title: 'Job assigned' });
       return;
     }
 
@@ -137,7 +164,25 @@ export function routeFcmMessage(data: FcmMessageData, userRole?: string | null) 
     case 'pro_en_route':
     case 'pro_arrived':
     case 'job_started':
-    case 'job_completed': {
+    case 'job_completed':
+    // Backend sends 'booking_completed' (notification/service.go); the app's
+    // legacy name was 'job_completed'. Alias both so the customer's
+    // TrackLive feed refreshes to the completed/review state.
+    case 'booking_completed':
+    // Pro-side ownership changes — a cancelled / (re|un)assigned booking
+    // must refresh the pro's job screens. Without these the pro kept
+    // offering En-Route/Arrived/Start on a job they no longer own (or that
+    // the customer cancelled) and every tap then errored.
+    // ('booking_assigned' is handled by its own case above under
+    // unified-slot-dispatch, which already emits the status-change event.)
+    case 'booking_cancelled_for_pro':
+    case 'booking_reassigned':
+    case 'booking_unassigned':
+    // Customer-side: their pro was swapped (CRM/leave reassign) or the
+    // booking was cancelled with no coverage. Refresh the booking feed.
+    case 'worker_changed':
+    case 'helper_reassigned':
+    case 'cancelled_no_coverage': {
       emitShiftEvent({
         type: 'booking_status_change',
         booking_id: bookingId,

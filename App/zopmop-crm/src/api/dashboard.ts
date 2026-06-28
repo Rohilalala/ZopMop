@@ -3,10 +3,11 @@ import { api } from './client';
 export type KPIs = {
   active_orders: number;
   workers_online: number;
-  revenue_today_cents: number;
+  revenue_today_paise: number;
   pending_refunds: number;
   pending_applications: number;
   open_disputes: number;
+  bookings_at_risk: number;
 };
 
 export type LiveOrder = {
@@ -18,7 +19,7 @@ export type LiveOrder = {
   created_at: string;
 };
 
-export type RevenuePoint = { date: string; revenue_cents: number };
+export type RevenuePoint = { date: string; revenue_paise: number };
 export type CategoryShare = { category: string; count: number };
 
 export async function fetchKpis(): Promise<KPIs> {

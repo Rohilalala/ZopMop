@@ -41,6 +41,8 @@ import {
   getWalletTransactions,
   type WalletTransaction,
 } from '../../api/wallet';
+import { useTheme } from '../../context/ThemeContext';
+import { useC } from '../../theme/screen';
 import { showError } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 import WalletTopupSheet from './WalletTopupSheet';
@@ -64,6 +66,8 @@ const walletMemCache: {
 } = { balancePaise: null, transactions: null };
 
 export default function WalletScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -129,8 +133,8 @@ export default function WalletScreen() {
   }, [fetchAll]);
 
   return (
-    <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+    <View style={[s.root, { backgroundColor: c.bg }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView
@@ -147,19 +151,22 @@ export default function WalletScreen() {
           />
         }
       >
-        <View style={[s.head, { paddingTop: insets.top + 10 }]}>
+        <View style={[s.head, { paddingTop: insets.top + 10, backgroundColor: isDark ? '#0A0A0A' : c.bg }]}>
           <View style={s.headRow}>
             <PressFx
               accessibilityRole="button"
               accessibilityLabel="Go back"
               onPress={() => navigation.goBack()}
-              style={s.iconBtn}
+              style={[s.iconBtn, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)',
+                borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,15,0.06)',
+              }]}
             >
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
             <View style={{ flex: 1 }}>
-              <Text style={s.title}>Wallet</Text>
-              <Text style={s.sub}>Closed-loop credit for ZopMop bookings.</Text>
+              <Text style={[s.title, { color: c.text }]}>Wallet</Text>
+              <Text style={[s.sub, { color: c.textMuted }]}>Closed-loop credit for ZopMop bookings.</Text>
             </View>
           </View>
         </View>
@@ -188,7 +195,7 @@ export default function WalletScreen() {
           </PressFx>
         </View>
 
-        <Text style={s.secH}>Recent activity</Text>
+        <Text style={[s.secH, { color: c.textMuted }]}>Recent activity</Text>
         <View style={s.body}>
           <GlassCard radius={20} style={s.card}>
             {loading && transactions.length === 0 ? (
@@ -197,12 +204,12 @@ export default function WalletScreen() {
               </View>
             ) : transactions.length === 0 ? (
               <View style={s.empty}>
-                <View style={s.emptyIcon}>
-                  <Feather name="file-text" size={18} color="rgba(255,255,255,0.45)" />
+                <View style={[s.emptyIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,15,0.05)' }]}>
+                  <Feather name="file-text" size={18} color={c.textMuted} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.emptyTitle}>No transactions yet</Text>
-                  <Text style={s.emptySub}>Top up to get started.</Text>
+                  <Text style={[s.emptyTitle, { color: c.text }]}>No transactions yet</Text>
+                  <Text style={[s.emptySub, { color: c.textMuted }]}>Top up to get started.</Text>
                 </View>
               </View>
             ) : (
@@ -216,7 +223,7 @@ export default function WalletScreen() {
           </GlassCard>
         </View>
 
-        <Text style={s.secH}>Why ZopMop wallet</Text>
+        <Text style={[s.secH, { color: c.textMuted }]}>Why ZopMop wallet</Text>
         <View style={s.body}>
           <GlassCard radius={20} style={s.card}>
             <Row icon="zap" title="Instant refunds" sub="Cancellations land back here within seconds." />
@@ -241,53 +248,63 @@ export default function WalletScreen() {
 }
 
 function BalanceHero({ balancePaise, loading }: { balancePaise: number | null; loading: boolean }) {
+  const { isDark } = useTheme();
   const display = balancePaise == null ? null : formatRupees(balancePaise);
 
   return (
     <View style={s.heroWrap}>
-      <View style={s.hero}>
+      <View style={[
+        s.hero,
+        isDark
+          ? { borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' }
+          : {
+              shadowColor: '#B37100', shadowOpacity: 0.12, shadowRadius: 32, shadowOffset: { width: 0, height: 16 },
+              borderWidth: 1, borderColor: 'rgba(245,163,0,0.12)',
+            },
+      ]}>
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           <Svg width="100%" height="100%">
             <Defs>
-              <SvgLinearGradient id="walletBg" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor="#1A1A1C" />
-                <Stop offset="100%" stopColor="#0D0D0F" />
+              <SvgLinearGradient id="walletBg" x1="0" y1="0" x2="0.3" y2="1">
+                <Stop offset="0%" stopColor={isDark ? '#1A1A1C' : '#FFFFFF'} />
+                <Stop offset="100%" stopColor={isDark ? '#0D0D0F' : '#F7F1E8'} />
               </SvgLinearGradient>
-              <SvgRadialGradient id="walletGlow" cx="80%" cy="30%" rx="100%" ry="80%">
-                <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.4" />
-                <Stop offset="50%" stopColor="#F5A300" stopOpacity="0" />
+              <SvgRadialGradient id="walletGlow" cx="85%" cy="15%" rx="90%" ry="70%">
+                <Stop offset="0%" stopColor="#F5A300" stopOpacity={isDark ? '0.45' : '0.25'} />
+                <Stop offset="55%" stopColor="#F5A300" stopOpacity="0" />
+              </SvgRadialGradient>
+              <SvgRadialGradient id="walletShine" cx="15%" cy="90%" rx="80%" ry="60%">
+                <Stop offset="0%" stopColor={isDark ? '#FFFFFF' : '#F5A300'} stopOpacity={isDark ? '0.04' : '0.08'} />
+                <Stop offset="60%" stopColor={isDark ? '#FFFFFF' : '#F5A300'} stopOpacity="0" />
               </SvgRadialGradient>
             </Defs>
             <Rect width="100%" height="100%" fill="url(#walletBg)" />
             <Rect width="100%" height="100%" fill="url(#walletGlow)" />
+            <Rect width="100%" height="100%" fill="url(#walletShine)" />
           </Svg>
         </View>
 
-        <View style={s.heroAmberLine} pointerEvents="none" />
+        <View style={[s.heroAmberLine, { backgroundColor: isDark ? 'rgba(245,163,0,0.4)' : 'rgba(245,163,0,0.25)' }]} pointerEvents="none" />
 
         <View style={s.heroTop}>
-          <Text style={s.heroEyebrow}>ZopMop · Wallet balance</Text>
-          <View style={s.heroBadge}>
-            <Feather name="lock" size={10} color="#FFC042" />
-            <Text style={s.heroBadgeText}>Secure</Text>
-          </View>
+          <Text style={s.heroEyebrow}>Wallet balance</Text>
         </View>
 
         <View style={s.heroBody}>
-          <Text style={s.balanceCurrency}>₹</Text>
+          <Text style={[s.balanceCurrency, { color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(13,13,15,0.50)' }]}>₹</Text>
           {display ? (
             <>
-              <Text style={s.balanceValue}>{display.whole}</Text>
-              <Text style={s.balanceDecimals}>.{display.decimals}</Text>
+              <Text style={[s.balanceValue, { color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>{display.whole}</Text>
+              <Text style={[s.balanceDecimals, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.35)' }]}>.{display.decimals}</Text>
             </>
           ) : (
-            <Text style={s.balanceValue}>{loading ? '—' : '0'}</Text>
+            <Text style={[s.balanceValue, { color: isDark ? '#FFFFFF' : '#0D0D0F' }]}>{loading ? '—' : '0'}</Text>
           )}
         </View>
 
         <View style={s.heroFootRow}>
-          <Feather name="info" size={11} color="rgba(255,255,255,0.45)" />
-          <Text style={s.heroFoot}>Use balance at checkout to skip the payment sheet.</Text>
+          <Feather name="info" size={11} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(13,13,15,0.35)'} />
+          <Text style={[s.heroFoot, { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,15,0.50)' }]}>Use balance at checkout to skip the payment sheet.</Text>
         </View>
       </View>
     </View>
@@ -295,13 +312,15 @@ function BalanceHero({ balancePaise, loading }: { balancePaise: number | null; l
 }
 
 function TxnRow({ t }: { t: WalletTransaction }) {
+  const { isDark } = useTheme();
+  const c = useC();
   const isCredit = t.amount_paise > 0;
   const sign = isCredit ? '+' : '−';
   const abs = Math.abs(t.amount_paise);
   const { whole, decimals } = formatRupees(abs);
   const label = labelForKind(t.kind);
   const icon = iconForKind(t.kind);
-  const tint = isCredit ? '#F5A300' : 'rgba(255,255,255,0.85)';
+  const tint = isCredit ? '#F5A300' : (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(13,13,15,0.75)');
 
   return (
     <View
@@ -309,16 +328,16 @@ function TxnRow({ t }: { t: WalletTransaction }) {
       accessibilityRole="text"
       accessibilityLabel={`${isCredit ? 'Credit' : 'Debit'} of ${whole}.${decimals} rupees, ${label}`}
     >
-      <View style={s.rowIcon}>
+      <View style={[s.rowIcon, { backgroundColor: c.amberSoft }]}>
         <Feather name={icon} size={17} color="#F5A300" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={s.rowTitle}>{t.note || label}</Text>
-        <Text style={s.rowSub}>{relativeTime(t.created_at)}</Text>
+        <Text style={[s.rowTitle, { color: c.text }]}>{t.note || label}</Text>
+        <Text style={[s.rowSub, { color: c.textMuted }]}>{relativeTime(t.created_at)}</Text>
       </View>
       <Text style={[s.rowAmount, { color: tint }]}>
         {sign}₹{whole}
-        <Text style={s.rowAmountDec}>.{decimals}</Text>
+        <Text style={[s.rowAmountDec, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.35)' }]}>.{decimals}</Text>
       </Text>
     </View>
   );
@@ -331,14 +350,15 @@ function Row({
   title: string;
   sub: string;
 }) {
+  const c = useC();
   return (
     <View style={s.row}>
-      <View style={s.rowIcon}>
+      <View style={[s.rowIcon, { backgroundColor: c.amberSoft }]}>
         <Feather name={icon} size={17} color="#F5A300" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={s.rowTitle}>{title}</Text>
-        <Text style={s.rowSub}>{sub}</Text>
+        <Text style={[s.rowTitle, { color: c.text }]}>{title}</Text>
+        <Text style={[s.rowSub, { color: c.textMuted }]}>{sub}</Text>
       </View>
     </View>
   );
@@ -394,10 +414,9 @@ function relativeTime(rfc3339: string): string {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+  root: { flex: 1 },
 
   head: {
-    backgroundColor: '#0A0A0A',
     paddingHorizontal: H_PAD,
     paddingBottom: 14,
   },
@@ -405,17 +424,16 @@ const s = StyleSheet.create({
   iconBtn: {
     width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 0.5,
   },
   title: {
     ...fontExtra,
-    fontSize: 24, color: '#FFFFFF',
+    fontSize: 24,
     letterSpacing: -0.6, lineHeight: 28,
   },
   sub: {
     ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
     marginTop: 2,
   },
 
@@ -444,7 +462,6 @@ const s = StyleSheet.create({
   secH: {
     ...fontBold,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
     letterSpacing: 1.3,
     textTransform: 'uppercase',
     paddingHorizontal: H_PAD + 4,
@@ -468,7 +485,6 @@ const s = StyleSheet.create({
   },
   heroAmberLine: {
     position: 'absolute', bottom: 0, left: '20%', right: '20%', height: 1,
-    backgroundColor: 'rgba(245,163,0,0.4)',
   },
   heroTop: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -495,24 +511,24 @@ const s = StyleSheet.create({
   balanceCurrency: {
     ...fontSemi,
     fontSize: 22,
-    color: 'rgba(255,255,255,0.65)', letterSpacing: -0.4,
+    letterSpacing: -0.4,
     marginRight: 4,
   },
   balanceValue: {
     ...fontExtra,
     fontSize: 44,
-    color: '#FFFFFF', letterSpacing: -1.2,
+    letterSpacing: -1.2,
     lineHeight: 46,
   },
   balanceDecimals: {
     ...fontSemi,
     fontSize: 22,
-    color: 'rgba(255,255,255,0.45)', letterSpacing: -0.4,
+    letterSpacing: -0.4,
   },
   heroFootRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   heroFoot: {
     ...fontMed,
-    fontSize: 11, color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
   },
 
   topupCta: {
@@ -536,15 +552,14 @@ const s = StyleSheet.create({
   emptyIcon: {
     width: 38, height: 38, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   emptyTitle: {
     ...fontBold,
-    fontSize: 13.5, color: '#FFFFFF', letterSpacing: -0.1,
+    fontSize: 13.5, letterSpacing: -0.1,
   },
   emptySub: {
     ...fontMed,
-    fontSize: 11.5, color: 'rgba(255,255,255,0.5)',
+    fontSize: 11.5,
     marginTop: 2,
   },
 
@@ -552,15 +567,14 @@ const s = StyleSheet.create({
   rowIcon: {
     width: 32, height: 32, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.12)',
   },
   rowTitle: {
     ...fontBold,
-    fontSize: 13, color: '#FFFFFF', letterSpacing: -0.1,
+    fontSize: 13, letterSpacing: -0.1,
   },
   rowSub: {
     ...fontMed,
-    fontSize: 11.5, color: 'rgba(255,255,255,0.55)',
+    fontSize: 11.5,
     marginTop: 2,
   },
   rowAmount: {
@@ -571,7 +585,6 @@ const s = StyleSheet.create({
   rowAmountDec: {
     ...fontSemi,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
   },
   divider: {
     height: 1,

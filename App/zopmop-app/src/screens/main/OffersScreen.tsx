@@ -3,7 +3,7 @@
 // gradient Apply) → list of ticket-style offer cards with discount badge,
 // dashed divider, terms, and apply CTA.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -33,6 +33,8 @@ import { useAuth } from '../../context/AuthContext';
 import { listOffers, type Offer } from '../../api/promotions';
 import { logEvent } from '../../analytics/impressionTracker';
 
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { PressFx } from '../../components/ui/PressFx';
 
@@ -67,6 +69,9 @@ function offerTerms(offer: Offer): string[] {
 }
 
 export default function OffersScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
@@ -111,7 +116,7 @@ export default function OffersScreen() {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView
@@ -124,7 +129,7 @@ export default function OffersScreen() {
         <View style={[s.head, { paddingTop: insets.top + 10 }]}>
           <View style={s.headRow}>
             <PressFx onPress={() => navigation.goBack()} style={s.iconBtn}>
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
             <View style={{ flex: 1 }}>
               <Text style={s.title}>Offers</Text>
@@ -137,12 +142,12 @@ export default function OffersScreen() {
         <View style={s.body}>
           <View style={[s.inputCard, !!errorMessage && s.inputCardError]}>
             <View style={s.inputIcon}>
-              <Feather name="tag" size={15} color="#F5A300" />
+              <Feather name="tag" size={15} color={c.amber} />
             </View>
             <TextInput
               style={s.input}
               placeholder="ENTER COUPON CODE"
-              placeholderTextColor="rgba(255,255,255,0.32)"
+              placeholderTextColor={c.textMuted}
               value={inputCode}
               onChangeText={(t) => {
                 setInputCode(t);
@@ -156,19 +161,24 @@ export default function OffersScreen() {
             <PressFx
               onPress={handleApplyInput}
               disabled={!inputCode.trim()}
-              style={[s.applyBtn, !inputCode.trim() && { opacity: 0.4 }]}
+              style={[s.applyBtn, !inputCode.trim() && s.applyBtnDisabled]}
             >
-              <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
-                <Defs>
-                  <SvgLinearGradient id="applyGrad" x1="0" y1="0" x2="1" y2="1">
-                    <Stop offset="0%" stopColor="#FFC042" />
-                    <Stop offset="60%" stopColor="#F5A300" />
-                    <Stop offset="100%" stopColor="#E88F00" />
-                  </SvgLinearGradient>
-                </Defs>
-                <Rect width="100%" height="100%" rx="10" fill="url(#applyGrad)" />
-              </Svg>
-              <Text style={s.applyBtnText}>Apply</Text>
+              {/* Vibrant amber gradient only when actionable. When disabled,
+                  a flat muted-amber chip + muted text reads clearly instead of
+                  dimming the whole button (which made the dark ink illegible). */}
+              {!!inputCode.trim() && (
+                <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+                  <Defs>
+                    <SvgLinearGradient id="applyGrad" x1="0" y1="0" x2="1" y2="1">
+                      <Stop offset="0%" stopColor="#FFC042" />
+                      <Stop offset="60%" stopColor="#F5A300" />
+                      <Stop offset="100%" stopColor="#E88F00" />
+                    </SvgLinearGradient>
+                  </Defs>
+                  <Rect width="100%" height="100%" rx="10" fill="url(#applyGrad)" />
+                </Svg>
+              )}
+              <Text style={[s.applyBtnText, !inputCode.trim() && s.applyBtnTextDisabled]}>Apply</Text>
             </PressFx>
           </View>
           {!!errorMessage && <Text style={s.errorText}>{errorMessage}</Text>}
@@ -177,7 +187,7 @@ export default function OffersScreen() {
         <Text style={s.secH}>Available coupons</Text>
         {loading ? (
           <View style={s.body}>
-            <ActivityIndicator color="#F5A300" style={{ marginTop: 20 }} />
+            <ActivityIndicator color={c.amber} style={{ marginTop: 20 }} />
           </View>
         ) : offers.length === 0 ? (
           <View style={s.body}>
@@ -191,13 +201,16 @@ export default function OffersScreen() {
                 offer={offer}
                 terms={offerTerms(offer)}
                 onApply={() => handleApplyOffer(offer)}
+                s={s}
+                c={c}
+                isDark={isDark}
               />
             ))}
           </View>
         )}
 
         <View style={s.disclaim}>
-          <Feather name="info" size={12} color="rgba(255,255,255,0.4)" />
+          <Feather name="info" size={12} color={c.textMuted} />
           <Text style={s.disclaimText}>
             One coupon per booking. Discounts apply after taxes & service fee.
           </Text>
@@ -207,15 +220,28 @@ export default function OffersScreen() {
   );
 }
 
-function OfferCard({ offer, terms, onApply }: { offer: Offer; terms: string[]; onApply: () => void }) {
+function OfferCard({
+  offer, terms, onApply, s, c, isDark,
+}: {
+  offer: Offer;
+  terms: string[];
+  onApply: () => void;
+  s: ReturnType<typeof makeStyles>;
+  c: ScreenColors;
+  isDark: boolean;
+}) {
+  // Raised ticket surface: dark keeps the #1A1A1C→#0F0F11 gradient identical;
+  // light becomes a white card on cream (border + shadow live in s.ticket).
+  const surfaceTop = isDark ? '#1A1A1C' : c.white;
+  const surfaceBot = isDark ? '#0F0F11' : c.white;
   return (
     <View style={s.ticket}>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Svg width="100%" height="100%">
           <Defs>
             <SvgLinearGradient id={`tBg-${offer.id}`} x1="0" y1="0" x2="1" y2="1">
-              <Stop offset="0%" stopColor="#1A1A1C" />
-              <Stop offset="100%" stopColor="#0F0F11" />
+              <Stop offset="0%" stopColor={surfaceTop} />
+              <Stop offset="100%" stopColor={surfaceBot} />
             </SvgLinearGradient>
             <SvgRadialGradient id={`tGlow-${offer.id}`} cx="0%" cy="50%" rx="50%" ry="120%">
               <Stop offset="0%" stopColor="#F5A300" stopOpacity="0.18" />
@@ -256,19 +282,40 @@ function OfferCard({ offer, terms, onApply }: { offer: Offer; terms: string[]; o
       </View>
 
       <PressFx onPress={onApply} style={s.ticketApplyBtn}>
-        <Feather name="check-circle" size={14} color="#F5A300" />
+        <Feather name="check-circle" size={14} color={c.amber} />
         <Text style={s.ticketApplyText}>Apply this offer</Text>
       </PressFx>
     </View>
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 (pixel-identical); light adds the
+// cream bg + amber, matching the other migrated screens.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised ticket surface: dark keeps the #0F0F11 base under the SVG gradient;
+  // light becomes a white card on cream, so it gets a subtle border + soft
+  // shadow to read on the cream bg (dark stays the documented dark literal).
+  const ticketSurface = isDark ? '#0F0F11' : c.white;
+  const lightCard = isDark
+    ? null
+    : {
+        shadowColor: '#000',
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 1,
+      };
+  // Danger: dark keeps the exact red literals; light uses readable deep red.
+  const dangerText = isDark ? '#EF4444' : c.danger;
+  const inputErrorBorder = isDark ? 'rgba(239,68,68,0.55)' : c.dangerBorder;
+
+  return StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.bg },
 
   // Sticky head
   head: {
-    backgroundColor: '#0A0A0A',
+    backgroundColor: c.bg,
     paddingHorizontal: H_PAD,
     paddingBottom: 14,
   },
@@ -276,24 +323,24 @@ const s = StyleSheet.create({
   iconBtn: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: c.glassHi,
+    borderWidth: 0.5, borderColor: c.glassBorderHi,
   },
   title: {
     ...fontExtra,
-    fontSize: 24, color: '#FFFFFF',
+    fontSize: 24, color: c.text,
     letterSpacing: -0.6, lineHeight: 28,
   },
   sub: {
     ...fontMed,
-    fontSize: 12, color: 'rgba(255,255,255,0.5)',
+    fontSize: 12, color: c.textMuted,
     marginTop: 2,
   },
 
   secH: {
     ...fontBold,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
+    color: c.textMuted,
     letterSpacing: 1.3,
     textTransform: 'uppercase',
     paddingHorizontal: H_PAD + 4,
@@ -308,20 +355,20 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingVertical: 6, paddingLeft: 14, paddingRight: 6,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.045)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
-  inputCardError: { borderColor: 'rgba(239,68,68,0.55)' },
+  inputCardError: { borderColor: inputErrorBorder },
   inputIcon: {
     width: 30, height: 30, borderRadius: 9,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(245,163,0,0.12)',
+    backgroundColor: c.amberSoft,
   },
   input: {
     flex: 1,
     ...fontSemi,
-    fontSize: 14, color: '#FFFFFF', letterSpacing: 1,
+    fontSize: 14, color: c.text, letterSpacing: 1,
     paddingVertical: 10,
   },
   applyBtn: {
@@ -331,12 +378,18 @@ const s = StyleSheet.create({
   },
   applyBtnText: {
     ...fontExtra,
+    // Ink on the amber gradient button — same in both themes.
     fontSize: 13, color: '#0A0A0A', letterSpacing: 0.2,
   },
+  // Disabled (no code entered): a clean neutral chip instead of dimming the
+  // amber gradient (which let the dark card bleed through + killed the ink
+  // contrast). Reads clearly as "disabled" and stays legible in both themes.
+  applyBtnDisabled: { backgroundColor: c.glassHi, borderWidth: 1, borderColor: c.glassBorder },
+  applyBtnTextDisabled: { color: c.textSecondary },
 
   errorText: {
     ...fontMed,
-    fontSize: 12, color: '#EF4444',
+    fontSize: 12, color: dangerText,
     marginTop: 8, marginLeft: 4,
   },
 
@@ -345,13 +398,14 @@ const s = StyleSheet.create({
     borderRadius: 18,
     overflow: 'hidden',
     padding: 14,
-    backgroundColor: '#0F0F11',
+    backgroundColor: ticketSurface,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: c.glassBorder,
+    ...(lightCard || {}),
   },
   ticketAmberLine: {
     position: 'absolute', bottom: 0, left: '15%', right: '15%', height: 1,
-    backgroundColor: 'rgba(245,163,0,0.4)',
+    backgroundColor: c.amberLine,
   },
   ticketTop: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 12,
@@ -361,51 +415,51 @@ const s = StyleSheet.create({
     paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8,
     backgroundColor: 'rgba(245,163,0,0.14)',
     borderWidth: 0.5,
-    borderColor: 'rgba(245,163,0,0.4)',
+    borderColor: c.amberLine,
   },
   discountBadgeText: {
     ...fontExtra,
-    fontSize: 11, color: '#FFC042', letterSpacing: 0.4,
+    fontSize: 11, color: c.amberHi, letterSpacing: 0.4,
   },
   ticketTitle: {
     ...fontBold,
-    fontSize: 14, color: '#FFFFFF', letterSpacing: -0.1,
+    fontSize: 14, color: c.text, letterSpacing: -0.1,
     lineHeight: 18,
   },
   codeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   codeLabel: {
     ...fontMed,
-    fontSize: 11, color: 'rgba(255,255,255,0.45)',
+    fontSize: 11, color: c.textMuted,
   },
   codeChip: {
     paddingVertical: 2, paddingHorizontal: 6, borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.glassHi,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: c.glassBorderHi,
     borderStyle: 'dashed',
   },
   codeChipText: {
     ...fontExtra,
-    fontSize: 10, color: '#FFC042', letterSpacing: 1,
+    fontSize: 10, color: c.amberHi, letterSpacing: 1,
   },
 
   dashedDivider: {
     height: 1, marginVertical: 8,
     borderTopWidth: 1,
     borderStyle: 'dashed',
-    borderTopColor: 'rgba(255,255,255,0.08)',
+    borderTopColor: c.glassBorder,
   },
 
   terms: { gap: 5, marginBottom: 10 },
   termRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   termDot: {
     width: 4, height: 4, borderRadius: 2, marginTop: 7,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: c.textMuted,
   },
   termText: {
     flex: 1,
     ...fontMed,
-    fontSize: 11.5, color: 'rgba(255,255,255,0.55)', lineHeight: 16,
+    fontSize: 11.5, color: c.textSecondary, lineHeight: 16,
   },
 
   ticketApplyBtn: {
@@ -418,12 +472,12 @@ const s = StyleSheet.create({
   },
   ticketApplyText: {
     ...fontExtra,
-    fontSize: 12.5, color: '#F5A300', letterSpacing: 0.2,
+    fontSize: 12.5, color: c.amber, letterSpacing: 0.2,
   },
 
   emptyText: {
     ...fontMed,
-    fontSize: 13, color: 'rgba(255,255,255,0.4)',
+    fontSize: 13, color: c.textMuted,
     textAlign: 'center', paddingVertical: 24,
   },
 
@@ -434,6 +488,7 @@ const s = StyleSheet.create({
   disclaimText: {
     flex: 1,
     ...fontMed,
-    fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 16,
+    fontSize: 11, color: c.textMuted, lineHeight: 16,
   },
-});
+  });
+}

@@ -1,6 +1,7 @@
 import { apiFetch } from './client';
 import { BASE_URL, authHeaders, validateShape } from './config';
 import { UnpaidBookingsError } from './users';
+import { NoProsAvailableError, type EarliestSlot } from './bookings';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,10 @@ export interface BookingDetail {
   discount_paise: number;
   scheduled_time?: string;
   cancelled_at?: string;
+  /** Who/what cancelled the booking: 'customer', 'system', or 'no_pros_found'
+   *  (the unified assigner's unfilled-at-slot-start terminal state). Drives the
+   *  no-pros rebook panel vs the generic cancelled UI on TrackLive. */
+  cancelled_by?: string;
   cancellation_fee_applied: boolean;
   cancellation_fee_paise: number;
   accepted_at?: string;
@@ -93,6 +98,13 @@ export interface BookingDetail {
   free_cancel_until?: string;
   created_at: string;
   updated_at: string;
+  /** Server-issued START OTP (always present for the customer). */
+  otp?: string;
+  /** Server-issued END OTP — present only once payment_status==='paid'. */
+  end_otp?: string;
+  payment_status?: string;
+  payment_method?: string;
+  wallet_applied_paise?: number;
   helper?: BookingDetailHelper;
   services: BookingDetailService[];
 }
@@ -128,8 +140,14 @@ export interface HelperInviteDetail {
 // ── Instant Booking (Customer) ────────────────────────────────────────────────
 
 /**
- * POST /bookings — creates an instant booking using the cart contents.
- * Returns the booking ID; the mobile client then polls /bookings/:id/match-status.
+ * POST /bookings — creates an ASAP booking from the cart and force-assigns a pro
+ * synchronously (spec §3.2, §5). The backend returns an ASAPResult envelope
+ * ({ booking, assigned, promise_eta_minutes, helper_name }); the booking fields
+ * the caller needs live under `.booking`, not at the top level. On 409
+ * no_pros_available the row was already cancelled server-side — surface it so the
+ * screen shows the no-pros state instead of polling a phantom booking forever.
+ * After a successful create the booking is already assigned, so the caller's
+ * match-status poll resolves to 'matched' on its first tick.
  */
 export async function createInstantBooking(
   token: string,
@@ -154,13 +172,18 @@ export async function createInstantBooking(
       code?: string;
       count?: number;
       total_paise?: number;
+      earliest_slot?: EarliestSlot | null;
     };
+    if (res.status === 409 && err.code === 'no_pros_available') {
+      throw new NoProsAvailableError(err.earliest_slot ?? null);
+    }
     if (res.status === 409 && err.code === 'UNPAID_BOOKINGS') {
       throw new UnpaidBookingsError(err.count ?? 0, err.total_paise ?? 0);
     }
     throw new Error(err.error ?? 'Failed to create instant booking');
   }
-  return validateShape<InstantBooking>(await res.json(), ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
+  const data = (await res.json()) as { booking?: unknown };
+  return validateShape<InstantBooking>(data.booking, ['id', 'customer_id', 'status', 'price_paise', 'created_at']);
 }
 
 /**
@@ -247,8 +270,14 @@ export async function submitBookingReview(
     body: JSON.stringify({ rating, comment: comment ?? '' }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as any).error ?? 'Failed to submit review');
+    const body = await res.json().catch(() => ({}));
+    const e = new Error((body as any).error ?? 'Failed to submit review') as Error & {
+      code?: string;
+      status?: number;
+    };
+    e.code = (body as any).code;
+    e.status = res.status;
+    throw e;
   }
 }
 

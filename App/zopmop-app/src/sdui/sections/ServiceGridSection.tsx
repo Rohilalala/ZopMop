@@ -22,6 +22,7 @@ import { GlassCard } from '../../components/home/GlassCard';
 import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
 import { haptics } from '../../utils/haptics';
 import type { ApiService } from '../../api/services';
 import type { MainStackParamList } from '../../types/navigation';
@@ -45,6 +46,8 @@ const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 
 export function ServiceGridSection({ data, onAction }: Props) {
   const { addItem } = useCart();
+  const { isDark } = useTheme();
+  const s = useStyles();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
 
   const handlePress = useCallback(
@@ -91,11 +94,11 @@ export function ServiceGridSection({ data, onAction }: Props) {
   }
 
   return (
-    <View style={styles.wrap}>
-      <View style={styles.head}>
-        <Text style={[fontBold, styles.title]}>{data.title || 'Popular services'}</Text>
+    <View style={s.wrap}>
+      <View style={s.head}>
+        <Text style={[fontBold, s.title]}>{data.title || 'Popular services'}</Text>
         <PressFx onPress={handleSeeAll}>
-          <Text style={[fontSemi, styles.link]}>See all →</Text>
+          <Text style={[fontSemi, s.link]}>See all →</Text>
         </PressFx>
       </View>
 
@@ -104,6 +107,7 @@ export function ServiceGridSection({ data, onAction }: Props) {
           <ServiceCard
             service={featured}
             featured
+            isDark={isDark}
             onPress={() => handlePress(featured)}
             onAdd={() => handleAdd(featured)}
           />
@@ -119,6 +123,7 @@ export function ServiceGridSection({ data, onAction }: Props) {
             <ServiceCard
               key={svc.id}
               service={svc}
+              isDark={isDark}
               onPress={() => handlePress(svc)}
               onAdd={() => handleAdd(svc)}
             />
@@ -132,15 +137,19 @@ export function ServiceGridSection({ data, onAction }: Props) {
 function ServiceCard({
   service,
   featured,
+  isDark,
   onPress,
   onAdd,
 }: {
   service: ApiService;
   featured?: boolean;
+  isDark: boolean;
   onPress: () => void;
   onAdd: () => void;
 }) {
-  const price  = `₹${(service.base_price_paise / 100).toFixed(0)}`;
+  const price  = service.base_price_paise != null
+    ? `₹${(service.base_price_paise / 100).toFixed(0)}`
+    : '';
   const mrp    = service.mrp_paise ? `₹${(service.mrp_paise / 100).toFixed(0)}` : null;
   const rating = service.rating?.toFixed(1) ?? null;
   const reviewLabel =
@@ -162,7 +171,7 @@ function ServiceCard({
         <View style={{ height: thumbH, position: 'relative' }}>
           <ServiceThumb height={thumbH} radius={12} featured={featured} />
 
-          {/* mascot/glyph — 3D PNG render when available, else emoji fallback */}
+          {/* mascot/glyph — 3D PNG render when available, else neutral vector glyph */}
           <View
             pointerEvents="none"
             style={{
@@ -195,7 +204,7 @@ function ServiceCard({
                 <Feather
                   name="package"
                   size={featured ? 56 : 40}
-                  color="rgba(255,255,255,0.7)"
+                  color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(13,13,15,0.35)'}
                 />
               );
             })()}
@@ -237,9 +246,13 @@ function ServiceCard({
               width: 28,
               height: 28,
               borderRadius: 14,
-              backgroundColor: '#0D0D0F',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.1)',
+              backgroundColor: isDark ? '#0D0D0F' : '#FFFFFF',
+              borderWidth: isDark ? 1 : 1,
+              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(13,13,15,0.08)',
+              shadowColor: isDark ? 'transparent' : '#000',
+              shadowOpacity: isDark ? 0 : 0.08,
+              shadowRadius: isDark ? 0 : 8,
+              shadowOffset: { width: 0, height: 2 },
               alignItems: 'center',
               justifyContent: 'center',
             }}
@@ -252,7 +265,7 @@ function ServiceCard({
       <Text
         style={[
           fontBold,
-          { fontSize: 13, color: '#FFFFFF', letterSpacing: -0.13, marginTop: 10 },
+          { fontSize: 13, color: isDark ? '#FFFFFF' : '#0D0D0F', letterSpacing: -0.13, marginTop: 10 },
         ]}
         numberOfLines={1}
       >
@@ -266,13 +279,13 @@ function ServiceCard({
           gap: 6,
         }}
       >
-        <Text style={[fontExtra, { color: '#FFFFFF', fontSize: 14 }]}>{price}</Text>
+        <Text style={[fontExtra, { color: isDark ? '#FFFFFF' : '#0D0D0F', fontSize: 14 }]}>{price}</Text>
         {mrp && (
           <Text
             style={[
               fontMed,
               {
-                color: 'rgba(255,255,255,0.4)',
+                color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(13,13,15,0.40)',
                 fontSize: 11,
                 textDecorationLine: 'line-through',
               },
@@ -287,7 +300,7 @@ function ServiceCard({
               fontMed,
               {
                 fontSize: 11,
-                color: 'rgba(255,255,255,0.5)',
+                color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(13,13,15,0.50)',
                 marginLeft: 'auto',
               },
             ]}
@@ -301,14 +314,17 @@ function ServiceCard({
   );
 }
 
-const styles = StyleSheet.create({
-  wrap:  { marginTop: 24, paddingHorizontal: H_PAD },
-  head:  {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    paddingBottom: 10,
-  },
-  title: { fontSize: 18, color: '#FFFFFF', letterSpacing: -0.18 },
-  link:  { fontSize: 12, color: '#F5A300' },
-});
+function useStyles() {
+  const { isDark } = useTheme();
+  return StyleSheet.create({
+    wrap:  { marginTop: 24, paddingHorizontal: H_PAD },
+    head:  {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      paddingBottom: 10,
+    },
+    title: { fontSize: 18, color: isDark ? '#FFFFFF' : '#0D0D0F', letterSpacing: -0.18 },
+    link:  { fontSize: 12, color: '#F5A300' },
+  });
+}

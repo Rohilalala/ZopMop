@@ -48,19 +48,6 @@ func (s *Service) GetProfile(ctx context.Context, helperID string) (*Profile, er
 	return s.repo.GetProfile(ctx, helperID)
 }
 
-// GetInvites returns the list of booking invites for this helper.
-// The matching engine stores booking IDs in Redis; we enrich them with DB details.
-func (s *Service) GetInvites(ctx context.Context, helperID string) ([]Invite, error) {
-	bookingIDs, err := s.matchEngine.GetHelperInvites(ctx, helperID)
-	if err != nil {
-		return nil, err
-	}
-	if len(bookingIDs) == 0 {
-		return []Invite{}, nil
-	}
-	return s.repo.GetBookingInviteDetails(ctx, bookingIDs)
-}
-
 // DeclineInvite removes a booking from the helper's Redis invite set.
 func (s *Service) DeclineInvite(ctx context.Context, helperID, bookingID string) error {
 	key := fmt.Sprintf("match:h:%s", helperID)

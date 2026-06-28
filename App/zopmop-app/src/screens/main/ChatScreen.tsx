@@ -28,14 +28,17 @@ import { Feather } from '@expo/vector-icons';
 import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { listMessages, sendMessage, type BookingMessage } from '../../api/messages';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontMed:   TextStyle = { fontFamily: 'PlusJakartaSans_500Medium' };
 const fontBold:  TextStyle = { fontFamily: 'PlusJakartaSans_700Bold' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 
-const AMBER = '#F5A300';
-
 export default function ChatScreen() {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'Chat'>>();
   const insets = useSafeAreaInsets();
@@ -119,7 +122,7 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
@@ -127,9 +130,10 @@ export default function ChatScreen() {
           onPress={() => navigation.goBack()}
           style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}
         >
-          <Feather name="chevron-left" size={20} color="#FFFFFF" />
+          <Feather name="chevron-left" size={20} color={c.text} />
         </Pressable>
         <View style={styles.headerAvatar}>
+          {/* Ink on amber — same in both themes. */}
           <Text style={[fontExtra, { color: '#0D0D0F', fontSize: 15 }]}>{headerInitial}</Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -162,7 +166,7 @@ export default function ChatScreen() {
             )}
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
-                <Feather name="message-circle" size={28} color="rgba(255,255,255,0.3)" />
+                <Feather name="message-circle" size={28} color={c.textMuted} />
                 <Text style={[fontMed, styles.emptyText]}>
                   Say hi — share gate code, parking notes or anything {headerName.split(' ')[0]} should know.
                 </Text>
@@ -177,7 +181,7 @@ export default function ChatScreen() {
             value={draft}
             onChangeText={setDraft}
             placeholder="Message your pro…"
-            placeholderTextColor="rgba(255,255,255,0.35)"
+            placeholderTextColor={c.textMuted}
             style={[fontMed, styles.input]}
             multiline
             maxLength={2000}
@@ -191,6 +195,7 @@ export default function ChatScreen() {
               pressed && { opacity: 0.8 },
             ]}
           >
+            {/* Ink on amber — same in both themes. */}
             <Feather name="send" size={16} color="#0D0D0F" />
           </Pressable>
         </View>
@@ -202,6 +207,9 @@ export default function ChatScreen() {
 // ── Bubble ───────────────────────────────────────────────────────────────────
 
 function Bubble({ msg, mine }: { msg: BookingMessage; mine: boolean }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const time = formatTime(msg.created_at);
   return (
     <View style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
@@ -237,120 +245,149 @@ function formatTime(iso: string): string {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors).
+// useColors()'s dark palette is Slate (#0F172A bg / #1E293B surface / #FFC042
+// accent), which would change this screen's dark look and fork the amber —
+// breaking "dark pixel-identical" + "amber #F5A300 in both". useC() keeps dark
+// at #0A0A0A / #F5A300 (identical) and carries the cream + amber light bg,
+// matching the other migrated screens (Wallet, ReferralEarn, ServiceComplete).
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Raised glass bars (header + composer) — the dark glass-on-black tint has no
+  // useC equivalent, so it stays the documented literal in dark (keeps it
+  // identical) and becomes a solid white bar in light. Light bars get a subtle
+  // shadow so they read against the cream bg (dark stays shadowless).
+  const surface = isDark ? 'rgba(15,15,17,0.95)' : c.white;
+  const lightBar = isDark
+    ? null
+    : {
+        shadowColor: '#000',
+        shadowOpacity: 0.04,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 1,
+      };
+  // White ring around the amber avatar — sits on an amber fill, so it stays the
+  // exact dark literal in dark; in light a hairline ink border reads on amber.
+  const avatarRing = isDark ? 'rgba(255,255,255,0.5)' : c.glassBorder;
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: 'rgba(15,15,17,0.95)',
-  },
-  iconBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  headerAvatar: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: AMBER,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.5)',
-  },
-  headerName: {
-    color: '#FFFFFF', fontSize: 15, letterSpacing: -0.2,
-  },
-  headerSub: {
-    color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2,
-  },
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
 
-  listContent: { padding: 16, paddingBottom: 24, gap: 6 },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+      borderBottomWidth: 0.5,
+      borderBottomColor: c.divider,
+      backgroundColor: surface,
+      ...(lightBar || {}),
+    },
+    iconBtn: {
+      width: 38, height: 38, borderRadius: 19,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.glassHi,
+    },
+    headerAvatar: {
+      width: 40, height: 40, borderRadius: 20,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amber,
+      borderWidth: 2,
+      borderColor: avatarRing,
+    },
+    headerName: {
+      color: c.text, fontSize: 15, letterSpacing: -0.2,
+    },
+    headerSub: {
+      color: c.textMuted, fontSize: 11, marginTop: 2,
+    },
 
-  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: 'rgba(255,255,255,0.6)', fontSize: 13 },
+    listContent: { padding: 16, paddingBottom: 24, gap: 6 },
 
-  emptyWrap: {
-    paddingVertical: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 36,
-  },
-  emptyText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 19,
-  },
+    loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    errorText: { color: c.textSecondary, fontSize: 13 },
 
-  row: {
-    marginVertical: 4,
-    maxWidth: '85%',
-    gap: 3,
-  },
-  rowMine:   { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  rowTheirs: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+    emptyWrap: {
+      paddingVertical: 80,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      paddingHorizontal: 36,
+    },
+    emptyText: {
+      color: c.textMuted,
+      fontSize: 13,
+      textAlign: 'center',
+      lineHeight: 19,
+    },
 
-  bubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-  },
-  bubbleMine: {
-    backgroundColor: AMBER,
-    borderTopRightRadius: 6,
-  },
-  bubbleTheirs: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderTopLeftRadius: 6,
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-  bodyMine:   { color: '#0D0D0F', fontSize: 14, lineHeight: 20 },
-  bodyTheirs: { color: '#FFFFFF', fontSize: 14, lineHeight: 20 },
-  time: {
-    color: 'rgba(255,255,255,0.35)',
-    fontSize: 10,
-    paddingHorizontal: 4,
-  },
+    row: {
+      marginVertical: 4,
+      maxWidth: '85%',
+      gap: 3,
+    },
+    rowMine:   { alignSelf: 'flex-end', alignItems: 'flex-end' },
+    rowTheirs: { alignSelf: 'flex-start', alignItems: 'flex-start' },
 
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: 'rgba(15,15,17,0.95)',
-  },
-  input: {
-    flex: 1,
-    minHeight: 42,
-    maxHeight: 120,
-    paddingHorizontal: 14,
-    paddingTop: 11,
-    paddingBottom: 11,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
-    color: '#FFFFFF',
-    fontSize: 14,
-  },
-  sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: AMBER,
-    shadowColor: AMBER,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-});
+    bubble: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 18,
+    },
+    bubbleMine: {
+      backgroundColor: c.amber,
+      borderTopRightRadius: 6,
+    },
+    bubbleTheirs: {
+      backgroundColor: c.glassHi,
+      borderTopLeftRadius: 6,
+      borderWidth: 0.5,
+      borderColor: c.glassBorder,
+    },
+    // Ink on amber bubble — same in both themes.
+    bodyMine:   { color: '#0D0D0F', fontSize: 14, lineHeight: 20 },
+    bodyTheirs: { color: c.text, fontSize: 14, lineHeight: 20 },
+    time: {
+      color: c.textMuted,
+      fontSize: 10,
+      paddingHorizontal: 4,
+    },
+
+    composer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingTop: 10,
+      borderTopWidth: 0.5,
+      borderTopColor: c.divider,
+      backgroundColor: surface,
+      ...(lightBar || {}),
+    },
+    input: {
+      flex: 1,
+      minHeight: 42,
+      maxHeight: 120,
+      paddingHorizontal: 14,
+      paddingTop: 11,
+      paddingBottom: 11,
+      borderRadius: 22,
+      backgroundColor: c.glassHi,
+      borderWidth: 0.5,
+      borderColor: c.glassBorder,
+      color: c.text,
+      fontSize: 14,
+    },
+    sendBtn: {
+      width: 42, height: 42, borderRadius: 21,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: c.amber,
+      shadowColor: c.amber,
+      shadowOpacity: 0.4,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+    },
+  });
+}

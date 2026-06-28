@@ -43,7 +43,11 @@ import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { PressFx } from '../../components/ui/PressFx';
+import ServiceComplete from '../../components/ServiceComplete';
+import { SuccessBackdrop } from '../../components/SuccessBackdrop';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 import {
   getBookingTrackingWsUrl,
   getBookingDetail,
@@ -51,9 +55,10 @@ import {
   type BookingDetail,
   type TrackingResponse,
 } from '../../api/matching';
-import { cancelBooking, keepLookingBooking } from '../../api/bookings';
+import { createCashfreeOrder, CashfreeOrderError } from '../../api/payments';
+import { useCashfreePayment } from '../../hooks/useCashfreePayment';
 import { onShiftEvent } from '../../utils/shiftEvents';
-import { showSuccess, showError } from '../../utils/toast';
+import { showError } from '../../utils/toast';
 import polyline from '@mapbox/polyline';
 
 // ── Sub-state derivation ─────────────────────────────────────────────────────
@@ -67,19 +72,21 @@ type SubState =
   | 'completed'
   | 'cancelled'
   | 'no_pro_available'
-  | 'no_show'
-  | 'pending_action';
+  | 'no_show';
 
 function deriveSubState(d: BookingDetail | null): SubState {
   if (!d) return 'dispatching';
-  if (d.status === 'cancelled') return 'cancelled';
-  // Failed-match terminal/decision states. Backend (migration 101) emits
-  // these when dispatch exhausts the pool, a pro no-shows, or the stealth
-  // search window expires. Must come before the timestamp checks below so a
-  // partially-stamped booking that later fails still surfaces the right UI.
+  if (d.status === 'cancelled') {
+    // The unified flow's unfilled-booking terminal state is status='cancelled'
+    // with cancelled_by='no_pros_found' (assigner + ASAP no-pro path). Surface
+    // the tailored no-pros rebook panel for it; everything else cancelled
+    // (customer/system) gets the generic cancelled UI.
+    return d.cancelled_by === 'no_pros_found' ? 'no_pro_available' : 'cancelled';
+  }
+  // Legacy failed-match terminal states (pre-unified-dispatch rows). The new
+  // flow no longer produces status='no_pro_available'; kept for old rows.
   if (d.status === 'no_pro_available') return 'no_pro_available';
   if (d.status === 'no_show') return 'no_show';
-  if (d.status === 'pending_customer_action') return 'pending_action';
   if (d.completed_at) return 'completed';
   if (d.started_at) return 'in_progress';
   if (d.arrived_at) return 'arrived';
@@ -136,10 +143,17 @@ const DARK_MAP_STYLE = [
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 export default function TrackLiveScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  // Success green: dark brand green kept exact; light uses a readable deep green.
+  const success = isDark ? GREEN : c.green;
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const route = useRoute<RouteProp<MainStackParamList, 'TrackLive'>>();
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { startPayment, pollStatus } = useCashfreePayment();
+  const [paying, setPaying] = useState(false);
 
   const params = route.params || ({} as MainStackParamList['TrackLive']);
   const {
@@ -174,6 +188,42 @@ export default function TrackLiveScreen() {
       setLoading(false);
     }
   }, [bookingId, token]);
+
+  // Pay-online nudge: reuse the Cashfree direct-order rail. On success we poll
+  // the gateway then refetch — the webhook stamps payment_status='paid', which
+  // unhides the END OTP and removes the nudge.
+  const payOnline = useCallback(async () => {
+    if (!bookingId || !token || token === '__guest__' || paying) return;
+    setPaying(true);
+    try {
+      const order = await createCashfreeOrder(token, {
+        booking_id: bookingId,
+        payment_source: 'direct',
+      });
+      await startPayment({
+        payment_session_id: order.payment_session_id,
+        order_id: order.order_id,
+        on_success: async () => {
+          try {
+            await pollStatus(order.order_id);
+          } catch {
+            // poll timeout/abort — the focus refetch will still pick up the
+            // webhook-stamped paid state shortly.
+          }
+          await fetchDetail();
+        },
+        on_failure: () => {
+          // sheet closed / failed — leave the nudge in place.
+        },
+      });
+    } catch (err) {
+      showError(
+        err instanceof CashfreeOrderError ? err.message : "Couldn't start payment. Try again.",
+      );
+    } finally {
+      setPaying(false);
+    }
+  }, [bookingId, token, paying, startPayment, pollStatus, fetchDetail]);
 
   // Initial fetch + refetch on focus (handles return from background).
   useFocusEffect(
@@ -228,43 +278,11 @@ export default function TrackLiveScreen() {
   };
 
   // ── Failed-match recovery actions ─────────────────────────────────────────
-  // Guards against double-tap while a request is in flight. `actionBusy`
-  // disables every CTA on the failed-match panels.
-  const [actionBusy, setActionBusy] = useState(false);
-
+  // The unified flow's terminal failed-match panels (no_pro_available, no_show)
+  // are all already terminal server-side, so they just route home — no in-screen
+  // cancel/keep-looking action remains (those belonged to the deleted
+  // pending_customer_action limbo, spec §9).
   const goHome = () => navigation.navigate('Tabs', { screen: 'Home' });
-
-  // Keep Looking — only valid in pending_customer_action (stealth window
-  // expired). Extends the search 15 min, then we refetch so the panel flips
-  // back to the dispatching spinner.
-  const onKeepLooking = async () => {
-    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
-    setActionBusy(true);
-    try {
-      await keepLookingBooking(token, bookingId);
-      showSuccess("We're looking again — hang tight");
-      await fetchDetail();
-    } catch (e) {
-      showError((e as Error)?.message ?? 'Could not extend the search');
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  // Cancel — used by the pending_action panel's secondary CTA. no_pro_available
-  // / no_show are already terminal server-side, so those panels just route
-  // home rather than issue a redundant cancel.
-  const onCancelBooking = async () => {
-    if (!bookingId || !token || token === '__guest__' || actionBusy) return;
-    setActionBusy(true);
-    try {
-      await cancelBooking(token, bookingId);
-      goHome();
-    } catch (e) {
-      showError((e as Error)?.message ?? 'Could not cancel the booking');
-      setActionBusy(false);
-    }
-  };
 
   // Live tracking via WebSocket. Server pushes a TrackingResponse JSON every
   // ~5s on this socket — replaces the previous setInterval poll. Saves mobile
@@ -337,7 +355,11 @@ export default function TrackLiveScreen() {
   const customerLng = tracking?.customer_lng;
   const proCoord = useMemo(
     () =>
-      helperLat !== undefined && helperLng !== undefined
+      // Reject (0,0) as well as undefined: the backend tracking fallback
+      // returns 0/0 for a pro who has not yet streamed any GPS. (0,0) is the
+      // Gulf of Guinea, so plotting it drops the marker an ocean away and
+      // fits the map across ~8000 km. No real pro is ever at exactly 0,0.
+      helperLat !== undefined && helperLng !== undefined && (helperLat !== 0 || helperLng !== 0)
         ? { latitude: helperLat, longitude: helperLng }
         : null,
     [helperLat, helperLng],
@@ -417,7 +439,22 @@ export default function TrackLiveScreen() {
     }
   }, [proCoord, homeCoord]);
 
-  const displayOtp = (otp ?? deriveOtp(bookingId ?? '0000')).padStart(4, '0').slice(0, 4);
+  // START OTP comes from the server (detail.otp); route-param `otp` is a
+  // first-paint fallback. END OTP only arrives when paid (server-gated).
+  const startOtp = (detail?.otp ?? otp ?? '').padStart(4, '0').slice(0, 4);
+  const endOtp = detail?.end_otp ?? '';
+  const isPaid = detail?.payment_status === 'paid';
+  const outstandingPaise = detail
+    ? Math.max(
+        0,
+        (detail.price_paise ?? 0) - (detail.discount_paise ?? 0) - (detail.wallet_applied_paise ?? 0),
+      )
+    : 0;
+  const isActive =
+    subState !== 'completed' &&
+    subState !== 'cancelled' &&
+    subState !== 'no_pro_available' &&
+    subState !== 'no_show';
   const initial = (helperName || displayHelperName || 'P')[0].toUpperCase();
   const shortId = bookingId
     ? `ZM-${bookingId.replace(/-/g, '').slice(0, 4).toUpperCase()}`
@@ -436,7 +473,7 @@ export default function TrackLiveScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* MAP — fills full screen, sheet overlays it. */}
       <MapView
@@ -571,6 +608,22 @@ export default function TrackLiveScreen() {
 
       {/* Bottom sheet — overlays the map. Content varies by sub-state. */}
       <View style={[styles.sheet, { height: SHEET_HEIGHT, paddingBottom: 24 + insets.bottom }]}>
+        {/* Completed: the same green+amber success glow BookingConfirmed uses,
+            clipped to the sheet's rounded top so both tick screens match. */}
+        {subState === 'completed' && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              borderTopLeftRadius: 28,
+              borderTopRightRadius: 28,
+              overflow: 'hidden',
+            }}
+          >
+            <SuccessBackdrop isDark={isDark} />
+          </View>
+        )}
         <View style={styles.grab} />
         <ScrollView
           style={{ flex: 1 }}
@@ -580,7 +633,7 @@ export default function TrackLiveScreen() {
           {/* Dispatching: no pro yet. Spinner + reassuring copy. */}
           {subState === 'dispatching' && (
             <View style={styles.statePanel}>
-              <ActivityIndicator size="large" color={AMBER} />
+              <ActivityIndicator size="large" color={c.amber} />
               <Text style={[fontBold, styles.stateHeadline]}>ZopMop is finding a pro for you...</Text>
               <Text style={[fontMed, styles.stateSub]}>Most bookings confirm in under 30 seconds</Text>
             </View>
@@ -590,7 +643,7 @@ export default function TrackLiveScreen() {
           {subState === 'cancelled' && (
             <View style={styles.statePanel}>
               <View style={styles.cancelIcon}>
-                <Feather name="x" size={28} color="#FFFFFF" />
+                <Feather name="x" size={28} color={isDark ? '#FFFFFF' : c.danger} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>Booking cancelled</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -609,7 +662,7 @@ export default function TrackLiveScreen() {
           {subState === 'no_pro_available' && (
             <View style={styles.statePanel}>
               <View style={styles.warnIcon}>
-                <Feather name="alert-triangle" size={26} color="#FFFFFF" />
+                <Feather name="alert-triangle" size={26} color={isDark ? '#FFFFFF' : c.amber} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>No pros available right now</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -629,7 +682,7 @@ export default function TrackLiveScreen() {
           {subState === 'no_show' && (
             <View style={styles.statePanel}>
               <View style={styles.warnIcon}>
-                <Feather name="user-x" size={26} color="#FFFFFF" />
+                <Feather name="user-x" size={26} color={isDark ? '#FFFFFF' : c.amber} />
               </View>
               <Text style={[fontBold, styles.stateHeadline]}>Pro didn't show up</Text>
               <Text style={[fontMed, styles.stateSub]}>
@@ -643,33 +696,6 @@ export default function TrackLiveScreen() {
                 style={styles.secondaryCta}
               >
                 <Text style={[fontSemi, styles.secondaryCtaText]}>Contact support</Text>
-              </PressFx>
-            </View>
-          )}
-
-          {/* Pending customer action: stealth search window expired. The
-              customer decides — keep looking (extends 15 min) or cancel. */}
-          {subState === 'pending_action' && (
-            <View style={styles.statePanel}>
-              <View style={styles.warnIcon}>
-                <Feather name="clock" size={26} color="#FFFFFF" />
-              </View>
-              <Text style={[fontBold, styles.stateHeadline]}>Still looking for a pro</Text>
-              <Text style={[fontMed, styles.stateSub]}>
-                We haven't matched you with a pro yet. Want us to keep looking
-                for a little longer?
-              </Text>
-              <PressFx
-                onPress={onKeepLooking}
-                style={[styles.primaryCta, actionBusy && { opacity: 0.5 }]}
-              >
-                <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>Keep looking</Text>
-              </PressFx>
-              <PressFx
-                onPress={onCancelBooking}
-                style={[styles.secondaryCta, actionBusy && { opacity: 0.5 }]}
-              >
-                <Text style={[fontSemi, styles.secondaryCtaText]}>Cancel booking</Text>
               </PressFx>
             </View>
           )}
@@ -697,7 +723,7 @@ export default function TrackLiveScreen() {
                 <View style={styles.metaRow}>
                   {(helperRating !== undefined || helperJobs !== undefined) && (
                     <>
-                      <Feather name="star" size={11} color={AMBER} />
+                      <Feather name="star" size={11} color={c.amber} />
                       <Text style={[fontSemi, styles.metaText]}>
                         {[
                           helperRating !== undefined ? helperRating.toFixed(1) : null,
@@ -717,7 +743,7 @@ export default function TrackLiveScreen() {
               {subState !== 'completed' && (
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <PressFx onPress={onMessagePro} style={[styles.proAction, styles.proActionGhost]}>
-                    <Feather name="message-circle" size={16} color="#FFFFFF" />
+                    <Feather name="message-circle" size={16} color={c.text} />
                   </PressFx>
                   <PressFx
                     onPress={onCallPro}
@@ -737,20 +763,55 @@ export default function TrackLiveScreen() {
             </Text>
           )}
 
-          {/* OTP card — only meaningful pre-start. Once started_at is stamped
-              the OTP is consumed and we hide it. */}
-          {(subState === 'en_route' || subState === 'arrived') && (
+          {/* START OTP — shown once the pro is en-route, stays through the job
+              so the pro can read it at the door. Server-issued. */}
+          {!!startOtp &&
+            (subState === 'en_route' || subState === 'arrived' || subState === 'in_progress') && (
+              <View style={styles.otp}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
+                  <Text style={[fontMed, styles.otpHelp]}>
+                    {helperName
+                      ? `Share with ${helperName.split(' ')[0]} when they arrive`
+                      : 'Share this code with your pro when they arrive'}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {startOtp.split('').map((d, i) => (
+                    <View key={i} style={styles.otpDigit}>
+                      <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+          {/* Pay-online nudge — present while the booking is active and unpaid.
+              Paying online (or the pro collecting cash) flips payment_status to
+              'paid', which removes this row and reveals the END OTP. */}
+          {isActive && !isPaid && (
+            <Pressable style={styles.payNudge} onPress={payOnline} disabled={paying}>
+              <View style={styles.payNudgeIcon}>
+                <Text style={[fontBold, styles.payNudgeRupee]}>₹</Text>
+              </View>
+              <Text style={[fontMed, styles.payNudgeText]}>
+                {`Pay ₹${(outstandingPaise / 100).toFixed(0)} online to avoid cash handling`}
+              </Text>
+              <Text style={[fontMed, styles.payNudgeChevron]}>›</Text>
+            </Pressable>
+          )}
+
+          {/* END OTP — only once paid, during the job. Shared to finish. */}
+          {isPaid && !!endOtp && subState === 'in_progress' && (
             <View style={styles.otp}>
               <View style={{ flex: 1 }}>
-                <Text style={[fontBold, styles.otpLabel]}>START OTP</Text>
+                <Text style={[fontBold, styles.otpLabel]}>END OTP</Text>
                 <Text style={[fontMed, styles.otpHelp]}>
-                  {helperName
-                    ? `Share with ${helperName.split(' ')[0]} when they arrive`
-                    : 'Share this code with your pro when they arrive'}
+                  Share when the job is done to finish
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: 6 }}>
-                {displayOtp.split('').map((d, i) => (
+                {endOtp.split('').map((d, i) => (
                   <View key={i} style={styles.otpDigit}>
                     <Text style={[fontMono, styles.otpDigitText]}>{d}</Text>
                   </View>
@@ -769,14 +830,14 @@ export default function TrackLiveScreen() {
                   <View
                     style={[
                       styles.taskBullet,
-                      s.status === 'completed' && { backgroundColor: GREEN },
-                      s.status === 'in_progress' && { backgroundColor: AMBER },
-                      s.status === 'skipped' && { backgroundColor: 'rgba(255,255,255,0.15)' },
+                      s.status === 'completed' && { backgroundColor: success },
+                      s.status === 'in_progress' && { backgroundColor: c.amber },
+                      s.status === 'skipped' && { backgroundColor: c.glassBorderHi },
                     ]}
                   >
                     {s.status === 'completed' && <Feather name="check" size={11} color="#FFFFFF" />}
                     {s.status === 'in_progress' && <Feather name="clock" size={11} color="#0D0D0F" />}
-                    {s.status === 'skipped' && <Feather name="minus" size={11} color="rgba(255,255,255,0.6)" />}
+                    {s.status === 'skipped' && <Feather name="minus" size={11} color={c.textSecondary} />}
                   </View>
                   <Text
                     style={[
@@ -793,21 +854,16 @@ export default function TrackLiveScreen() {
             </View>
           )}
 
-          {/* Completed: hide steps, surface inline rating + tip placeholder. */}
+          {/* Completed: hide steps, surface the Service-Complete view. */}
           {subState === 'completed' && (
-            <RatingPanel
+            <ServiceComplete
               helperName={helperName}
               priceText={detail ? `₹${(detail.price_paise / 100).toFixed(0)}` : undefined}
               onSubmit={async (stars, text) => {
                 if (!bookingId || !token || token === '__guest__') return;
-                try {
-                  await submitBookingReview(token, bookingId, stars, text);
-                  showSuccess('Thanks for your feedback!');
-                  navigation.navigate('Tabs', { screen: 'Bookings' });
-                } catch (e) {
-                  showError((e as Error)?.message ?? 'Could not submit rating');
-                }
+                await submitBookingReview(token, bookingId, stars, text);
               }}
+              onDone={() => navigation.navigate('Tabs', { screen: 'Bookings' })}
               onSkip={() => navigation.navigate('Tabs', { screen: 'Bookings' })}
             />
           )}
@@ -821,6 +877,10 @@ export default function TrackLiveScreen() {
             subState === 'in_progress') && (
             <View style={{ marginTop: 18, paddingHorizontal: 20 }}>
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state="done"
                 icon="check"
                 title="Booking confirmed"
@@ -829,6 +889,10 @@ export default function TrackLiveScreen() {
                 connectorBelow="solid-green"
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state={
                   subState === 'en_route'
                     ? 'active'
@@ -852,6 +916,10 @@ export default function TrackLiveScreen() {
                 connectorBelow={subState === 'en_route' ? 'amber-fade' : subState === 'assigned' ? 'muted' : 'solid-green'}
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state={
                   subState === 'arrived'
                     ? 'active'
@@ -873,23 +941,16 @@ export default function TrackLiveScreen() {
                 connectorBelow="muted"
               />
               <Step
+                c={c}
+                isDark={isDark}
+                styles={styles}
+                success={success}
                 state="pending"
                 icon="check"
                 title="Service completed"
                 sub="Rate your pro after the service"
                 time={'—'}
               />
-            </View>
-          )}
-
-          {/* Tip placeholder — visible on completed but disabled. Real
-              tipping flow is post-MVP. */}
-          {subState === 'completed' && (
-            <View style={styles.tipPlaceholder}>
-              <Feather name="dollar-sign" size={14} color="rgba(255,255,255,0.4)" />
-              <Text style={[fontMed, { color: 'rgba(255,255,255,0.4)', fontSize: 12 }]}>
-                Tip (coming soon)
-              </Text>
             </View>
           )}
 
@@ -902,89 +963,11 @@ export default function TrackLiveScreen() {
 
           {loading && !detail && (
             <View style={{ alignItems: 'center', marginTop: 12 }}>
-              <ActivityIndicator size="small" color={AMBER} />
+              <ActivityIndicator size="small" color={c.amber} />
             </View>
           )}
         </ScrollView>
       </View>
-    </View>
-  );
-}
-
-// ── Rating panel (inline) ────────────────────────────────────────────────────
-// Inline (not modal) per UX choice: persistent, dismiss-resistant, fits the
-// completed-state sheet space, measurably higher submission rate.
-
-function RatingPanel({
-  helperName,
-  priceText,
-  onSubmit,
-  onSkip,
-}: {
-  helperName?: string;
-  priceText?: string;
-  onSubmit: (stars: number, comment: string) => Promise<void>;
-  onSkip: () => void;
-}) {
-  const [stars, setStars] = useState(0);
-  const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const canSubmit = stars > 0 && !submitting;
-
-  const submit = async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(stars, comment.trim());
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <View style={styles.ratingPanel}>
-      <Text style={[fontExtra, styles.ratingHeadline]}>Service completed</Text>
-      {priceText && (
-        <Text style={[fontMed, styles.ratingSub]}>Total {priceText}</Text>
-      )}
-      <Text style={[fontBold, styles.ratingPrompt]}>
-        Rate {helperName ? helperName.split(' ')[0] : 'your pro'}
-      </Text>
-      <View style={styles.starsRow}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <Pressable key={n} onPress={() => setStars(n)} hitSlop={6}>
-            <Feather
-              name="star"
-              size={32}
-              color={n <= stars ? AMBER : 'rgba(255,255,255,0.18)'}
-              // @ts-ignore — Feather supports filled via overlay; use color only
-            />
-          </Pressable>
-        ))}
-      </View>
-      <TextInput
-        style={styles.ratingInput}
-        placeholder="Add your feedback (optional)"
-        placeholderTextColor="rgba(255,255,255,0.35)"
-        value={comment}
-        onChangeText={setComment}
-        multiline
-        maxLength={500}
-      />
-      <PressFx
-        onPress={submit}
-        style={[styles.primaryCta, !canSubmit && { opacity: 0.4 }]}
-        disabled={!canSubmit}
-      >
-        <Text style={[fontBold, { color: '#0D0D0F', fontSize: 14 }]}>
-          {submitting ? 'Submitting…' : 'Submit rating'}
-        </Text>
-      </PressFx>
-      <Pressable onPress={onSkip} hitSlop={6} style={{ marginTop: 10, alignSelf: 'center' }}>
-        <Text style={[fontMed, { color: 'rgba(255,255,255,0.55)', fontSize: 13 }]}>
-          Skip rating
-        </Text>
-      </Pressable>
     </View>
   );
 }
@@ -1064,6 +1047,10 @@ type StepState = 'done' | 'active' | 'pending';
 type Connector = 'solid-green' | 'amber-fade' | 'muted';
 
 function Step({
+  c,
+  isDark,
+  styles,
+  success,
   state,
   icon,
   title,
@@ -1072,6 +1059,10 @@ function Step({
   timeAccent,
   connectorBelow,
 }: {
+  c: ScreenColors;
+  isDark: boolean;
+  styles: ReturnType<typeof makeStyles>;
+  success: string;
   state: StepState;
   icon: React.ComponentProps<typeof Feather>['name'];
   title: string;
@@ -1122,15 +1113,15 @@ function Step({
             width: 2,
             backgroundColor:
               connectorBelow === 'solid-green'
-                ? GREEN
+                ? success
                 : connectorBelow === 'muted'
-                ? 'rgba(255,255,255,0.10)'
+                ? c.glassBorderHi
                 : 'transparent',
           }}
         >
           {connectorBelow === 'amber-fade' && (
             <View style={StyleSheet.absoluteFill}>
-              <View style={{ flex: 0.2, backgroundColor: AMBER }} />
+              <View style={{ flex: 0.2, backgroundColor: c.amber }} />
               <View style={{ flex: 0.8, backgroundColor: 'rgba(245,163,0,0.10)' }} />
             </View>
           )}
@@ -1140,16 +1131,16 @@ function Step({
       <Animated.View
         style={[
           styles.marker,
-          state === 'done' && { backgroundColor: GREEN },
+          state === 'done' && { backgroundColor: success },
           state === 'active' && {
-            backgroundColor: AMBER,
-            shadowColor: AMBER,
+            backgroundColor: c.amber,
+            shadowColor: c.amber,
             shadowOpacity: 0.5,
             shadowRadius: 8,
             shadowOffset: { width: 0, height: 0 },
             elevation: 6,
           },
-          state === 'pending' && { backgroundColor: 'rgba(255,255,255,0.06)' },
+          state === 'pending' && { backgroundColor: c.glass },
           markerAStyle,
         ]}
       >
@@ -1171,20 +1162,20 @@ function Step({
         <Feather
           name={icon}
           size={13}
-          color={state === 'done' ? '#FFFFFF' : state === 'active' ? '#0D0D0F' : 'rgba(255,255,255,0.4)'}
+          color={state === 'done' ? '#FFFFFF' : state === 'active' ? '#0D0D0F' : c.textMuted}
         />
       </Animated.View>
       <View style={{ flex: 1, paddingTop: 4 }}>
         <Text
           style={[
             fontBold,
-            { color: '#FFFFFF', fontSize: 13, letterSpacing: -0.07, lineHeight: 16 },
+            { color: c.text, fontSize: 13, letterSpacing: -0.07, lineHeight: 16 },
             state === 'pending' && { opacity: 0.5 },
           ]}
         >
           {title}
         </Text>
-        <Text style={[fontMed, { color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }]}>
+        <Text style={[fontMed, { color: c.textSecondary, fontSize: 11, marginTop: 2 }]}>
           {sub}
         </Text>
       </View>
@@ -1194,7 +1185,7 @@ function Step({
           {
             fontSize: 11,
             paddingTop: 5,
-            color: timeAccent ? AMBER : 'rgba(255,255,255,0.4)',
+            color: timeAccent ? c.amber : c.textMuted,
           },
         ]}
       >
@@ -1215,15 +1206,6 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function deriveOtp(seed: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = (h * 16777619) >>> 0;
-  }
-  return String(h % 10000).padStart(4, '0');
 }
 
 function formatNow(): string {
@@ -1277,10 +1259,32 @@ function addMinutes(min: number): string {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 identical; light adds cream + amber.
+// Floating chips/pins/route sit over a hardcoded-dark Google map (DARK_MAP_STYLE
+// is unchanged in both themes), so their dark surfaces + white glyphs stay
+// literal in both — theming them to cream would make them unreadable on the map.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Success green: dark brand green kept exact; light uses a readable deep green.
+  const success = isDark ? GREEN : c.green;
+  // Map backdrop flash colour behind the map tiles — dark map base in dark,
+  // cream in light so the brief pre-render flash matches the theme.
+  const mapBg = isDark ? '#0A1218' : c.bg;
+  // Bottom sheet surface (#0F0F11) has no useC equivalent → documented literal
+  // in dark (identical); white card in light. `verify` ring matches it.
+  const surface = isDark ? '#0F0F11' : c.white;
+  // Sheet grab handle — bright white handle on dark sheet in dark; a subtle
+  // ink hairline on the cream sheet in light.
+  const grabColor = isDark ? 'rgba(255,255,255,0.18)' : c.glassBorderHi;
+  // Cancel icon uses a soft red wash — exact literal in dark, danger tokens
+  // in light so it reads on cream.
+  const cancelBg = isDark ? 'rgba(255,90,90,0.18)' : c.dangerSoft;
+  const cancelBorder = isDark ? 'rgba(255,90,90,0.4)' : c.dangerBorder;
+
+  return StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#0A1218',
+    backgroundColor: mapBg,
   },
 
   // Top bar
@@ -1398,7 +1402,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#0F0F11',
+    backgroundColor: surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingTop: 8,
@@ -1408,14 +1412,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -12 },
     elevation: 24,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: c.glassBorder,
     zIndex: 40,
   },
   grab: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: grabColor,
     alignSelf: 'center',
     marginVertical: 6,
     marginBottom: 16,
@@ -1432,12 +1436,12 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: AMBER,
+    backgroundColor: c.amber,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)',
-    shadowColor: AMBER,
+    shadowColor: c.amber,
     shadowOpacity: 0.3,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
@@ -1450,14 +1454,14 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: GREEN,
+    backgroundColor: success,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#0F0F11',
+    borderColor: surface,
   },
   pname: {
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 16,
     letterSpacing: -0.32,
   },
@@ -1468,7 +1472,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,163,0,0.18)',
   },
   badgeText: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 9,
     letterSpacing: 0.4,
   },
@@ -1479,14 +1483,14 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   metaText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11.5,
   },
   metaDot: {
     width: 3,
     height: 3,
     borderRadius: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.5)',
+    backgroundColor: c.textMuted,
   },
   proAction: {
     width: 42,
@@ -1496,13 +1500,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   proActionGhost: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   proActionPrimary: {
-    backgroundColor: AMBER,
-    shadowColor: AMBER,
+    backgroundColor: c.amber,
+    shadowColor: c.amber,
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
@@ -1518,18 +1522,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: 'rgba(245,163,0,0.10)',
+    backgroundColor: c.amberSoft,
     borderWidth: 1,
     borderColor: 'rgba(245,163,0,0.45)',
     borderStyle: 'dashed',
   },
   otpLabel: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 11,
     letterSpacing: 0.8,
   },
   otpHelp: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11.5,
     marginTop: 2,
   },
@@ -1537,7 +1541,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: c.bg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -1545,8 +1549,41 @@ const styles = StyleSheet.create({
   },
   otpDigitText: {
     fontSize: 18,
-    color: AMBER,
+    color: c.amber,
     letterSpacing: -0.3,
+  },
+
+  payNudge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    marginHorizontal: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: c.amberSoft,
+  },
+  payNudgeIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: c.amber,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payNudgeRupee: {
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  payNudgeText: {
+    flex: 1,
+    color: c.textSecondary,
+    fontSize: 13,
+  },
+  payNudgeChevron: {
+    color: c.amber,
+    fontSize: 20,
   },
 
   // Step marker
@@ -1567,7 +1604,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,163,0,0.15)',
   },
   bkIdText: {
-    color: AMBER,
+    color: c.amber,
     fontSize: 10,
     letterSpacing: -0.1,
   },
@@ -1580,14 +1617,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stateHeadline: {
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 16,
     textAlign: 'center',
     marginTop: 8,
     letterSpacing: -0.2,
   },
   stateSub: {
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     fontSize: 12.5,
     textAlign: 'center',
     lineHeight: 18,
@@ -1596,11 +1633,11 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(255,90,90,0.18)',
+    backgroundColor: cancelBg,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,90,90,0.4)',
+    borderColor: cancelBorder,
   },
   warnIcon: {
     width: 48,
@@ -1614,7 +1651,7 @@ const styles = StyleSheet.create({
   },
   primaryCta: {
     marginTop: 14,
-    backgroundColor: AMBER,
+    backgroundColor: c.amber,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 999,
@@ -1629,12 +1666,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondaryCtaText: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 13,
   },
 
   assignedHint: {
-    color: 'rgba(255,255,255,0.55)',
+    color: c.textSecondary,
     fontSize: 12,
     paddingHorizontal: 20,
     marginTop: 8,
@@ -1646,7 +1683,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   sectionHeader: {
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
     fontSize: 11,
     letterSpacing: 0.8,
     marginBottom: 10,
@@ -1662,76 +1699,20 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
     alignItems: 'center',
     justifyContent: 'center',
   },
   taskName: {
     flex: 1,
-    color: '#FFFFFF',
+    color: c.text,
     fontSize: 13.5,
   },
   taskDuration: {
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
     fontSize: 11,
   },
 
   // Rating panel (completed)
-  ratingPanel: {
-    marginTop: 6,
-    marginHorizontal: 16,
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: 'rgba(245,163,0,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(245,163,0,0.20)',
-  },
-  ratingHeadline: {
-    color: AMBER,
-    fontSize: 18,
-    letterSpacing: -0.3,
-  },
-  ratingSub: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12.5,
-    marginTop: 2,
-  },
-  ratingPrompt: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    marginTop: 14,
-  },
-  starsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-    marginBottom: 14,
-  },
-  ratingInput: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontFamily: 'PlusJakartaSans_500Medium',
-    minHeight: 60,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-
-  tipPlaceholder: {
-    marginTop: 14,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-});
+  });
+}

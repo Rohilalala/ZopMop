@@ -176,7 +176,7 @@ None. The codebase uses Zop SVG mascot fallbacks (`assets/zop/zop-*.svg`) consis
 ### 8. Hardcoded test entities
 - `tel:+911800000000` → `src/screens/main/HelpSupportScreen.tsx:71` (the call-us button dials a placeholder).
 - `https://zopmop.com/privacy` and `https://zopmop.com/terms` → `src/screens/auth/OTPVerificationScreen.tsx:34-35`. Need verification that those URLs resolve to live pages before launch (not flagged as test, but worth checking).
-- `support@zopmop.com` → `HelpSupportScreen.tsx:77-78`. Verify the inbox is monitored.
+- `hello@zopmop.com` → `HelpSupportScreen.tsx:67-68`. Verify the inbox is monitored.
 
 ### 9. Empty-state copy
 All empty states (Wallet "No transactions yet", AddressesScreen "No saved addresses", YourExpertsScreen "No experts yet", AllServicesScreen "No services available", ChatScreen "Say hi…") read as intentional UX. None flagged.

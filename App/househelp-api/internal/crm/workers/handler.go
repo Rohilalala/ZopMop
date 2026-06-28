@@ -45,6 +45,7 @@ func (h *Handler) RegisterRoutes(r fiber.Router) {
 	g.Get("/live",               read, h.LivePins)
 	g.Post("/",                  middleware.RequirePermission("workers.create"), h.Create)
 	g.Get("/:id",                read, h.Get)
+	g.Get("/:id/pii",            middleware.RequirePermission("workers.read_pii"), h.RevealPII)
 	g.Get("/:id/jobs",           read, h.Jobs)
 	g.Get("/:id/active-job",     read, h.ActiveJob)
 	g.Post("/:id/approve",       middleware.RequirePermission("workers.approve"), h.Approve)
@@ -155,9 +156,50 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		log.Error().Err(err).Msg("[crm.workers] get failed")
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
 	}
-	// Audit single-worker PII reads (audit NEW-A1-002 partial).
+	// C7: never ship raw Aadhaar / bank-account numbers in the detail payload,
+	// regardless of role. The drawer shows a last-4 mask; the unmasked values
+	// come only from GET /workers/:id/pii (superadmin-only, audited reveal).
+	d.AadhaarNumber = maskTail(d.AadhaarNumber)
+	d.BankAccountNumber = maskTail(d.BankAccountNumber)
 	h.audit(c, "worker.view", id, nil, nil)
 	return c.JSON(d)
+}
+
+// RevealPII returns the unmasked Aadhaar + bank-account numbers. Superadmin-
+// only (workers.read_pii) and every call writes a worker.pii.reveal audit row,
+// so each disclosure of plaintext PII is attributable.
+func (h *Handler) RevealPII(c *fiber.Ctx) error {
+	id := c.Params("id")
+	d, err := h.repo.Get(c.UserContext(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "worker not found"})
+		}
+		log.Error().Err(err).Msg("[crm.workers] reveal pii failed")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "internal error"})
+	}
+	h.audit(c, "worker.pii.reveal", id, nil, nil)
+	return c.JSON(fiber.Map{
+		"aadhaar_number":           d.AadhaarNumber,
+		"bank_account_number":      d.BankAccountNumber,
+		"bank_account_holder_name": d.BankAccountHolderName,
+		"bank_ifsc":                d.BankIFSC,
+	})
+}
+
+// maskTail keeps only the last 4 characters of a PII value and masks the rest,
+// e.g. "123456789012" -> "••••••••9012". nil / short values mask fully.
+func maskTail(s *string) *string {
+	if s == nil || *s == "" {
+		return s
+	}
+	v := *s
+	if len(v) <= 4 {
+		masked := "••••"
+		return &masked
+	}
+	masked := strings.Repeat("•", len(v)-4) + v[len(v)-4:]
+	return &masked
 }
 
 // Jobs handles GET /workers/:id/jobs.
@@ -219,7 +261,7 @@ func (h *Handler) Reject(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "reason required"})
 	}
 	id := c.Params("id")
-	if err := h.repo.Reject(c.UserContext(), id); err != nil {
+	if err := h.repo.Reject(c.UserContext(), id, req.Reason); err != nil {
 		return h.errResp(c, err)
 	}
 	h.audit(c, "worker.reject", id, nil, req.Reason)
@@ -261,6 +303,19 @@ func (h *Handler) Unsuspend(c *fiber.Ctx) error {
 // ForceOffline handles POST /workers/:id/force-offline.
 func (h *Handler) ForceOffline(c *fiber.Ctx) error {
 	id := c.Params("id")
+	// Refuse to pull a worker offline while they have an in-flight booking —
+	// flipping is_available alone leaves the accepted/in_progress job
+	// stranded on a now-unavailable helper. The admin must reassign/complete
+	// the job first. 409 carries the blocking booking id for the UI.
+	if has, bookingID, err := h.repo.HasActiveJob(c.UserContext(), id); err != nil {
+		return h.errResp(c, err)
+	} else if has {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":      "has_active_job",
+			"message":    "Worker has an active job. Reassign or complete it before forcing them offline.",
+			"booking_id": bookingID,
+		})
+	}
 	if err := h.repo.ForceOffline(c.UserContext(), id); err != nil {
 		return h.errResp(c, err)
 	}

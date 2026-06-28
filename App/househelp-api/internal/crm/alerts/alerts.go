@@ -72,20 +72,25 @@ func (r *Recorder) Push(ctx context.Context, sev Severity, source, message, link
 	}
 }
 
-// Service handles alert queries. Reads only.
+// Service handles alert queries (read pool) and the per-admin mark-all-read
+// mutation (write pool). MarkAllRead must NOT run through the read pool: once
+// CRM_DATABASE_READ_URL points at a real replica, an UPDATE there fails with
+// "cannot execute UPDATE in a read-only transaction".
 type Service struct {
-	db *pgxpool.Pool
+	read  *pgxpool.Pool
+	write *pgxpool.Pool
 }
 
-// NewService constructs the alerts query Service.
-func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
+// NewService constructs the alerts Service. read backs List; write backs
+// MarkAllRead. Pass the same pool for both when no replica is configured.
+func NewService(read, write *pgxpool.Pool) *Service { return &Service{read: read, write: write} }
 
 // List returns the most recent alerts. limit clamped to [1, 200].
 func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.Query(ctx, `
+	rows, err := s.read.Query(ctx, `
 		SELECT id, severity, source, message, link, metadata, read_by, created_at
 		FROM crm_alerts
 		ORDER BY created_at DESC
@@ -109,7 +114,7 @@ func (s *Service) List(ctx context.Context, limit int) ([]Entry, error) {
 
 // MarkAllRead appends adminID to every alert's read_by JSON array (idempotent).
 func (s *Service) MarkAllRead(ctx context.Context, adminID string) error {
-	_, err := s.db.Exec(ctx, `
+	_, err := s.write.Exec(ctx, `
 		UPDATE crm_alerts
 		SET read_by = (
 		  CASE
@@ -135,7 +140,11 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // RegisterRoutes mounts /alerts/* under the authed admin group.
 func (h *Handler) RegisterRoutes(r fiber.Router) {
 	r.Get("/alerts", middleware.RequirePermission("alerts.read"), h.List)
-	r.Post("/alerts/read-all", h.MarkAllRead)
+	// Was unguarded — the only write in the authed group with no
+	// RequirePermission. read-all only appends the caller's own admin id to
+	// each alert's read_by (per-admin read-state), so viewer-tier is correct,
+	// but it must still pass through the RBAC middleware like every other route.
+	r.Post("/alerts/read-all", middleware.RequirePermission("alerts.mark_read"), h.MarkAllRead)
 }
 
 // List returns recent alerts.

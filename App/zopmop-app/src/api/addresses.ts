@@ -45,7 +45,12 @@ export async function createAddress(token: string, payload: CreateAddressPayload
     headers: authHeaders(token),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Failed to save address');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error((body as any).error ?? 'Failed to save address') as Error & { fields?: unknown };
+    if ((body as any).fields) err.fields = (body as any).fields;
+    throw err;
+  }
   return res.json() as Promise<ApiAddress>;
 }
 
@@ -55,7 +60,12 @@ export async function updateAddress(token: string, id: string, payload: Partial<
     headers: authHeaders(token),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Failed to update address');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error((body as any).error ?? 'Failed to update address') as Error & { fields?: unknown };
+    if ((body as any).fields) err.fields = (body as any).fields;
+    throw err;
+  }
   return res.json() as Promise<ApiAddress>;
 }
 

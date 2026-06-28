@@ -402,12 +402,13 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 		bookingCustomerID string
 		amountPaise       int64
 		discountPaise     int64
+		walletApplied     int64
 		status            string
 	)
 	err := h.db.QueryRow(ctx, `
-		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), status
+		SELECT customer_id::text, amount_paise, COALESCE(discount_paise, 0), COALESCE(wallet_applied_paise, 0), status
 		FROM bookings WHERE id = $1::uuid
-	`, bookingID).Scan(&bookingCustomerID, &amountPaise, &discountPaise, &status)
+	`, bookingID).Scan(&bookingCustomerID, &amountPaise, &discountPaise, &walletApplied, &status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errResp(c, fiber.StatusNotFound, "booking_not_found", "booking not found")
@@ -431,7 +432,9 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 			fmt.Sprintf("booking in status %s cannot be charged", status))
 	}
 
-	netPaise := amountPaise - discountPaise
+	// Split bookings already debited wallet_applied_paise from the wallet at
+	// create time; the Cashfree order charges only the remainder.
+	netPaise := amountPaise - discountPaise - walletApplied
 	if netPaise <= 0 {
 		return errResp(c, fiber.StatusConflict, "zero_amount", "booking has zero amount due")
 	}
@@ -444,11 +447,15 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 	}
 
 	// Idempotency on the gateway side: short-circuit if a successful
-	// payment already lives against this booking.
+	// CASHFREE payment already lives against this booking. Scoped to
+	// gateway='cashfree' so a split booking's wallet-portion payment row
+	// (gateway='wallet', gateway_status='success') does NOT count as
+	// "already paid" and block creating the order for the remaining
+	// Cashfree leg.
 	var alreadyPaid bool
 	if err := h.db.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM payments
-		               WHERE booking_id = $1::uuid AND gateway_status = 'success')
+		               WHERE booking_id = $1::uuid AND gateway = 'cashfree' AND gateway_status = 'success')
 	`, bookingID).Scan(&alreadyPaid); err == nil && alreadyPaid {
 		return errResp(c, fiber.StatusConflict, "already_paid", "booking already paid")
 	}
@@ -921,16 +928,19 @@ func (h *Handler) dispatchCashfreeEventTx(ctx context.Context, tx pgx.Tx, eventT
 			return fmt.Errorf("update success status: %w", err)
 		}
 		if paymentBooking != nil && *paymentBooking != "" {
-			// Mirror the wallet path: flip bookings.payment_status='paid'
-			// inside the same tx as the ledger update + outbox emit so the
-			// customer-facing list filter (payment_method != 'cashfree' OR
-			// payment_status = 'paid') starts admitting this row. Scoped
-			// to payment_method='cashfree' so this never touches a wallet-
-			// or COD-paid row that happened to share an order id.
+			// A successful Cashfree payment settled THIS booking (paymentBooking
+			// is resolved from the order's own payments row, so it's
+			// unambiguous). Mark it paid AND stamp payment_method='cashfree' —
+			// the latter matters for the pay-online-anytime path on a COD
+			// booking: the customer can pay the nudge online, which converts the
+			// row to a paid online booking (END OTP unlocks; the customer-list
+			// filter admits it; collect-cash is now gated out, so no double
+			// charge). Previously this was scoped `AND payment_method='cashfree'`
+			// which left COD-paid-online bookings stuck unpaid forever.
 			if _, err := tx.Exec(ctx,
 				`UPDATE bookings
-				 SET payment_status = 'paid', updated_at = NOW()
-				 WHERE id = $1::uuid AND payment_method = 'cashfree'`,
+				 SET payment_status = 'paid', payment_method = 'cashfree', updated_at = NOW()
+				 WHERE id = $1::uuid`,
 				*paymentBooking,
 			); err != nil {
 				return fmt.Errorf("stamp booking payment_status=paid: %w", err)

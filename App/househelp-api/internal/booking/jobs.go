@@ -36,10 +36,22 @@ import (
 // in-zone check is decorative.
 const ArrivedRadiusMeters = 100.0
 
+// maxOTPAttempts caps wrong START/END OTP tries per booking. Generous enough
+// that an honest mis-type never strands a pro, low enough that the 4-digit
+// keyspace can't be brute-forced (≤10 guesses vs 10k). On lockout the pro
+// contacts support / CRM resets.
+const maxOTPAttempts = 10
+
 var (
 	ErrOutsideArrivedRadius = errors.New("too far from customer location to mark arrived")
 	ErrJobNotInState        = errors.New("job is not in the expected state for this transition")
 	ErrServiceNotFound      = errors.New("service line not found on this booking")
+	// ErrInvalidOTP — the supplied booking OTP did not match. Handler maps to 400.
+	ErrInvalidOTP = errors.New("invalid otp")
+	// ErrPaymentRequired — completion attempted on an unpaid booking. Handler maps to 409.
+	ErrPaymentRequired = errors.New("payment required")
+	// ErrOTPLocked — too many wrong OTP attempts on this booking. Handler maps to 429.
+	ErrOTPLocked = errors.New("otp locked")
 	// Phase 11A contact reveal — distinct errors so handler can map to
 	// 403 vs 409 cleanly. Forbidden = booking not assigned to this pro;
 	// InvalidState = pre-accept / post-complete / cancelled / etc.
@@ -75,11 +87,11 @@ func (h *JobsHandler) RegisterRoutes(r fiber.Router) {
 	r.Get("/active", h.Active)
 	r.Get("/pending", h.Pending)
 	r.Post("/:id/accept", h.Accept)
-	r.Post("/:id/decline", h.Decline)
 	r.Post("/:id/en-route", h.EnRoute)
 	r.Post("/:id/arrived", h.Arrived)
 	r.Post("/:id/start", h.Start)
 	r.Post("/:id/complete", h.Complete)
+	r.Post("/:id/collect-cash", h.CollectCash)
 	r.Post("/:id/contact", h.RevealContact)
 	r.Post("/:id/services/:service_id/start", h.ServiceStart)
 	r.Post("/:id/services/:service_id/complete", h.ServiceComplete)
@@ -117,21 +129,6 @@ func (h *JobsHandler) Accept(c *fiber.Ctx) error {
 		return mapAcceptError(c, err)
 	}
 	return c.JSON(fiber.Map{"message": "accepted"})
-}
-
-func (h *JobsHandler) Decline(c *fiber.Ctx) error {
-	bookingID := c.Params("id")
-	if !validateBookingIDParam(bookingID) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
-	}
-	helperID, _ := c.Locals("userID").(string)
-	// Pro decline = drop from this pro's Redis invite set so they stop
-	// seeing it; the dispatcher's per-pro timer advances the chain
-	// automatically. No DB state change at this layer.
-	if h.service.matchEngine != nil {
-		h.service.matchEngine.RemoveHelperInvites(c.UserContext(), helperID, []string{bookingID})
-	}
-	return c.JSON(fiber.Map{"message": "declined"})
 }
 
 type enRouteRequest struct {
@@ -178,6 +175,12 @@ func (h *JobsHandler) Arrived(c *fiber.Ctx) error {
 				"code":  "OUTSIDE_ARRIVED_RADIUS",
 			})
 		}
+		// Stale/duplicate Arrived tap (booking already advanced past
+		// 'accepted', reassigned, or cancelled) — 409 like the sibling
+		// EnRoute path, so the app retry-storm + "backend down" never fires.
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to mark arrived"})
 	}
 	return c.JSON(fiber.Map{"message": "arrived"})
@@ -189,8 +192,23 @@ func (h *JobsHandler) Start(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if err := h.service.StartBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrJobNotInState):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 	return c.JSON(fiber.Map{"message": "in_progress"})
 }
@@ -201,8 +219,25 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
 	}
 	helperID, _ := c.Locals("userID").(string)
-	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
+	}
+	if err := h.service.CompleteBooking(c.UserContext(), bookingID, helperID, req.OTP); err != nil {
+		switch {
+		case errors.Is(err, ErrOTPLocked):
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Too many incorrect codes on this booking. Contact support to unlock.", "code": "otp_locked"})
+		case errors.Is(err, ErrInvalidOTP):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "incorrect OTP", "code": "invalid_otp"})
+		case errors.Is(err, ErrPaymentRequired):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "payment required", "code": "payment_required"})
+		case errors.Is(err, ErrJobNotInState):
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 	// Read back the earnings snapshot for the response.
 	var earnings int64
@@ -217,6 +252,25 @@ func (h *JobsHandler) Complete(c *fiber.Ctx) error {
 		"pro_earnings_paise":      earnings,
 		"actual_duration_minutes": actualMin,
 	})
+}
+
+// CollectCash handles POST /pro/jobs/:id/collect-cash. The assigned pro marks
+// the outstanding net collected in cash for a COD booking — flips it to paid,
+// writes a cash payments row, and unlocks the END OTP.
+func (h *JobsHandler) CollectCash(c *fiber.Ctx) error {
+	bookingID := c.Params("id")
+	if !validateBookingIDParam(bookingID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid booking id"})
+	}
+	helperID, _ := c.Locals("userID").(string)
+	outstanding, err := h.service.CollectCash(c.UserContext(), bookingID, helperID)
+	if err != nil {
+		if errors.Is(err, ErrJobNotInState) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "cash_collected", "outstanding_paise": outstanding})
 }
 
 // RevealContact handles POST /pro/jobs/:id/contact. The assigned pro asks
@@ -315,6 +369,8 @@ func mapAcceptError(c *fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, ErrAlreadyAccepted), errors.Is(err, ErrBookingNotPending):
 		status, message = fiber.StatusConflict, "booking already accepted by another helper"
+	case errors.Is(err, ErrHelperAtMaxActive):
+		status, message = fiber.StatusConflict, "you already have the maximum number of active jobs"
 	case errors.Is(err, ErrTooFarAway):
 		status, message = fiber.StatusBadRequest, "too far from booking location"
 	case err != nil && err.Error() == "booking not found":
@@ -446,13 +502,13 @@ func (s *Service) MarkBookingServiceSkipped(ctx context.Context, bookingID, serv
 		UPDATE booking_services
 		   SET status      = 'skipped',
 		       completed_at = COALESCE(completed_at, now()),
-		       skip_reason  = NULLIF($5, '')
+		       skip_reason  = NULLIF($4, '')
 		 WHERE id = $1 AND booking_id = $2
 		   AND EXISTS (
 		       SELECT 1 FROM bookings b
-		        WHERE b.id = $2 AND b.helper_id = $4 AND b.status IN ('accepted','arrived','in_progress')
+		        WHERE b.id = $2 AND b.helper_id = $3 AND b.status IN ('accepted','arrived','in_progress')
 		   )
-	`, serviceLineID, bookingID, "skipped", helperID, reason)
+	`, serviceLineID, bookingID, helperID, reason)
 	if err != nil {
 		return fmt.Errorf("skip booking_service: %w", err)
 	}

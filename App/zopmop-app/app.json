@@ -16,7 +16,6 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.zopmop.app",
       "associatedDomains": ["applinks:zopmop.com"],
-      "googleServicesFile": "./GoogleService-Info.plist",
       "entitlements": {
         "aps-environment": "development"
       },
@@ -35,9 +34,7 @@
             ]
           }
         ],
-        "NSFaceIDUsageDescription": "ZopMop uses Face ID to keep your saved payment methods and wallet secure on this device.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "ZopMop uses your location only while the app is open to dispatch the nearest helper. We do not track your location in the background.",
-        "NSLocationAlwaysUsageDescription": "ZopMop uses your location only while the app is open. We do not track your location in the background."
+        "NSFaceIDUsageDescription": "ZopMop uses Face ID to keep your saved payment methods and wallet secure on this device."
       },
       "config": {
         "googleMaps": {}
@@ -50,7 +47,6 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {
           "action": "VIEW",
@@ -74,7 +70,8 @@
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ],
       "package": "com.zopmop.app",
       "config": {
@@ -92,13 +89,12 @@
           "locationWhenInUsePermission": "ZopMop uses your location to show available services in your area and dispatch the nearest helper to your booking."
         }
       ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "@react-native-firebase/messaging",
       "expo-secure-store",
       [
-        "react-native-maps",
-        {}
+        "expo-image-picker",
+        {
+          "microphonePermission": false
+        }
       ],
       [
         "expo-build-properties",

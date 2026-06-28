@@ -7,11 +7,9 @@ type BookingStatus string
 
 const (
 	StatusPending    BookingStatus = "pending"
-	// StatusSearching is set by the StealthDispatcher after it claims a
-	// new instant booking and before it emits the FCM invites. Pros that
-	// receive the invite call AcceptBooking, which now accepts both
-	// 'pending' (scheduled flow) and 'searching' (stealth flow) as the
-	// pre-assignment state.
+	// StatusSearching is a legacy pre-assignment state. The invite-chain
+	// dispatchers that produced it are retired; AcceptBooking still tolerates
+	// it so any old 'searching' rows remain claimable.
 	StatusSearching  BookingStatus = "searching"
 	StatusAccepted   BookingStatus = "accepted"
 	StatusInProgress BookingStatus = "in_progress"
@@ -35,6 +33,11 @@ type Booking struct {
 	DiscountPaise          int           `json:"discount_paise"`
 	ScheduledTime          *time.Time    `json:"scheduled_time,omitempty"`
 	CancelledAt            *time.Time    `json:"cancelled_at,omitempty"`
+	// CancelledBy records who/what terminated the booking: 'customer', 'system',
+	// or 'no_pros_found' (the assigner's unfilled-at-slot-start terminal state).
+	// The customer app branches on 'no_pros_found' to show the rebook panel
+	// instead of the generic cancelled UI.
+	CancelledBy            *string       `json:"cancelled_by,omitempty"`
 	CancellationFeeApplied bool          `json:"cancellation_fee_applied"`
 	CancellationFeeCents   int           `json:"cancellation_fee_paise"`
 	// Phase 10 lifecycle timestamps. NULL until the pro reaches that step.
@@ -53,6 +56,16 @@ type Booking struct {
 	FreeCancelUntil *time.Time `json:"free_cancel_until,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// Server OTP rail (migration 144). StartOTP is exposed to the booking's
+	// customer only; EndOTP additionally requires payment_status='paid'. Both
+	// are nil on the pro/helper payload — never leak the code to the verifier.
+	// Populated in GetBookingByID per caller role; never selected for the pro
+	// list query.
+	StartOTP           *string `json:"otp,omitempty"`
+	EndOTP             *string `json:"end_otp,omitempty"`
+	PaymentStatus      *string `json:"payment_status,omitempty"`
+	PaymentMethod      *string `json:"payment_method,omitempty"`
+	WalletAppliedPaise int     `json:"wallet_applied_paise"`
 }
 
 // BookingDetail is the enriched response returned by GET /bookings/:id.
@@ -81,10 +94,12 @@ type BookingDetailHelper struct {
 // per-service status. display_order is the canonical sort key for the
 // task checklist UI.
 type BookingDetailService struct {
+	ID              string     `json:"id"` // booking_services row PK — the pro app's per-service start/complete/skip calls key on this
 	ServiceID       string     `json:"service_id"`
 	ServiceName     string     `json:"service_name"`
 	DurationMinutes int        `json:"duration_minutes"`
 	PricePaise      int        `json:"price_paise"`
+	Quantity        int        `json:"quantity"`
 	Status          string     `json:"status"` // pending | in_progress | completed | skipped
 	DisplayOrder    int        `json:"display_order"`
 	StartedAt       *time.Time `json:"started_at,omitempty"`
@@ -123,17 +138,21 @@ type CancelBookingResponse struct {
 
 // CreateBookingRequest is the input for creating a new booking.
 //
-// PaymentSource selects the funding rail. Empty / "direct" uses the
-// existing Cashfree-or-COD path; "wallet" debits the closed-loop wallet
-// inline. Wallet path requires sufficient balance — caller gets a 402 with
-// code "insufficient_wallet_balance" when short.
+// PaymentSource selects the funding rail:
+//   - ""/"direct" : Cashfree online prepay — the row is held unpaid and is NOT
+//     dispatched until the gateway webhook stamps payment_status='paid'.
+//   - "wallet"    : closed-loop wallet debited inline (requires balance, else a
+//     402 with code "insufficient_wallet_balance"); dispatches immediately.
+//   - "cod"       : cash on delivery — no money moves at booking time and the
+//     pro is force-assigned immediately (there is no prepay gate to wait on).
 type CreateBookingRequest struct {
 	ServiceCategoryID string  `json:"service_category_id" validate:"required,uuid_format"`
 	Address           string  `json:"address" validate:"required,min=5,max=500"`
 	Lat               float64 `json:"lat" validate:"required,latitude"`
 	Lng               float64 `json:"lng" validate:"required,longitude"`
 	PromoCode         string  `json:"promo_code,omitempty" validate:"omitempty,max=50"`
-	PaymentSource     string  `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
+	PaymentSource     string  `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise  int64   `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // CancelBookingRequest is the input for cancelling a booking.
@@ -173,14 +192,17 @@ type CreateScheduledBookingRequest struct {
 	AddressID     string `json:"address_id"  validate:"required,uuid_format"`
 	TimeSlotID    string `json:"time_slot_id" validate:"required,uuid_format"`
 	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
-	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise int64 `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // CreateInstantBookingRequest is the input for POST /bookings/instant.
 // Cart items are read server-side; only the delivery address is required.
 type CreateInstantBookingRequest struct {
 	AddressID     string `json:"address_id" validate:"required,uuid_format"`
-	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet"`
+	PromoCode     string `json:"promo_code,omitempty" validate:"omitempty,max=50"`
+	PaymentSource string `json:"payment_source,omitempty" validate:"omitempty,oneof=direct wallet cod split"`
+	WalletApplyPaise int64 `json:"wallet_apply_paise,omitempty" validate:"omitempty,gte=0"`
 }
 
 // MatchStatusResponse is returned by GET /bookings/:id/match-status.

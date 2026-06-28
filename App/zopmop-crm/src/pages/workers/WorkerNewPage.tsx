@@ -3,7 +3,7 @@ import { useForm, type SubmitHandler, type UseFormReturn } from 'react-hook-form
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useBlocker, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Check, ChevronRight, Edit2, Loader2, AlertTriangle,
 } from 'lucide-react';
@@ -259,9 +259,13 @@ export function WorkerNewPage() {
 
   const isDirty = form.formState.isDirty;
 
-  // Browser back / refresh guard. useBlocker handles react-router navigation
-  // (e.g. back arrow → /workers); beforeunload covers the hard-reload case.
-  const blocker = useBlocker(isDirty && !form.formState.isSubmitting);
+  // Browser back / refresh guard. The in-page back arrow is intercepted
+  // below (pendingNav + UnsavedChangesGuard); beforeunload covers the
+  // hard-reload case. NOTE: useBlocker is intentionally NOT used — it
+  // requires a data router (createBrowserRouter) and the app mounts a
+  // plain <BrowserRouter>, so it threw an invariant on first render and
+  // white-screened the whole CRM (no error boundary).
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
   useEffect(() => {
     if (!isDirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -280,9 +284,11 @@ export function WorkerNewPage() {
         kind: 'success',
         message: `Pro created. They can now log in with phone +91${form.getValues('phone')} + OTP.`,
       });
-      // form.reset clears dirty so useBlocker stops blocking.
+      // form.reset clears dirty so the back-arrow guard stops blocking.
       form.reset(undefined, { keepValues: true });
-      nav(`/workers/${result.id}`, { replace: true });
+      // No /workers/:id route exists — that path fell through the `*`
+      // catch-all to the dashboard. WorkersPage opens the drawer via ?id=.
+      nav(`/workers?id=${result.id}`, { replace: true });
     },
     onError: (err: unknown) => {
       if (err instanceof PhoneInUseError) {
@@ -316,13 +322,27 @@ export function WorkerNewPage() {
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
       <UnsavedChangesGuard
-        proceed={() => blocker.proceed?.()}
-        reset={() => blocker.reset?.()}
-        active={blocker.state === 'blocked'}
+        proceed={() => {
+          const to = pendingNav;
+          setPendingNav(null);
+          if (to) nav(to);
+        }}
+        reset={() => setPendingNav(null)}
+        active={pendingNav !== null}
       />
 
       <div className="flex items-center gap-3">
-        <Link to="/workers" className="btn-ghost !p-2" aria-label="back to workers">
+        <Link
+          to="/workers"
+          className="btn-ghost !p-2"
+          aria-label="back to workers"
+          onClick={(e) => {
+            if (isDirty && !form.formState.isSubmitting) {
+              e.preventDefault();
+              setPendingNav('/workers');
+            }
+          }}
+        >
           <ArrowLeft className="w-4 h-4" />
         </Link>
         <div className="flex-1">

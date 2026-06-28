@@ -14,7 +14,6 @@ export type Promo = {
   cta?: string;
   bg?: string;
   accent?: string;
-  emoji?: string;
   onPress?: () => void;
 };
 
@@ -34,21 +33,6 @@ export function PromoCard({ promo }: { promo: Promo }) {
         overflow: 'hidden',
       }}
     >
-      {promo.emoji && (
-        <Text
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            right: -10,
-            top: -10,
-            fontSize: 180,
-            opacity: 0.18,
-          }}
-        >
-          {promo.emoji}
-        </Text>
-      )}
-
       {promo.eyebrow && (
         <Text style={[fontReg, { fontSize: 12, color: accent, marginBottom: 8, letterSpacing: 1.2 }]}>
           {promo.eyebrow.toUpperCase()}

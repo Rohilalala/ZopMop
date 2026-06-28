@@ -6,6 +6,8 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,27 +19,38 @@ import (
 
 // KPIs is the top-row metric bundle.
 type KPIs struct {
-	ActiveOrders       int `json:"active_orders"`
-	WorkersOnline      int `json:"workers_online"`
-	RevenueTodayCents  int `json:"revenue_today_paise"`
-	PendingRefunds     int `json:"pending_refunds"`
+	ActiveOrders        int `json:"active_orders"`
+	WorkersOnline       int `json:"workers_online"`
+	RevenueTodayCents   int `json:"revenue_today_paise"`
+	PendingRefunds      int `json:"pending_refunds"`
 	PendingApplications int `json:"pending_applications"`
-	OpenDisputes       int `json:"open_disputes"`
+	OpenDisputes        int `json:"open_disputes"`
+	BookingsAtRisk      int `json:"bookings_at_risk"`
 }
+
+// dispatchLeadConfigKey is the app_config key holding the assigner's lead
+// window in minutes (spec §2 dispatchLeadMin). Mirrors
+// config_manager.ConfigDispatchLeadMin; duplicated here so the crm-api
+// dashboard doesn't depend on config_manager wiring it does not otherwise use.
+const dispatchLeadConfigKey = "dispatch.lead_min"
+
+// defaultDispatchLeadMin is the fallback used when the config row is missing
+// or unparseable (spec §2 default).
+const defaultDispatchLeadMin = 30
 
 // LiveOrder is one row of the live-orders feed.
 type LiveOrder struct {
-	ID              string     `json:"id"`
-	UserName        string     `json:"user_name"`
-	Category        string     `json:"category"`
-	HelperName      *string    `json:"helper_name,omitempty"`
-	Status          string     `json:"status"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID         string    `json:"id"`
+	UserName   string    `json:"user_name"`
+	Category   string    `json:"category"`
+	HelperName *string   `json:"helper_name,omitempty"`
+	Status     string    `json:"status"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // RevenuePoint is a single bar on the 7-day revenue chart.
 type RevenuePoint struct {
-	Date         string `json:"date"`         // YYYY-MM-DD
+	Date         string `json:"date"` // YYYY-MM-DD
 	RevenueCents int    `json:"revenue_paise"`
 }
 
@@ -68,8 +81,21 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 	}{
 		{
 			"active_orders",
+			// Live booking statuses under the unified assigner: a booking is
+			// 'pending' until placed, 'accepted' once a pro is force-assigned and
+			// through en-route/arrival (those are timestamps on an 'accepted' row —
+			// see repository MarkArrived, which keeps status='accepted'), then
+			// 'in_progress' once started, plus 'arrived' for the per-line arrived
+			// state. There is no 'assigned'/'en_route' booking status in the CHECK
+			// constraint (migrations 004/054) — listing them counted nothing while
+			// dropping the entire 'accepted' bucket, i.e. every assigned-but-not-
+			// started job. 'searching' is defensively included too: the unified
+			// flow no longer produces it (booking/model.go marks it legacy), but
+			// in-flight develop bookings created before cutover can still be
+			// 'searching' — counting it keeps those transition rows from being
+			// under-counted as active orders.
 			`SELECT COUNT(*) FROM bookings
-			 WHERE status IN ('pending','assigned','en_route','in_progress','arrived')`,
+			 WHERE status IN ('pending','searching','accepted','arrived','in_progress')`,
 			&out.ActiveOrders,
 		},
 		{
@@ -81,7 +107,7 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 			"revenue_today",
 			`SELECT COALESCE(SUM(amount_paise), 0) FROM bookings
 			 WHERE status = 'completed'
-			   AND completed_at >= date_trunc('day', now())`,
+			   AND completed_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'`,
 			&out.RevenueTodayCents,
 		},
 		{
@@ -96,8 +122,7 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 		},
 		{
 			"open_disputes",
-			// Disputes table doesn't exist yet — return 0 gracefully.
-			`SELECT 0`,
+			`SELECT COUNT(*) FROM crm_disputes WHERE status NOT IN ('resolved')`,
 			&out.OpenDisputes,
 		},
 	}
@@ -109,7 +134,43 @@ func (s *Service) KPIs(ctx context.Context) (*KPIs, error) {
 			*q.dest = 0
 		}
 	}
+
+	// Bookings-at-risk: pending + unassigned bookings whose assignment window
+	// has already opened (now ≥ scheduled_time − dispatchLeadMin) — the assigner
+	// is actively failing to place them (spec §14.1). Lead minutes come from the
+	// dispatch config; on miss/parse-fail it falls back to defaultDispatchLeadMin.
+	lead := s.dispatchLeadMin(ctx)
+	if err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM bookings
+		WHERE status = 'pending'
+		  AND helper_id IS NULL
+		  AND now() >= scheduled_time - make_interval(mins => $1)
+		  AND (payment_method IS DISTINCT FROM 'cashfree' OR payment_status = 'paid')
+	`, lead).Scan(&out.BookingsAtRisk); err != nil {
+		log.Warn().Err(err).Msg("[crm.dashboard] bookings_at_risk query failed — defaulting to 0")
+		out.BookingsAtRisk = 0
+	}
 	return out, nil
+}
+
+// dispatchLeadMin reads the dispatch lead window (minutes) from app_config,
+// the same row config_manager serves. crm-api does not wire config_manager,
+// so the dashboard reads the row directly off its own pool. A missing row,
+// DB error, or unparseable value falls back to defaultDispatchLeadMin.
+func (s *Service) dispatchLeadMin(ctx context.Context) int {
+	var raw string
+	if err := s.db.QueryRow(ctx,
+		`SELECT value FROM app_config WHERE key = $1`, dispatchLeadConfigKey,
+	).Scan(&raw); err != nil {
+		return defaultDispatchLeadMin
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		log.Warn().Str("value", raw).Int("default", defaultDispatchLeadMin).
+			Msg("[crm.dashboard] invalid dispatch.lead_min — using default")
+		return defaultDispatchLeadMin
+	}
+	return n
 }
 
 // LiveOrders returns the N most recent orders. Best-effort.
@@ -152,8 +213,8 @@ func (s *Service) Revenue7d(ctx context.Context) ([]RevenuePoint, error) {
 	rows, err := s.db.Query(ctx, `
 		WITH days AS (
 		  SELECT generate_series(
-		    date_trunc('day', now()) - interval '6 days',
-		    date_trunc('day', now()),
+		    date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') - interval '6 days',
+		    date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata'),
 		    interval '1 day'
 		  ) AS day
 		)
@@ -162,8 +223,8 @@ func (s *Service) Revenue7d(ctx context.Context) ([]RevenuePoint, error) {
 		FROM days d
 		LEFT JOIN bookings b
 		  ON b.status = 'completed'
-		 AND b.completed_at >= d.day
-		 AND b.completed_at < d.day + interval '1 day'
+		 AND b.completed_at >= d.day AT TIME ZONE 'Asia/Kolkata'
+		 AND b.completed_at < (d.day + interval '1 day') AT TIME ZONE 'Asia/Kolkata'
 		GROUP BY d.day
 		ORDER BY d.day
 	`)
@@ -188,7 +249,7 @@ func (s *Service) CategoryShareToday(ctx context.Context) ([]CategoryShare, erro
 		SELECT COALESCE(sc.category, 'unknown'), COUNT(*)
 		FROM bookings b
 		LEFT JOIN service_categories sc ON sc.id = b.service_category_id
-		WHERE b.created_at >= date_trunc('day', now())
+		WHERE b.created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'
 		GROUP BY sc.category
 		ORDER BY COUNT(*) DESC
 	`)

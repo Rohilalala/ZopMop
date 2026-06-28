@@ -5,10 +5,10 @@ import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize, Spacing } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
+import { setNeedsWelcome } from '../../utils/pendingAuthStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'Welcome'>;
@@ -17,9 +17,9 @@ type Props = {
 
 const AUTO_ADVANCE_MS = 2600;
 
-export default function WelcomeScreen({ navigation, route }: Props) {
-  const { phone } = route.params;
-  const c = useColors();
+export default function WelcomeScreen({ route }: Props) {
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = authColors;
   const styles = useMemo(() => createStyles(c), [c]);
 
   const { user } = useAuth();
@@ -56,12 +56,12 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       }),
     ]).start();
 
-    const t = setTimeout(
-      () => navigation.replace('RoleSelection', { phone }),
-      AUTO_ADVANCE_MS,
-    );
+    // Clearing the welcome flag is what moves the user on: App.tsx swaps
+    // AuthNavigator → MainNavigator, which lands them per their backend
+    // role. No role selection — roles are assigned in the DB via the CRM.
+    const t = setTimeout(() => setNeedsWelcome(false), AUTO_ADVANCE_MS);
     return () => clearTimeout(t);
-  }, [navigation, phone, titleOpacity, titleY, subOpacity]);
+  }, [titleOpacity, titleY, subOpacity]);
 
   return (
     <View style={styles.root}>
@@ -69,7 +69,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
       <View style={styles.lottieWrap} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/hi-name.lottie')}
+          source={require('../../../assets/animation/hi-name.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
@@ -81,6 +81,15 @@ export default function WelcomeScreen({ navigation, route }: Props) {
         <View style={styles.content}>
           <Animated.Text
             style={[
+              styles.overline,
+              { opacity: titleOpacity, transform: [{ translateY: titleY }] },
+            ]}
+          >
+            Welcome to <Text style={styles.subtitleBrandZop}>Zop</Text>
+            <Text style={styles.subtitleBrandMop}>Mop</Text>
+          </Animated.Text>
+          <Animated.Text
+            style={[
               styles.title,
               { opacity: titleOpacity, transform: [{ translateY: titleY }] },
             ]}
@@ -90,7 +99,7 @@ export default function WelcomeScreen({ navigation, route }: Props) {
           </Animated.Text>
           <Animated.Text style={[styles.subtitle, { opacity: subOpacity }]}>
             Let's go <Text style={styles.subtitleBrandZop}>Zop</Text>
-            <Text style={styles.subtitleBrandMop}>Mop</Text>ing.
+            <Text style={styles.subtitleBrandMop}>Mop</Text>ping.
           </Animated.Text>
         </View>
       </SafeAreaView>
@@ -109,6 +118,12 @@ function createStyles(c: typeof lightColors) {
       paddingTop: Spacing['4xl'],
       gap: Spacing.md,
     },
+    overline: {
+      fontFamily: FontFamily.semibold,
+      fontSize: FontSize.xl,
+      color: c.text,
+      letterSpacing: -0.3,
+    },
     title: {
       fontFamily: FontFamily.extrabold,
       fontSize: 72,
@@ -124,7 +139,7 @@ function createStyles(c: typeof lightColors) {
     },
     subtitleBrandZop: {
       fontFamily: FontFamily.extrabold,
-      color: c.primary,
+      color: c.accent,
     },
     subtitleBrandMop: {
       fontFamily: FontFamily.extrabold,

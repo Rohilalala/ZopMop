@@ -11,25 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
-	"github.com/adityarohilla/househelp-api/internal/booking"
 	"github.com/adityarohilla/househelp-api/internal/compliance"
 	"github.com/adityarohilla/househelp-api/internal/payroll"
 	"github.com/adityarohilla/househelp-api/internal/users"
 )
 
-// UnpaidChecker is the slice of booking.Repository that SoftDeleteUser
-// needs to detect completed-but-unpaid Cashfree bookings before allowing
-// account deletion. Defined as an interface to avoid a hard dependency on
-// the booking package's full Repository surface.
-type UnpaidChecker interface {
-	GetUnpaidBookingsForCustomer(ctx context.Context, customerID string) (count int, totalPaise int64, err error)
-}
-
 // Repository handles all database operations for the auth module.
 type Repository struct {
-	db            *pgxpool.Pool
-	compliance    *compliance.Service
-	unpaidChecker UnpaidChecker
+	db         *pgxpool.Pool
+	compliance *compliance.Service
 }
 
 // NewRepository creates a new auth repository.
@@ -42,12 +32,6 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // the soft-delete transaction. Optional — Repository falls back to its
 // pre-compliance behaviour when nil. Audit C-8 / F2D-1.
 func (r *Repository) SetCompliance(c *compliance.Service) { r.compliance = c }
-
-// SetUnpaidChecker wires the booking-package Repository so SoftDeleteUser
-// can reject deletion when the customer has completed-but-unpaid Cashfree
-// bookings. Optional — Repository skips the check when nil. App Store
-// guideline 5.1.1(v) compliance + revenue-leak prevention.
-func (r *Repository) SetUnpaidChecker(c UnpaidChecker) { r.unpaidChecker = c }
 
 const userSelectFields = `id, phone, name, role, is_suspended, has_accepted_privacy_policy, created_at, updated_at`
 
@@ -309,20 +293,11 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 		return ErrActiveBooking
 	}
 
-	// Customer-side guard: block deletion when the customer has
-	// completed-but-unpaid Cashfree bookings. Without this, AnonymizeBookings
-	// AsCustomerTx below would hard-delete the unpaid rows (money never moved
-	// per moneyMovedPredicate), erasing the receivable. Apple guideline
-	// 5.1.1(v) + revenue-leak prevention.
-	if r.unpaidChecker != nil {
-		count, totalPaise, err := r.unpaidChecker.GetUnpaidBookingsForCustomer(queryCtx, userID)
-		if err != nil {
-			return fmt.Errorf("check unpaid bookings: %w", err)
-		}
-		if count > 0 {
-			return &booking.ErrUnpaidBookings{Count: count, TotalPaise: totalPaise}
-		}
-	}
+	// B7: completed-but-unpaid Cashfree bookings no longer block deletion.
+	// AnonymizeBookingsAsCustomerTx now retains them de-identified (the
+	// receivable survives for recovery + tax) instead of hard-deleting, so
+	// account deletion always proceeds — Apple guideline 5.1.1(v). Active
+	// in-flight bookings still block above (ErrActiveBooking).
 
 	// Chunk-7 active-refund guard: block deletion if the user has a
 	// refund in the chunk-3 'approved' in-flight lock state claimed

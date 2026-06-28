@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import LottieView from 'lottie-react-native';
 import { FontFamily } from '../theme';
+import { useC } from '../theme/screen';
 import { PrimaryButton } from './PrimaryButton';
 
 type Props = {
@@ -17,7 +18,7 @@ type Props = {
   testID?: string;
 };
 
-const DEFAULT_LOTTIE = require('../../assets/animation/lookaway.lottie');
+const DEFAULT_LOTTIE = require('../../assets/animation/lookaway.json');
 
 export function EmptyState({
   title,
@@ -29,6 +30,7 @@ export function EmptyState({
   style,
   testID,
 }: Props) {
+  const c = useC();
   return (
     <View style={[styles.wrap, style]} testID={testID}>
       {illustration ? (
@@ -41,8 +43,8 @@ export function EmptyState({
           style={styles.lottie}
         />
       )}
-      <Text style={styles.title}>{title}</Text>
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      <Text style={[styles.title, { color: c.text }]}>{title}</Text>
+      {subtitle ? <Text style={[styles.subtitle, { color: c.textSecondary }]}>{subtitle}</Text> : null}
       {ctaLabel && onCtaPress ? (
         <PrimaryButton label={ctaLabel} onPress={onCtaPress} style={styles.cta} />
       ) : null}

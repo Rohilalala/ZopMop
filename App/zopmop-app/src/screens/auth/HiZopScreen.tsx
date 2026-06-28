@@ -11,7 +11,7 @@ import {
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
-import { useColors, useTheme } from '../../context/ThemeContext';
+import { authColors } from '../../theme/colors';
 
 type Props = {
   navigation: NativeStackNavigationProp<AuthStackParamList, 'HiZop'>;
@@ -20,11 +20,18 @@ type Props = {
 const { height: SH } = Dimensions.get('window');
 
 export default function HiZopScreen({ navigation }: Props) {
-  const c = useColors();
-  const { isDark } = useTheme();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = authColors;
   const ref = useRef<LottieView>(null);
   const [done, setDone] = useState(false);
   const btnOpacity = useRef(new Animated.Value(0)).current;
+
+  // Fallback: if onAnimationFinish never fires (known lottie-react-native
+  // issue with .lottie files on Android), show the button after 4 seconds.
+  useEffect(() => {
+    const tid = setTimeout(() => setDone(true), 4000);
+    return () => clearTimeout(tid);
+  }, []);
 
   useEffect(() => {
     if (!done) return;
@@ -38,11 +45,11 @@ export default function HiZopScreen({ navigation }: Props) {
 
   return (
     <>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={c.background} />
+      <StatusBar barStyle="dark-content" backgroundColor={c.background} />
       <View style={[styles.root, { backgroundColor: c.background }]}>
         <LottieView
           ref={ref}
-          source={require('../../../assets/animation/hi-zop.lottie')}
+          source={require('../../../assets/animation/hi-zop.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
@@ -56,7 +63,7 @@ export default function HiZopScreen({ navigation }: Props) {
           pointerEvents={done ? 'auto' : 'none'}
         >
           <TouchableOpacity
-            style={[styles.btn, { backgroundColor: c.primary }]}
+            style={[styles.btn, { backgroundColor: c.accent }]}
             activeOpacity={0.85}
             onPress={() => navigation.replace('PhoneEntry')}
           >
@@ -96,7 +103,7 @@ const styles = StyleSheet.create({
     height: 16,
     borderRightWidth: 3,
     borderTopWidth: 3,
-    borderColor: '#FFFFFF',
+    borderColor: '#0D0D0F',
     transform: [{ rotate: '45deg' }],
     marginLeft: -4,
   },

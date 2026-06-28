@@ -3,24 +3,11 @@
 // @react-native-firebase/messaging inside individual screens and keeps
 // the route-level FCM listener in one place (usePushNotifications).
 
-export interface OfferPayload {
-  booking_id: string;
-  customer_first_name?: string;
-  address_summary?: string;
-  task_list_json?: string;
-  estimated_earnings_paise?: number;
-  estimated_duration_minutes?: number;
-  time_remaining_sec?: number;
-  /** Wall-clock epoch ms when the offer push was received locally —
-   *  used by the offer screen to derive a live countdown without
-   *  relying on the device clock vs. server clock. */
-  received_at_ms: number;
-}
-
 type ShiftEvent =
   | { type: 'zone_approval_granted'; request_id?: string; commitment_id?: string }
+  | { type: 'zone_approval_rejected'; request_id?: string; commitment_id?: string; reason?: string }
   | { type: 'zone_drift_warning'; commitment_id?: string }
-  | { type: 'booking_offer'; payload: OfferPayload }
+  | { type: 'booking_assigned'; booking_id: string }
   | { type: 'booking_status_change'; booking_id: string; status?: string };
 
 type Listener = (ev: ShiftEvent) => void;

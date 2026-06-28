@@ -7,6 +7,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { useTheme } from '../../context/ThemeContext';
 
 const fontReg: TextStyle = { fontFamily: 'PlusJakartaSans_400Regular' };
 const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
@@ -53,6 +54,7 @@ type Props = {
  * Sequenced with a brief mascot wiggle settle.
  */
 export function GreetingHeroCard({ name, active }: Props) {
+  const { isDark, colors: c } = useTheme();
   const { hello, tagline } = useMemo(() => getGreeting(name), [name]);
   const greetOpacity = useSharedValue(0);
   const tagOpacity = useSharedValue(0);
@@ -75,7 +77,7 @@ export function GreetingHeroCard({ name, active }: Props) {
         style={[
           greetStyle,
           fontReg,
-          { fontSize: 16, color: '#9CA3AF', marginTop: 32, maxWidth: '62%' },
+          { fontSize: 16, color: isDark ? '#9CA3AF' : c.textMuted, marginTop: 32, maxWidth: '62%' },
         ]}
       >
         {hello}
@@ -89,7 +91,7 @@ export function GreetingHeroCard({ name, active }: Props) {
           {
             fontSize: 38,
             lineHeight: 44,
-            color: '#0F172A',
+            color: isDark ? '#0F172A' : c.text,
             marginTop: 10,
             letterSpacing: -0.8,
             maxWidth: '62%',

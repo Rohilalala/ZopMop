@@ -1,13 +1,14 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { SkeletonBox } from '../SkeletonBox';
-import { C } from '../../theme/screen';
+import { useC } from '../../theme/screen';
 
 const TILE = (340 - 20 * 2 - 12) / 2;
 
 export function HomeScreenSkeleton() {
+  const c = useC();
   return (
-    <View style={s.root}>
+    <View style={[s.root, { backgroundColor: c.bg }]}>
       <View style={s.headerRow}>
         <View style={{ flex: 1, gap: 8 }}>
           <SkeletonBox width="55%" height={11} borderRadius={4} />
@@ -54,7 +55,7 @@ function ServiceCard() {
 }
 
 const s = StyleSheet.create({
-  root: { paddingTop: 8, backgroundColor: C.bg, flex: 1 },
+  root: { paddingTop: 8, flex: 1 },
   headerRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 20, paddingTop: 4, paddingBottom: 16,

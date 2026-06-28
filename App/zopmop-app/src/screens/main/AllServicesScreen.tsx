@@ -8,14 +8,9 @@
 //   • Service cards reuse GlassCard + ServiceThumb + serviceIcon (same vocabulary
 //     as Home).
 //   • Cart dock (HomeCartBar) + BottomTabBar (active="services").
-//
-// `instant: true` route param re-renders cards as direct InstantMatching CTAs
-// (no add-to-cart, no stepper) — preserves the existing instant flow.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  
-  Alert,
   Dimensions,
   RefreshControl,
   ScrollView,
@@ -28,25 +23,17 @@ import {
 import { LoadingBars } from '../../components/ui/LoadingBars';
 import { LoadingSkeleton } from '../../components/skeletons/LoadingSkeleton';
 import { Image } from 'expo-image';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSpring,
-  withTiming,
-  Easing,
-} from 'react-native-reanimated';
-import { ZopSleeping } from '../../components/home/ZopSleeping';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RouteProp } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 
 import type { MainStackParamList } from '../../types/navigation';
 import { listServices, type ApiService } from '../../api/services';
 import { getNearbyStats } from '../../api/insights';
 import { useCart } from '../../context/CartContext';
+import { useTheme } from '../../context/ThemeContext';
+import { useC, type ScreenColors } from '../../theme/screen';
 
 import { Bloom } from '../../components/home/Bloom';
 import { ZopRefresh } from '../../components/home/ZopRefresh';
@@ -56,6 +43,7 @@ import { ServiceThumb } from '../../components/home/ServiceThumb';
 import { serviceIcon } from '../../components/home/serviceIcon';
 import { PressFx } from '../../components/ui/PressFx';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -99,23 +87,9 @@ function groupServices(services: ApiService[]): Group[] {
   return out.filter((g) => g.services.length > 0);
 }
 
-function isInstantSvc(s: ApiService): boolean {
-  return s.min_duration_minutes <= 30;
-}
-
-// Night window — instant booking is closed between 20:00 and 06:00 since the
-// pro fleet is off-duty. Matches the LivePill night gate.
-const NIGHT_START_HOUR = 20;
-const NIGHT_END_HOUR   = 6;
-function isNightTime(d = new Date()): boolean {
-  const hr = d.getHours();
-  return hr >= NIGHT_START_HOUR || hr < NIGHT_END_HOUR;
-}
-
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 type Filter = 'all' | string;
-type Mode   = 'schedule' | 'instant';
 
 // Module-level cache so re-entering AllServices renders the grid synchronously
 // from the previous fetch instead of flashing the skeleton again. Background
@@ -126,14 +100,15 @@ const servicesMemCache: {
 } = { list: [], nearbyCount: null };
 
 export default function AllServicesScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
-  const route = useRoute<RouteProp<MainStackParamList, 'AllServices'>>();
   const insets = useSafeAreaInsets();
 
   const [services, setServices] = useState<ApiService[]>(servicesMemCache.list);
   const [loading, setLoading]   = useState(servicesMemCache.list.length === 0);
   const [filter, setFilter]     = useState<Filter>('all');
-  const [mode, setMode]         = useState<Mode>(route.params?.instant ? 'instant' : 'schedule');
   const [nearbyCount, setNearbyCount] = useState<number | null>(servicesMemCache.nearbyCount);
   // Two-phase refresh state:
   //   holdScreen — drives RefreshControl (keeps the scroll pulled down).
@@ -142,7 +117,6 @@ export default function AllServicesScreen() {
   // refresh state until the entire animation has finished.
   const [holdScreen, setHoldScreen] = useState(false);
   const [zopActive,  setZopActive]  = useState(false);
-  const instantMode = mode === 'instant';
 
   // Default coords: Sector 51, Gurugram — same fallback the home screen uses
   // before location resolves. AllServices doesn't get coords passed in, so
@@ -190,11 +164,9 @@ export default function AllServicesScreen() {
     }
   }, [fetchAll]);
 
-  // Mode + filter pipeline. Instant mode pre-filters to quick-turn services
-  // (≤ 30 min). Then category chip narrows further.
-  const modeFiltered = useMemo(() => {
-    return instantMode ? services.filter(isInstantSvc) : services;
-  }, [services, instantMode]);
+  // Filter pipeline — the browse grid shows every service; the category chip
+  // narrows it.
+  const modeFiltered = services;
 
   const visible = useMemo(() => {
     if (filter === 'all') return modeFiltered;
@@ -229,14 +201,14 @@ export default function AllServicesScreen() {
 
   return (
     <View style={styles.safe}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <ScrollView
         // Background colour bleeds into the iOS overscroll gap so the area
         // above the content stays dark instead of flashing white.
-        style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-        contentContainerStyle={{ paddingBottom: 200, backgroundColor: '#0A0A0A' }}
+        style={{ flex: 1, backgroundColor: c.bg }}
+        contentContainerStyle={{ paddingBottom: 200, backgroundColor: c.bg }}
         showsVerticalScrollIndicator={false}
         stickyHeaderIndices={[0]}
         refreshControl={
@@ -259,18 +231,13 @@ export default function AllServicesScreen() {
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              <Feather name="chevron-left" size={18} color={c.text} />
             </PressFx>
 
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>Explore Services</Text>
               <Text style={styles.subtitle}>
                 {services.length} services
-                {/* Show "N pros nearby" only in Instant mode during the day.
-                    Schedule mode + night-mode-instant suppress the count. */}
-                {instantMode && !isNightTime() && nearbyCount != null
-                  ? ` · ${nearbyCount} pros nearby`
-                  : ''}
               </Text>
             </View>
 
@@ -280,12 +247,9 @@ export default function AllServicesScreen() {
               accessibilityRole="button"
               accessibilityLabel="Search"
             >
-              <Feather name="search" size={16} color="#FFFFFF" />
+              <Feather name="search" size={16} color={c.text} />
             </PressFx>
           </View>
-
-          {/* Mode toggle: Schedule | Instant */}
-          <ModeToggle mode={mode} onChange={setMode} />
 
           {/* Category chips */}
           <ScrollView
@@ -309,8 +273,6 @@ export default function AllServicesScreen() {
         {/* Body */}
         {loading ? (
           <LoadingSkeleton variant="list-grid" rows={6} />
-        ) : instantMode && isNightTime() ? (
-          <NightClosed />
         ) : (
           groups.map((group, gi) => (
             <View key={group.id} style={styles.section}>
@@ -327,7 +289,7 @@ export default function AllServicesScreen() {
 
               <View style={styles.grid}>
                 {group.services.map((svc) => (
-                  <ServiceCard key={`${gi}-${svc.id}`} service={svc} instantMode={instantMode} />
+                  <ServiceCard key={`${gi}-${svc.id}`} service={svc} />
                 ))}
               </View>
             </View>
@@ -336,123 +298,15 @@ export default function AllServicesScreen() {
 
         {!loading && groups.every((g) => g.services.length === 0) && (
           <View style={styles.emptyWrap}>
-            <Feather name="search" size={32} color="rgba(255,255,255,0.4)" />
+            <Feather name="search" size={32} color={c.textMuted} />
             <Text style={styles.emptyTitle}>No services available</Text>
             <Text style={styles.emptySub}>Try a different filter</Text>
           </View>
         )}
       </ScrollView>
 
-      {!instantMode && <HomeCartBar />}
+      <HomeCartBar />
       <ZopRefresh refreshing={zopActive} />
-    </View>
-  );
-}
-
-// ── Mode toggle ─────────────────────────────────────────────────────────────
-
-function ModeToggle({
-  mode,
-  onChange,
-}: {
-  mode: Mode;
-  onChange: (next: Mode) => void;
-}) {
-  const [w, setW] = useState(0);
-  const offset = useSharedValue(mode === 'schedule' ? 0 : 1);
-
-  useEffect(() => {
-    // Snappy spring — matches BookingsScreen tab glider exactly.
-    offset.value = withSpring(mode === 'schedule' ? 0 : 1, {
-      damping: 26,
-      stiffness: 320,
-      mass: 0.7,
-      overshootClamping: false,
-    });
-  }, [mode]);
-
-  const gliderWidth = Math.max((w - 8) / 2, 0);
-  const gliderStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: 4 + offset.value * gliderWidth }],
-  }));
-
-  return (
-    <View style={styles.modeWrap} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
-      <Animated.View
-        style={[
-          styles.modeGlider,
-          { width: gliderWidth },
-          gliderStyle,
-        ]}
-      />
-      <ModeBtn
-        active={mode === 'schedule'}
-        onPress={() => onChange('schedule')}
-        icon="calendar"
-        label="Schedule"
-      />
-      <ModeBtn
-        active={mode === 'instant'}
-        onPress={() => onChange('instant')}
-        icon="zap"
-        label="Instant"
-      />
-    </View>
-  );
-}
-
-function ModeBtn({
-  active,
-  onPress,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onPress: () => void;
-  icon: 'calendar' | 'zap';
-  label: string;
-}) {
-  return (
-    <PressFx onPress={onPress} style={styles.modeBtn}>
-      <Feather
-        name={icon}
-        size={14}
-        color={active ? '#0D0D0F' : 'rgba(255,255,255,0.7)'}
-      />
-      <Text style={[styles.modeLabel, active && styles.modeLabelActive]}>{label}</Text>
-    </PressFx>
-  );
-}
-
-// ── Night closed empty state ────────────────────────────────────────────────
-// Instant booking is shut between 20:00 and 06:00. Show a floating Zop and a
-// "come back tomorrow" message instead of the service grid.
-
-function NightClosed() {
-  const float = useSharedValue(0);
-  useEffect(() => {
-    float.value = withRepeat(
-      withTiming(1, { duration: 3200, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-  }, []);
-  const zopStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -float.value * 10 }],
-  }));
-
-  return (
-    <View style={styles.nightWrap}>
-      <Animated.View style={[zopStyle, { marginBottom: 28 }]}>
-        <ZopSleeping size={200} />
-      </Animated.View>
-      <Text style={styles.nightTitle}>Pros are clocked out</Text>
-      <Text style={styles.nightSub}>
-        Instant booking is closed for the night.{'\n'}Come back tomorrow at 6 am.
-      </Text>
-      <Text style={styles.nightHint}>
-        Tap <Text style={{ color: '#F5A300' }}>Schedule</Text> above to book ahead.
-      </Text>
     </View>
   );
 }
@@ -470,6 +324,9 @@ function Chip({
   active: boolean;
   onPress: () => void;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   return (
     <PressFx onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
       <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{label}</Text>
@@ -486,11 +343,12 @@ function Chip({
 
 function ServiceCard({
   service,
-  instantMode,
 }: {
   service: ApiService;
-  instantMode: boolean;
 }) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { addItem, removeItem, items } = useCart();
   const [busy, setBusy] = useState(false);
@@ -509,13 +367,6 @@ function ServiceCard({
 
   const handleCardPress = () => {
     haptics.light();
-    if (instantMode) {
-      navigation.navigate('InstantMatching', {
-        serviceId: service.id,
-        serviceName: service.name,
-      });
-      return;
-    }
     if (!inCart) navigation.navigate('ServiceAbout', { service });
   };
 
@@ -525,8 +376,7 @@ function ServiceCard({
     try {
       await addItem(service.id, service.min_duration_minutes, service.name, service.base_price_paise);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg, { title: 'Could not add to cart' });
+      showError(friendlyError(err, 'Couldn’t add the service to your cart. Please try again.'), { title: 'Could not add to cart' });
     } finally {
       setBusy(false);
     }
@@ -536,6 +386,14 @@ function ServiceCard({
     if (busy || !cartItem) return;
     setBusy(true);
     try {
+      // Fixed-duration service (single slot, step 0 — e.g. Party Cleanup):
+      // there is nothing to decrement, so minus removes the item and plus is a
+      // no-op. Without this, `next` stays at the fixed duration and the item is
+      // re-added instead of removed.
+      if (service.duration_step_minutes <= 0) {
+        if (delta < 0) await removeItem(cartItem.id);
+        return;
+      }
       const next = cartItem.duration_minutes + delta * service.duration_step_minutes;
       if (next < service.min_duration_minutes) {
         await removeItem(cartItem.id);
@@ -543,8 +401,7 @@ function ServiceCard({
         await addItem(service.id, next, service.name, Math.round((service.base_price_paise * next) / service.min_duration_minutes));
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg);
+      showError(friendlyError(err, 'Couldn’t update the service. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -600,14 +457,15 @@ function ServiceCard({
                 }}
               />
             ) : (
-              <Feather name="package" size={40} color="rgba(255,255,255,0.7)" />
+              <Feather name="package" size={40} color={c.textSecondary} />
             )}
           </View>
 
           {/* rating chip */}
           {rating && (
             <View style={styles.ratingChip}>
-              <Text style={{ color: '#F5A300', fontSize: 10 }}>★</Text>
+              <Text style={{ color: c.amber, fontSize: 10 }}>★</Text>
+              {/* ink text on the white rating badge → theme-independent */}
               <Text style={[fontBold, { color: '#0D0D0F', fontSize: 10 }]}>
                 {rating}
                 {showReviews ? ` · ${reviews}` : ''}
@@ -616,8 +474,7 @@ function ServiceCard({
           )}
 
           {/* add fab OR stepper */}
-          {!instantMode && (
-            inCart ? (
+          {inCart ? (
               <View style={styles.stepper}>
                 <PressFx
                   onPress={() => handleStep(-1)}
@@ -626,11 +483,12 @@ function ServiceCard({
                   disabled={busy}
                 >
                   {busy
-                    ? <LoadingBars size="small" color="#F5A300" />
-                    : <Feather name="minus" size={16} color="#F5A300" />
+                    ? <LoadingBars size="small" color={c.amber} />
+                    : <Feather name="minus" size={16} color={c.amber} />
                   }
                 </PressFx>
                 <View style={styles.stepMid}>
+                  {/* ink + gray text on the white stepper → theme-independent */}
                   <Text style={[fontBold, { color: '#0D0D0F', fontSize: 12 }]}>
                     {cartItem.duration_minutes}
                   </Text>
@@ -660,7 +518,7 @@ function ServiceCard({
                     color={
                       cartItem.duration_minutes >= service.max_duration_minutes
                         ? 'rgba(245,163,0,0.35)'
-                        : '#F5A300'
+                        : c.amber
                     }
                   />
                 </PressFx>
@@ -672,12 +530,11 @@ function ServiceCard({
                 style={styles.addFab}
               >
                 {busy
-                  ? <LoadingBars size="small" color="#F5A300" />
-                  : <Feather name="plus" size={16} color="#F5A300" />
+                  ? <LoadingBars size="small" color={c.amber} />
+                  : <Feather name="plus" size={16} color={c.amber} />
                 }
               </PressFx>
-            )
-          )}
+            )}
         </View>
 
         {/* meta */}
@@ -688,13 +545,13 @@ function ServiceCard({
           {service.name.replace(/\n/g, ' ')}
         </Text>
         <View style={styles.priceRow}>
-          <Text style={[fontExtra, { color: '#FFFFFF', fontSize: 14 }]}>{price}</Text>
+          <Text style={[fontExtra, { color: c.text, fontSize: 14 }]}>{price}</Text>
           {mrp && (
             <Text
               style={[
                 fontMed,
                 {
-                  color: 'rgba(255,255,255,0.35)',
+                  color: c.textMuted,
                   fontSize: 11,
                   textDecorationLine: 'line-through',
                 },
@@ -708,7 +565,7 @@ function ServiceCard({
               fontSemi,
               {
                 fontSize: 10.5,
-                color: 'rgba(255,255,255,0.45)',
+                color: c.textMuted,
                 marginLeft: 'auto',
               },
             ]}
@@ -723,16 +580,33 @@ function ServiceCard({
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 pixel-identical; light adds the
+// cream bg + amber. The dark-only raised/white surfaces (chip-active ink,
+// rating badge, add-fab, stepper) are forked via locals below so dark keeps
+// its exact literal while light gets a readable equivalent.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Header overlay: opaque-ish dark wash in dark (keeps the sticky bar reading
+  // over content) → solid cream bg in light.
+  const headBg = isDark ? 'rgba(10,10,10,0.92)' : c.bg;
+  // Active chip + add-fab are dark ink chips in dark mode. On cream they invert
+  // to the ink colour so the amber label/icon stays legible (button is "dark"
+  // in both — the amber sits on a dark chip). Ink is theme-independent here.
+  const inkChip = '#0D0D0F';
+  // White surfaces (rating badge, stepper) read on the dark thumbnail in both
+  // themes — keep the near-white literal in both.
+  const whiteSurface = 'rgba(255,255,255,0.96)';
+
+  return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: c.bg },
 
   head: {
-    backgroundColor: 'rgba(10,10,10,0.92)',
+    backgroundColor: headBg,
     paddingTop: 10,
     paddingBottom: 14,
     paddingHorizontal: H_PAD,
     borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: c.glassBorder,
     zIndex: 30,
   },
   headRow: {
@@ -747,21 +621,21 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.glassHi,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   title: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 24,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.6,
     lineHeight: 26,
   },
   subtitle: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
     marginTop: 2,
   },
 
@@ -772,13 +646,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.glass,
     borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.glassBorder,
   },
   chipActive: {
-    backgroundColor: '#0D0D0F',
-    borderColor: '#0D0D0F',
+    backgroundColor: inkChip,
+    borderColor: inkChip,
     shadowColor: '#000',
     shadowOpacity: 0.4,
     shadowRadius: 14,
@@ -788,63 +662,22 @@ const styles = StyleSheet.create({
   chipLabel: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
     fontSize: 12.5,
-    color: 'rgba(255,255,255,0.7)',
+    color: c.textSecondary,
   },
-  chipLabelActive: { color: '#F5A300' },
+  chipLabelActive: { color: c.amber },
   chipCount: {
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.glassHi,
   },
   chipCountActive: { backgroundColor: 'rgba(245,163,0,0.2)' },
   chipCountText: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 10,
-    color: 'rgba(255,255,255,0.6)',
+    color: c.textSecondary,
   },
-  chipCountTextActive: { color: '#F5A300' },
-
-  // Mode toggle (Schedule | Instant) — segmented control with sliding glider.
-  modeWrap: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 12,
-    padding: 4,
-    position: 'relative',
-  },
-  modeGlider: {
-    position: 'absolute',
-    top: 4,
-    left: 0,
-    bottom: 4,
-    borderRadius: 9,
-    backgroundColor: '#F5A300',
-    shadowColor: '#F5A300',
-    shadowOpacity: 0.3,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  modeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 9,
-    zIndex: 1,
-  },
-  modeLabel: {
-    fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.7)',
-    letterSpacing: -0.13,
-  },
-  modeLabelActive: { color: '#0D0D0F' },
+  chipCountTextActive: { color: c.amber },
 
   loadWrap: { padding: 60, alignItems: 'center' },
 
@@ -858,13 +691,13 @@ const styles = StyleSheet.create({
   secTitle: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.15,
   },
   secMeta: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.4)',
+    color: c.textMuted,
   },
 
   grid: {
@@ -880,7 +713,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 99,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: whiteSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
@@ -893,7 +726,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#0D0D0F',
+    backgroundColor: inkChip,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -915,7 +748,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 6,
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: whiteSurface,
     zIndex: 3,
     shadowColor: '#000',
     shadowOpacity: 0.25,
@@ -938,7 +771,7 @@ const styles = StyleSheet.create({
 
   cardName: {
     fontSize: 13,
-    color: '#FFFFFF',
+    color: c.text,
     letterSpacing: -0.2,
     lineHeight: 16,
     marginTop: 10,
@@ -951,36 +784,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Night-closed empty state for instant mode after 8pm.
-  nightWrap: {
-    paddingTop: 60,
-    paddingBottom: 60,
-    paddingHorizontal: 32,
-    alignItems: 'center',
-  },
-  nightTitle: {
-    fontFamily: 'PlusJakartaSans_800ExtraBold',
-    fontSize: 24,
-    color: '#FFFFFF',
-    letterSpacing: -0.6,
-    textAlign: 'center',
-  },
-  nightSub: {
-    fontFamily: 'PlusJakartaSans_500Medium',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.6)',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginTop: 10,
-  },
-  nightHint: {
-    fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
-    textAlign: 'center',
-    marginTop: 24,
-  },
-
   emptyWrap: {
     paddingTop: 80,
     alignItems: 'center',
@@ -989,11 +792,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
-    color: '#FFFFFF',
+    color: c.text,
   },
   emptySub: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 13,
-    color: 'rgba(255,255,255,0.5)',
+    color: c.textMuted,
   },
-});
+  });
+}

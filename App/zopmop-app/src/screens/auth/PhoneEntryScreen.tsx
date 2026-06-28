@@ -13,13 +13,12 @@ import {
   Keyboard,
 } from 'react-native';
 import { LoadingBars } from '../../components/ui/LoadingBars';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import LottieView from 'lottie-react-native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../types/navigation';
-import { lightColors } from '../../theme/colors';
+import { lightColors, authColors } from '../../theme/colors';
 import { FontFamily, FontSize } from '../../theme';
-import { useColors } from '../../context/ThemeContext';
 import { haptics } from '../../utils/haptics';
 import { IndiaFlag } from '../../components/ui/IndiaFlag';
 import { posthog } from '../../config/posthog';
@@ -30,9 +29,15 @@ type Props = {
 };
 
 const COUNTRY_CODE = '+91';
+// Keep in sync with styles.bottom.paddingBottom — the CTA already sits this far
+// above the bottom safe-area inset, so it's subtracted from the keyboard lift.
+const BTN_PAD_BOTTOM = 16;
+const KB_GAP = 12; // breathing room left between the CTA and the keyboard top
 
 export default function PhoneEntryScreen({ navigation }: Props) {
-  const c = useColors();
+  // Auth flow is locked to light (light-mode Lottie pages) — no dark variant.
+  const c = authColors;
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(c), [c]);
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
@@ -62,8 +67,15 @@ export default function PhoneEntryScreen({ navigation }: Props) {
     const showSub = Keyboard.addListener(showEv, (e) => {
       setKbOpen(true);
       const kbH = e.endCoordinates.height;
+      // Lift the CTA only as far as it takes to clear the keyboard. The button
+      // already rests above the bottom safe-area inset + its own padding, so we
+      // lift by the actual overlap with the keyboard (plus a small gap). Clamp
+      // at 0 so a short or floating keyboard can never push the button DOWN and
+      // off the bottom of the screen.
+      const overlap = kbH - insets.bottom - BTN_PAD_BOTTOM;
+      const lift = overlap > 0 ? overlap + KB_GAP : 0;
       Animated.timing(btnLift, {
-        toValue: -kbH + 32,
+        toValue: -lift,
         duration: Platform.OS === 'ios' ? e.duration ?? 250 : 200,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
@@ -82,7 +94,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       showSub.remove();
       hideSub.remove();
     };
-  }, [btnLift]);
+  }, [btnLift, insets.bottom]);
 
   const isValid = phone.replace(/\s/g, '').length === 10;
 
@@ -135,7 +147,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
       <View style={styles.lottie} pointerEvents="none">
         <LottieView
           ref={lottieRef}
-          source={require('../../../assets/animation/phone.lottie')}
+          source={require('../../../assets/animation/phone.json')}
           autoPlay
           loop={false}
           resizeMode="cover"
@@ -212,7 +224,7 @@ export default function PhoneEntryScreen({ navigation }: Props) {
             activeOpacity={0.85}
           >
             {loading ? (
-              <LoadingBars color="#FFFFFF" size="small" />
+              <LoadingBars color="#0D0D0F" size="small" />
             ) : (
               <Text style={styles.continueButtonText}>Send OTP</Text>
             )}
@@ -298,7 +310,7 @@ function createStyles(c: typeof lightColors) {
       lineHeight: 21,
       textAlign: 'center',
     },
-    termsLink: { color: c.primary, fontFamily: FontFamily.medium },
+    termsLink: { color: c.accentOnSurface, fontFamily: FontFamily.medium },
     bottomSpacer: { flex: 1 },
     bottom: {
       paddingHorizontal: 24,
@@ -306,7 +318,7 @@ function createStyles(c: typeof lightColors) {
     },
     continueButton: {
       height: 54,
-      backgroundColor: c.primary,
+      backgroundColor: c.accent,
       borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
@@ -315,7 +327,7 @@ function createStyles(c: typeof lightColors) {
     continueButtonText: {
       fontFamily: FontFamily.semibold,
       fontSize: FontSize.md,
-      color: '#FFFFFF',
+      color: '#0D0D0F',
       letterSpacing: 0.2,
     },
   });

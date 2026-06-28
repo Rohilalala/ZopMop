@@ -1,0 +1,10 @@
+# Local-dev override: publish DB/Redis ports so a natively-run `go run ./cmd/api`
+# can reach them. Host 5432/6379 are taken by another project (isc-*), so use
+# 5433/6380. Point the backend at them via DATABASE_URL/REDIS_URL env overrides.
+services:
+  postgres:
+    ports:
+      - "5433:5432"
+  redis:
+    ports:
+      - "6380:6379"

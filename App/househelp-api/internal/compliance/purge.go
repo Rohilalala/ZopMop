@@ -230,8 +230,16 @@ func execAnonymizeReviewsAsHelper(ctx context.Context, q txQuerier, helperID str
 // MUST use `predicate IS TRUE` for keep-and-anonymise and `predicate
 // IS NOT TRUE` for hard-delete; these collapse NULL to FALSE the way
 // the WHERE clause needs.
+// B7: a COMPLETED booking is a delivered service — a financial event /
+// receivable — regardless of whether the Cashfree payment has settled yet.
+// Retain (anonymise) every completed or paid booking so account deletion never
+// erases a receivable (a completed-but-unpaid Cashfree row used to be
+// hard-deleted, which is why deletion was blocked). This intentionally retains
+// MORE than internal/booking/repository.go's "money moved" check — that one
+// still treats unpaid Cashfree as a receivable for revenue-leak detection in
+// other flows; here the goal is record retention, not money-movement.
 const moneyMovedPredicate = `(
-	(payment_method IS DISTINCT FROM 'cashfree' AND status = 'completed')
+	status = 'completed'
 	OR payment_status = 'paid'
 )`
 

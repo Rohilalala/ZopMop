@@ -11,10 +11,20 @@ type LangDict = {
   drift: Record<string, string>;
   cancel: Record<string, string>;
   tabs: Record<string, string>;
-  jobs: Record<string, string>;
+  jobs: {
+    headerTitle: string;
+    empty: { title: string; subtitle: string };
+    loadErrorBody: string;
+    sectionNewOffer: string;
+    sectionActive: string;
+    sectionToday: string;
+    activeTap: string;
+    completedSummary: string;
+    newBadge: string;
+    gotIt: string;
+  };
   profile: Record<string, string>;
   language: Record<string, string>;
-  offer: Record<string, string>;
   jobDetail: Record<string, string>;
 };
 
@@ -70,6 +80,7 @@ const hi: LangDict = {
     eightHourWarning: '8 घंटे से ज़्यादा काम आपकी सेहत के लिए ठीक नहीं है',
     save: 'सेव करें',
     overlapError: 'इस समय पहले से शिफ्ट है',
+    endBeforeStart: 'खत्म समय शुरू समय के बाद होना चाहिए',
     deleteConfirm: 'इस शिफ्ट को हटाना है?',
   },
   zoneApproval: {
@@ -83,12 +94,14 @@ const hi: LangDict = {
     waitingBody: 'एडमिन आपकी रिक्वेस्ट देख रहे हैं। मंज़ूरी मिलते ही आपको सूचना मिलेगी।',
     backToDashboard: 'डैशबोर्ड पर वापस',
     photoRequired: 'सेल्फी लेना ज़रूरी है',
+    photoTooLarge: 'यह फोटो बहुत बड़ी है। बेहतर रोशनी में या थोड़ा पीछे हटकर दोबारा लें।',
     submitFailed: 'रिक्वेस्ट भेजने में दिक्कत हुई',
+    rejected: 'आपकी ज़ोन अप्रूवल रिक्वेस्ट अस्वीकार कर दी गई।',
   },
   money: {
     title: 'पैसा',
     payoutLine: 'पेआउट {date} को प्रोसेस होगा',
-    progressLine: '{current} / 80 घंटे ऑनलाइन',
+    progressLine: '{current} / {target} घंटे ऑनलाइन',
     overtimeLine: '+ {hours} घंटे ओवरटाइम (₹90/hr)',
     onlinePay: 'ऑनलाइन pay (₹80 × {hours} घंटे)',
     overtimePay: 'ओवरटाइम (₹90 × {hours} घंटे)',
@@ -121,14 +134,15 @@ const hi: LangDict = {
   },
   jobs: {
     headerTitle: 'आज की booking',
-    'empty.title': 'अभी कोई booking नहीं',
-    'empty.subtitle': 'बुकिंग आते ही यहाँ दिखेंगी',
+    empty: { title: 'अभी कोई booking नहीं', subtitle: 'बुकिंग आते ही यहाँ दिखेंगी' },
+    loadErrorBody: 'काम लोड नहीं हो पाए। कनेक्शन जांचें और दोबारा try करें।',
     sectionNewOffer: 'नई booking',
     sectionActive: 'अभी का काम',
     sectionToday: 'आज की पूरी हुई',
     activeTap: 'विवरण देखें',
     completedSummary: '{count} सेवा · {minutes}min · ₹{earnings}',
-    secondsShort: '{n}s',
+    newBadge: 'नई',
+    gotIt: 'समझ गया',
   },
   profile: {
     assignedArea: 'आपका असाइन्ड एरिया',
@@ -137,6 +151,8 @@ const hi: LangDict = {
     onlineHours: 'ऑनलाइन घंटे',
     totalEarnings: 'कुल कमाई',
     changeLanguage: 'भाषा बदलें',
+    declareLeave: 'छुट्टी घोषित करें',
+    leaveHistory: 'छुट्टी इतिहास',
     support: 'सपोर्ट',
     about: 'हमारे बारे में',
     logout: 'लॉग आउट',
@@ -149,20 +165,14 @@ const hi: LangDict = {
     titleEn: 'Choose Language',
     hindi: 'हिंदी',
     english: 'English',
+    bangla: 'बांग्ला',
     hindiSubtitle: 'Hindi',
     englishSubtitle: 'अंग्रेज़ी',
+    banglaSubtitle: 'Bangla',
     changed: 'भाषा बदल दी गई',
-  },
-  offer: {
-    title: 'नई booking आई है',
-    earningsLabel: 'अनुमानित कमाई',
-    durationLabel: 'कुल समय',
-    minutesShort: '{n} min',
-    accept: 'स्वीकार करें',
-    decline: 'मना करें',
-    expired: 'Offer expired',
-    busyWarning: 'आप पहले से एक काम कर रहे हैं',
-    serviceLine: '{name} · {qty}',
+    confirmTitle: 'भाषा बदलें?',
+    confirmBody: 'क्या आप वाकई ऐप की भाषा बदलना चाहते हैं?',
+    confirmCta: 'हां, बदलें',
   },
   jobDetail: {
     headerStepAccepted: 'ग्राहक के पास जाएं',
@@ -183,12 +193,25 @@ const hi: LangDict = {
     finishJob: 'काम पूरा करें',
     finishConfirmTitle: 'काम खत्म करें?',
     finishConfirmBody: 'क्या आप काम खत्म करना चाहते हैं?',
+    startOtpTitle: 'ग्राहक का START OTP डालें',
+    startOtpCta: 'जाँचें और शुरू करें',
+    endOtpTitle: 'ग्राहक का END OTP डालें',
+    endOtpCta: 'जाँचें और खत्म करें',
+    otpWrong: 'गलत OTP। ग्राहक से दोबारा पढ़ने को कहें।',
+    awaitingPaymentTitle: 'भुगतान बाकी है',
+    awaitingPaymentBody: 'ग्राहक ने अभी भुगतान नहीं किया। नकद लें, या ऑनलाइन भुगतान का इंतज़ार करें।',
+    collectCash: '₹{amount} नकद लें',
+    collectCashConfirmTitle: 'नकद मिल गया?',
+    collectCashConfirmBody: 'पुष्टि करें कि आपको ₹{amount} नकद मिले। इससे फिनिश OTP खुलेगा।',
     elapsedLabel: 'बीता समय',
     serviceStart: 'शुरू करें',
     serviceDone: 'Done',
     serviceSkip: 'Skip',
     serviceSkippedLabel: 'Skipped',
+    serviceFallbackName: 'सेवा',
     skipReasonTitle: 'क्यों skip कर रहे हैं?',
+    skipConfirmTitle: 'यह सेवा skip करें?',
+    skipConfirmBody: 'इससे सेवा job से हमेशा के लिए हट जाएगी। इसे वापस नहीं किया जा सकता।',
     summaryDuration: 'कुल समय',
     summaryServices: 'सेवाएं',
     summaryEarnings: 'कमाई',
@@ -197,6 +220,9 @@ const hi: LangDict = {
     cancelJob: 'Booking रद्द करें',
     callUnavailable: 'Contact नहीं ले सकते अभी',
     callNetworkError: 'Network issue. कृपया दोबारा try करें',
+    cancelledTitle: 'यह booking रद्द हो गई',
+    cancelledBody: 'यह job अब आपको assign नहीं है।',
+    backToJobs: 'Jobs पर वापस जाएं',
   },
 };
 

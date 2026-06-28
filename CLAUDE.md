@@ -1,3 +1,44 @@
+# CLAUDE.md — ZopMop Repo
+Project-specific instructions. Read after ~/.claude/CLAUDE.md.
+Last revised: <!-- LAST_REVISED: 2026-06-05 -->
+
+## Session Start (ZopMop-specific additions)
+After completing the global session start ritual, also read:
+- audit/ directory — know which audit items are still open before touching prod paths
+  (audit/security/, audit/money/, audit/findings/; business rules in docs/business-rules-audit-2026-05-21.md)
+- Any open PR descriptions on the current branch
+
+## Stack Quick Reference
+Backend:  Go + Fiber  |  cd App/househelp-api && go run ./cmd/api
+Mobile:   RN + Expo   |  cd App/zopmop-app && npx expo start
+CRM:      React + Vite |  cd App/zopmop-crm && npm run dev
+DB:       pg + postgis + redis (local via docker-compose)
+Deploy:   Railway — push to main triggers prod deploy
+
+## ZopMop Non-Negotiables
+- Integer paise. No floats. Ever. Money = int64 paise in every layer.
+- IsProduction() guard on: OTP sends, SMS, payment triggers, webhook calls.
+- All timestamps stored and displayed in Asia/Kolkata.
+- git worktree add before any parallel workstream (violated twice — both caused messes).
+- Read audit/ before touching payroll, pricing, dispatch, or auth paths.
+- CRM is not deployed to prod. Do not reference CRM endpoints from mobile or backend prod.
+
+## Open Blockers — do not close without explicit sign-off
+Business rules:  C1, C7, C10  →  docs/business-rules-audit-2026-05-21.md
+Money:           LB-1, LB-6   →  audit/money/SYNTHESIS.md (+ audit/money/REVIEW.md)
+Security:        Maps key history scrub, webhook SSRF  →  audit/security/SYNTHESIS.md
+
+## Branch Flow
+feature/<slug> → develop → main (prod, Railway auto-deploy)
+Never push directly to main. PR only.
+
+## Self-Improvement
+Follow ~/.claude/CLAUDE.md Section 5.
+ZopMop-specific findings go to ~/.claude/projects/zopmop.md or the relevant
+directory CLAUDE.md. Update audit/ files if a finding changes audit status.
+
+---
+
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 

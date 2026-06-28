@@ -68,11 +68,11 @@ func (r *Repository) List(ctx context.Context, f ListFilter) (*ListResponse, err
 
 	// Order column. Whitelist to avoid sql injection via SortBy.
 	sortColMap := map[string]string{
-		"":            "u.created_at",
-		"joined_at":   "u.created_at",
+		"":             "u.created_at",
+		"joined_at":    "u.created_at",
 		"total_orders": "stats.total_orders",
-		"ltv_cents":   "stats.ltv_cents",
-		"name":        "u.name",
+		"ltv_cents":    "stats.ltv_cents",
+		"name":         "u.name",
 	}
 	sortCol, ok := sortColMap[f.SortBy]
 	if !ok {
@@ -219,7 +219,7 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		    COUNT(*)                                        AS total_orders,
 		    COALESCE(SUM(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0) AS ltv_cents,
 		    COALESCE(AVG(b.amount_paise) FILTER (WHERE b.status = 'completed'), 0)::int AS avg_order_cents,
-		    COUNT(*) FILTER (WHERE b.status IN ('pending','assigned','en_route','in_progress','arrived')) AS active_orders,
+		    COUNT(*) FILTER (WHERE b.status IN ('pending','searching','dispatching','accepted','arrived','in_progress')) AS active_orders,
 		    MAX(b.created_at)                               AS last_active_at
 		  FROM bookings b
 		  WHERE b.customer_id = u.id
@@ -227,8 +227,8 @@ func (r *Repository) Get(ctx context.Context, id string) (*Detail, error) {
 		WHERE u.id = $1::uuid AND u.deleted_at IS NULL
 	`
 	var (
-		d       Detail
-		status  string
+		d      Detail
+		status string
 	)
 	err := r.read.QueryRow(ctx, q, id).Scan(
 		&d.ID, &d.Phone, &d.Email, &d.Name, &d.AvatarURL, &d.Role,
@@ -434,7 +434,7 @@ func (r *Repository) HasActiveOrders(ctx context.Context, userID string) (bool, 
 	err := r.read.QueryRow(ctx, `
 		SELECT COUNT(*) FROM bookings
 		WHERE customer_id = $1::uuid
-		  AND status IN ('pending','assigned','en_route','in_progress','arrived')
+		  AND status IN ('pending','searching','dispatching','accepted','arrived','in_progress')
 	`, userID).Scan(&count)
 	if err != nil {
 		return false, 0, fmt.Errorf("check active orders: %w", err)

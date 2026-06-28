@@ -44,6 +44,27 @@ func (r *Repository) GetBalance(ctx context.Context, userID string) (int64, erro
 	return balance, nil
 }
 
+// GetBalanceTx returns the current balance for a user inside the supplied tx,
+// taking a row-level lock (FOR UPDATE) so a concurrent debit can't race the
+// caller between this read and its own write. Returns 0 when no wallet row
+// exists yet (the row is lazily created on first mutation). Used by the
+// booking split-payment path to read the available balance and debit
+// min(balance, net) atomically.
+func (r *Repository) GetBalanceTx(ctx context.Context, tx pgx.Tx, userID string) (int64, error) {
+	var balance int64
+	err := tx.QueryRow(ctx,
+		`SELECT balance_paise FROM wallets WHERE user_id = $1::uuid FOR UPDATE`,
+		userID,
+	).Scan(&balance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("get balance (tx): %w", err)
+	}
+	return balance, nil
+}
+
 // History returns wallet_transactions for a user in reverse-chronological
 // order. Cursor is (created_at, id) — caller passes the values from the
 // last row of the previous page. limit is clamped to [1, 100].
@@ -131,6 +152,23 @@ func (r *Repository) ApplyTransactionTx(ctx context.Context, tx pgx.Tx, in Walle
 		return nil, fmt.Errorf("lock wallet row: %w", err)
 	}
 
+	// Idempotency: with the wallet row locked (serializing same-user
+	// writes), bail before mutating balance if this Reference already
+	// landed. The partial unique index uq_wallet_tx_reference is the hard
+	// backstop for the rare cross-user / non-serialized race.
+	if in.Reference != "" {
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM wallet_transactions WHERE reference = $1)`,
+			in.Reference,
+		).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("check wallet tx reference: %w", err)
+		}
+		if exists {
+			return nil, ErrDuplicateTransaction
+		}
+	}
+
 	newBalance := current + in.AmountPaise
 	if newBalance < 0 {
 		return nil, ErrInsufficientBalance
@@ -147,18 +185,24 @@ func (r *Repository) ApplyTransactionTx(ctx context.Context, tx pgx.Tx, in Walle
 	var txID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO wallet_transactions
-		  (user_id, amount_paise, balance_after, kind, booking_id, payment_id, note)
+		  (user_id, amount_paise, balance_after, kind, booking_id, payment_id, note, reference)
 		VALUES (
 		  $1::uuid, $2, $3, $4,
 		  CASE WHEN $5::text = '' THEN NULL ELSE $5::uuid END,
 		  CASE WHEN $6::text = '' THEN NULL ELSE $6::uuid END,
-		  NULLIF($7, '')
+		  NULLIF($7, ''), NULLIF($8, '')
 		)
+		ON CONFLICT (reference) WHERE reference IS NOT NULL DO NOTHING
 		RETURNING id::text
 	`,
 		in.UserID, in.AmountPaise, newBalance, string(in.Kind),
-		ptrOrEmpty(in.BookingID), ptrOrEmpty(in.PaymentID), in.Note,
+		ptrOrEmpty(in.BookingID), ptrOrEmpty(in.PaymentID), in.Note, in.Reference,
 	).Scan(&txID); err != nil {
+		// ON CONFLICT DO NOTHING returns no row when the reference
+		// already exists — a concurrent racer beat the pre-check above.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrDuplicateTransaction
+		}
 		return nil, fmt.Errorf("insert wallet_transactions: %w", err)
 	}
 

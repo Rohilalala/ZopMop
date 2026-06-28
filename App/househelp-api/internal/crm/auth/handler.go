@@ -151,6 +151,13 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 	}
 	res, err := h.svc.Refresh(c.UserContext(), cookieVal, c.Get("User-Agent"), c.IP(), c.Get("X-Request-ID"))
 	if err != nil {
+		// Benign multi-tab rotation race: another leg already rotated this
+		// session. The family is still alive and a fresh cookie was just
+		// issued to the winning request — do NOT clear the shared cookie,
+		// or we'd force-log-out every tab. Client retries once.
+		if errors.Is(err, ErrSessionRotationRace) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "rotation_race"})
+		}
 		h.clearRefreshCookie(c)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "session expired"})
 	}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -21,6 +21,9 @@ import type { MainStackParamList } from '../../types/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { fileDispute, DISPUTE_REASON_LABELS, type DisputeReason } from '../../api/disputes';
 import { PressFx } from '../../components/ui/PressFx';
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
+import { friendlyError } from '../../utils/errors';
 import { showError, showSuccess } from '../../utils/toast';
 import { haptics } from '../../utils/haptics';
 
@@ -34,6 +37,9 @@ type Nav = NativeStackNavigationProp<MainStackParamList, 'ReportIssue'>;
 type Route = RouteProp<MainStackParamList, 'ReportIssue'>;
 
 export default function ReportIssueScreen() {
+  const { isDark } = useTheme();
+  const c = useC();
+  const styles = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const route = useRoute<Route>();
@@ -56,8 +62,7 @@ export default function ReportIssueScreen() {
       showSuccess('Dispute filed. We will review within 48 hours.');
       navigation.goBack();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      showError(msg, { title: 'Could not file dispute' });
+      showError(friendlyError(err, 'Couldn’t file your dispute. Please try again.'), { title: 'Could not file dispute' });
     } finally {
       setSubmitting(false);
     }
@@ -65,12 +70,12 @@ export default function ReportIssueScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0A0A0A" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={12}>
-          <Feather name="x" size={22} color="rgba(255,255,255,0.8)" />
+          <Feather name="x" size={22} color={c.textSecondary} />
         </TouchableOpacity>
         <Text style={[fontBold, styles.title]}>Report an issue</Text>
         {serviceName ? (
@@ -110,7 +115,7 @@ export default function ReportIssueScreen() {
             value={description}
             onChangeText={setDescription}
             placeholder="Describe what happened (min 10 characters)..."
-            placeholderTextColor="rgba(255,255,255,0.25)"
+            placeholderTextColor={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.35)'}
             multiline
             numberOfLines={5}
             maxLength={2000}
@@ -140,24 +145,36 @@ export default function ReportIssueScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root:              { flex: 1, backgroundColor: '#0A0A0A' },
-  header:            { paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  backBtn:           { alignSelf: 'flex-start', marginBottom: 12 },
-  title:             { fontSize: 22, color: '#FFFFFF', marginBottom: 2 },
-  subtitle:          { fontSize: 13, color: 'rgba(255,255,255,0.45)' },
-  scroll:            { flex: 1 },
-  content:           { padding: 20, gap: 12 },
-  sectionLabel:      { fontSize: 14, color: 'rgba(255,255,255,0.6)', marginTop: 8, marginBottom: 4 },
-  reasonGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  reasonChip:        { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)' },
-  reasonChipActive:  { backgroundColor: 'rgba(245,163,0,0.15)', borderColor: '#F5A300' },
-  reasonLabel:       { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
-  reasonLabelActive: { color: '#F5A300' },
-  input:             { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)', padding: 14, color: '#FFFFFF', fontSize: 14, minHeight: 120, marginTop: 4 },
-  charCount:         { fontSize: 11, color: 'rgba(255,255,255,0.25)', textAlign: 'right' },
-  submitBtn:         { backgroundColor: '#F5A300', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
-  submitBtnDisabled: { opacity: 0.35 },
-  submitLabel:       { fontSize: 16, color: '#0D0D0F' },
-  footNote:          { fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', lineHeight: 18, marginTop: 4 },
-});
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors
+// slate). Dark stays #0A0A0A + amber #F5A300 identical; light adds the cream bg
+// + amber. Ink on the amber submit button stays #0D0D0F in both themes.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  // Input / chip fill (rgba(255,255,255,0.06) in dark) → glassHi token.
+  // The two dim caption greys (0.25 / 0.30) sit below textMuted (0.45), so they
+  // fork to keep dark pixel-identical rather than brightening to the token.
+  const dimCaption = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(13,13,15,0.35)';
+  const footCaption = isDark ? 'rgba(255,255,255,0.3)' : 'rgba(13,13,15,0.40)';
+
+  return StyleSheet.create({
+    root:              { flex: 1, backgroundColor: c.bg },
+    header:            { paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.glassBorder },
+    backBtn:           { alignSelf: 'flex-start', marginBottom: 12 },
+    title:             { fontSize: 22, color: c.text, marginBottom: 2 },
+    subtitle:          { fontSize: 13, color: c.textMuted },
+    scroll:            { flex: 1 },
+    content:           { padding: 20, gap: 12 },
+    sectionLabel:      { fontSize: 14, color: c.textSecondary, marginTop: 8, marginBottom: 4 },
+    reasonGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    reasonChip:        { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: c.glassHi, borderWidth: StyleSheet.hairlineWidth, borderColor: c.glassBorderHi },
+    reasonChipActive:  { backgroundColor: 'rgba(245,163,0,0.15)', borderColor: c.amber },
+    reasonLabel:       { fontSize: 13, color: c.textSecondary },
+    reasonLabelActive: { color: c.amber },
+    input:             { backgroundColor: c.glassHi, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: c.glassBorderHi, padding: 14, color: c.text, fontSize: 14, minHeight: 120, marginTop: 4 },
+    charCount:         { fontSize: 11, color: dimCaption, textAlign: 'right' },
+    submitBtn:         { backgroundColor: c.amber, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+    submitBtnDisabled: { opacity: 0.35 },
+    // Ink on amber — same in both themes.
+    submitLabel:       { fontSize: 16, color: '#0D0D0F' },
+    footNote:          { fontSize: 12, color: footCaption, textAlign: 'center', lineHeight: 18, marginTop: 4 },
+  });
+}

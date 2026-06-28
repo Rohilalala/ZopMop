@@ -115,15 +115,33 @@ func (r *Repository) ResetFailedLogin(ctx context.Context, adminID string) error
 }
 
 // SetTOTPSecret persists a freshly-generated TOTP secret for the admin.
-// Called once at initial enrolment, not for re-validation.
+// Does NOT mark the admin enrolled — enrolment is only confirmed once the
+// admin proves possession via a successful verify (see MarkTOTPEnrolled).
+// Persisting totp_enrolled_at here previously bricked accounts that abandoned
+// the first-login QR step: the secret existed, so enrolled looked complete,
+// so otpauth_url was never shown again.
 func (r *Repository) SetTOTPSecret(ctx context.Context, adminID, secret string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE crm_admins
-		SET totp_secret = $2, totp_enrolled_at = now(), updated_at = now()
+		SET totp_secret = $2, updated_at = now()
 		WHERE id = $1
 	`, adminID, secret)
 	if err != nil {
 		return fmt.Errorf("set totp secret: %w", err)
+	}
+	return nil
+}
+
+// MarkTOTPEnrolled stamps totp_enrolled_at on the first successful TOTP
+// verification, completing enrolment. Idempotent: only sets it once.
+func (r *Repository) MarkTOTPEnrolled(ctx context.Context, adminID string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE crm_admins
+		SET totp_enrolled_at = now(), updated_at = now()
+		WHERE id = $1 AND totp_enrolled_at IS NULL
+	`, adminID)
+	if err != nil {
+		return fmt.Errorf("mark totp enrolled: %w", err)
 	}
 	return nil
 }
@@ -145,6 +163,22 @@ func (r *Repository) CreateSession(ctx context.Context, s *Session) error {
 		return fmt.Errorf("create session: %w", err)
 	}
 	return nil
+}
+
+// ConsumeChallenge records a TOTP challenge jti as used. Returns true if this
+// call consumed it (fresh), false if it was already used (replay). The
+// INSERT ... ON CONFLICT DO NOTHING is atomic, so two concurrent replays of
+// the same challenge yield exactly one fresh==true.
+func (r *Repository) ConsumeChallenge(ctx context.Context, jti, adminID string, expiresAt time.Time) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		INSERT INTO crm_used_challenges (jti, admin_id, expires_at)
+		VALUES ($1::uuid, $2::uuid, $3)
+		ON CONFLICT (jti) DO NOTHING
+	`, jti, adminID, expiresAt)
+	if err != nil {
+		return false, fmt.Errorf("consume challenge: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // GetSessionByHash looks up an active-leg session (not revoked, not
@@ -323,14 +357,18 @@ func (r *Repository) RevokeSession(ctx context.Context, sessionID string) error 
 	return nil
 }
 
-// ListSessions lists active (not revoked, not expired) sessions for an admin.
+// ListSessions lists active (not revoked, not expired, not rotated) sessions
+// for an admin. Rotated legs (rotated_at IS NOT NULL) are superseded refresh
+// tokens — listing them floods the page with dead duplicates and makes the
+// "Revoke" control useless (revoking a rotated leg is a no-op against the
+// device's live leg), so they are excluded.
 func (r *Repository) ListSessions(ctx context.Context, adminID string) ([]Session, error) {
 	const q = `
 		SELECT id, admin_id, refresh_token_hash, user_agent,
 		       host(ip_address)::text, issued_at, last_used_at,
 		       expires_at, revoked_at
 		FROM crm_admin_sessions
-		WHERE admin_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		WHERE admin_id = $1 AND revoked_at IS NULL AND rotated_at IS NULL AND expires_at > now()
 		ORDER BY last_used_at DESC
 	`
 	rows, err := r.db.Query(ctx, q, adminID)

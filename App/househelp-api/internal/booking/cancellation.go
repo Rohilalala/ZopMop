@@ -28,9 +28,12 @@ func FreeCancelDeadline(start time.Time) time.Time {
 	return start.Add(-FreeCancellationWindow)
 }
 
-// IsFreeCancellation reports whether cancelling at `now` is inside the free
-// window for a booking starting at `start`. Free iff now is strictly before
-// start - 30m.
-func IsFreeCancellation(start, now time.Time) bool {
-	return now.Before(FreeCancelDeadline(start))
+// IsFreeCancellation reports whether cancelling is free. Per product policy
+// cancelling an order is ALWAYS free — there is no cancellation fee, regardless
+// of how close to the scheduled start the customer cancels. The window/deadline
+// helpers above are retained only for the informational free-cancel copy the
+// app renders (CanCancelFree / FreeCancelUntil in GetBooking); no fee is ever
+// charged on the cancel path (see CancelBooking).
+func IsFreeCancellation(_, _ time.Time) bool {
+	return true
 }

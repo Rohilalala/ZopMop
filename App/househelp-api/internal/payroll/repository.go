@@ -57,8 +57,8 @@ func (r *Repository) CloseStaleSessionsForCycle(ctx context.Context, proID strin
 	defer cancel()
 	res, err := r.db.Exec(ctx, `
 		UPDATE shift_sessions ss
-		   SET offline_at     = sc.shift_date + sc.end_time,
-		       online_minutes = GREATEST(0, EXTRACT(EPOCH FROM ((sc.shift_date + sc.end_time) - ss.online_at))::int / 60)
+		   SET offline_at     = (sc.shift_date + sc.end_time) AT TIME ZONE 'Asia/Kolkata',
+		       online_minutes = GREATEST(0, EXTRACT(EPOCH FROM (((sc.shift_date + sc.end_time) AT TIME ZONE 'Asia/Kolkata') - ss.online_at))::int / 60)
 		  FROM shift_commitments sc
 		 WHERE sc.id = ss.commitment_id
 		   AND ss.pro_id = $1::uuid
@@ -96,6 +96,31 @@ func (r *Repository) AggregateActivity(ctx context.Context, proID string, cycleS
 	return onlineMin, workingMin, nil
 }
 
+// SumDeductionsForCycle totals non-reversed admin_pro_deductions whose
+// snapshotted fortnight_start falls inside the cycle window. Rows with a
+// NULL fortnight_start are attributed to the cycle that was open when they
+// were created (created_at within the cycle) so a deduction entered without
+// an explicit fortnight still lands on the right payout.
+func (r *Repository) SumDeductionsForCycle(ctx context.Context, proID string, cycleStart, cycleEnd time.Time) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var total int64
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_paise), 0)::bigint
+		  FROM admin_pro_deductions
+		 WHERE pro_id = $1::uuid
+		   AND reversed_at IS NULL
+		   AND COALESCE(
+		         fortnight_start,
+		         (created_at AT TIME ZONE 'Asia/Kolkata')::date
+		       ) BETWEEN $2::date AND $3::date
+	`, proID, cycleStart.Format("2006-01-02"), cycleEnd.Format("2006-01-02")).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // UpsertPayout writes the payouts row for (pro, cycle_start) if no
 // row exists yet. ON CONFLICT DO NOTHING means a re-run of the cron
 // (or a manual replay) is safe and never overwrites a row an admin
@@ -115,14 +140,14 @@ func (r *Repository) UpsertPayout(ctx context.Context, proID string, cycle Cycle
 			$1::uuid, $2::date, $3::date,
 			$4, $5,
 			$6, $7, $8,
-			0, $9, 'pending_manual_payout'
+			$9, $10, 'pending_manual_payout'
 		)
 		ON CONFLICT (pro_id, cycle_start) DO NOTHING
 	`,
 		proID, cycle.StartDate(), cycle.EndDate(),
 		p.OnlineMinutes, p.WorkingMinutes,
 		p.BasePayPaise, p.BonusPayPaise, p.GrossPayPaise,
-		p.NetPayPaise,
+		p.DeductionsPaise, p.NetPayPaise,
 	)
 	if err != nil {
 		return false, err

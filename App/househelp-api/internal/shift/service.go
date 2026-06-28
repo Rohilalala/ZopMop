@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -18,14 +19,31 @@ type Notifier interface {
 	PushToAdminGroup(ctx context.Context, title, body string, data map[string]string) error
 }
 
+// CancelHooks lets the wiring layer plug in the booking-side side
+// effects of a pro cancellation (customer push + outbox event) without
+// the shift package importing the notification/booking packages. All
+// calls are best-effort: a push failure must not roll back the cancel,
+// which is already committed to the DB by the time these fire.
+//
+// Refund orchestration and automatic re-dispatch are intentionally NOT
+// wired here — they are a product decision (whether a prepaid customer
+// is auto-refunded vs auto-rebooked) and are tracked separately.
+type CancelHooks interface {
+	NotifyCustomerBookingCancelled(ctx context.Context, customerID, bookingID string) error
+}
+
 type Service struct {
-	repo *Repository
-	ntf  Notifier
+	repo        *Repository
+	ntf         Notifier
+	cancelHooks CancelHooks
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
 func (s *Service) SetNotifier(n Notifier) { s.ntf = n }
+
+// SetCancelHooks injects the customer-facing cancel side effects.
+func (s *Service) SetCancelHooks(h CancelHooks) { s.cancelHooks = h }
 
 // istLocation is the canonical India Standard Time zone — load once.
 var istLocation = func() *time.Location {
@@ -173,7 +191,13 @@ func (s *Service) decrementLeaveBalance(ctx context.Context, proID string) error
 // opens a session. Outside-zone path returns LocationOK=false +
 // RequiresManualApproval=true unless an approval is already on file
 // for this commitment.
-func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat, lng float64) (*GoOnlineResult, error) {
+func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat, lng float64, selfie string) (*GoOnlineResult, error) {
+	// Must be an image data URL — reject empty AND non-image values (e.g. a
+	// "javascript:"/"data:text/html" payload that the CRM would render in an
+	// <a href>, a stored-XSS vector).
+	if !strings.HasPrefix(selfie, "data:image/") {
+		return nil, ErrSelfieRequired
+	}
 	c, err := s.repo.GetCommitmentForPro(ctx, proID, commitmentID)
 	if err != nil {
 		return nil, err
@@ -215,30 +239,38 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 
 	locationOK := false
 	var distance float64
-	var zoneErr error
 	if !approved {
 		_, zLat, zLng, shiftRadiusKm, zErr := s.repo.CurrentZoneAssignment(ctx, proID)
-		zoneErr = zErr
-		if zErr == nil {
-			distance = haversineMeters(lat, lng, zLat, zLng)
-			// Per-zone Go-Online verification radius — distinct
-			// from service_zones.radius_km (the customer-facing
-			// service area). Ops can tune per-zone; default is
-			// 1.0 km (the spec's original number).
-			locationOK = distance <= shiftRadiusKm*1000
+		if zErr != nil {
+			// A missing zone assignment is a precondition failure the
+			// app must handle distinctly (412) — not a radius miss that
+			// dumps the pro into the selfie flow with "0m away". Any
+			// other lookup error (DB blip/timeout) is a genuine 500, not
+			// a silent manual-approval.
+			if errors.Is(zErr, ErrNoZoneAssigned) {
+				return nil, ErrNoZoneAssigned
+			}
+			return nil, fmt.Errorf("zone assignment lookup: %w", zErr)
 		}
+		distance = haversineMeters(lat, lng, zLat, zLng)
+		// Per-zone Go-Online verification radius — distinct
+		// from service_zones.radius_km (the customer-facing
+		// service area). Ops can tune per-zone; default is
+		// 1.0 km (the spec's original number).
+		locationOK = distance <= shiftRadiusKm*1000
 	}
 
-	if !approved && (zoneErr != nil || !locationOK) {
+	if !approved && !locationOK {
 		// Surface the manual-approval pathway. If a pending request
-		// already exists, signal that too — the app shouldn't ask
-		// the pro to upload again.
+		// already exists, signal that so the app routes the pro to the
+		// "waiting for approval" state instead of asking for another
+		// selfie (a resubmit would 409 ErrApprovalPending).
 		_, hasPending, _ := s.repo.PendingApprovalForCommitment(ctx, commitmentID)
-		_ = hasPending
 		return &GoOnlineResult{
 			LocationOK:             false,
 			RequiresManualApproval: true,
 			DistanceMeters:         distance,
+			ApprovalPending:        hasPending,
 		}, nil
 	}
 
@@ -247,7 +279,7 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 		_ = s.repo.MarkLateShow(ctx, commitmentID)
 	}
 
-	sessID, err := s.repo.OpenSession(ctx, commitmentID, proID, lat, lng, approved || locationOK, approved, adminID)
+	sessID, err := s.repo.OpenSession(ctx, commitmentID, proID, lat, lng, approved || locationOK, approved, adminID, selfie)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +294,10 @@ func (s *Service) GoOnline(ctx context.Context, proID, commitmentID string, lat,
 }
 
 // GoOffline closes the session unless bookings are still pending.
-func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error {
+func (s *Service) GoOffline(ctx context.Context, proID, sessionID, selfie string) error {
+	if !strings.HasPrefix(selfie, "data:image/") {
+		return ErrSelfieRequired
+	}
 	pending, err := s.repo.PendingBookingsCountForPro(ctx, proID)
 	if err != nil {
 		return err
@@ -270,7 +305,7 @@ func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error 
 	if pending > 0 {
 		return ErrBookingsPending
 	}
-	minutes, err := s.repo.CloseSession(ctx, sessionID)
+	minutes, err := s.repo.CloseSession(ctx, sessionID, selfie)
 	if err != nil {
 		return err
 	}
@@ -278,6 +313,56 @@ func (s *Service) GoOffline(ctx context.Context, proID, sessionID string) error 
 		log.Warn().Err(err).Msg("[shift] bump online minutes failed")
 	}
 	return nil
+}
+
+// ExpireStaleSessions force-closes any open shift session whose committed
+// shift window has already ended (the pro never went offline), unless the pro
+// still has a booking in flight. Mirrors a manual go-offline: closes the
+// session, marks the commitment completed, and bumps online minutes. Returns
+// the number of sessions closed. Intended to run on a short periodic sweep.
+func (s *Service) ExpireStaleSessions(ctx context.Context) (int, error) {
+	rows, err := s.repo.ListExpirableSessions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	now := IST()
+	closed := 0
+	for _, r := range rows {
+		_, end, werr := commitmentWindow(&Commitment{ShiftDate: r.ShiftDate, StartTime: r.StartTime, EndTime: r.EndTime})
+		if werr != nil {
+			// Unparseable / overnight window — can't safely compute the end; skip.
+			log.Warn().Err(werr).Str("commitment_id", r.CommitmentID).Msg("[shift] expire sweep: skip (bad window)")
+			continue
+		}
+		if !now.After(end) {
+			continue // still inside the committed shift window
+		}
+		// Shift window has ended. Don't yank a pro who is mid-job — leave the
+		// session open; the next sweep closes it once the job clears.
+		pending, perr := s.repo.PendingBookingsCountForPro(ctx, r.ProID)
+		if perr != nil {
+			log.Warn().Err(perr).Str("pro_id", r.ProID).Msg("[shift] expire sweep: pending-bookings check failed; skip")
+			continue
+		}
+		if pending > 0 {
+			continue
+		}
+		minutes, cerr := s.repo.CloseSession(ctx, r.SessionID, "") // auto-offline: no selfie (pro absent)
+		if cerr != nil {
+			log.Warn().Err(cerr).Str("session_id", r.SessionID).Msg("[shift] expire sweep: close failed")
+			continue
+		}
+		if err := s.repo.MarkCompleted(ctx, r.CommitmentID); err != nil {
+			log.Warn().Err(err).Str("commitment_id", r.CommitmentID).Msg("[shift] expire sweep: mark completed failed")
+		}
+		if err := s.repo.BumpHelperOnlineMinutes(ctx, r.ProID, minutes); err != nil {
+			log.Warn().Err(err).Str("pro_id", r.ProID).Msg("[shift] expire sweep: bump minutes failed")
+		}
+		closed++
+		log.Info().Str("session_id", r.SessionID).Str("pro_id", r.ProID).Int("minutes", minutes).
+			Msg("[shift] force-offline: committed shift window ended")
+	}
+	return closed, nil
 }
 
 // ─── Manual approval ──────────────────────────────────────────────
@@ -360,7 +445,7 @@ func (s *Service) RejectZoneRequest(ctx context.Context, requestID, adminID, not
 // CancelBooking applies the 5-strike rule. customer_was_notified is
 // inferred from booking status: anything past 'pending' counts.
 func (s *Service) CancelBooking(ctx context.Context, proID, bookingID string) (*CancelBookingResult, error) {
-	owner, status, err := s.repo.BookingOwnerAndStatus(ctx, bookingID)
+	owner, _, err := s.repo.BookingOwnerAndStatus(ctx, bookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -368,27 +453,60 @@ func (s *Service) CancelBooking(ctx context.Context, proID, bookingID string) (*
 		return nil, ErrBookingNotOwnedByPro
 	}
 
-	customerNotified := status != "pending"
-
 	prior, err := s.repo.CountCancellations30d(ctx, proID)
 	if err != nil {
 		return nil, err
 	}
 	index := prior + 1
 	estMinutes := s.repo.BookingMinutesEstimate(ctx, bookingID)
+
+	// A cancellable booking is always in 'accepted' state, so the
+	// customer has already been notified a pro is on the way.
+	customerNotified := true
 	penaltyPaise := 0
-	if customerNotified && index >= StrikeThreshold {
+	if index >= StrikeThreshold {
 		penaltyPaise = (BaseRatePaisePerHour * estMinutes) / 60
 	}
 
-	if err := s.repo.MarkBookingCancelled(ctx, bookingID); err != nil {
-		return nil, err
+	// Re-dispatch instead of dead-ending (spec §7): a future booking returns to
+	// the assigner with this pro excluded so it isn't immediately re-offered to
+	// them. Once the slot has passed there's nothing to re-dispatch, so keep the
+	// old terminal cancel path. scheduled_time read failure also falls back to
+	// cancel — never leave the booking stuck assigned to a pro who quit it.
+	scheduledTime, stErr := s.repo.BookingScheduledTime(ctx, bookingID)
+	reDispatch := stErr == nil && time.Now().Before(scheduledTime)
+	var customerID string
+	if reDispatch {
+		// Returns the booking to the assigner; no customer-facing cancel,
+		// so customerID stays empty and the notify block below is skipped.
+		if err := s.repo.UnassignBooking(ctx, bookingID, proID); err != nil {
+			return nil, err
+		}
+	} else {
+		// Status guard + idempotency: the conditional UPDATE flips ONLY an
+		// 'accepted' booking still owned by this pro to 'cancelled'. A
+		// double-tap, a timeout-retry, or an already-completed/cancelled
+		// booking matches 0 rows → ErrBookingNotCancellable (409) and we
+		// never stack a second strike or flip a finished job. Returns the
+		// customer_id so we can notify the waiting prepaid customer.
+		var err error
+		customerID, err = s.repo.MarkBookingCancelled(ctx, bookingID, proID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := s.repo.InsertCancellation(ctx, proID, bookingID, customerNotified, estMinutes, penaltyPaise, index); err != nil {
 		return nil, err
 	}
-	if customerNotified {
-		_ = s.repo.BumpCancellationCount30d(ctx, proID)
+	_ = s.repo.BumpCancellationCount30d(ctx, proID)
+
+	// Customer-facing side effect: push + outbox so the prepaid customer
+	// learns their pro cancelled (previously silent — the customer kept
+	// waiting). Best-effort; the cancel is already committed.
+	if s.cancelHooks != nil && customerID != "" {
+		if nerr := s.cancelHooks.NotifyCustomerBookingCancelled(ctx, customerID, bookingID); nerr != nil {
+			log.Warn().Err(nerr).Str("booking_id", bookingID).Msg("[shift] notify customer of pro cancellation failed")
+		}
 	}
 
 	return &CancelBookingResult{
@@ -406,35 +524,45 @@ func (s *Service) FortnightProgress(ctx context.Context, proID string) (*Fortnig
 	if err != nil {
 		return nil, err
 	}
-	// NULL fortnight_start_date (pro never committed a shift) → derive
-	// the current Monday from the wall clock so /pro/fortnight/progress
-	// still returns a usable zero-state instead of 500-ing.
-	var fortnightStart time.Time
-	if snap.FortnightStart != nil && !snap.FortnightStart.IsZero() {
-		fortnightStart = *snap.FortnightStart
-	} else {
-		fortnightStart = currentFortnightStart(IST())
-	}
-	fortnightEnd := fortnightStart.AddDate(0, 0, 13)
+	// Anchor on the canonical payroll cycle (1–15 / 16–EOM), NOT the
+	// frozen helpers.fortnight_start_date. That column was backfilled
+	// once at migration 098 and never advanced, so the old read anchor
+	// disagreed with the rolling-Monday write anchor (absence deductions
+	// vanished) and never reset (projected pay grew for life).
+	now := IST()
+	fortnightStart := currentFortnightStart(now)
+	fortnightEnd := currentFortnightEnd(now)
 
 	targetMinutes := snap.WeeklyHoursTarget * 60
-	onlineMin := snap.OnlineMinutes
+	// Online minutes from shift_sessions within the cycle window — the
+	// same source payroll aggregates — so the figure zeroes each cycle
+	// and matches the eventual payout rather than the unbounded
+	// helpers.current_fortnight_online_min counter.
+	onlineMin, err := s.repo.FortnightOnlineMinutes(ctx, proID, fortnightStart, fortnightEnd)
+	if err != nil {
+		return nil, err
+	}
 	overtimeMin := onlineMin - targetMinutes
 	if overtimeMin < 0 {
 		overtimeMin = 0
 	}
-	regularMin := onlineMin - overtimeMin
 
-	onlinePay := (BaseRatePaisePerHour * regularMin) / 60
-	overtimePay := (OvertimeRatePaisePerHour * overtimeMin) / 60
+	// Pay formula MUST match payroll.ComputePay: base on ALL online
+	// minutes + bonus on job minutes, both at BaseRatePaisePerHour, with
+	// no separate overtime tier. The overtime split below is informational
+	// only (rendered as a line) — it is not paid at a different rate, and
+	// is no longer added on top, which is what made the Money tab promise
+	// a number the payroll engine never paid.
+	onlinePay := (BaseRatePaisePerHour * onlineMin) / 60
+	overtimePay := 0 // overtime not a separate pay tier in payroll v1
 
-	jobMin, err := s.repo.FortnightJobMinutes(ctx, proID, fortnightStart)
+	jobMin, err := s.repo.FortnightJobMinutes(ctx, proID, fortnightStart, fortnightEnd)
 	if err != nil {
 		return nil, err
 	}
 	jobPay := (BaseRatePaisePerHour * jobMin) / 60
 
-	absenceDeductions, cancellationDeductions, err := s.repo.FortnightDeductionsSplit(ctx, proID, fortnightStart)
+	absenceDeductions, cancellationDeductions, err := s.repo.FortnightDeductionsSplit(ctx, proID, fortnightStart, fortnightEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -489,15 +617,32 @@ func commitmentWindow(c *Commitment) (start, end time.Time, err error) {
 	return
 }
 
-// currentFortnightStart returns the most recent Monday on or before
-// the given date — used as the canonical anchor when helpers.
-// fortnight_start_date is unset.
+// currentFortnightStart returns the canonical pay-cycle anchor for the
+// IST date `t`: the 1st (for days 1–15) or the 16th (for days 16–EOM).
+// This MUST match payroll.CycleForCloseDate's half-month boundaries —
+// the Money tab read anchor and the 3 AM absence write key both key off
+// this, and payroll closes on those same cycles. The old rolling-Monday
+// anchor (a) never reset cleanly, (b) disagreed with the frozen
+// helpers.fortnight_start_date the deduction reads used, and (c) was a
+// third, divergent pay window on top of payroll's.
 func currentFortnightStart(t time.Time) time.Time {
-	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, istLocation)
-	// Sunday=0, Monday=1, ... so back up (dow-1+7)%7 days.
-	wd := int(d.Weekday())
-	delta := (wd + 6) % 7
-	return d.AddDate(0, 0, -delta)
+	d := t.In(istLocation)
+	if d.Day() >= 16 {
+		return time.Date(d.Year(), d.Month(), 16, 0, 0, 0, 0, istLocation)
+	}
+	return time.Date(d.Year(), d.Month(), 1, 0, 0, 0, 0, istLocation)
+}
+
+// currentFortnightEnd returns the inclusive last IST date of the pay
+// cycle containing `t`: the 15th (for the 1st–15th cycle) or the last
+// day of the month (for the 16th–EOM cycle).
+func currentFortnightEnd(t time.Time) time.Time {
+	d := t.In(istLocation)
+	if d.Day() >= 16 {
+		// Day 0 of next month = last day of this month (leap-safe).
+		return time.Date(d.Year(), d.Month()+1, 0, 0, 0, 0, 0, istLocation)
+	}
+	return time.Date(d.Year(), d.Month(), 15, 0, 0, 0, 0, istLocation)
 }
 
 // haversineMeters returns the great-circle distance between two

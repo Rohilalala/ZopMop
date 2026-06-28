@@ -45,12 +45,18 @@ func (k Kind) IsCredit() bool {
 // signed (positive = credit, negative = debit) — the service layer flips
 // the sign based on Kind so callers always pass a positive number.
 type WalletTx struct {
-	UserID       string
-	AmountPaise  int64 // signed
-	Kind         Kind
-	BookingID    *string
-	PaymentID    *string
-	Note         string
+	UserID      string
+	AmountPaise int64 // signed
+	Kind        Kind
+	BookingID   *string
+	PaymentID   *string
+	Note        string
+	// Reference is an optional idempotency key (e.g. a refund row id).
+	// When set, a second ApplyTransactionTx with the same Reference is
+	// rejected with ErrDuplicateTransaction via a partial unique index,
+	// so a retried credit can never move money twice. Empty for the
+	// topup/spend/referral/reversal paths, which carry no key.
+	Reference string
 }
 
 // WalletTransaction is the persisted shape of a wallet_transactions row.
@@ -85,4 +91,7 @@ var (
 	ErrInvalidAmount       = errors.New("wallet: amount must be positive")
 	ErrMissingRef          = errors.New("wallet: required reference id missing")
 	ErrNotConfigured       = errors.New("wallet: service not configured")
+	// ErrDuplicateTransaction — a credit with this Reference was already
+	// applied (idempotency index hit). Callers treat it as "already done".
+	ErrDuplicateTransaction = errors.New("wallet: duplicate transaction reference")
 )

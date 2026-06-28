@@ -88,7 +88,7 @@ func TestMC_VerifyHappyAndWrong(t *testing.T) {
 }
 
 func TestMC_DevModeBypass(t *testing.T) {
-	c := NewMessageCentralClient(MessageCentralConfig{DevMode: true})
+	c := NewMessageCentralClient(MessageCentralConfig{DevMode: true, IsDevelopment: true})
 	vid, err := c.SendOTP(context.Background(), "+919876543210")
 	if err != nil || !strings.HasPrefix(vid, "dev-") {
 		t.Fatalf("dev send vid=%q err=%v", vid, err)
@@ -98,6 +98,19 @@ func TestMC_DevModeBypass(t *testing.T) {
 	}
 	if err := c.VerifyOTP(context.Background(), vid, "123456"); !errors.Is(err, ErrOTPInvalid) {
 		t.Fatalf("dev verify wrong: %v, want ErrOTPInvalid", err)
+	}
+}
+
+// C10 defense-in-depth: even with DevMode=true, the hardcoded "999999" bypass
+// must be disabled outside a development env (staging or production), so a
+// misconfigured non-dev deploy cannot accept the dev OTP for any phone.
+func TestMC_DevBypassDisabledOutsideDevelopment(t *testing.T) {
+	c := NewMessageCentralClient(MessageCentralConfig{DevMode: true, IsDevelopment: false})
+	if c.DevMode() {
+		t.Fatalf("DevMode() must report false outside a development env")
+	}
+	if err := c.VerifyOTP(context.Background(), "dev-9999999999", "999999"); err == nil {
+		t.Fatalf("VerifyOTP must NOT accept 999999 in production (got nil = accepted)")
 	}
 }
 

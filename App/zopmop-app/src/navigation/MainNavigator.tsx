@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../types/navigation';
 import { BottomTabBar } from '../components/home/BottomTabBar';
@@ -14,10 +14,6 @@ import HelpSupportScreen from '../screens/main/HelpSupportScreen';
 import YourExpertsScreen from '../screens/main/YourExpertsScreen';
 import BookingRateScreen from '../screens/main/BookingRateScreen';
 import ReportIssueScreen from '../screens/main/ReportIssueScreen';
-import InstantMatchingScreen from '../screens/booking/InstantMatchingScreen';
-// Legacy ActiveBookingScreen replaced by TrackLiveScreen — both routes now
-// render the new design.
-// import ActiveBookingScreen from '../screens/booking/ActiveBookingScreen';
 import ProDashboardScreen from '../screens/pro/ProDashboardScreen';
 import ProDeclareLeaveScreen from '../screens/pro/ProDeclareLeaveScreen';
 import ProProfileScreen from '../screens/pro/ProProfileScreen';
@@ -26,10 +22,10 @@ import CommitShiftScreen from '../screens/pro/CommitShiftScreen';
 import ZoneApprovalRequestScreen from '../screens/pro/ZoneApprovalRequestScreen';
 import ProMoneyScreen from '../screens/pro/ProMoneyScreen';
 import LanguageToggleScreen from '../screens/pro/LanguageToggleScreen';
-import JobOfferScreen from '../screens/pro/JobOfferScreen';
 import JobDetailScreen from '../screens/pro/JobDetailScreen';
 import ProNavigator from './ProNavigator';
 import ZoneDriftOverlay from '../components/ZoneDriftOverlay';
+import { IosZopButton } from '../components/home/IosZopButton';
 import RoomiesSetupScreen from '../screens/main/RoomiesSetupScreen';
 import RoomiesCodeShareScreen from '../screens/main/RoomiesCodeShareScreen';
 import RoomiesJoinScreen from '../screens/main/RoomiesJoinScreen';
@@ -38,11 +34,11 @@ import ManageHouseholdScreen from '../screens/main/ManageHouseholdScreen';
 import BookingConfirmedScreen from '../screens/main/BookingConfirmedScreen';
 import TrackLiveScreen from '../screens/main/TrackLiveScreen';
 import ChatScreen from '../screens/main/ChatScreen';
-import TipScreen from '../screens/main/TipScreen';
 import ReferralEarnScreen from '../screens/main/ReferralEarnScreen';
 import ReferralInviteScreen from '../screens/main/ReferralInviteScreen';
 import { CartProvider } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { ROOMIES_ENABLED } from '../config/features';
 
 const Stack = createNativeStackNavigator<MainStackParamList>();
 
@@ -106,7 +102,13 @@ export default function MainNavigator() {
         <Stack.Screen
           name="ServiceAbout"
           component={ServiceAboutScreen}
-          options={{ animation: 'slide_from_bottom' }}
+          options={{
+            // Renders as a bottom sheet over the dimmed catalog — keep the
+            // previous screen visible behind and let the sheet animate itself.
+            presentation: 'transparentModal',
+            animation: 'fade',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
         />
         <Stack.Screen
           name="Cart"
@@ -149,11 +151,6 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
         />
         <Stack.Screen
-          name="InstantMatching"
-          component={InstantMatchingScreen}
-          options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
-        />
-        <Stack.Screen
           name="ActiveBooking"
           component={TrackLiveScreen}
           options={{ animation: 'fade', gestureEnabled: false }}
@@ -174,8 +171,10 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         {/* ProMatched / ProActive / ProScheduledInvite were retired
-            in Phase 10 — replaced by JobDetail + JobOffer.
-            Archived at _legacy/pro_legacy_screens/. */}
+            in Phase 10 — replaced by JobDetail. The offer/accept JobOffer
+            flow was deleted under the unified-slot-dispatch design (jobs
+            are force-assigned to the roster). Legacy screens archived at
+            _legacy/pro_legacy_screens/. */}
         <Stack.Screen
           name="ProProfile"
           component={ProProfileScreen}
@@ -207,40 +206,39 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
-          name="JobOffer"
-          component={JobOfferScreen}
-          options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal', gestureEnabled: false }}
-        />
-        <Stack.Screen
           name="JobDetail"
           component={JobDetailScreen}
           options={{ animation: 'slide_from_right' }}
         />
-        <Stack.Screen
-          name="RoomiesSetup"
-          component={RoomiesSetupScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesCodeShare"
-          component={RoomiesCodeShareScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesJoin"
-          component={RoomiesJoinScreen}
-          options={{ animation: 'slide_from_right' }}
-        />
-        <Stack.Screen
-          name="RoomiesWelcome"
-          component={RoomiesWelcomeScreen}
-          options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
-        />
-        <Stack.Screen
-          name="ManageHousehold"
-          component={ManageHouseholdScreen}
-          options={{ animation: 'slide_from_bottom' }}
-        />
+        {ROOMIES_ENABLED && (
+          <>
+            <Stack.Screen
+              name="RoomiesSetup"
+              component={RoomiesSetupScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesCodeShare"
+              component={RoomiesCodeShareScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesJoin"
+              component={RoomiesJoinScreen}
+              options={{ animation: 'slide_from_right' }}
+            />
+            <Stack.Screen
+              name="RoomiesWelcome"
+              component={RoomiesWelcomeScreen}
+              options={{ animation: 'fade', headerShown: false, gestureEnabled: false }}
+            />
+            <Stack.Screen
+              name="ManageHousehold"
+              component={ManageHouseholdScreen}
+              options={{ animation: 'slide_from_bottom' }}
+            />
+          </>
+        )}
         <Stack.Screen
           name="BookingConfirmed"
           component={BookingConfirmedScreen}
@@ -257,11 +255,6 @@ export default function MainNavigator() {
           options={{ animation: 'slide_from_right' }}
         />
         <Stack.Screen
-          name="Tip"
-          component={TipScreen}
-          options={{ animation: 'slide_from_bottom' }}
-        />
-        <Stack.Screen
           name="ReferralEarn"
           component={ReferralEarnScreen}
           options={{ animation: 'slide_from_right' }}
@@ -272,7 +265,9 @@ export default function MainNavigator() {
           options={{ gestureEnabled: false, animation: 'slide_from_bottom' }}
         />
       </Stack.Navigator>
-      <PersistentTabBar />
+      {/* iOS: native UITabBar (TabsNavigator) + an independent floating Zop
+          button. Android: the custom branded bar (Zop mascot lives in it). */}
+      {Platform.OS === 'ios' ? <IosZopButton /> : <PersistentTabBar />}
       <ZoneDriftOverlay />
       </View>
     </CartProvider>

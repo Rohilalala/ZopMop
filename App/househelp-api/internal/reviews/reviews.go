@@ -145,11 +145,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrBookingNotCompleted):
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error(), "code": "booking_not_completed"})
 		case errors.Is(err, ErrNotOwner):
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error(), "code": "not_owner"})
 		case errors.Is(err, ErrAlreadyReviewed):
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+			// The review already exists — for a retry after a dropped response
+			// this is the desired end state, so the client treats it as success.
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error(), "code": "already_reviewed"})
 		}
 		log.Warn().Err(err).Str("booking_id", c.Params("id")).Msg("review create failed")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

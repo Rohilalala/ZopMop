@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 
-import { bannersApi, type Banner } from '@/api/all';
+import { bannersApi, zonesApi, type Banner } from '@/api/all';
+import { utcToISTInput, istInputToUTC } from '@/lib/formatters';
 import { Card, EmptyState, Skeleton, StatusPill } from '@/components/ui';
 import { ConfirmModal, Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
@@ -30,6 +31,10 @@ export function BannersPage() {
 
   function move(idx: number, dir: -1 | 1) {
     if (!q.data) return;
+    // Block overlapping reorders: a rapid second click (or a click while the
+    // previous POST is in flight) would send a stale ordering and race the
+    // server, corrupting display_order. One reorder at a time.
+    if (reorder.isPending) return;
     const next = [...q.data];
     const j = idx + dir;
     if (j < 0 || j >= next.length) return;
@@ -77,7 +82,7 @@ export function BannersPage() {
                         }
                         move(i, -1);
                       }}
-                      disabled={i === 0 || !canReorder}
+                      disabled={i === 0 || !canReorder || reorder.isPending}
                       title={!canReorder ? 'Insufficient permissions' : undefined}
                     ><ArrowUp className="w-4 h-4" /></button>
                     <button
@@ -89,7 +94,7 @@ export function BannersPage() {
                         }
                         move(i, 1);
                       }}
-                      disabled={i === (q.data!.length - 1) || !canReorder}
+                      disabled={i === (q.data!.length - 1) || !canReorder || reorder.isPending}
                       title={!canReorder ? 'Insufficient permissions' : undefined}
                     ><ArrowDown className="w-4 h-4" /></button>
                     <button className="btn-ghost !py-1 !px-2" onClick={() => setEditing(b)}>Edit</button>
@@ -132,7 +137,7 @@ export function BannersPage() {
 type Form = {
   title: string; subtitle: string; image_url: string;
   cta_label: string; cta_kind: string; tap_action: string;
-  audience: string; is_active: boolean;
+  audience: string; audience_zone: string; is_active: boolean;
   display_order: number;
   starts_at: string; ends_at: string;
 };
@@ -146,10 +151,11 @@ function emptyForm(b?: Banner | null): Form {
     cta_kind: b?.cta_kind ?? '',
     tap_action: b?.tap_action ?? '',
     audience: b?.audience ?? 'all',
+    audience_zone: b?.audience_zone ?? '',
     is_active: b?.is_active ?? true,
     display_order: b?.display_order ?? 0,
-    starts_at: b?.starts_at?.slice(0, 16) ?? '',
-    ends_at: b?.ends_at?.slice(0, 16) ?? '',
+    starts_at: utcToISTInput(b?.starts_at),
+    ends_at: utcToISTInput(b?.ends_at),
   };
 }
 
@@ -161,12 +167,14 @@ function BannerEditor({ banner, onClose }: { banner: Banner | null; onClose: () 
   const canUpdate = usePermission('banners.update');
   const canSave = banner ? canUpdate : canCreate;
 
+  const zonesQ = useQuery({ queryKey: ['zones'], queryFn: zonesApi.list, enabled: f.audience === 'zone' });
+
   const save = useMutation({
     mutationFn: async () => {
       const body: Partial<Banner> = {
         ...f,
-        starts_at: f.starts_at ? new Date(f.starts_at).toISOString() : null,
-        ends_at: f.ends_at ? new Date(f.ends_at).toISOString() : null,
+        starts_at: istInputToUTC(f.starts_at),
+        ends_at: istInputToUTC(f.ends_at),
       };
       if (banner) await bannersApi.update(banner.id, body);
       else await bannersApi.create(body);
@@ -192,12 +200,28 @@ function BannerEditor({ banner, onClose }: { banner: Banner | null; onClose: () 
             </select>
           </div>
           <input className="input" placeholder="Tap action (URL / promo code / route)" value={f.tap_action} onChange={(e) => setF({ ...f, tap_action: e.target.value })} />
-          <select className="input" value={f.audience} onChange={(e) => setF({ ...f, audience: e.target.value })}>
+          <select
+            className="input"
+            value={f.audience}
+            onChange={(e) => setF({ ...f, audience: e.target.value, audience_zone: e.target.value === 'zone' ? f.audience_zone : '' })}
+          >
             <option value="all">All users</option>
             <option value="new_users">New users</option>
             <option value="vip">VIP only</option>
             <option value="zone">By zone</option>
           </select>
+          {f.audience === 'zone' && (
+            <select
+              className="input"
+              value={f.audience_zone}
+              onChange={(e) => setF({ ...f, audience_zone: e.target.value })}
+            >
+              <option value="">— pick a zone —</option>
+              {zonesQ.data?.map((z) => (
+                <option key={z.id} value={z.id}>{z.name} · {z.city}</option>
+              ))}
+            </select>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <input className="input" type="datetime-local" value={f.starts_at} onChange={(e) => setF({ ...f, starts_at: e.target.value })} />
             <input className="input" type="datetime-local" value={f.ends_at} onChange={(e) => setF({ ...f, ends_at: e.target.value })} />

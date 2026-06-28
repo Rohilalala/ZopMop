@@ -28,6 +28,44 @@ import (
 
 var ErrNotFound = errors.New("order not found")
 
+// istZone is Asia/Kolkata (fixed UTC+5:30). Used to turn the bare
+// YYYY-MM-DD the Orders date pickers send into the correct UTC instant for
+// a created_at range filter.
+var istZone = time.FixedZone("IST", 5*3600+30*60)
+
+// parseFilterDate accepts an RFC3339 timestamp or a bare YYYY-MM-DD. For the
+// bare form, `endOfDay` controls whether it resolves to 00:00:00 IST (start)
+// or 23:59:59.999999999 IST (inclusive end) of that day.
+func parseFilterDate(v string, endOfDay bool) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, true
+	}
+	if d, err := time.ParseInLocation("2006-01-02", v, istZone); err == nil {
+		if endOfDay {
+			d = d.Add(24*time.Hour - time.Nanosecond)
+		}
+		return d, true
+	}
+	return time.Time{}, false
+}
+
+// validCancelledBy is the allow-list for the cancelled_by orders filter.
+// Mirrors the values writers actually persist: 'customer' (internal/booking
+// self-cancel), 'system' (internal/booking auto-expire / dispatch-rollback,
+// also counted as auto_expired_bookings in analytics), 'admin' (internal/admin
+// bare 'admin' plus the CRM cancel path's 'admin:<email>' form), and
+// 'no_pros_found' (matching dispatch — spec §5.5). 'helper' is intentionally
+// absent: no code path writes it (it lives only in doc comments), so filtering
+// by it would always return zero rows. An unrecognised value is ignored rather
+// than errored, matching the other List filters' best-effort query-param
+// handling.
+var validCancelledBy = map[string]bool{
+	"customer":      true,
+	"system":        true,
+	"admin":         true,
+	"no_pros_found": true,
+}
+
 // ── Models ─────────────────────────────────────────────────────────────
 
 // ListItem is a row in the orders table.
@@ -128,7 +166,7 @@ func NewRepository(read, write *pgxpool.Pool) *Repository {
 func (r *Repository) SetRedis(rdb *redis.Client) { r.rdb = rdb }
 
 // List returns a page of orders matching the filter.
-func (r *Repository) List(ctx context.Context, search, status, category, customerID, workerID string, fromTS, toTS *time.Time, minCents, maxCents *int, sortBy, sortDir string, limit, offset int) ([]ListItem, int, error) {
+func (r *Repository) List(ctx context.Context, search, status, category, customerID, workerID, cancelledBy string, fromTS, toTS *time.Time, minCents, maxCents *int, sortBy, sortDir string, limit, offset int) ([]ListItem, int, error) {
 	args := []any{}
 	conds := []string{"1=1"}
 	if search != "" {
@@ -154,6 +192,18 @@ func (r *Repository) List(ctx context.Context, search, status, category, custome
 	if workerID != "" {
 		args = append(args, workerID)
 		conds = append(conds, fmt.Sprintf("b.helper_id = $%d::uuid", len(args)))
+	}
+	if validCancelledBy[cancelledBy] {
+		// 'admin' covers both the bare 'admin' literal (internal/admin) and the
+		// CRM cancel path's 'admin:<email>' form; everything else matches exactly
+		// (e.g. spec §5.5 'no_pros_found' feed).
+		if cancelledBy == "admin" {
+			args = append(args, "admin%")
+			conds = append(conds, fmt.Sprintf("b.cancelled_by LIKE $%d", len(args)))
+		} else {
+			args = append(args, cancelledBy)
+			conds = append(conds, fmt.Sprintf("b.cancelled_by = $%d", len(args)))
+		}
 	}
 	if fromTS != nil {
 		args = append(args, *fromTS)
@@ -385,17 +435,24 @@ func (r *Repository) Cancel(ctx context.Context, id, reason, adminEmail string) 
 }
 
 // MarkComplete forces an order into 'completed' state. Pro Mode only.
+//
+// Only an order a helper has actually picked up ('accepted' or 'in_progress')
+// may be force-completed. A 'pending' order has no helper assigned, so
+// completing it would stamp completed_at — and fire downstream
+// earnings/ratings — on a helper-less booking, bypassing the entire
+// dispatch/accept lifecycle. The SPA disables the button for non-completable
+// states, but that is client-only; this whitelist is the authoritative guard.
 func (r *Repository) MarkComplete(ctx context.Context, id string) error {
 	res, err := r.write.Exec(ctx, `
 		UPDATE bookings
 		SET status = 'completed', completed_at = now(), updated_at = now()
-		WHERE id = $1::uuid AND status NOT IN ('completed','cancelled')
+		WHERE id = $1::uuid AND status IN ('accepted','in_progress')
 	`, id)
 	if err != nil {
 		return fmt.Errorf("mark complete: %w", err)
 	}
 	if res.RowsAffected() == 0 {
-		return errors.New("order is already completed or cancelled")
+		return errors.New("order is not in a completable state (must be accepted or in_progress)")
 	}
 	return nil
 }
@@ -725,14 +782,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(q("limit", "50"))
 	offset, _ := strconv.Atoi(q("offset", "0"))
 
+	// Accept either RFC3339 or the bare YYYY-MM-DD the date pickers send.
+	// Bare dates are interpreted as IST day boundaries (from = 00:00 IST,
+	// to = end of the selected day) so the filter matches what the admin sees.
 	var fromTS, toTS *time.Time
 	if v := q("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, false); ok {
 			fromTS = &t
 		}
 	}
 	if v := q("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		if t, ok := parseFilterDate(v, true); ok {
 			toTS = &t
 		}
 	}
@@ -749,7 +809,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	}
 
 	items, total, err := h.repo.List(c.UserContext(),
-		q("search"), q("status"), q("category"), q("customer_id"), q("worker_id"),
+		q("search"), q("status"), q("category"), q("customer_id"), q("worker_id"), q("cancelled_by"),
 		fromTS, toTS, minC, maxC, q("sort_by"), q("sort_dir"), limit, offset,
 	)
 	if err != nil {

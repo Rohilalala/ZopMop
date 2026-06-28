@@ -35,6 +35,7 @@ var permissions = map[string]string{
 	"workers.force_offline":  RoleAdmin,
 	"workers.set_categories": RoleAdmin,
 	"workers.add_note":       RoleSupport,
+	"workers.read_pii":       RoleSuperadmin, // unmasked Aadhaar/bank reveal — superadmin only, audited
 	"workers.deduct":         RoleAdmin, // manual fortnight deduction
 	"workers.update":         RoleAdmin, // generic update gate (leave allocate, etc.)
 
@@ -53,6 +54,11 @@ var permissions = map[string]string{
 	"promos.create": RoleAdmin,
 	"promos.update": RoleAdmin,
 	"promos.toggle": RoleAdmin,
+
+	// catalog (service categories — price/MRP/active toggle). Edits are
+	// business-critical (they change what customers pay), so writes are
+	// admin-gated like promos/localities.
+	"catalog.update": RoleAdmin,
 
 	// banners
 	"banners.create":  RoleAdmin,
@@ -123,6 +129,17 @@ var permissions = map[string]string{
 	"zones.approval.approve": RoleAdmin,
 	"zones.approval.reject":  RoleAdmin,
 
+	// shift-session selfies (go-online / go-offline proof-of-presence). PII —
+	// gate at support, same tier as workers.read / zones.approval.read.
+	"shift_sessions.read": RoleSupport,
+
+	// SDUI page-config lifecycle (crm-api fronts the bff admin handler).
+	// Pushing/blanking the production home screen and widening the action
+	// allowlist must be admin-gated; FE gates write/activate at admin.
+	"sdui.read":     RoleAdmin,
+	"sdui.write":    RoleAdmin,
+	"sdui.activate": RoleAdmin,
+
 	// SUPERADMIN-only
 	"flags.update":       RoleSuperadmin,
 	"flags.rollback":     RoleSuperadmin,
@@ -141,11 +158,14 @@ var permissions = map[string]string{
 	// Mechanism landed in commit e6c9f32; tightening landed in the
 	// follow-up commit that closes A5-001.
 	"alerts.read":        RoleViewer,
+	"alerts.mark_read":   RoleViewer, // per-admin read-state; explicit key so the write is RBAC-gated like every other route (was unguarded)
 	"analytics.read":     RoleViewer,
 	"app_version.read":   RoleViewer,
 	"audit.read":         RoleAdmin, // forensic logs + indirect PII via JSONB
 	"banners.read":       RoleViewer,
 	"blacklist.read":     RoleViewer,
+	"capacity.read":      RoleViewer, // slot-capacity grid (drill-down from localities)
+	"catalog.read":       RoleViewer,
 	"changelog.read":     RoleViewer,
 	"dashboard.read":     RoleViewer,
 	"disputes.read":      RoleViewer,
@@ -157,6 +177,9 @@ var permissions = map[string]string{
 	"incidents.read":     RoleViewer,
 	"leaves.read":        RoleViewer,
 	"localities.read":    RoleViewer,
+	"localities.create":  RoleAdmin,
+	"localities.update":  RoleAdmin,
+	"localities.delete":  RoleAdmin,
 	"notifications.read": RoleViewer,
 	"orders.read":        RoleViewer,
 	"payouts.read":       RoleViewer,

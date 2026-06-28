@@ -22,7 +22,10 @@ import { useColors } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useProRoleGate } from '../../hooks/useRoleGate';
 import { showError } from '../../utils/toast';
+import { friendlyError } from '../../utils/errors';
 import { haptics } from '../../utils/haptics';
+import { captureSelfieForApproval } from '../../utils/photoCapture';
+import { getPositionWithTimeout } from '../../utils/location';
 import {
   getActiveShift,
   listCommitments,
@@ -33,7 +36,7 @@ import {
   type GoOnlineResult,
 } from '../../api/shifts';
 import { getHelperActive, type HelperBooking } from '../../api/pro';
-import { t } from '../../i18n';
+import { t, useLocale } from '../../i18n';
 import { onShiftEvent } from '../../utils/shiftEvents';
 
 type DashState =
@@ -96,6 +99,7 @@ function isPast3amIST(): boolean {
 }
 
 export default function ProDashboardScreen() {
+  useLocale(); // live-update strings on language change
   useProRoleGate();
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { user, token, signOut } = useAuth();
@@ -207,6 +211,14 @@ export default function ProDashboardScreen() {
       if (ev.type === 'zone_approval_granted') {
         approvalPendingRef.current = null;
         refresh();
+      } else if (ev.type === 'zone_approval_rejected') {
+        // Admin rejected the out-of-zone request. Clear the pending flag
+        // so the pro leaves the "Waiting for approval" state, surface the
+        // reason, and refetch. Previously this push had no handler and the
+        // pro sat on the waiting screen the whole shift.
+        approvalPendingRef.current = null;
+        showError(ev.reason || t('zoneApproval.rejected'));
+        refresh();
       }
     });
     return unsub;
@@ -221,9 +233,21 @@ export default function ProDashboardScreen() {
         showError(t('dashboard.locationDenied'));
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const result: GoOnlineResult = await goOnline(commitment.id, pos.coords.latitude, pos.coords.longitude);
+      const pos = await getPositionWithTimeout();
+      const selfie = await captureSelfieForApproval();
+      if (!selfie) {
+        showError('A selfie is required to go online.');
+        return;
+      }
+      const result: GoOnlineResult = await goOnline(commitment.id, pos.coords.latitude, pos.coords.longitude, selfie.dataUrl);
       if (!result.location_ok && result.requires_manual_approval) {
+        // A request is already queued — go straight to the waiting state
+        // rather than re-prompting for a selfie (the resubmit 409s).
+        if (result.approval_pending) {
+          approvalPendingRef.current = commitment.id;
+          await refresh();
+          return;
+        }
         navigation.navigate('ZoneApprovalRequest', {
           commitment_id: commitment.id,
           current_lat: pos.coords.latitude,
@@ -234,10 +258,15 @@ export default function ProDashboardScreen() {
         refresh();
         return;
       }
+      // Location rejected but not manually approvable — don't fake success.
+      if (!result.location_ok) {
+        showError("You're outside your committed zone. Move closer and try again.");
+        return;
+      }
       haptics.success();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t take you online. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -253,11 +282,16 @@ export default function ProDashboardScreen() {
         setShowPendingModal(pending);
         return;
       }
-      await goOffline(commitment.id);
+      const selfie = await captureSelfieForApproval();
+      if (!selfie) {
+        showError('A selfie is required to go offline.');
+        return;
+      }
+      await goOffline(commitment.id, selfie.dataUrl);
       haptics.success();
       await refresh();
     } catch (e: any) {
-      showError(e?.message ?? t('common.error'));
+      showError(friendlyError(e, 'Couldn’t take you offline. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -357,11 +391,12 @@ export default function ProDashboardScreen() {
           <View style={[styles.cardGlass, styles.jobCard]}>
             <Text style={styles.jobHeader}>{t('dashboard.activeJob')}</Text>
             <Text style={styles.jobAddress}>{b.address}</Text>
-            <Text style={styles.jobMeta}>₹{Math.round(b.price_paise / 100)}</Text>
+            {/* No per-job earnings — pay is time-based (hours online +
+                working), shown on the Money tab, not per booking. */}
           </View>
           <TouchableOpacity
             style={styles.primaryBtn}
-            onPress={() => showError(t('dashboard.comingSoon'))}
+            onPress={() => navigation.navigate('JobDetail', { booking_id: b.id })}
           >
             <Text style={styles.primaryBtnText}>{t('dashboard.completeJob')}</Text>
           </TouchableOpacity>

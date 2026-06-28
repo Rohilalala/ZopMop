@@ -129,10 +129,17 @@ func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle Cycl
 	if err != nil {
 		return PayBreakdown{}, fmt.Errorf("aggregate activity: %w", err)
 	}
-	if workingMin > onlineMin {
-		return PayBreakdown{}, ErrInvalidActivity
+	// ComputePay caps working at online — a working>online aggregate no
+	// longer errors out the recompute; the pro is paid the capped amount.
+	pay, err := ComputePay(onlineMin, workingMin)
+	if err != nil {
+		return PayBreakdown{}, err
 	}
-	return ComputePay(onlineMin, workingMin)
+	deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+	if err != nil {
+		return PayBreakdown{}, fmt.Errorf("sum deductions: %w", err)
+	}
+	return pay.applyDeductions(deductions), nil
 }
 
 // RunCycle is the manual-trigger entry point. It writes one payout
@@ -141,6 +148,9 @@ func (s *Service) ComputeForHelper(ctx context.Context, proID string, cycle Cycl
 func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, error) {
 	if cycle.End.Before(cycle.Start) {
 		return nil, fmt.Errorf("payroll: cycle_end before cycle_start")
+	}
+	if !IsCanonicalCycle(cycle) {
+		return nil, fmt.Errorf("payroll: %s..%s is not a canonical pay cycle (1st–15th or 16th–end-of-month); refusing to avoid overlapping double-pay", cycle.StartDate(), cycle.EndDate())
 	}
 
 	ids, err := s.repo.EligibleHelpers(ctx, cycle.End)
@@ -166,16 +176,15 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			continue
 		}
 
-		// Working > online violates the working⊆online invariant. Log
-		// loudly and skip rather than write nonsense pay.
+		// Working > online: ComputePay caps working at online — the pro is
+		// still paid (online + capped working), never skipped. Warn for
+		// visibility since it can signal a session-tracking edge.
 		if workingMin > onlineMin {
-			log.Error().
+			log.Warn().
 				Str("pro_id", proID).
 				Int("online_min", onlineMin).
 				Int("working_min", workingMin).
-				Msg("[payroll] working minutes exceed online minutes — data integrity bug, skipping pro")
-			out.Errors++
-			continue
+				Msg("[payroll] working minutes exceed online — capping working at online")
 		}
 
 		pay, err := ComputePay(onlineMin, workingMin)
@@ -184,6 +193,14 @@ func (s *Service) RunCycle(ctx context.Context, cycle CycleClose) (*RunResult, e
 			out.Errors++
 			continue
 		}
+
+		deductions, err := s.repo.SumDeductionsForCycle(ctx, proID, cycle.Start, cycle.End)
+		if err != nil {
+			log.Warn().Err(err).Str("pro_id", proID).Msg("[payroll] sum deductions failed")
+			out.Errors++
+			continue
+		}
+		pay = pay.applyDeductions(deductions)
 
 		inserted, err := s.repo.UpsertPayout(ctx, proID, cycle, pay)
 		if err != nil {

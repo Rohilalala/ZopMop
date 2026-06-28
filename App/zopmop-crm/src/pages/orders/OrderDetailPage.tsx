@@ -138,7 +138,7 @@ function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' |
 
 const TIMELINE_STEPS: { key: keyof OrderDetail; label: string }[] = [
   { key: 'created_at',    label: 'Created' },
-  { key: 'matched_at',    label: 'Matched' },
+  { key: 'matched_at',    label: 'Assigned' },
   { key: 'accepted_at',   label: 'Accepted' },
   { key: 'en_route_at',   label: 'En route' },
   { key: 'arrived_at',    label: 'Arrived' },
@@ -532,7 +532,9 @@ function ActionsCard({ order }: { order: OrderDetail }) {
         impact={
           <div className="space-y-3">
             <p className="text-danger">
-              This will cancel the booking and refund the customer. The pro will be notified.
+              This sets the booking to <span className="font-medium">cancelled</span>. No refund is
+              issued automatically — if the customer prepaid, raise a refund separately from the
+              Refunds page. The pro is not notified by this action.
             </p>
             <textarea
               className="input min-h-[70px] resize-y"

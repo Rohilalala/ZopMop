@@ -11,6 +11,7 @@ import { navigationRef } from '../navigation/navigationRef';
 import { useAuth } from '../context/AuthContext';
 import { cancelBooking } from '../api/bookings';
 import { showError, showSuccess } from '../utils/toast';
+import { friendlyError } from '../utils/errors';
 
 const AMBER = '#F5A300';
 
@@ -106,7 +107,7 @@ export default function ZopBookingCard({ booking, onCloseChat }: Props) {
                   : 'Booking cancelled',
               );
             } catch (e) {
-              showError(e instanceof Error ? e.message : 'Could not cancel');
+              showError(friendlyError(e, 'Couldn’t cancel right now. Please try again.'));
             } finally {
               setCancelling(false);
             }

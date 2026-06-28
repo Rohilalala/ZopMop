@@ -2,7 +2,7 @@
 // Celebration moment after joining a household: animated home glyph,
 // group name + saved address chip, "Let's go" CTA.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   Animated,
   StatusBar,
@@ -20,6 +20,8 @@ import type {
 } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../../types/navigation';
 
+import { useC, type ScreenColors } from '../../theme/screen';
+import { useTheme } from '../../context/ThemeContext';
 import { Bloom } from '../../components/home/Bloom';
 import { GlassCard } from '../../components/home/GlassCard';
 import { PressFx } from '../../components/ui/PressFx';
@@ -31,6 +33,9 @@ const fontExtra: TextStyle = { fontFamily: 'PlusJakartaSans_800ExtraBold' };
 type Props = NativeStackScreenProps<MainStackParamList, 'RoomiesWelcome'>;
 
 export default function RoomiesWelcomeScreen({ route }: Props) {
+  const c = useC();
+  const { isDark } = useTheme();
+  const s = useMemo(() => makeStyles(c, isDark), [c, isDark]);
   const navigation = useNavigation<NativeStackNavigationProp<MainStackParamList>>();
   const { groupName, addressLabel, addressAdded } = route.params;
 
@@ -46,7 +51,7 @@ export default function RoomiesWelcomeScreen({ route }: Props) {
 
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <Bloom />
 
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
@@ -54,7 +59,7 @@ export default function RoomiesWelcomeScreen({ route }: Props) {
           <View style={s.iconWrap}>
             <View style={s.iconRing} />
             <View style={s.iconCircle}>
-              <Feather name="home" size={44} color="#F5A300" />
+              <Feather name="home" size={44} color={c.amber} />
             </View>
           </View>
 
@@ -62,7 +67,7 @@ export default function RoomiesWelcomeScreen({ route }: Props) {
           <Text style={s.groupName}>{groupName}</Text>
 
           <GlassCard radius={99} style={s.addressChip}>
-            <Feather name="map-pin" size={13} color="rgba(255,255,255,0.65)" />
+            <Feather name="map-pin" size={13} color={c.textSecondary} />
             <Text style={s.addressText}>{addressLabel}</Text>
           </GlassCard>
 
@@ -81,82 +86,88 @@ export default function RoomiesWelcomeScreen({ route }: Props) {
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0A' },
-  body: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-  },
+// THEME NOTE: migrated to useC() (screen.ts), NOT useColors() (theme/colors).
+// useC() keeps dark at #0A0A0A / #F5A300 (pixel-identical to before) and carries
+// the cream + amber light bg, matching the other migrated screens. Amber-tint
+// surfaces (icon ring/circle) stay literal — amber is identical in both themes.
+function makeStyles(c: ScreenColors, isDark: boolean) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
+    body: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 32,
+    },
 
-  iconWrap: {
-    width: 140, height: 140,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 28,
-  },
-  iconRing: {
-    position: 'absolute',
-    width: 140, height: 140, borderRadius: 70,
-    borderWidth: 1,
-    borderColor: 'rgba(245,163,0,0.18)',
-  },
-  iconCircle: {
-    width: 96, height: 96, borderRadius: 48,
-    backgroundColor: 'rgba(245,163,0,0.14)',
-    borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
-    alignItems: 'center', justifyContent: 'center',
-  },
+    iconWrap: {
+      width: 140, height: 140,
+      alignItems: 'center', justifyContent: 'center',
+      marginBottom: 28,
+    },
+    iconRing: {
+      position: 'absolute',
+      width: 140, height: 140, borderRadius: 70,
+      borderWidth: 1,
+      borderColor: 'rgba(245,163,0,0.18)',
+    },
+    iconCircle: {
+      width: 96, height: 96, borderRadius: 48,
+      backgroundColor: 'rgba(245,163,0,0.14)',
+      borderWidth: 1, borderColor: 'rgba(245,163,0,0.32)',
+      alignItems: 'center', justifyContent: 'center',
+    },
 
-  welcome: {
-    ...fontExtra,
-    fontSize: 30,
-    color: '#FFFFFF',
-    letterSpacing: -0.8,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  groupName: {
-    ...fontBold,
-    fontSize: 18,
-    color: 'rgba(255,255,255,0.7)',
-    textAlign: 'center',
-    marginBottom: 22,
-    letterSpacing: -0.3,
-  },
+    welcome: {
+      ...fontExtra,
+      fontSize: 30,
+      color: c.text,
+      letterSpacing: -0.8,
+      textAlign: 'center',
+      marginBottom: 4,
+    },
+    groupName: {
+      ...fontBold,
+      fontSize: 18,
+      color: c.textSecondary,
+      textAlign: 'center',
+      marginBottom: 22,
+      letterSpacing: -0.3,
+    },
 
-  addressChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  addressText: {
-    ...fontMed,
-    fontSize: 12.5,
-    color: '#FFFFFF',
-  },
-  addressAddedNote: {
-    ...fontMed,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.45)',
-    textAlign: 'center',
-    marginTop: 12,
-  },
+    addressChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+    },
+    addressText: {
+      ...fontMed,
+      fontSize: 12.5,
+      color: c.text,
+    },
+    addressAddedNote: {
+      ...fontMed,
+      fontSize: 12,
+      color: c.textMuted,
+      textAlign: 'center',
+      marginTop: 12,
+    },
 
-  letsGoBtn: {
-    marginHorizontal: 20,
-    marginBottom: 24,
-    backgroundColor: '#F5A300',
-    borderRadius: 18,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  letsGoBtnText: {
-    ...fontBold,
-    fontSize: 14.5,
-    color: '#0A0A0A',
-    letterSpacing: 0.2,
-  },
-});
+    letsGoBtn: {
+      marginHorizontal: 20,
+      marginBottom: 24,
+      backgroundColor: c.amber,
+      borderRadius: 18,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
+    letsGoBtnText: {
+      ...fontBold,
+      fontSize: 14.5,
+      color: '#0A0A0A', // Ink on amber — same in both themes.
+      letterSpacing: 0.2,
+    },
+  });
+}
