@@ -27,6 +27,7 @@ type PurgeReport struct {
 	UserPreferredHelpersAsUser     int64
 	UserPreferredHelpersAsHelper   int64
 	ReengagementNotifications      int64
+	TrialUsage                     int64
 	BookingMessagesAnonymized      int64
 	ReviewsAnonymizedAsCustomer    int64
 	ReviewsAnonymizedAsHelper      int64
@@ -57,6 +58,7 @@ func (r PurgeReport) Total() int64 {
 		r.UserPreferredHelpersAsUser +
 		r.UserPreferredHelpersAsHelper +
 		r.ReengagementNotifications +
+		r.TrialUsage +
 		r.BookingMessagesAnonymized +
 		r.ReviewsAnonymizedAsCustomer +
 		r.ReviewsAnonymizedAsHelper +
@@ -736,6 +738,117 @@ func execPurgeTrivialUserData(ctx context.Context, q txQuerier, userID string) (
 		return r, fmt.Errorf("purge reengagement_notifications: %w", err)
 	}
 	r.ReengagementNotifications = res.RowsAffected()
+
+	// trial_usage — retains a plaintext phone snapshot + address_geohash
+	// (DPDP right-to-erasure scope). users(id) FK is CASCADE but never fires
+	// (we soft-delete the parent), so the phone survives unless purged here.
+	res, err = q.Exec(ctx, `DELETE FROM trial_usage WHERE user_id = $1::uuid`, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge trial_usage: %w", err)
+	}
+	r.TrialUsage = res.RowsAffected()
+
+	return r, nil
+}
+
+// RoomiesPurgeReport counts rows removed by PurgeRoomiesTx.
+type RoomiesPurgeReport struct {
+	Groups      int64
+	Memberships int64
+	Debts       int64
+	ChoreOrders int64
+}
+
+// PurgeRoomiesTx dissolves the user's roomies footprint. It MUST run before
+// PurgeTrivialUserDataTx: address_groups.address_id has a RESTRICT FK to
+// user_addresses, so a group backed by the user's address blocks the trivial
+// purge's `DELETE FROM user_addresses` with SQLSTATE 23503 — DELETE /me then
+// returns 500 (Apple guideline 5.1.1(v) reject; DPDP erasure failure).
+//
+// Roomies is pre-launch; dissolving the group when its host deletes their
+// account is the chosen semantics — the host owns the shared address, so the
+// group goes with it. Deletes follow the FK chain (ledger_debts →
+// chore_orders → address_members → address_groups), then remove the user's
+// membership + debts in groups hosted by OTHERS (PII residue; those rows have
+// no inbound FK). No-op for users with no roomies rows.
+func (s *Service) PurgeRoomiesTx(ctx context.Context, tx pgx.Tx, userID string) (RoomiesPurgeReport, error) {
+	return execPurgeRoomies(ctx, txAdapter{tx: tx}, userID)
+}
+
+// PurgeRoomies is the standalone variant — opens its own tx. Prefer the Tx
+// variant inside SoftDeleteUser so the dissolve commits atomically with the
+// rest of the deletion.
+func (s *Service) PurgeRoomies(ctx context.Context, userID string) (RoomiesPurgeReport, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return RoomiesPurgeReport{}, fmt.Errorf("purge roomies begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	r, err := execPurgeRoomies(ctx, txAdapter{tx: tx}, userID)
+	if err != nil {
+		return r, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return r, fmt.Errorf("purge roomies commit: %w", err)
+	}
+	return r, nil
+}
+
+func execPurgeRoomies(ctx context.Context, q txQuerier, userID string) (RoomiesPurgeReport, error) {
+	var r RoomiesPurgeReport
+
+	// Groups owned by this user: hosted by them OR backed by one of their
+	// addresses (address_groups.address_id is UNIQUE → one group per address).
+	const ownedGroups = `(
+		SELECT id FROM address_groups
+		WHERE host_user_id = $1::uuid
+		   OR address_id IN (SELECT id FROM user_addresses WHERE user_id = $1::uuid)
+	)`
+
+	// 1. ledger_debts in owned groups (references chore_orders + address_group).
+	res, err := q.Exec(ctx, `DELETE FROM ledger_debts WHERE address_group_id IN `+ownedGroups, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge ledger_debts (owned groups): %w", err)
+	}
+	r.Debts = res.RowsAffected()
+
+	// 2. chore_orders in owned groups.
+	res, err = q.Exec(ctx, `DELETE FROM chore_orders WHERE address_group_id IN `+ownedGroups, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge chore_orders (owned groups): %w", err)
+	}
+	r.ChoreOrders = res.RowsAffected()
+
+	// 3. address_members in owned groups.
+	res, err = q.Exec(ctx, `DELETE FROM address_members WHERE address_group_id IN `+ownedGroups, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge address_members (owned groups): %w", err)
+	}
+	r.Memberships = res.RowsAffected()
+
+	// 4. the owned groups themselves — now unreferenced, so the trivial
+	//    purge's user_addresses DELETE can proceed without the FK 23503.
+	res, err = q.Exec(ctx, `DELETE FROM address_groups
+		WHERE host_user_id = $1::uuid
+		   OR address_id IN (SELECT id FROM user_addresses WHERE user_id = $1::uuid)`, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge address_groups (owned): %w", err)
+	}
+	r.Groups = res.RowsAffected()
+
+	// 5. the user's debts in groups hosted by OTHERS (PII; no inbound FK).
+	res, err = q.Exec(ctx, `DELETE FROM ledger_debts WHERE debtor_id = $1::uuid OR creditor_id = $1::uuid`, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge ledger_debts (member): %w", err)
+	}
+	r.Debts += res.RowsAffected()
+
+	// 6. the user's memberships in groups hosted by OTHERS.
+	res, err = q.Exec(ctx, `DELETE FROM address_members WHERE user_id = $1::uuid`, userID)
+	if err != nil {
+		return r, fmt.Errorf("purge address_members (member): %w", err)
+	}
+	r.Memberships += res.RowsAffected()
 
 	return r, nil
 }
