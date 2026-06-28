@@ -381,6 +381,16 @@ func (r *Repository) SoftDeleteUser(ctx context.Context, userID, reason string) 
 			return fmt.Errorf("compliance anonymise refunds: %w", err)
 		}
 
+		// Roomies (P0): dissolve the user's roomies groups + memberships
+		// BEFORE the trivial purge. address_groups.address_id has a RESTRICT
+		// FK to user_addresses, so a host's group makes PurgeTrivialUserDataTx's
+		// `DELETE FROM user_addresses` fail (SQLSTATE 23503) and DELETE /me
+		// returns 500 — Apple 5.1.1(v) reject. Same RESTRICT-detach reasoning
+		// as the bookings.address_id anonymisation above.
+		if _, err := r.compliance.PurgeRoomiesTx(queryCtx, tx, userID); err != nil {
+			return fmt.Errorf("compliance purge roomies: %w", err)
+		}
+
 		report, err := r.compliance.PurgeTrivialUserDataTx(queryCtx, tx, userID)
 		if err != nil {
 			return fmt.Errorf("compliance purge trivial: %w", err)

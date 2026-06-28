@@ -220,6 +220,108 @@ func TestPurgeTrivialUserData_DeletesAllTables(t *testing.T) {
 	mustExec(t, pool, `DELETE FROM reengagement_notifications WHERE user_id=$1::uuid`, otherID)
 }
 
+// TestPurgeRoomies_DissolvesGroupAndUnblocksAddressDelete is the regression
+// guard for the P0 where a roomies host's DELETE /me returned 500: the trivial
+// purge's `DELETE FROM user_addresses` hit address_groups' RESTRICT FK
+// (SQLSTATE 23503). PurgeRoomies must dissolve the chain first so the trivial
+// purge then succeeds.
+func TestPurgeRoomies_DissolvesGroupAndUnblocksAddressDelete(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	ctx := context.Background()
+
+	hostID := makeUser(t, pool, uuid.NewString())
+
+	var addrID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO user_addresses (user_id, tag, title, flat_no, building_name, full_address, lat, lon)
+		VALUES ($1::uuid,'Home','t','1','b','addr',12.9,77.6) RETURNING id::text
+	`, hostID).Scan(&addrID); err != nil {
+		t.Fatalf("insert address: %v", err)
+	}
+	var groupID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO address_groups (host_user_id, address_id, name, invite_code)
+		VALUES ($1::uuid,$2::uuid,'g','RMTST1') RETURNING id::text
+	`, hostID, addrID).Scan(&groupID); err != nil {
+		t.Fatalf("insert address_group: %v", err)
+	}
+	mustExec(t, pool, `INSERT INTO address_members (user_id, address_group_id, role) VALUES ($1::uuid,$2::uuid,'host')`, hostID, groupID)
+	var choreID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO chore_orders (idempotency_key, initiator_id, total_amount, initiator_pays, address_group_id)
+		VALUES ($1,$2::uuid,100,100,$3::uuid) RETURNING id::text
+	`, "idem-"+hostID, hostID, groupID).Scan(&choreID); err != nil {
+		t.Fatalf("insert chore_order: %v", err)
+	}
+	mustExec(t, pool, `INSERT INTO ledger_debts (address_group_id, debtor_id, creditor_id, chore_order_id, amount) VALUES ($1::uuid,$2::uuid,$2::uuid,$3::uuid,100)`, groupID, hostID, choreID)
+
+	rep, err := svc.PurgeRoomies(ctx, hostID)
+	if err != nil {
+		t.Fatalf("purge roomies: %v", err)
+	}
+	if rep.Groups != 1 {
+		t.Errorf("Groups = %d, want 1", rep.Groups)
+	}
+	if rep.ChoreOrders != 1 {
+		t.Errorf("ChoreOrders = %d, want 1", rep.ChoreOrders)
+	}
+
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM address_groups WHERE id=$1::uuid`,
+		`SELECT COUNT(*) FROM address_members WHERE address_group_id=$1::uuid`,
+		`SELECT COUNT(*) FROM chore_orders WHERE address_group_id=$1::uuid`,
+		`SELECT COUNT(*) FROM ledger_debts WHERE address_group_id=$1::uuid`,
+	} {
+		var n int
+		if err := pool.QueryRow(ctx, q, groupID).Scan(&n); err != nil {
+			t.Fatalf("count check %q: %v", q, err)
+		}
+		if n != 0 {
+			t.Errorf("roomies chain not dissolved: %q left %d rows", q, n)
+		}
+	}
+
+	// The actual P0: the trivial purge's user_addresses DELETE must now succeed.
+	if _, err := svc.PurgeTrivialUserData(ctx, hostID); err != nil {
+		t.Fatalf("trivial purge after roomies dissolve (P0 regression): %v", err)
+	}
+	var addrLeft int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM user_addresses WHERE user_id=$1::uuid`, hostID).Scan(&addrLeft); err != nil {
+		t.Fatalf("address count: %v", err)
+	}
+	if addrLeft != 0 {
+		t.Errorf("address survived purge: %d rows left", addrLeft)
+	}
+}
+
+// TestPurgeTrivialUserData_PurgesTrialUsage guards the P0 where trial_usage
+// retained the user's plaintext phone snapshot after account deletion.
+func TestPurgeTrivialUserData_PurgesTrialUsage(t *testing.T) {
+	pool := openComplianceTestDB(t)
+	svc := NewService(pool, NewRegistry())
+	ctx := context.Background()
+
+	userID := makeUser(t, pool, uuid.NewString())
+	bookingID := makeBooking(t, pool, userID)
+	mustExec(t, pool, `INSERT INTO trial_usage (user_id, phone, booking_id) VALUES ($1::uuid,'del:trial',$2::uuid)`, userID, bookingID)
+
+	rep, err := svc.PurgeTrivialUserData(ctx, userID)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if rep.TrialUsage != 1 {
+		t.Errorf("TrialUsage = %d, want 1", rep.TrialUsage)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM trial_usage WHERE user_id=$1::uuid`, userID).Scan(&n); err != nil {
+		t.Fatalf("trial_usage count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("trial_usage survived deletion: %d rows", n)
+	}
+}
+
 func mustExec(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {

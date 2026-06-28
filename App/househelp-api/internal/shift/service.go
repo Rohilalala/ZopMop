@@ -371,6 +371,14 @@ func (s *Service) ExpireStaleSessions(ctx context.Context) (int, error) {
 // The app uploads the selfie via a separate file-upload pipeline and
 // passes the resulting URL here.
 func (s *Service) RequestManualApproval(ctx context.Context, proID, commitmentID string, lat, lng float64, photoURL string) (string, error) {
+	// Stored-XSS guard (mirrors GoOnline/GoOffline). photoURL is stored
+	// verbatim and rendered by the CRM zone-approval view in <a href>/<img
+	// src> against an admin session, so a "javascript:" / "data:text/html"
+	// value would execute. Require an image data URL — the app posts
+	// photo.dataUrl (data:image/jpeg;base64,...) via photoCapture.ts.
+	if !strings.HasPrefix(photoURL, "data:image/") {
+		return "", ErrSelfieRequired
+	}
 	if _, exists, err := s.repo.PendingApprovalForCommitment(ctx, commitmentID); err != nil {
 		return "", err
 	} else if exists {
