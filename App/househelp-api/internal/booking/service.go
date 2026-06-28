@@ -1078,6 +1078,31 @@ func (s *Service) GetBookingDetail(ctx context.Context, bookingID, requestingUse
 	return detail, nil
 }
 
+// CancelAndRefundAsPro cancels a booking on the pro's behalf and issues the
+// customer a FULL refund (no cancellation fee — the cancellation is the pro's
+// fault). It mirrors the customer cancel money path (CancelBookingWithFee +
+// refundSplitWalletOnCancel) with fee=0, so every payment type — paid Cashfree,
+// wallet, split, COD/unpaid — routes through the same proven, idempotent rails:
+// CancelBookingWithFee only matches a pending/accepted row, so a double-tap
+// finds 0 rows and cannot double-refund. Returns the booking's customer_id so
+// the shift layer can notify the waiting customer.
+//
+// Closes LB-1: the shift pro-cancel path previously stamped the booking
+// cancelled with no refund, stranding a prepaid customer's money.
+func (s *Service) CancelAndRefundAsPro(ctx context.Context, bookingID, proID string) (string, error) {
+	if _, err := s.repo.CancelBookingWithFee(ctx, bookingID, "pro", 0, s.walletRepo); err != nil {
+		return "", err
+	}
+	// Return the wallet portion of a split booking (the rail above only moves
+	// money for the paid/Cashfree leg). Idempotent; no-ops for non-split rows.
+	if rErr := s.refundSplitWalletOnCancel(ctx, bookingID); rErr != nil {
+		log.Warn().Err(rErr).Str("booking_id", bookingID).Msg("split wallet refund on pro cancel failed")
+	}
+	var customerID string
+	_ = s.db.QueryRow(ctx, `SELECT customer_id::text FROM bookings WHERE id = $1::uuid`, bookingID).Scan(&customerID)
+	return customerID, nil
+}
+
 // CancelBooking cancels a booking. Free if requested more than 30m before
 // the scheduled start time; otherwise stamps a cancellation fee. Returns the
 // outcome so the caller can echo the fee back to the user.

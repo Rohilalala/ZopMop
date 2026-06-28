@@ -507,9 +507,11 @@ func main() {
 	shiftRepo := shift.NewRepository(dbPool)
 	shiftService := shift.NewService(shiftRepo)
 	shiftService.SetNotifier(shift.NewNotifier(&shiftPushAdapter{n: notificationService}))
-	// Customer-facing side effect of a pro cancellation. Refund + auto
-	// re-dispatch are intentionally deferred (product decision).
+	// Customer-facing side effect of a pro cancellation (push + outbox).
 	shiftService.SetCancelHooks(notificationService)
+	// LB-1: a terminal pro cancellation now cancels + FULLY refunds the
+	// prepaid customer through the booking money rails (no fee — pro's fault).
+	shiftService.SetProCancelRefunder(bookingService)
 	shiftHandler := shift.NewHandler(shiftService)
 	shiftCron := shift.NewCron(shiftService)
 	shiftCron.Start(context.Background())

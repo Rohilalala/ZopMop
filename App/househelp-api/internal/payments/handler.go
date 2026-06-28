@@ -17,6 +17,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -460,12 +461,62 @@ func (h *Handler) createCashfreeOrderForBooking(c *fiber.Ctx, userID, bookingID 
 		return errResp(c, fiber.StatusConflict, "already_paid", "booking already paid")
 	}
 
+	// LB-6: a pending Cashfree payment row with no live (unexpired) order
+	// would block the partial unique index below and lock the customer out of
+	// paying. Fail those dead rows first — they are exactly the rows
+	// findReusableCashfreeOrder already refuses to reuse.
+	if err := h.expireStalePendingCashfree(ctx, bookingID); err != nil {
+		log.Warn().Err(err).Str("booking_id", bookingID).Msg("[cashfree] expire stale pending failed")
+	}
+
 	custPhone, custEmail, custName := h.loadCustomerDetails(ctx, userID)
 	resp, err := h.openCashfreeOrder(ctx, &bookingID, userID, netPaise, custPhone, custEmail, custName, "Zopmop booking "+bookingID)
 	if err != nil {
+		// LB-6: a concurrent request won the race and created the single
+		// allowed pending order (uq_payments_pending_cashfree_per_booking).
+		// Reuse it rather than charging twice; if the winner's order isn't
+		// visible yet (its gateway call is still in flight), tell the app to
+		// retry — never open a second order.
+		if isUniquePendingCashfreeViolation(err) {
+			if reused, ok := h.findReusableCashfreeOrder(ctx, bookingID); ok {
+				return c.JSON(reused)
+			}
+			return errResp(c, fiber.StatusConflict, "order_in_progress",
+				"a payment order is already being created for this booking; retry shortly")
+		}
 		return h.translateGatewayError(c, err)
 	}
 	return c.JSON(resp)
+}
+
+// expireStalePendingCashfree marks as 'failed' any pending Cashfree payment for
+// this booking that has no live (unexpired) cashfree_orders row — an expired
+// order, or one whose gateway call died before the cashfree_orders insert.
+// These are exactly the rows findReusableCashfreeOrder refuses to reuse; left
+// pending they would block uq_payments_pending_cashfree_per_booking and stop
+// the customer from opening a fresh order.
+func (h *Handler) expireStalePendingCashfree(ctx context.Context, bookingID string) error {
+	_, err := h.db.Exec(ctx, `
+		UPDATE payments p SET gateway_status = 'failed'
+		WHERE p.booking_id = $1::uuid
+		  AND p.gateway = 'cashfree'
+		  AND p.gateway_status = 'pending'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM cashfree_orders co
+		      WHERE co.payment_id = p.id AND co.expires_at > NOW()
+		  )
+	`, bookingID)
+	return err
+}
+
+// isUniquePendingCashfreeViolation reports whether err is the unique violation
+// raised by uq_payments_pending_cashfree_per_booking — i.e. a concurrent
+// request already holds the one allowed pending order for this booking.
+func isUniquePendingCashfreeViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "uq_payments_pending_cashfree_per_booking"
 }
 
 // createCashfreeOrderForWalletTopup handles payment_source="wallet_topup".
