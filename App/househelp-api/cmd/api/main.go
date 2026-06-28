@@ -317,6 +317,11 @@ func main() {
 	complianceService.SetRedis(rdb)
 	auditRecorder := audit.NewRecorder(dbPool)
 	authHandler.SetCompliance(complianceService)
+	// Wire compliance into the repo too — SoftDeleteUser gates its PII
+	// anonymise/purge + active-refund guard on r.compliance != nil. Without
+	// this, prod account deletion silently runs the pre-compliance path
+	// (DPDP erasure gap; Apple 5.1.1(v)). The handler wiring above is not enough.
+	authRepo.SetCompliance(complianceService)
 	authHandler.SetAudit(auditRecorder)
 
 	jwtVerificationKeys := make([]mw.JWTKey, 0, len(cfg.JWTPreviousSecrets)+2)
