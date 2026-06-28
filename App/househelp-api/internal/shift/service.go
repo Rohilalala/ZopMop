@@ -25,17 +25,26 @@ type Notifier interface {
 // calls are best-effort: a push failure must not roll back the cancel,
 // which is already committed to the DB by the time these fire.
 //
-// Refund orchestration and automatic re-dispatch are intentionally NOT
-// wired here — they are a product decision (whether a prepaid customer
-// is auto-refunded vs auto-rebooked) and are tracked separately.
+// Automatic re-dispatch of a future booking is handled in CancelBooking; the
+// refund of a past (terminal-cancel) booking is issued via ProCancelRefunder.
 type CancelHooks interface {
 	NotifyCustomerBookingCancelled(ctx context.Context, customerID, bookingID string) error
+}
+
+// ProCancelRefunder cancels + fully refunds a booking on a pro's behalf. It is
+// injected at wiring time (by the booking service) so the shift package stays
+// decoupled from the booking/payments packages. When unset, CancelBooking
+// falls back to the legacy status-only transition with NO refund — so prod MUST
+// wire this (cmd/api/main.go) to satisfy LB-1.
+type ProCancelRefunder interface {
+	CancelAndRefundAsPro(ctx context.Context, bookingID, proID string) (customerID string, err error)
 }
 
 type Service struct {
 	repo        *Repository
 	ntf         Notifier
 	cancelHooks CancelHooks
+	refundHook  ProCancelRefunder
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
@@ -44,6 +53,11 @@ func (s *Service) SetNotifier(n Notifier) { s.ntf = n }
 
 // SetCancelHooks injects the customer-facing cancel side effects.
 func (s *Service) SetCancelHooks(h CancelHooks) { s.cancelHooks = h }
+
+// SetProCancelRefunder injects the cancel+refund rail for terminal pro
+// cancellations (LB-1). Without it, CancelBooking falls back to a status-only
+// transition that does not refund the customer.
+func (s *Service) SetProCancelRefunder(h ProCancelRefunder) { s.refundHook = h }
 
 // istLocation is the canonical India Standard Time zone — load once.
 var istLocation = func() *time.Location {
@@ -490,7 +504,18 @@ func (s *Service) CancelBooking(ctx context.Context, proID, bookingID string) (*
 		// never stack a second strike or flip a finished job. Returns the
 		// customer_id so we can notify the waiting prepaid customer.
 		var err error
-		customerID, err = s.repo.MarkBookingCancelled(ctx, bookingID, proID)
+		if s.refundHook != nil {
+			// LB-1: cancel + FULL refund (fee=0) through the booking money
+			// rails so a prepaid customer isn't left out of pocket when their
+			// pro quits a job that can no longer be re-dispatched. The rail is
+			// idempotent (matches only a pending/accepted row), so a double-tap
+			// errors here rather than refunding twice.
+			customerID, err = s.refundHook.CancelAndRefundAsPro(ctx, bookingID, proID)
+		} else {
+			// Legacy fallback (hook unwired, e.g. unit tests): status-only
+			// transition with NO refund. Production wires the hook — see LB-1.
+			customerID, err = s.repo.MarkBookingCancelled(ctx, bookingID, proID)
+		}
 		if err != nil {
 			return nil, err
 		}
